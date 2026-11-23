@@ -1,7 +1,7 @@
 // Phone-width screenshot proof for GH #704 v2 (the sidebar Tabs tree): on a
 // touch phone a long-press drag to the right nests a tab, the disclosure
 // triangle collapses the group, and the rows indent by depth.
-// Usage: npm run build && node scripts/shot-sidebar-tabs-tree.mjs   (writes screenshots/sidebar-tabs-tree/)
+// Usage: npm run build:mock && node scripts/shot-sidebar-tabs-tree.mjs   (writes screenshots/sidebar-tabs-tree/)
 // Touch is driven as synthetic PointerEvents (pointerType "touch"), so this
 // proves the hold-then-drag logic and the layout, not the device's native
 // scroll arbitration.

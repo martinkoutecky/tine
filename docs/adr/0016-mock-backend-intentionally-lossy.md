@@ -4,7 +4,7 @@ Date: 2026-07-02
 
 ## Status
 
-Accepted
+Superseded by [0081](0081-browser-mock-on-the-core.md): the mock now answers no graph question; the browser core does.
 
 ## Context
 

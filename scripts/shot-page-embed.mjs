@@ -1,7 +1,7 @@
 // Visual check for GH #439: a whole-page `{{embed [[Page]]}}` sits on the outline
 // grid of its host (embedded roots line up with the host's own children) and names
 // the embedded page.
-// Usage: npm run build && node scripts/shot-page-embed.mjs
+// Usage: npm run build:mock && node scripts/shot-page-embed.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

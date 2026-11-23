@@ -1,7 +1,7 @@
 // Browser geometry and screenshot proof for GH #704/#705 under D-20261018-W1:
 // the sidebar's Tabs section lists the open tabs at every width, and the top
 // bar's tab strip appears when there is room (>= 640 px) on any device.
-// Usage: npm run build && node scripts/shot-sidebar-tabs.mjs   (writes screenshots/sidebar-tabs/)
+// Usage: npm run build:mock && node scripts/shot-sidebar-tabs.mjs   (writes screenshots/sidebar-tabs/)
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

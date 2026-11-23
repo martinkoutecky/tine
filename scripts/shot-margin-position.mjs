@@ -4,7 +4,7 @@
 // enters and leaves editing; a pane with room to spare widens the column;
 // someone else's comment has its own background. On a narrow pane a block's
 // comments show right under it, before its other children (GH #110).
-// Usage: npm run build && node scripts/shot-margin-position.mjs [outDir]
+// Usage: npm run build:mock && node scripts/shot-margin-position.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

@@ -1,0 +1,16 @@
+;; The browser development graph (ADR 0081). The core reads this file as a
+;; desktop open does; Settings changes in the browser edit it in memory.
+{:preferred-format "Markdown"
+ :preferred-workflow :todo
+ :journal/page-title-format "MMM do, yyyy"
+ :journal/file-name-format "yyyy_MM_dd"
+ :file/name-format :triple-lowbar
+ :start-of-week 0
+ :feature/enable-timetracking? true
+ :feature/enable-search-remove-accents? true
+ :ui/show-brackets? true
+ :ui/enable-tooltip? true
+ :favorites []
+ :macros {"poem" "Roses are $1, violets are $2."
+          "hi" "Hello, **$1**! See [[$2]]."
+          "card" "## $1\n\n$2\n\n+ see [[$1]]"}}

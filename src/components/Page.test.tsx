@@ -2,7 +2,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { openCommentThread } from "../tests/commentEntry";
 import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, OPENING_SHAPE_SURFACE_CASES, expectOpeningShape, pointerClick, shownLines } from "../tests/openingClickCases";
 import { resetNearObserverForTests } from "../lazyObserve";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -1359,6 +1359,9 @@ describe("trailing page block target", () => {
 });
 
 describe("page actions entry point", () => {
+  // The browser mock refuses the rename probe (ADR 0081): these title renames
+  // fake the plain-rename offer the old mock gave.
+  beforeEach(() => { vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" }); });
   it("discards the first A read after navigating A to B to A", async () => {
     let finishOld!: (page: PageRead | null) => void;
     let finishNew!: (page: PageRead | null) => void;

@@ -2,7 +2,7 @@
 // with a comment card (three-level thread), a repeated-phrase quote, a stale quote
 // and an untouched block, in light and dark at wide, desktop and phone width.
 // Zooming into the passage must keep the same threads and replies inline.
-// Usage: npm run build && node scripts/shot-margin-comments.mjs [outDir]
+// Usage: npm run build:mock && node scripts/shot-margin-comments.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

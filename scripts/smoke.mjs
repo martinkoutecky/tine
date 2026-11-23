@@ -1,6 +1,6 @@
 // Headless render smoke test against the mock backend. Catches runtime crashes
 // in the live sidebar/query paths (circular-import TDZ, render throws, etc.).
-// Usage: node scripts/smoke.mjs   (requires `npm run build` first)
+// Usage: node scripts/smoke.mjs   (requires `npm run build:mock` first)
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";

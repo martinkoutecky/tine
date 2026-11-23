@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { mockBackend } from "./mock";
+import { mockBackend, MOCK_REFUSAL_MESSAGE } from "./mock";
+import { mockFileTimes, mockGraphFiles } from "./mockGraph";
+import type { PageMail } from "./document";
 import type { PageDto } from "./types";
 
+// The browser mock answers graph questions through the core over its fixture
+// files (ADR 0081); these pin the mock's own parts: fixtures, edits, refusals
+// and host state. The core's answers have their own tests.
 describe("mock backend", () => {
   it("accepts the caller's exact asset cap and refuses one byte over (L-1)", async () => {
     const api = mockBackend();
@@ -12,93 +17,81 @@ describe("mock backend", () => {
     await expect(api.readAsset(name, TOO_SMALL_MAX_BYTES)).rejects.toBe("asset-too-large");
   });
 
-  it("keeps distinct page owners and scopes while search names fold", async () => {
-    const pages: PageDto[] = ["Ａ", "A", "Café", "Cafe"].map((name) => ({
-      name, title: name, kind: "page", pre_block: null,
-      blocks: [{ id: `id-${name}`, raw: `shared needle ${name}`, collapsed: false, children: [] }],
-      format: "md",
-    }));
-    const b = mockBackend(pages);
-    for (const name of ["A", "Cafe"]) {
-      const scope = { name, pageKind: "page" as const, path: `pages/${name}.md` };
-      const result = await b.runGraphSearch("needle", 0, 20, undefined, false, scope);
-      expect(result.hits.filter((hit) => hit.entity === "block").map((hit) => hit.page)).toEqual([name]);
-      expect(result.hits.filter((hit) => hit.entity === "block").map((hit) => hit.path)).toEqual([scope.path]);
-      const byName = await b.runGraphSearch("needle", 0, 20, undefined, false, { name, pageKind: "page" });
-      expect(byName.hits.filter((hit) => hit.entity === "block").map((hit) => hit.page)).toEqual([name]);
-    }
+  it("opens the fixture graph with its config, journals by day and namespaces by file name", async () => {
+    const api = mockBackend({ search: "" });
+    const graph = await api.loadGraph("");
+    if (graph.kind !== "loaded") throw new Error("not loaded");
+    expect(graph.meta.journal_page_title_format).toBe("MMM do, yyyy");
+    expect(graph.meta.macros.poem).toBe("Roses are $1, violets are $2.");
+    expect(graph.config_problem).toBeNull();
+    expect((await api.getPage("Jun 14th, 2026", "journal"))?.id).toBe("journals/2026_06_14.md");
+    expect((await api.getPage("Formula1/2026", "page"))?.id).toBe("pages/Formula1___2026.md");
+    const backlinks = await api.getBacklinks("Tine");
+    expect(backlinks.some((group) => group.page === "Jun 14th, 2026")).toBe(true);
   });
 
-  it("uses the mock graph's explicit accent policy for every search entry", async () => {
-    const page: PageDto = { name: "Café", title: "Café", kind: "page", pre_block: null,
-      blocks: [{ id: "cafe-id", raw: "café body", collapsed: false, children: [] }], format: "md" };
-    const b = mockBackend([page], false);
-    expect((await b.search("cafe", 20)).flatMap((group) => group.blocks).map((block) => block.id)).not.toContain("cafe-id");
-    expect((await b.runGraphSearch("cafe", 20, 20)).hits.some((hit) => hit.entity === "block" && hit.block.id === "cafe-id")).toBe(false);
-    expect((await b.quickSwitch("cafe", 20)).map((entry) => entry.name)).not.toContain("Café");
-    expect((await b.captureQuickSwitch("cafe", 20)).map((entry) => entry.name)).not.toContain("Café");
-  });
-  it("block picker search matches whitespace-separated fragments in order, like OG's LIKE '%a%b%'", async () => {
-    const page: PageDto = { name: "P", title: "P", kind: "page", pre_block: null,
-      blocks: [{ id: "a", raw: "qzfoo qzdraft", collapsed: false, children: [] },
-        { id: "b", raw: "qzready only", collapsed: false, children: [] }], format: "md" };
-    const b = mockBackend([page]);
-    const ids = async (q: string) => (await b.search(q, 20)).flatMap((group) => group.blocks).map((block) => block.id);
-    expect(await ids("qzfo qzdr")).toEqual(["a"]);
-    expect(await ids("ZFOO  QZDRA")).toEqual(["a"]);
-    expect(await ids("qzdra qzfoo")).toEqual([]); // not in order, and `qzdra` is not a whole word
-    expect(await ids("qzfdr")).toEqual([]);
-    expect(await ids("   ")).toEqual([]);
+  it("selects flag fixtures by the URL and generates the sized ones", () => {
+    const base = mockGraphFiles("");
+    expect(base.has("logseq/config.edn")).toBe(true);
+    expect(base.has("pages/Project Plan.md")).toBe(false);
+    const flagged = mockGraphFiles("?conflicts&regressions&big&blocks=3");
+    expect(flagged.has("pages/Project Plan.md")).toBe(true);
+    expect(flagged.has("pages/Rendering regression.md")).toBe(true);
+    expect(flagged.get("pages/Big.md")?.match(/^\t?- /gm)).toHaveLength(3);
   });
 
-  it("block picker search adds OG's full-text leg: whole words in any order, listed before fragment-only blocks", async () => {
-    const page: PageDto = { name: "P", title: "P", kind: "page", pre_block: null,
-      blocks: [{ id: "a", raw: "qzfoo qzbarx tail", collapsed: false, children: [] },
-        { id: "b", raw: "xx qzbar yy qzfoo", collapsed: false, children: [] },
-        { id: "c", raw: "qzfoo qzdraft", collapsed: false, children: [] }], format: "md" };
-    const b = mockBackend([page]);
-    const ids = async (q: string, limit = 20) => (await b.search(q, limit)).flatMap((group) => group.blocks).map((block) => block.id);
-    expect(await ids("qzdraft qzfoo")).toEqual(["c"]);
-    expect(await ids("qzfoo qzbar")).toEqual(["b", "a"]);
-    expect(await ids("qzfoo qzbar", 1)).toEqual(["b"]);
+  it("gives each file one time: journals newest first, then the rest by path", async () => {
+    const times = mockFileTimes(["pages/b.md", "journals/2026_06_12.md", "pages/a.md", "journals/2026_06_14.md"]);
+    expect(Object.entries(times).sort(([, a], [, b]) => b - a).map(([path]) => path))
+      .toEqual(["journals/2026_06_14.md", "journals/2026_06_12.md", "pages/a.md", "pages/b.md"]);
+    const { modified } = await mockBackend({ search: "" }).pageModified();
+    const newest = [...modified].sort(([, a], [, b]) => b - a)[0];
+    expect(newest).toEqual(["journals/2026_06_14.md", Date.UTC(2026, 5, 15, 12) / 1000]);
   });
 
-  it("query (todo TODO DOING) matches both open tasks", async () => {
-    const b = mockBackend();
-    const groups = await b.runQuery("(todo TODO DOING)");
-    const raws = groups.flatMap((g) => g.blocks.map((bl) => bl.raw));
-    expect(raws.some((r) => r.startsWith("TODO ") && r.includes("Ship the M0"))).toBe(true);
-    expect(raws.some((r) => r.startsWith("DOING Wire"))).toBe(true);
+  it("writes a submitted page through the core, so a read and an Open answer the saved text", async () => {
+    const api = mockBackend({ search: "", files: { "pages/p.md": "- original\n" } });
+    const mail: PageMail[] = [];
+    await api.onPageMail((m) => mail.push(m));
+    const before = await api.getPage("p", "page");
+    if (!before) throw new Error("no fixture page");
+    const edited: PageDto = { ...before, blocks: [{ ...before.blocks[0], raw: "edited" }] };
+    expect(await api.pageSubmit(1, 1, "pages/p.md", edited, 1, null, {} as never)).toBeNull();
+    expect((await api.getPage("p", "page"))?.blocks.map((block) => block.raw)).toEqual(["edited"]);
+    expect((await api.search("edited", 10)).map((group) => group.page)).toEqual(["p"]);
+    await api.pageOpen(1, 2, { name: "p", kind: "page", path: "pages/p.md" });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const open = mail.find((m) => m.answer?.id === 2)?.page?.text;
+    expect(open?.kind === "page" ? open.dto.blocks[0].raw : null).toBe("edited");
+    expect(mail.find((m) => m.answer?.id === 1)?.answer?.took).toBe(true);
+    // A window reload reloads the preview, and with it the fixture graph.
+    await api.pageWindowReloaded();
+    expect((await api.getPage("p", "page"))?.blocks.map((block) => block.raw)).toEqual(["original"]);
   });
 
-  it("backlinks to Tine include the journal", async () => {
-    const b = mockBackend();
-    const groups = await b.getBacklinks("Tine");
-    expect(groups.some((g) => g.page === "Jun 14th, 2026")).toBe(true);
+  it("deletes a page file with replace", async () => {
+    const api = mockBackend({ search: "", files: { "pages/gone.md": "- bye\n" } });
+    expect(await api.pageDelete(1, "gone", "page")).toBe("applied");
+    expect(await api.getPage("gone", "page")).toBeNull();
   });
 
-  it("query (tag name) matches hashtag references", async () => {
-    const b = mockBackend();
-    const groups = await b.runQuery('(tag "sheets")');
-    const raws = groups.flatMap((g) => g.blocks.map((bl) => bl.raw));
-    expect(raws.some((r) => r.includes("#sheets"))).toBe(true);
+  it("refuses the store's write paths beyond one page's text, and leaves native-only members absent", async () => {
+    const api = mockBackend({ search: "" });
+    for (const refused of [
+      () => api.renamePage("Tine", "Tine 2", {} as never),
+      () => api.renameWouldChange("Tine", "Tine 2", []),
+      () => api.mergePages("a", "b", {} as never),
+      () => api.resolveSyncConflict("a", "b", {}, "", "", {} as never),
+      () => api.applyJournalFilenameMigrations({} as never),
+      () => api.copyGuideIntoGraph("Tine Guide", "replace-page"),
+      () => api.pagePrintHtml("Tine", {} as never, []),
+    ]) await expect(refused()).rejects.toThrow(MOCK_REFUSAL_MESSAGE);
+    expect(api.pdfAssetSource).toBeUndefined();
+    expect("rescanGraphNow" in api).toBe(false);
   });
 
-  it("block ref counts cover bare + labeled forms", async () => {
-    const b = mockBackend();
-    const counts = await b.getBlockRefCounts();
-    // kitchen-sink target 64b9c0e2… is referenced by a bare ref, a labeled ref,
-    // AND an {{embed}} (the embed arg is a block ref too, like OG) → 3.
-    expect(counts["64b9c0e2-0000-0000-0000-000000000000"]).toBe(3);
-    // 58900000-0000-4000-8000-0000000000b1 is referenced once from the Jun 14th journal.
-    expect(counts["58900000-0000-4000-8000-0000000000b1"]).toBe(1);
-  });
-
-  it("block referrers list the referencing blocks (same page included)", async () => {
-    const b = mockBackend();
-    const groups = await b.getBlockReferrers("64b9c0e2-0000-0000-0000-000000000000");
-    const raws = groups.flatMap((g) => g.blocks.map((bl) => bl.raw));
-    expect(raws.some((r) => r.includes("Block reference (bare)"))).toBe(true);
-    expect(raws.some((r) => r.includes("Labeled block reference"))).toBe(true);
+  it("reads the conflict demo's journal files from the graph", async () => {
+    const api = mockBackend({ search: "?conflicts" });
+    expect(await api.readJournalFile("Friday, 26-06-2026.org")).toBe("* something something\n*\n");
   });
 });

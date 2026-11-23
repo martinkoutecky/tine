@@ -75,6 +75,10 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
   graph("Other");
   const { save, written } = await stuckDisk(itself ? "Old" : "Other", family);
   vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
+  // The desktop host answers whether a rename would change a text (the browser
+  // mock refuses it, ADR 0081): here, a text that links the old name.
+  vi.spyOn(backend(), "renameWouldChange").mockImplementation(async (_from, _to, texts) =>
+    texts.map((text) => /\[\[old\]\]/i.test(text.raw)));
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({
     outcome: "renamed",
     touched: [{ path: "pages/Old.md", moved: true }, { path: "pages/Referrer.md", moved: false }],

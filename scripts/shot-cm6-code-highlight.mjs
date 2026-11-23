@@ -1,4 +1,4 @@
-// npm run build && node scripts/shot-cm6-code-highlight.mjs [outDir]
+// npm run build:mock && node scripts/shot-cm6-code-highlight.mjs [outDir]
 // Uses the browser-only regression graph; no native graph or settings files.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";

@@ -1,7 +1,7 @@
 // Visual check for GH #845: the comment margin shown, hidden with the t m
 // shortcut, and shown again, at a wide pane (the margin column) and a narrow one
 // (inline cards), in light and dark. Before the change the page can only be shown.
-// Usage: npm run build && node scripts/shot-margin-toggle.mjs [outDir]
+// Usage: npm run build:mock && node scripts/shot-margin-toggle.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

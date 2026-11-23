@@ -1,5 +1,5 @@
 // Render the Sheets phase-1 mock page and screenshot it.
-// Usage: npm run build && node scripts/shot-sheets.mjs
+// Usage: npm run build:mock && node scripts/shot-sheets.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Suspense } from "solid-js";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
@@ -16,6 +16,10 @@ import * as nativeChrome from "../nativeChrome";
 // was the graph menu's row action.
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// The Graph tab's resources ask the graph; open the browser core first, so a
+// tick is enough for them to answer (ADR 0081: the core loads on first use).
+beforeAll(async () => { await backend().resolvePage("Tine", "page"); });
 
 afterEach(() => {
   closeSettings();

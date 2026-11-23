@@ -13,7 +13,7 @@
 //     with breathing room below it in [25%, 60%] of the pane's own height —
 //     the editing slack must be proportional to the PANE, not the window.
 //
-// Usage: npm run build && source scripts/env.sh && node scripts/shot-pane-slack.mjs
+// Usage: npm run build:mock && source scripts/env.sh && node scripts/shot-pane-slack.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";

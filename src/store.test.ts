@@ -298,7 +298,9 @@ describe("properties-only first block", () => {
   });
 });
 
-beforeAll(() => initParser());
+// Open the browser core before any test: its first answer waits for the core to
+// load (ADR 0081), and an answer a test leaves pending must not land in a later one.
+beforeAll(async () => { await initParser(); await backend().resolvePage("Tine", "page"); });
 
 beforeEach(() => {
   counter = 0;
@@ -1052,6 +1054,14 @@ describe("reloadDisposition (watcher reload guard)", () => {
 });
 
 describe("page-scoped structural undo", () => {
+  // The fake page host resolves a path-less Open through `resolvePage`. These
+  // undo/redo checks are sensitive to how many microtasks that answer takes
+  // (2 or 4 extra hops make flushAll report true over a failed write; see the
+  // 5b receipt), so it answers at once, as the pre-core mock did.
+  beforeEach(() => {
+    vi.spyOn(backend(), "resolvePage").mockImplementation(async (name, kind) =>
+      ({ kind: "absent", id: `${kind === "journal" ? "journals" : "pages"}/${name}.md` }));
+  });
   const journal = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "journal", title: name, pre_block: null, blocks,
   });
@@ -1971,7 +1981,7 @@ describe("save engine (persistence)", () => {
 
   it("does not delete a same-name page in a new graph after draining the old save (I-20)", async () => {
     const release = holdNextSubmit();
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     load([blk("old graph")]);
     markDirty("Test", "save-block");
     const first = flushPage("Test");

@@ -1,13 +1,9 @@
 import { base64ToBytes } from "./render/wasmBytes";
+import { BrowserCoreLoadError } from "./browserCoreError";
 
+// The one module that imports the core chunk. Its importers are the publication
+// worker and the browser mock's graph; vite.config.ts `browserCoreAssets` pins it.
 let core: ReturnType<typeof initializeBrowserCore> | undefined;
-
-/** The browser could not initialize the graph engine. */
-export class BrowserCoreLoadError extends Error {
-  constructor(cause: unknown) {
-    super(`Browser graph engine unavailable: ${String(cause)}`, { cause });
-  }
-}
 
 async function initializeBrowserCore() {
   try {

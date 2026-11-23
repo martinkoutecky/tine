@@ -5,7 +5,7 @@ import { renderBlocks } from "../render/body";
 import { renderRawHtml, renderSanitizedHtml } from "../render/rawHtml";
 import { QuickShareFailure, QuickShareBanner } from "./viewer";
 import { QuickShareError } from "./quickShare";
-import { BrowserCoreLoadError } from "../browserCore";
+import { BrowserCoreLoadError } from "../browserCoreError";
 import { QUICK_SHARE_SNAPSHOT } from "../publishedBackend";
 
 let dispose: (() => void) | undefined;

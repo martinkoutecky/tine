@@ -7,12 +7,14 @@ it("I-12: namespace identity calls pageIdentityKey (exemplar src/pageIdentity.ts
   expect(source).not.toMatch(/identityFold\(|toLowerCase\(/);
 });
 
-it("I-12: published name, block and evidence answers come from the browser core", () => {
-  const source = readFileSync("src/publishedBackend.ts", "utf8");
+it("I-12: published and mock name, block and evidence answers come from the browser core", () => {
+  const source = readFileSync("src/graphForwards.ts", "utf8");
   expect(source).toContain('read("resolve_page_json",');
   expect(source).toContain('read("resolve_blocks_json",');
   expect(source).toContain('read("run_graph_search_json",');
-  expect(source).not.toMatch(/blockRegions\(|raw\.includes\(|searchSubstringSpans\(|pageIdentityKey\(/);
+  for (const backend of ["src/graphForwards.ts", "src/publishedBackend.ts", "src/mock.ts"]) {
+    expect(readFileSync(backend, "utf8")).not.toMatch(/blockRegions\(|raw\.includes\(|searchSubstringSpans\(|pageIdentityKey\(/);
+  }
 });
 
 

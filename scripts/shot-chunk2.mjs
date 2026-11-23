@@ -1,5 +1,5 @@
 // Screenshot Chunk 2 UI: grid edge-grow affordances (hover) + board group-by toolbar.
-// Usage: npm run build && node scripts/shot-chunk2.mjs
+// Usage: npm run build:mock && node scripts/shot-chunk2.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";

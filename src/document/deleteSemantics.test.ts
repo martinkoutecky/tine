@@ -39,7 +39,7 @@ describe("delete semantics (master 695527da9)", () => {
     answer(0);
     await Promise.resolve();
     setRaw("c1", "last irreplaceable keystroke");
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     vi.useFakeTimers();
     try {
       let result: boolean | undefined;
@@ -126,7 +126,7 @@ describe("delete semantics (master 695527da9)", () => {
     expect(doc.byId.c1.raw).toBe("my irreplaceable draft");
   });
   it("deletes a page that is not loaded, by name", async () => {
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     const save = vi.spyOn(backend(), "pageSubmit");
     expect(pageByName("Elsewhere")).toBeUndefined();
     expect(await deletePage("Elsewhere", "page")).toBe(true);
@@ -151,7 +151,7 @@ describe("delete semantics (master 695527da9)", () => {
       page: { version: 9, conflict: true, risk: false, disk: { kind: "file", rev: "external" }, text: { kind: "unchanged" } } });
     expect(isConflicted("Clash")).toBe(true);
     submit.mockClear();
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     expect(await deletePage("Clash", "page", "pages/Clash.md")).toBe(true);
     expect(submit).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalledWith(host.session, "Clash", "page", "pages/Clash.md");

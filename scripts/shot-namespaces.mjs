@@ -11,7 +11,7 @@
 //   * the filter box and buttons stay inside the viewport (no horizontal scroll).
 // Exits non-zero on the first failed check. Screenshots go to screenshots/namespaces-*.png.
 //
-// Usage (after `source scripts/env.sh && npm run build`):
+// Usage (after `source scripts/env.sh && npm run build:mock`):
 //   node scripts/shot-namespaces.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

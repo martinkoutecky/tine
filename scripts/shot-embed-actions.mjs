@@ -3,7 +3,7 @@
 // or neighbouring embed shows only its own. On a touch screen the same toolbar
 // appears while a block inside the embed is being edited. Keyboard: Tab reaches
 // every button and the toolbar stays visible while one has focus.
-// Usage: npm run build && node scripts/shot-embed-actions.mjs
+// Usage: npm run build:mock && node scripts/shot-embed-actions.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

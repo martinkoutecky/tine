@@ -1,0 +1,34 @@
+#+TITLE: org-sink
+#+FILETAGS: :demo:org:
+#+ALIAS: org parity
+* Inline styles: *bold*, /italic/, _underline_, +strike+, ~code~, =verbatim=, ^^highlight^^
+* Org links: [[Tine]], [[Tine][the project]], and [[https://orgmode.org][Org website]]
+* Boundary-safe plain text: a/b/c paths, snake_case_var, and 2*3*4 stay literal
+* TODO [#A] high-priority org task
+SCHEDULED: <2026-06-25 Thu>
+* DOING in-progress task referencing [[n-fold IP]]
+* Inline timestamps: met on <2026-06-26 Fri> (active), logged [2026-06-20 Sat] (inactive)
+* a parent headline
+** child block under it with /emphasis/
+** DONE finished child task
+* Org table:
+| Feature | Status |
+|---------+--------|
+| Outliner | done |
+| Queries | partial |
+* Org source block:
+#+BEGIN_SRC clojure
+(defn hello [] "world")
+#+END_SRC
+* Org quote block:
+#+BEGIN_QUOTE
+to be or not to be
+#+END_QUOTE
+* A property drawer stays as content:
+:PROPERTIES:
+:key: value
+:END:
+* A plain list — org bullets are - and + (in md, - is the outline bullet):
+- milk
+- eggs
++ also fine

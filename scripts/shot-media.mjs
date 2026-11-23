@@ -5,7 +5,7 @@
 // (gated to !isTauri()): headless WebKit can't decode the fixture media inline, so
 // the in-app "Expand" button never appears in the mock.
 //
-// Usage:  source scripts/env.sh && npm run build && node scripts/shot-media.mjs
+// Usage:  source scripts/env.sh && npm run build:mock && node scripts/shot-media.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";

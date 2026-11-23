@@ -62,7 +62,7 @@ describe("page delete retires routes before purging the page (GH #376)", () => {
   });
 
   it("GH #687: names read-only and stale-target refusals before reaching storage", async () => {
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     const why = vi.fn();
     setDoc("pages", 0, "readOnly", true);
     expect(await deletePage("Doomed", "page", undefined, undefined, why)).toBe(false);
@@ -73,7 +73,7 @@ describe("page delete retires routes before purging the page (GH #376)", () => {
     expect(remove).not.toHaveBeenCalled();
   });
   it("never shows a pane route that names a page already purged", async () => {
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     const orphanedFrames: string[] = [];
     const dispose = createRoot((dispose) => {
       createComputed(() => {
@@ -114,7 +114,7 @@ describe("page delete retires routes before purging the page (GH #376)", () => {
     expect(pageByName("Doomed")).toBeDefined();
     failing.mockRestore();
 
-    const ok = vi.spyOn(backend(), "pageDelete");
+    const ok = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     expect(await deletePage("Doomed", "page", undefined, () => { throw new Error("ui"); })).toBe(true);
     expect(pageByName("Doomed")).toBeUndefined();
     ok.mockRestore();

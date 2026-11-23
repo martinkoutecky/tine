@@ -2,12 +2,13 @@ import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
 import { fileURLToPath } from "node:url";
 import { vitestMaxWorkers, vitestWorkerHeap } from "./scripts/lib/vitest-workers.mjs";
+import { vitestWasmBytes } from "./scripts/lib/vitest-wasm-bytes.mjs";
 
 // Separate config for the AST renderer tests: these import the .tsx render
 // components and mount them into a jsdom DOM (client mode), so they need the
 // Solid plugin + a DOM environment (the main vitest config is pure-TS / node).
 export default defineConfig({
-  plugins: [solid()],
+  plugins: [solid(), vitestWasmBytes()],
   // Build-time constants injected by Vite's `define` in prod (vite.config.ts);
   // stub them so components that read them can be mounted in tests.
   define: {
@@ -27,7 +28,7 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 60_000,
     include: ["src/**/*.test.tsx"],
-    setupFiles: ["./src/testSetup.waitFor.ts", "./src/testSetup.parser.ts", "./src/testSetup.render.ts"],
+    setupFiles: ["./src/testSetup.waitFor.ts", "./src/testSetup.parser.ts", "./src/testSetup.mock.ts", "./src/testSetup.render.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {

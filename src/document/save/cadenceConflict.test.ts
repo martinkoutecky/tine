@@ -21,6 +21,9 @@ const page = (id = "pages/Note.md", rev = "original"): PageRead => ({
 const errors = () => toasts().filter((toast) => toast.kind === "error");
 
 beforeAll(() => initParser());
+// The browser mock's first graph read loads the core in real time; load it
+// before any test fakes the clock, so a page's Open answers at once.
+beforeAll(async () => { await backend().resolvePage("Note", "page"); });
 beforeEach(() => { resetStore(); setToasts([]); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); resetStore(); });
 

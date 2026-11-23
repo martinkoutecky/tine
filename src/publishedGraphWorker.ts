@@ -1,4 +1,4 @@
-import { BrowserCoreLoadError } from "./browserCore";
+import { BrowserCoreLoadError } from "./browserCoreError";
 import { PublishedQueryLimitError, type GraphRead, type GraphReply, type GraphRequest } from "./publishedGraphRpc";
 import { QuickShareError } from "./quickShare/quickShare";
 import { documentOf, listen, mainWindow } from "./windowRealm";

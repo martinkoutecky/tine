@@ -118,8 +118,9 @@ function installFakeWindow() {
     querySelector: () => null,
     querySelectorAll: () => [],
   };
-  // A window owns its document and refers to itself, as a real one does.
-  Object.assign(fakeWindow, { document: fakeDocument, window: fakeWindow });
+  // A window owns its document and refers to itself, as a real one does. It
+  // has a clock too: the browser core (ADR 0081) reads `window.performance`.
+  Object.assign(fakeWindow, { document: fakeDocument, window: fakeWindow, performance: globalThis.performance });
 
   Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
   Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });

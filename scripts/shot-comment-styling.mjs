@@ -1,5 +1,5 @@
 // GH #929: routed margin comments with graph custom.css, wide and compact.
-// npm run build && node scripts/shot-comment-styling.mjs [outDir]
+// npm run build:mock && node scripts/shot-comment-styling.mjs [outDir]
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";

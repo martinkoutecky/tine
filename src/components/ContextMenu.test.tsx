@@ -321,7 +321,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     await bindTestHost();
     let finish!: (confirmed: boolean) => void;
     vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, "P", "page", true);
     const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
@@ -343,7 +343,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     await bindTestHost();
     let finish!: (confirmed: boolean) => void;
     vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, { name: "P", pageKind: "page", ...(explicit ? { path: "pages/one.md" } : {}) }, true);
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Delete page"))!.click();
@@ -359,7 +359,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   it("reopening a page menu replaces the previous file target", async () => {
     load(); setDoc("pages", 0, "id", "pages/one.md");
     const host = await bindTestHost();
-    const remove = vi.spyOn(backend(), "pageDelete");
+    const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/one.md" }, true);
@@ -385,7 +385,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
         { role: "theirs", label: "pages/笔记集/P.md", path: "pages/笔记集/P.md", kind: "page" },
       ], markers: [] }] });
     const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-    const byName = vi.spyOn(backend(), "pageDelete");
+    const byName = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     const byFile = vi.spyOn(backend(), "pageDeleteFile").mockResolvedValue("applied");
     const dispose = mount(() => <ContextMenu />);
     try {
@@ -713,6 +713,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       ? (outcome === "merged" ? { kind: "existing", id: "pages/Q.md", others: [] } : { kind: "absent", id: "pages/Q.md" })
       : { kind: "existing", id: "pages/P.md", others: [] });
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    // The browser mock refuses the rename probe (ADR 0081): fake the plain-rename offer.
+    vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
     const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome, touched: [{ path: "pages/P.md", moved: true }], renamed: [{ from: "P", to: "Q", path: "pages/P.md" }] });
     document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
     await Promise.resolve();
@@ -732,6 +734,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Q.md" });
+    // The browser mock refuses the rename probe (ADR 0081): fake the plain-rename offer.
+    vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
     let finish!: (value: RenameDone) => void;
     vi.spyOn(backend(), "renamePage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();

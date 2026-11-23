@@ -1,7 +1,7 @@
 // README feature-gallery screenshots: tabs, dim-inactive-blocks, carry, queries
 // + query builder, and PDF highlights (text + area). Headless Chromium over the
 // mock backend. Each shot is isolated so one failure doesn't abort the rest.
-// Usage (after `source scripts/env.sh && npm run build`):
+// Usage (after `source scripts/env.sh && npm run build:mock`):
 //   node scripts/shot-features.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

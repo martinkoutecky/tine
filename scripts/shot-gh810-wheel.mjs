@@ -1,7 +1,7 @@
 // GH #810: real mouse-wheel scrolling past expanded block embeds must not throw the blocks in view back the
 // other way. Needs real X11 wheel events: only those drive Chromium's compositor smooth scrolling, the path that
 // fails. CDP wheel events and scrollBy({behavior:"smooth"}) pass on the broken code, as does WebKitGTK.
-// Usage: npm run build && xvfb-run -a -s "-screen 0 1400x1600x24" node scripts/shot-gh810-wheel.mjs
+// Usage: npm run build:mock && xvfb-run -a -s "-screen 0 1400x1600x24" node scripts/shot-gh810-wheel.mjs
 // Needs xdotool and the full Chromium (not the headless shell) with its system libraries.
 // Sampling: on every animation frame, the most common on-screen movement of the blocks seen in both frames.
 import { chromium } from "playwright";

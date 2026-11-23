@@ -1,5 +1,5 @@
 // Browser geometry and screenshot proof for GH #105 across widths and themes.
-// Usage: npm run build && node scripts/shot-tab-overflow.mjs
+// Usage: npm run build:mock && node scripts/shot-tab-overflow.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

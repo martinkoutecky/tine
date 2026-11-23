@@ -10,7 +10,7 @@
 // auto-enables dim — so we must NOT toggle `t b` again, and we must click a
 // block into edit mode to light up the spotlight.
 //
-// Usage:  source scripts/env.sh && npm run build && node scripts/shot-website.mjs
+// Usage:  source scripts/env.sh && npm run build:mock && node scripts/shot-website.mjs
 //         then copy the chosen files into website/img/ (see docs/SCREENSHOTS.md).
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

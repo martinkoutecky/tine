@@ -2,7 +2,7 @@
 // sidebar's first-level section headings (Open tabs, Favorites, Recent, All
 // pages, Namespaces) share one font size. "All pages" is a button and used to
 // reset its font to the inherited body size, so it was visibly larger.
-// Usage: npm run build && node scripts/shot-sidebar-headings.mjs   (writes screenshots/sidebar-headings/)
+// Usage: npm run build:mock && node scripts/shot-sidebar-headings.mjs   (writes screenshots/sidebar-headings/)
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

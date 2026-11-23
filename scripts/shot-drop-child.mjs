@@ -1,7 +1,7 @@
 // Visual check for GH #326: dragging a block bullet into the deep (>50px) zone of
 // another block shows the child drop indicator; the shallow strip keeps the
 // sibling indicators. jsdom applies no layout, so this drives headless Chromium.
-// Usage: npm run build && node scripts/shot-drop-child.mjs
+// Usage: npm run build:mock && node scripts/shot-drop-child.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

@@ -1,57 +1,41 @@
-import type { BlockDto } from "./types";
+// Generated fixture files for the browser mock's size and scroll flags
+// (`?big`, `?manyrefs`): graph files the core reads, built before it opens.
 
-// Mock pages for scroll and windowing checks, outside mock.ts's size ratchet.
-type Block = (raw: string, children?: BlockDto[]) => BlockDto;
+/** One outline node: its block text and its children. */
+type Node = string | [string, Node[]];
 
-// A large synthetic page (~2000 root blocks) cycling through construct types, for
-// the lazy-body virtualization harness: most blocks start as deferred raw-text
-// placeholders and only parse/render on scroll. Gated behind `?big` so it never
-// pollutes the normal mock screenshots (it would otherwise show up in All-Pages /
-// quick-switch). Reach it with `…/?big` then quick-switch (Ctrl+K) to "Big".
-export function bigPageBlocks(b: Block, n: number): BlockDto[] {
-  const out: BlockDto[] = [];
+/** Markdown outline text: tab-indented bullets, continuation lines under the bullet. */
+function outline(nodes: Node[], depth = 0): string {
+  return nodes.map(node => {
+    const [raw, children] = typeof node === "string" ? [node, []] : node;
+    const indent = "\t".repeat(depth);
+    const text = raw.split("\n").join(`\n${indent}  `);
+    return `${indent}- ${text}\n${outline(children, depth + 1)}`;
+  }).join("");
+}
+
+/** The `?big` page's block texts (~2000 root blocks) cycling through construct types, for the lazy-body
+ * virtualization harness: most blocks start as deferred raw-text placeholders and only parse/render on scroll.
+ * Reach it with `…/?big` then quick-switch (Ctrl+K) to "Big". */
+export function bigPageRaws(n: number): string[] {
+  const out: string[] = [];
   for (let i = 0; i < n; i++) {
     switch (i % 6) {
-      case 0:
-        out.push(b(`Paragraph **${i}** with *emphasis*, a [[ref ${i % 50}]] and a #tag${i % 20}.`));
-        break;
-      case 1:
-        out.push(b(`## Heading ${i}`));
-        break;
-      case 2:
-        out.push(b("```js\nfunction f" + i + "(x) {\n  return x * " + i + ";\n}\n```"));
-        break;
-      case 3:
-        out.push(b(`| Col A | Col B |\n| --- | --- |\n| row ${i} | val ${i} |\n| row ${i + 1} | val ${i + 1} |`));
-        break;
-      case 4:
-        out.push(b(`Display math: $$\\sum_{k=0}^{${i}} k = \\frac{${i}(${i}+1)}{2}$$`));
-        break;
+      case 0: out.push(`Paragraph **${i}** with *emphasis*, a [[ref ${i % 50}]] and a #tag${i % 20}.`); break;
+      case 1: out.push(`## Heading ${i}`); break;
+      case 2: out.push("```js\nfunction f" + i + "(x) {\n  return x * " + i + ";\n}\n```"); break;
+      case 3: out.push(`| Col A | Col B |\n| --- | --- |\n| row ${i} | val ${i} |\n| row ${i + 1} | val ${i + 1} |`); break;
+      case 4: out.push(`Display math: $$\\sum_{k=0}^{${i}} k = \\frac{${i}(${i}+1)}{2}$$`); break;
       default:
-        out.push(
-          b(`Block ${i}: a longer line of prose that wraps so the placeholder height is a realistic proxy for the rendered paragraph, with a [[link ${i % 30}]].`)
-        );
-        break;
+        out.push(`Block ${i}: a longer line of prose that wraps so the placeholder height is a realistic proxy for the rendered paragraph, with a [[link ${i % 30}]].`);
     }
   }
-  return out.map((block) => ({ ...block, has_id: false }));
+  return out;
 }
 
-// GH #810 real-wheel scroll check (`?embedscroll`, scripts/shot-gh810-wheel.mjs): sections of plain rows
-// with expanded block embeds, deep enough that nested outline windows remount around them.
-export function embedScrollBlocks(b: Block): { source: BlockDto[]; page: BlockDto[] } {
-  const source = "81000000-0000-4000-8000-000000000810";
-  const section = (label: string) => b(label, Array.from({ length: 40 }, (_, i) =>
-    b(i % 13 === 5 ? `{{embed ((${source}))}}` : `${label} row ${i} plain line of text`)));
-  return {
-    source: [b(`Embedded root\nid:: ${source}`, Array.from({ length: 9 }, (_, i) => b(`Embedded row ${i}`)))],
-    page: [section("Top one"), b("Short A"), section("Top two"), b("Short B"), section("Top three"), section("Top four")],
-  };
-}
-
-// GH #848/#849 (`?manyrefs`): one hub with 127 linked references on 93 pages, with the heavy content the reports
-// name (quotes, code, images, citations, long text), plus a plain neighbour page to switch tabs to.
-export function manyRefsPages(b: Block): { name: string; blocks: BlockDto[] }[] {
+/** GH #848/#849 (`?manyrefs`): one hub with 127 linked references on 93 pages, with the heavy content the reports
+ * name (quotes, code, images, citations, long text), plus a plain neighbour page to switch tabs to. */
+function manyRefsFiles(): Record<string, string> {
   const image = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520"><rect width="900" height="520" fill="#789"/></svg>');
   const body = (p: number, i: number): string => {
     const needle = p % 15 === 7 ? "Foreign" : "Other";
@@ -65,9 +49,27 @@ export function manyRefsPages(b: Block): { name: string; blocks: BlockDto[] }[] 
       default: return `Plain ${needle} row ${tail}`;
     }
   };
-  const pages = Array.from({ length: 93 }, (_, p) => ({
-    name: `Refpage ${String(p).padStart(2, "0")}`,
-    blocks: Array.from({ length: p < 34 ? 2 : 1 }, (_, i) => b(body(p, i), [b(`Child of ${p}/${i}`)])),
-  }));
-  return [{ name: "Hub", blocks: [b("Hub intro"), b("A second hub row")] }, { name: "Plain neighbour", blocks: Array.from({ length: 200 }, (_, i) => b(`Neighbour row ${i}`)) }, ...pages];
+  const files: Record<string, string> = {
+    "pages/Hub.md": outline(["Hub intro", "A second hub row"]),
+    "pages/Plain neighbour.md": outline(Array.from({ length: 200 }, (_, i) => `Neighbour row ${i}`)),
+  };
+  for (let p = 0; p < 93; p++) {
+    files[`pages/Refpage ${String(p).padStart(2, "0")}.md`] = outline(Array.from({ length: p < 34 ? 2 : 1 },
+      (_, i): Node => [body(p, i), [`Child of ${p}/${i}`]]));
+  }
+  return files;
+}
+
+/** The generated files a URL's flags add (`?big[&blocks=N][&long]`, `?manyrefs`). */
+export function generatedFlagFiles(search: string): Record<string, string> {
+  const params = new URLSearchParams(search);
+  const files: Record<string, string> = {};
+  if (/[?&]big\b/.test(search)) {
+    const n = Math.min(5000, Math.max(1, Number(params.get("blocks")) || 2000));
+    const raws = bigPageRaws(n).map((raw, i) => params.has("long")
+      ? `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) : raw);
+    files["pages/Big.md"] = "title:: Big\n\n" + outline(raws);
+  }
+  if (/[?&]manyrefs\b/.test(search)) Object.assign(files, manyRefsFiles());
+  return files;
 }

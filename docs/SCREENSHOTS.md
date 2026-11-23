@@ -19,13 +19,13 @@ rendering quirks — fonts/emoji — not layout.)
 ## How they're made
 
 All shots are **headless Chromium renders of the built frontend against the mock
-backend** (`src/mock.ts` + `src/fixtures/kitchen-sink.md`) — *not* the real
+backend** (`src/mock.ts`: the browser core over the fixture graph in `src/mock/graph/`) — *not* the real
 WebKitGTK app. So they reflect the real layout/CSS and current components, but
 with fake data and Chromium font rendering. No display/Xvfb is needed.
 
 ```bash
 source scripts/env.sh        # sets PLAYWRIGHT_BROWSERS_PATH + the nspr/nss libs
-npm run build                # refresh dist/ so the harness serves current code
+npm run build:mock           # refresh dist/ (with the browser mock) so the harness serves current code
 node scripts/shot-readme.mjs # → screenshots/rm-tabs.png, rm-focus-dim.png, rm-quick-capture.png
 node scripts/shot-capture.mjs# → screenshots/rm-quick-capture.png (better: slash menu + window frame)
 node scripts/screenshot.mjs  # → screenshots/journals-light.png, pdf-notes-light.png, … (the review set)
@@ -63,8 +63,10 @@ Scripts write to the gitignored `screenshots/` dir; the README set is then
   desktop (build the release binary, bind/run `tine --capture`, screenshot the
   window). Swap that into `docs/img/quick-capture.png` if you want the real thing.
 - Mock data is generic ("kitchen-sink"). If a feature needs specific content to
-  be visible (e.g. a `/calc` result, a callout, a datalog query), add it to
-  `src/fixtures/kitchen-sink.md` or a dedicated shot script.
+  be visible (e.g. a `/calc` result, a callout, a datalog query), add a page
+  under `src/mock/graph/`, or under `src/mock/flags/<flag>/` to show it only
+  with `?<flag>` in the URL. The browser core answers every query and link from
+  those files (ADR 0081).
 
 ## Currently unillustrated (candidates for new README shots)
 

@@ -4,7 +4,7 @@
 // differs from its neighbours, the cycle repeats every six levels, the knob off
 // paints one color, and an embed starts again at level 1. Headless Chromium over
 // the mock backend.
-// Usage (after `source scripts/env.sh && npx vite build`):
+// Usage (after `source scripts/env.sh && npx vite build --mode mock`):
 //   node scripts/shot-guide-level-colors.mjs <distDir> <outDir>
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

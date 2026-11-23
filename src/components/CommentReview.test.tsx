@@ -25,7 +25,7 @@ const b = (id: string, raw: string, children: BlockDto[] = [], collapsed = false
 const stepPageComment = (step: number) => { expect(runGlobalCommand(step > 0 ? "comment/next" : "comment/previous")).toBe(true); };
 function mount(width: number, popup: boolean, blocks?: BlockDto[]) {
   changeCommentsInPopup(popup);
-  loadSingle({ name: "Review", title: "Review", id: "/graph/pages/Review.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks: blocks ?? [
+  loadSingle({ name: "Review", title: "Review", id: "pages/Review.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks: blocks ?? [
     b("p", "first then last", [b("last", "Last\ntine.quote:: last"), b("first", "First\ntine.quote:: first"),
       b("tie", "Tie\ntine.quote:: first"), b("closed", "Closed\ntine.quote:: then\ntine.resolved:: true")]),
     b("q", "another passage", [b("third", "Third\ntine.quote:: passage")]),

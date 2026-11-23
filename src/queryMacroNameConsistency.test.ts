@@ -52,10 +52,6 @@ const RULE =
  *  Listed rather than pattern-matched so a new one is a review decision. */
 const DATA_FILES: readonly { file: string; why: string }[] = [
   {
-    file: "src/mock.ts",
-    why: "the browser dev-preview's sample graph: block bodies, the same as any user's notes.",
-  },
-  {
     file: "crates/tine-guide/src/lib.rs",
     why: "the shipped Guide pages' Markdown, plus the assertions that they copy verbatim.",
   },

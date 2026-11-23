@@ -51,6 +51,9 @@ function slowReader(submit: { mock: { calls: unknown[][] } }): Round[] {
 
 async function start() {
   loadRoutedPage(dto("P"));
+  // The browser mock's first graph read loads the core in real time; load it
+  // before the clock is faked, so the page's Open answers at once.
+  await backend().getPageByPath("pages/P.md", undefined);
   await bindTestHost();
   const submit = vi.spyOn(backend(), "pageSubmit");
   const rounds = slowReader(submit);

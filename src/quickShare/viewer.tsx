@@ -1,5 +1,5 @@
 import { t, type MessageId } from "../i18n";
-import { BrowserCoreLoadError } from "../browserCore";
+import { BrowserCoreLoadError } from "../browserCoreError";
 import { QuickShareError, type QuickShareReason } from "./quickShare";
 
 const errors: Record<QuickShareReason, MessageId> = {

@@ -42,7 +42,7 @@ see the project `CLAUDE.md`.
 | [0013](0013-block-identity-vs-rendered-instance.md) | One block, many rendered instances: focus/caret ownership rules | Accepted |
 | [0014](0014-cache-gen-invalidation-contract.md) | Derived caches self-invalidate via `cache_gen` — no hand-rolled invalidation | Accepted |
 | [0015](0015-lsdoc-wire-contract.md) | The lsdoc wire contract: what Tine may assume about lsdoc's output | Accepted |
-| [0016](0016-mock-backend-intentionally-lossy.md) | The mock backend is an intentionally lossy dev double | Accepted |
+| [0016](0016-mock-backend-intentionally-lossy.md) | The mock backend is an intentionally lossy dev double | Superseded by [0081](0081-browser-mock-on-the-core.md) |
 | [0017](0017-snapshot-scope.md) | Launch snapshots cover text + config + PDF highlight sidecars, not asset bytes | Accepted |
 | [0018](0018-in-app-lsdoc-mldoc-diff-panel.md) | In-app lsdoc↔mldoc diff panel bundles mldoc lazily and runs it in a worker | Retired |
 | [0019](0019-raw-html-sanitizer.md) | Raw HTML renders live via a shared sanitizer allowlist (DOMPurify + ammonia), mirrored and contract-tested | Accepted |
@@ -90,3 +90,4 @@ see the project `CLAUDE.md`.
 | [0076](0076-quick-share-device-records.md) | Quick share keeps its account and share keys in two private app-data files | Proposed |
 | [0077](0077-unlinked-mentions-count-code-text.md) | Unlinked mentions count text inside code, math and other literal regions (supersedes 0043's code-exclusion rule; matches OG) | Accepted |
 | [0080](0080-theme-typography-local-fonts.md) | Theme API 0.3 lets a package name local fonts and a block line height (closed grammar, no CSS, no downloads) | Accepted |
+| [0081](0081-browser-mock-on-the-core.md) | The browser mock answers no graph question: the browser core does | Accepted |

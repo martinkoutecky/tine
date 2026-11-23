@@ -1,7 +1,7 @@
 // In-page find & replace (GH #208, #338): the replace row on desktop, and the
 // page "⋯" menu's Find in page plus the open replace row at phone width.
 // Headless Chromium over the mock backend. Usage (after `source scripts/env.sh
-// && npm run build`): node scripts/shot-find-replace.mjs
+// && npm run build:mock`): node scripts/shot-find-replace.mjs
 import { chromium, devices } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

@@ -1,7 +1,7 @@
 // Settings modal (default tab: theme / task workflow / graph / publish / keyboard
 // shortcuts) over the app, with the "All pages" sidebar expanded behind it for
 // context. Headless Chromium over the mock backend. Curated → docs/img/settings.png.
-// Usage (after `source scripts/env.sh && npm run build`):
+// Usage (after `source scripts/env.sh && npm run build:mock`):
 //   node scripts/shot-settings.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

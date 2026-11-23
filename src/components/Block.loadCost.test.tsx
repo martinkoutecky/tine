@@ -5,7 +5,7 @@ import { initParser } from "../render/parse";
 import { facetsOf, seedFacets } from "../render/facets";
 import { resetStore } from "../document";
 import { setDoc, type Node } from "../document/model";
-import { bigPageBlocks } from "../mockScrollFixtures";
+import { bigPageRaws } from "../mockScrollFixtures";
 import { CommentIndexContext, createCommentIndex } from "../commentIndex";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { Block, SurfaceContext } from "./Block";
@@ -29,7 +29,7 @@ afterEach(() => { resetStore(); resetNearObserverForTests(); vi.unstubAllGlobals
 // Bodies remain outside the view: their existing near-parse test owns V's cost.
 function load(n: number, plain = false) {
   let serial = 0;
-  const blocks = bigPageBlocks(raw => ({ id: `cost-${serial++}`, raw: plain ? "Plain leaf" : raw, children: [], collapsed: false }), n);
+  const blocks = bigPageRaws(n).map(raw => ({ id: `cost-${serial++}`, raw: plain ? "Plain leaf" : raw, children: [], collapsed: false }));
   const ids = blocks.map(b => b.id);
   for (const b of blocks) seedFacets(b.raw, "md", { ...facetsOf(b.raw, "md"), hasId: false });
   setDoc({ byId: Object.fromEntries(blocks.map(b => [b.id, { id: b.id, raw: b.raw, collapsed: false, children: [], page: "Big", parent: null } satisfies Node])),

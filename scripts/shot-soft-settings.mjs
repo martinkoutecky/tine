@@ -1,5 +1,5 @@
 // GH #649: actual Settings markup in Soft light/dark, including hover and About.
-// npm run build; node scripts/shot-soft-settings.mjs <artifact-dir> [--verify]
+// npm run build:mock; node scripts/shot-soft-settings.mjs <artifact-dir> [--verify]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";

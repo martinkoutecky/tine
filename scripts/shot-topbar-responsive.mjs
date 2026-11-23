@@ -1,5 +1,5 @@
 // Browser geometry and screenshot proof for GH #205.
-// Usage: npm run build && node scripts/shot-topbar-responsive.mjs
+// Usage: npm run build:mock && node scripts/shot-topbar-responsive.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

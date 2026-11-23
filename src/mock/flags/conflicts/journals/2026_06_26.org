@@ -1,0 +1,4 @@
+* Tried out the Org demo graph in Tine today
+* TODO follow up on the [[kitchen-sink]] feature tour
+SCHEDULED: <2026-06-27 Sat>
+* DONE loaded the graph and clicked around

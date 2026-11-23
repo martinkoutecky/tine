@@ -1,0 +1,11 @@
+- Embedded root
+  id:: 81000000-0000-4000-8000-000000000810
+	- Embedded row 0
+	- Embedded row 1
+	- Embedded row 2
+	- Embedded row 3
+	- Embedded row 4
+	- Embedded row 5
+	- Embedded row 6
+	- Embedded row 7
+	- Embedded row 8

@@ -1,0 +1,4 @@
+- Ordinary parent
+	- {{embed [[Page embed source regression]]}}
+	- Ordinary sibling
+- {{embed [[Page embed source regression]]}}

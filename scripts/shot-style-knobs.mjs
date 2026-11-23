@@ -1,7 +1,7 @@
 // Style knobs acceptance shots (GH #610 item 3): the Settings > Appearance >
 // Fine-tuning section, and the embed page before / after choosing "Accent line
 // and dot only". Headless Chromium over the mock backend.
-// Usage (after `source scripts/env.sh && npm run build`):
+// Usage (after `source scripts/env.sh && npm run build:mock`):
 //   node scripts/shot-style-knobs.mjs <distDir> <outDir>
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

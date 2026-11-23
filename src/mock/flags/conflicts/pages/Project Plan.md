@@ -1,0 +1,65 @@
+title:: Project Plan
+
+- Milestones for the launch
+- TODO ship the beta by Friday
+- write the release notes
+- launch checklist item 1 - status notes and follow-ups
+- launch checklist item 2 - status notes and follow-ups
+- launch checklist item 3 - status notes and follow-ups
+- launch checklist item 4 - status notes and follow-ups
+- launch checklist item 5 - status notes and follow-ups
+- launch checklist item 6 - status notes and follow-ups
+- launch checklist item 7 - status notes and follow-ups
+- launch checklist item 8 - status notes and follow-ups
+- launch checklist item 9 - status notes and follow-ups
+- launch checklist item 10 - status notes and follow-ups
+- launch checklist item 11 - status notes and follow-ups
+- launch checklist item 12 - status notes and follow-ups
+- launch checklist item 13 - status notes and follow-ups
+- launch checklist item 14 - status notes and follow-ups
+- launch checklist item 15 - status notes and follow-ups
+- launch checklist item 16 - status notes and follow-ups
+- launch checklist item 17 - status notes and follow-ups
+- launch checklist item 18 - status notes and follow-ups
+- launch checklist item 19 - status notes and follow-ups
+- launch checklist item 20 - status notes and follow-ups
+- launch checklist item 21 - status notes and follow-ups
+- launch checklist item 22 - status notes and follow-ups
+- launch checklist item 23 - status notes and follow-ups
+- launch checklist item 24 - status notes and follow-ups
+- launch checklist item 25 - status notes and follow-ups
+- launch checklist item 26 - status notes and follow-ups
+- launch checklist item 27 - status notes and follow-ups
+- launch checklist item 28 - status notes and follow-ups
+- launch checklist item 29 - status notes and follow-ups
+- launch checklist item 30 - status notes and follow-ups
+- launch checklist item 31 - status notes and follow-ups
+- launch checklist item 32 - status notes and follow-ups
+- launch checklist item 33 - status notes and follow-ups
+- launch checklist item 34 - status notes and follow-ups
+- launch checklist item 35 - status notes and follow-ups
+- launch checklist item 36 - status notes and follow-ups
+- launch checklist item 37 - status notes and follow-ups
+- launch checklist item 38 - status notes and follow-ups
+- launch checklist item 39 - status notes and follow-ups
+- launch checklist item 40 - status notes and follow-ups
+- launch checklist item 41 - status notes and follow-ups
+- launch checklist item 42 - status notes and follow-ups
+- launch checklist item 43 - status notes and follow-ups
+- launch checklist item 44 - status notes and follow-ups
+- launch checklist item 45 - status notes and follow-ups
+- launch checklist item 46 - status notes and follow-ups
+- launch checklist item 47 - status notes and follow-ups
+- launch checklist item 48 - status notes and follow-ups
+- launch checklist item 49 - status notes and follow-ups
+- launch checklist item 50 - status notes and follow-ups
+- launch checklist item 51 - status notes and follow-ups
+- launch checklist item 52 - status notes and follow-ups
+- launch checklist item 53 - status notes and follow-ups
+- launch checklist item 54 - status notes and follow-ups
+- launch checklist item 55 - status notes and follow-ups
+- launch checklist item 56 - status notes and follow-ups
+- launch checklist item 57 - status notes and follow-ups
+- launch checklist item 58 - status notes and follow-ups
+- launch checklist item 59 - status notes and follow-ups
+- launch checklist item 60 - status notes and follow-ups

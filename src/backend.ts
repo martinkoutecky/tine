@@ -53,7 +53,7 @@ import type {
 import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy, GitSyncStatus } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
-import { mockBackend } from "./mock";
+import { browserMockBackend } from "./browserMock";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
@@ -1090,7 +1090,7 @@ let _backend: Backend | null = null;
 
 export function backend(): Backend {
   if (!_backend) {
-    _backend = isTauri() ? new TauriBackend() : isPublishedExport() ? publishedBackend() : mockBackend();
+    _backend = isTauri() ? new TauriBackend() : isPublishedExport() ? publishedBackend() : browserMockBackend();
   }
   return _backend;
 }

@@ -1,5 +1,5 @@
 // Capture real mock-app screenshots while exercising all launch plugins.
-// Usage: npm run build, build the plugin WASMs, then run this script.
+// Usage: build the plugin WASMs, then run this script (it builds the mock app itself).
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -35,44 +35,13 @@ const BULLET_SHOTS = screenshotDir(BULLET_ROOT, "bullet-threading");
 const QUERY_SHOTS = screenshotDir(QUERY_ROOT, "query-filter");
 const HEADING_SHOTS = screenshotDir(HEADING_ROOT, "heading-level-shortcuts");
 
-// The preview has no query engine. Supply fixed rows at its mock boundary,
-// while the real view toggle, sheet filter and plugin WASM still run unchanged.
-// Keep the fixture in this harness's temporary build, never in the shipped app.
+// The browser core answers the tasks query from the `?plugintasks` fixture page
+// (src/mock/flags/plugintasks/), while the real view toggle, sheet filter and
+// plugin WASM run unchanged. Build the mock app into this harness's temporary
+// directory, never into the shipped app.
 const previewDir = mkdtempSync(join(tmpdir(), "tine-plugin-preview-"));
-let fixtureInstalled = false;
 try {
-  await build({
-    root: ROOT,
-    build: { outDir: previewDir, emptyOutDir: true },
-    plugins: [{
-      name: "launch-plugin-query-fixture",
-      transform(code, id) {
-        if (id !== join(ROOT, "src/mockQuery.ts")) return;
-        fixtureInstalled = true;
-        return `${code}
-const previewParse = mockQueryCommands.parseQuery;
-const previewRun = mockQueryCommands.queryRun;
-mockQueryCommands.parseQuery = async (...args) => {
-  const parsed = await previewParse(...args);
-  if (args[0] === "(todo TODO DOING DONE)") parsed.query.diagnostics = [];
-  return parsed;
-};
-mockQueryCommands.queryRun = async (query) => sourceOriginal(query.source) === "(todo TODO DOING DONE)"
-  ? {
-    anchor: "block",
-    groups: [{ page: "Plugin tasks", kind: "page", blocks: [
-      { id: "plugin-todo", raw: "TODO Open task", collapsed: false, children: [], marker: "TODO" },
-      { id: "plugin-done", raw: "DONE Closed task", collapsed: false, children: [], marker: "DONE" },
-    ] }],
-    diagnostics: [], report: { ran: ["task"], ignored: [], supported: true },
-    total: 2, matched_total: 2, exceeded: false,
-  }
-  : previewRun(query);
-`;
-      },
-    }],
-  });
-  if (!fixtureInstalled) throw new Error("I-12: launch plugin fixture must use src/mockQuery.ts, the preview query boundary");
+  await build({ root: ROOT, mode: "mock", build: { outDir: previewDir, emptyOutDir: true } });
 } catch (error) {
   rmSync(previewDir, { recursive: true, force: true });
   throw error;
@@ -160,7 +129,7 @@ async function navigate(page, name) {
 
 try {
   if (!["desktop", "android", "ios"].includes(PLATFORM)) throw new Error(`unsupported test platform ${PLATFORM}`);
-  const url = `http://127.0.0.1:${PORT}/${PLATFORM === "desktop" ? "" : `?platform=${PLATFORM}`}`;
+  const url = `http://127.0.0.1:${PORT}/?plugintasks${PLATFORM === "desktop" ? "" : `&platform=${PLATFORM}`}`;
   await waitForServer(url);
   browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({

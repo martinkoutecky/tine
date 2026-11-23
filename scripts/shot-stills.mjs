@@ -1,7 +1,7 @@
 // Extra README/website stills for features that shipped without one: the live
 // `/calc` block and the colored callouts. Headless Chromium over the mock backend
 // (same approach as shot-features.mjs). Usage (after `source scripts/env.sh &&
-// npm run build`):  node scripts/shot-stills.mjs
+// npm run build:mock`):  node scripts/shot-stills.mjs
 // Writes screenshots/feat-calc.png and screenshots/feat-callouts.png.
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

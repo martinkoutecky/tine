@@ -1,0 +1,19 @@
+- Level 0 root
+  id:: b10c0e3b-0000-4000-8000-000000000856
+	- Level 1 first
+		- Level 2 first
+			- Level 3 first
+				- Level 4 first
+					- Level 5 first
+						- Level 6 first
+							- Level 7 leaf
+							- Level 7 second leaf
+						- Level 6 second
+				- Level 4 second
+		- Level 2 second
+			- Level 3 under second
+	- Level 1 second
+		- Level 2 under second
+- Second root
+	- Child of second root
+		- Grandchild of second root

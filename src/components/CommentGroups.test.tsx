@@ -28,7 +28,7 @@ function b(id: string, raw: string, children: BlockDto[] = [], collapsed = false
   return { id, raw, children, collapsed, properties: blockRegions(raw, "md").properties.filter(p => p.primary).map(p => [p.key, p.value]) };
 }
 function mount(blocks: BlockDto[]) {
-  loadSingle({ name: "Groups", title: "Groups", id: "/graph/pages/Groups.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks });
+  loadSingle({ name: "Groups", title: "Groups", id: "pages/Groups.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks });
   const el = document.createElement("div"); document.body.append(el);
   dispose = render(() => <Block id="p" />, el);
   openCommentThread(el);
@@ -85,7 +85,7 @@ it("New thread retains an unsent reply in the existing group", () => {
 });
 
 it("commenting from a secondary editor focuses that copy's reply box", async () => {
-  loadSingle({ name: "Groups", title: "Groups", id: "/graph/pages/Groups.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks: [b("p", "some words", [b("a", "One\ntine.quote:: words")])] });
+  loadSingle({ name: "Groups", title: "Groups", id: "pages/Groups.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks: [b("p", "some words", [b("a", "One\ntine.quote:: words")])] });
   const el = document.createElement("div"); document.body.append(el);
   dispose = render(() => <><SurfaceContext.Provider value="main"><div data-copy="main"><Block id="p" /></div></SurfaceContext.Provider><SurfaceContext.Provider value="ref:copy"><div data-copy="secondary"><Block id="p" /></div></SurfaceContext.Provider></>, el);
   const copy = el.querySelector('[data-copy="secondary"]')!;

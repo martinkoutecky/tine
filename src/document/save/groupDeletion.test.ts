@@ -30,7 +30,7 @@ async function setup(holdA = false): Promise<{ host: TestHost; move: MockInstanc
   if (holdA) startEditing(staying.id);
   const move = vi.spyOn(backend(), "pageMove");
   const submit = vi.spyOn(backend(), "pageSubmit");
-  const remove = vi.spyOn(backend(), "pageDelete");
+  const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
   await moveBlock(moved.id, null, 0, "B");
   await vi.waitFor(() => expect(move).toHaveBeenCalledOnce());
   return { host, move, remove, submit };

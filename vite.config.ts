@@ -75,18 +75,42 @@ function twemojiAssets(): Plugin {
   };
 }
 
-function browserCoreAssets(inWorker: boolean): Plugin {
-  const coreDir = normalizePath(fileURLToPath(new URL("./src/render/wasm-core/", import.meta.url)));
-  const graphWorker = normalizePath(fileURLToPath(new URL("./src/publishedGraph.worker.ts", import.meta.url)));
+/** Builds that carry the browser mock (`src/browserMock.ts`, BROWSER_MOCK_BUILD). */
+const MOCK_MODES = new Set(["development", "test", "mock"]);
+
+/** The loading rule for the browser core and the browser mock (ADR 0081).
+ * `src/browserCore.ts` is the one module that imports the core chunk, and it
+ * has exactly two importers: the publication worker and, in a build that
+ * carries the mock, the mock's graph (`src/mockGraph.ts`). Each build has at
+ * most one core chunk under assets/, reached only by that loader's dynamic
+ * import. A build without the mock (the desktop app, the quick-share viewer)
+ * contains neither the mock nor the core in its main bundle. */
+function browserCoreAssets(inWorker: boolean, mode: string): Plugin {
+  const src = normalizePath(fileURLToPath(new URL("./src/", import.meta.url)));
+  const coreDir = `${src}render/wasm-core/`;
+  const loader = `${src}browserCore.ts`;
+  const mockEntry = `${src}mock.ts`;
+  const importer = inWorker ? `${src}publishedGraph.worker.ts` : MOCK_MODES.has(mode) ? `${src}mockGraph.ts` : null;
+  const isMock = (id: string) => id.startsWith(`${src}mock`);
   return {
     name: "browser-core-assets",
     apply: "build",
     generateBundle(_, bundle) {
       const chunks = Object.values(bundle).filter((file) => file.type === "chunk");
       const coreChunks = chunks.filter((chunk) => chunk.moduleIds.some((id) => id.startsWith(coreDir)));
-      const owner = chunks.find(chunk => chunk.isEntry && chunk.facadeModuleId === graphWorker);
-      if (!inWorker || !owner) {
-        if (coreChunks.length) this.error("The browser core can only be imported by the publication worker");
+      if (!inWorker && !importer && chunks.some((chunk) => chunk.moduleIds.some(isMock))) {
+        this.error(`A ${mode} build must not contain the browser mock (src/mock*)`);
+      }
+      // Modules the bundle emits (rollup's graph also lists tree-shaken ones).
+      const emitted = new Set(chunks.flatMap((chunk) => chunk.moduleIds));
+      const importers = (this.getModuleInfo(loader)?.importers ?? []).filter((id) => emitted.has(id));
+      if (importers.some((id) => id !== importer)) {
+        this.error(`src/browserCore.ts may only be imported by ${importer ? importer.slice(src.length) : "nothing"} here, not by `
+          + importers.filter((id) => id !== importer).map((id) => id.slice(src.length)).join(", "));
+      }
+      const owner = chunks.find((chunk) => chunk.moduleIds.includes(loader));
+      if (!owner || !importer) {
+        if (coreChunks.length) this.error(`A ${mode} ${inWorker ? "worker" : "main"} bundle must not contain the browser core`);
         return;
       }
       const [core] = coreChunks;
@@ -94,8 +118,16 @@ function browserCoreAssets(inWorker: boolean): Plugin {
           !["lsdoc_wasm.js", "lsdoc_wasm_bytes.ts"].every((name) => core.moduleIds.includes(coreDir + name)) ||
           !core.fileName.startsWith("assets/") ||
           !owner.dynamicImports.includes(core.fileName) ||
-          chunks.some(chunk => chunk.imports.includes(core.fileName))) {
-        this.error("Expected one lazy browser core chunk owned by the publication worker under assets/");
+          chunks.some((chunk) => chunk.imports.includes(core.fileName)) ||
+          chunks.some((chunk) => chunk !== owner && chunk.dynamicImports.includes(core.fileName))) {
+        this.error(`Expected one lazy browser core chunk under assets/, loaded only by src/browserCore.ts for ${importer.slice(src.length)}`);
+      }
+      if (!inWorker) {
+        // The mock itself loads lazily too: no entry and no static import reaches it.
+        const mock = chunks.find((chunk) => chunk.moduleIds.includes(mockEntry));
+        if (!mock || mock.isEntry || chunks.some((chunk) => chunk.imports.includes(mock.fileName))) {
+          this.error("Expected the browser mock (src/mock.ts) in a chunk reached only by a dynamic import");
+        }
       }
     },
   };
@@ -126,9 +158,9 @@ return {
   base: viewer ? "/s/2/" : "./",
   // Published readers use native emoji (editableEmoji.ts); the viewer needs
   // neither the desktop SVG bundle nor its root-relative development server.
-  plugins: [solid(), browserCoreAssets(false),
+  plugins: [solid(), browserCoreAssets(false, mode),
     ...(viewer ? [quickShareRoute()] : [twemojiAssets(), pdfjsAssets()])],
-  worker: { format: "es", plugins: () => [browserCoreAssets(true)] },
+  worker: { format: "es", plugins: () => [browserCoreAssets(true, mode)] },
   // Upstream's legacy build supplies recent JS API polyfills to existing
   // WebKitGTK/Android WebViews. Main and worker use the same shared policy.
   resolve: { alias: [{ find: /^pdfjs-dist$/, replacement: fileURLToPath(new URL("./node_modules/pdfjs-dist/legacy/build/pdf.mjs", import.meta.url)) }] },

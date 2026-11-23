@@ -2,7 +2,7 @@
 // column at two desktop sizes in light and dark, for the slice-1 fixture page,
 // a paragraph with six comments (stacking), and a page without comments (whose
 // layout must stay the plain centred column).
-// Usage: npm run build && node scripts/shot-margin-column.mjs [outDir]
+// Usage: npm run build:mock && node scripts/shot-margin-column.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

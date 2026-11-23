@@ -7,7 +7,7 @@
 // components' own class names (DOM order is pinned by DiskOrMineChoice.test.tsx;
 // the wrapping behaviour of the real DialogActions is asserted by
 // scripts/shot-action-placement-layout.mjs).
-// Usage: npm run build && node scripts/shot-action-placement.mjs   (needs scripts/env.sh for Chromium)
+// Usage: npm run build:mock && node scripts/shot-action-placement.mjs   (needs scripts/env.sh for Chromium)
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

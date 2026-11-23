@@ -38,7 +38,7 @@ function b(id: string, raw: string, children: BlockDto[] = [], format: Format = 
 }
 function mount(format: Format = "md") {
   const raw = format === "md" ? "Comment\ntine.quote:: words" : "Comment\n:PROPERTIES:\n:tine.quote: words\n:END:";
-  loadSingle({ name: "Dates", title: "Dates", id: `/graph/pages/Dates.${format}`, rev: "fixture", kind: "page", format, pre_block: null,
+  loadSingle({ name: "Dates", title: "Dates", id: `pages/Dates.${format}`, rev: "fixture", kind: "page", format, pre_block: null,
     blocks: [b("p", "some words", [b("c", raw, [b("r", "Legacy reply")], format)], format)] });
   const el = document.createElement("div"); document.body.append(el);
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("comment-surface") ? 1400 : 0; });
@@ -100,7 +100,7 @@ it.each(["md", "org"] as const)("%s reveals greyed threads, reopens by reply, an
 // property deltas, not only structure. Each transition below is a raw edit of a
 // block the scope did not already list as a root.
 it("the resolved control follows blocks gaining and losing a quote and roots becoming replies", () => {
-  loadSingle({ name: "Moves", title: "Moves", id: "/graph/pages/Moves.md", rev: "fixture", kind: "page", format: "md", pre_block: null,
+  loadSingle({ name: "Moves", title: "Moves", id: "pages/Moves.md", rev: "fixture", kind: "page", format: "md", pre_block: null,
     blocks: [b("p", "some words here", [
       b("c", "Comment\ntine.quote:: words"),
       b("o", "Ordinary child"),
@@ -131,7 +131,7 @@ it("the resolved control follows blocks gaining and losing a quote and roots bec
 
 it("resolved descendants are excluded from below counts", () => {
   // A body ancestor's below count includes this thread once, never its replies.
-  loadSingle({ name: "Ancestor", title: "Ancestor", id: "/graph/pages/Ancestor.md", rev: "fixture", kind: "page", format: "md", pre_block: null,
+  loadSingle({ name: "Ancestor", title: "Ancestor", id: "pages/Ancestor.md", rev: "fixture", kind: "page", format: "md", pre_block: null,
     blocks: [b("ancestor", "Parent", [b("body", "Body", [b("below", "Hidden\ntine.quote:: Body", [b("deep", "Deep reply")])])])] });
   expect(descendantOpenThreads("ancestor", "md")).toBe(1);
   setThreadResolved("below", true);
@@ -227,7 +227,7 @@ it("read-only pages expose no Resolve action and refuse mutation, reply and crea
 
 it.each((["md", "org"] as const).flatMap(format => [1, 60].map(bodyBlocks => ({ format, bodyBlocks }))))("I-25 measures $format save requests on $bodyBlocks body blocks", async ({ format, bodyBlocks }) => {
   const quote = format === "md" ? "Comment\ntine.quote:: words" : "Comment\n:PROPERTIES:\n:tine.quote: words\n:END:";
-  loadSingle({ name: "Dates", title: "Dates", id: `/graph/pages/Dates.${format}`, rev: "fixture", kind: "page", format, pre_block: null,
+  loadSingle({ name: "Dates", title: "Dates", id: `pages/Dates.${format}`, rev: "fixture", kind: "page", format, pre_block: null,
     blocks: [b("p", "some words", [b("c", quote, [], format)], format), ...Array.from({ length: bodyBlocks - 1 }, (_, i) => b(`f${i}`, `Filler ${i}`, [], format))] });
   const submit = vi.spyOn(backend(), "pageSubmit");
   const bytes = () => {

@@ -1,7 +1,7 @@
 // Screenshot proof for D-20261019-AL2 (card hB9Zjw): the page header's alias
 // group rows ("Also called" names with no page of their own, then the group's
 // other real pages) at desktop width, in the right sidebar, and at 390 px.
-// Usage: npm run build && node scripts/shot-alias-groups.mjs   (writes screenshots/alias-groups/)
+// Usage: npm run build:mock && node scripts/shot-alias-groups.mjs   (writes screenshots/alias-groups/)
 // The mock backend's `?aliasgroups` fixture: Germany (alias:: DE, Deutschland,
 // Bundesrepublik) and Bundesrepublik (its own page, alias:: BRD).
 import { chromium, devices } from "playwright";

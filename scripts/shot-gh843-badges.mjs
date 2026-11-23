@@ -1,6 +1,6 @@
 // GH #843: a block's reference count and margin comment count must be the same size on the same line.
 // Fails on the old CSS (different height, 1 px or more apart). Writes one enlarged crop per size.
-// Usage: npm run build && node scripts/shot-gh843-badges.mjs [outDir]
+// Usage: npm run build:mock && node scripts/shot-gh843-badges.mjs [outDir]
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

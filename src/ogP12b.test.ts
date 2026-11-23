@@ -1,6 +1,6 @@
 // OG-P12B (Martin 2026-10-01): page headers, code fences and task markers all follow the
 // parser (OG/mldoc). Each test names the user-visible behaviour it protects.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { isPageHeaderPropertiesOnly, pagePropertyEntries, splitPagePreamble, caretOnPropertyLine } from "./editor/properties";
 import { caretInFence, codeFences } from "./editor/fences";
 import { codeBodyProjection, codeFenceOnly } from "./editor/codeFence";
@@ -100,20 +100,5 @@ describe("D13: one accepted marker/priority answer for readers and writers", () 
     expect(setPriority("TODO [#A] x", null)).toBe("TODO x");
     expect(setPriority("TODO x [#A]", "B")).toBe("TODO [#B] x [#A]");
     expect(visibleBody("TODO [#A] x", "md")).toEqual(["x"]);
-  });
-});
-
-describe("D13: the demo mock reads the parser only once it is ready", () => {
-  it("building the mock before the parser is initialised neither throws nor freezes empty facets", async () => {
-    vi.resetModules();
-    const parse = await import("./render/parse");
-    expect(parse.parserReady()).toBe(false);
-    const mock = await import("./mock");
-    const backend = mock.mockBackend();
-    await parse.initParser();
-    const page = (await backend.getPage("Jun 14th, 2026", "journal"))!;
-    const todo = JSON.parse(JSON.stringify(page)).blocks.find((b: { raw: string }) => b.raw.startsWith("TODO [#A] Ship"));
-    expect(todo?.marker).toBe("TODO");
-    expect(todo?.priority).toBe("A");
   });
 });

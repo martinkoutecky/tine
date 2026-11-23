@@ -94,24 +94,6 @@ export function headerTokens(raw: string, format: "md" | "org" = "md"): { marker
   return memo.tokens;
 }
 
-/** Defines `marker`/`priority` on `block` as accessors that read {@link headerTokens} on first access
- *  once the parser is ready (a read before that is undefined and not remembered). For the demo mock,
- *  which builds its blocks at import, before the wasm parser exists. */
-export function lazyHeaderFacets<T extends { raw: string }>(block: T): T {
-  let facets: { marker?: string; priority?: string } | undefined;
-  const read = () => {
-    if (!facets && parserReady()) {
-      const { marker, priority } = headerTokens(block.raw);
-      facets = { marker: marker?.text, priority: priority?.text };
-    }
-    return facets ?? {};
-  };
-  return Object.defineProperties(block, {
-    marker: { get: () => read().marker, enumerable: true, configurable: true },
-    priority: { get: () => read().priority, enumerable: true, configurable: true },
-  });
-}
-
 /** The leading task marker the parser accepted, with its UTF-16 span, or null. */
 export function matchLeadingMarker(raw: string, format: "md" | "org" = "md"): LeadingMarkerMatch | null {
   const marker = headerTokens(raw, format).marker;

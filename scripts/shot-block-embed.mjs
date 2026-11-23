@@ -2,7 +2,7 @@
 // bullet, the embedded root's, at the host's place (D-20261030-EMB restores 0.8's
 // single-root rule after beta.1's GH #726 host bullet), with a heavier source
 // descendant guide.
-// Usage: npm run build && node scripts/shot-block-embed.mjs
+// Usage: npm run build:mock && node scripts/shot-block-embed.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

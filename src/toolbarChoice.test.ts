@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { decodeToolbarChoice, placeToolbarActions, saveToolbarChoice, toolbarActions } from "./toolbarChoice";
+
+// The browser mock loads on its first call; load it first, so a write the
+// previous test queued has landed before a test spies on the next one.
+beforeAll(async () => { await backend().getAppString("toolbar_actions", ""); });
 
 afterEach(async () => { saveToolbarChoice(null); await Promise.resolve(); vi.restoreAllMocks(); vi.doUnmock("./backend"); });
 const available = toolbarActions.map(action => action.id);

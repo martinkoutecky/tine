@@ -641,7 +641,7 @@ describe("QuickSwitcher search syntax help", () => {
       disk.set(key, JSON.stringify({ ...dto, id: key }));
       return null;
     });
-    const deletes = vi.spyOn(backend(), "pageDelete");
+    const deletes = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{
         entity: "block",

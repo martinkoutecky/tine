@@ -14,6 +14,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { adoptResults, advanceResultsEpoch, captureResultsTicket, installResultsPendingGate, resultsSettled } from "../queryResultsEpoch";
 import { createSignal } from "solid-js";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { OPENING_CONTROL_CASES, OPENING_DRAWER_CASES, OPENING_SHAPE_SURFACE_CASES, expectOpeningShape, pointerClick, shownLines } from "../tests/openingClickCases";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
@@ -157,6 +158,9 @@ it.each(OPENING_SHAPE_SURFACE_CASES.flatMap((c) => (["ref", "query"] as const).m
   "shows the groups of opening text %j on %s", async (c, surface) => {
     const [text, format] = c;
     vi.spyOn(backend(), "getPage").mockResolvedValue({ ...sourcePage(format), pre_block: text + "\n" });
+    // A query in the opening text runs against the graph; the shape is the
+    // opening text's, so its results stay empty (the core's graph has tasks, ADR 0081).
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
     const hit: BlockDto = { id: "page-preamble:Page:source", raw: text, collapsed: false, page_preamble: true, children: [] };
     adoptResults(hit, captureResultsTicket());
     const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[hit]} surface={surface} eager />);

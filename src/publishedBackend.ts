@@ -4,15 +4,14 @@
  */
 import type { Backend, LoadGraphResult } from "./backend";
 import type { ConfirmOptions } from "./backendInterface";
-import type { ConfigProblem } from "./backendTypes";
-import type { GraphCall, GraphRead } from "./publishedGraphRpc";
+import { graphIdentity, graphReads } from "./graphForwards";
+import type { GraphRead } from "./publishedGraphRpc";
 import { openPublishedGraphWorker } from "./publishedGraphWorker";
 import { setQuickSharePrefix } from "./publishedPermalink";
 import { readBounded } from "./publishedSnapshot";
 import type { QuickShareListing } from "./quickShare/commands";
 import { loadQuickShare } from "./quickShare/quickShare";
 import { checkBrowserHandoff } from "./linkSchemePolicy";
-import type { GraphMeta, PageRead, PageReadSource, RefGroup } from "./types";
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
@@ -108,9 +107,7 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
   let activationSeq = 0;
   const unsubscribed = async () => () => {};
 
-  async function read<T>(...call: GraphCall): Promise<T> {
-    return JSON.parse(await (await load()).read(call));
-  }
+  const graphRead: GraphRead = async (call, queryLocation) => (await load()).read(call, queryLocation);
 
   /** `../assets/<name>` — or null when the authored name would leave the
    *  export's own `assets/` folder. The rule is the static exporter's
@@ -135,10 +132,7 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
     // ---- graph identity ----
     async loadGraph(): Promise<LoadGraphResult> {
       const { name } = await load();
-      const [meta, config_problem] = await Promise.all([
-        read<GraphMeta>("graph_meta_json"),
-        read<ConfigProblem | null>("config_problem_json"),
-      ]);
+      const { meta, config_problem } = await graphIdentity(graphRead);
       return {
         kind: "loaded",
         binding_generation: 1,
@@ -152,48 +146,7 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
     async startupGraphPath() {
       return (await load()).name;
     },
-    pageInventory: () => read("page_inventory_json"),
-    pageModified: () => read("page_modified_json"),
-    pageBacklinkCounts: () => read("page_backlink_counts_json"),
-    resolvePage: (name, kind) => read("resolve_page_json", name, kind === "journal"),
-    pageAliasGroup: name => read("page_alias_group_json", name),
-    getPage: (name, kind) => read("get_page_json", name, kind === "journal"),
-    async getPageByPath(path, source) {
-      const answer = await read<{ page: PageRead | null; source: PageReadSource | null }>("get_page_by_path_json", path);
-      source?.(answer.source);
-      return answer.page;
-    },
-    journalFeedPage: (limit, before, waitForReferences = false, through = null) =>
-      read("journal_feed_page_json", limit, before === null ? undefined : BigInt(before),
-        waitForReferences, through === null ? undefined : BigInt(through)),
-    journalContentDays: () => read("journal_content_days_json"),
-    pageIcons: names => read("page_icons_json", JSON.stringify(names)),
-    getBacklinks: name => read("get_backlinks_json", name),
-    getBacklinkFilterContext: (name, targets) =>
-      read("get_backlink_filter_context_json", name, JSON.stringify(targets)),
-    getUnlinkedRefs: name => read("get_unlinked_refs_json", name),
-    getBlockRefCounts: () => read("get_block_ref_counts_json"),
-    getBlockReferrers: uuid => read("get_block_referrers_json", uuid),
-    async resolveBlock(uuid) {
-      const [group] = await read<(RefGroup | null)[]>("resolve_blocks_json", JSON.stringify([uuid]));
-      return group;
-    },
-    resolveBlocks: uuids => read("resolve_blocks_json", JSON.stringify(uuids)),
-    previewBlock: (uuid, maxNodes) => read("preview_block_json", uuid, maxNodes),
-    search: (query, limit) => read("search_json", query, limit),
-    quickSwitch: (query, limit, _editor, transliteration = false) =>
-      read("capture_quick_switch_json", query, limit, transliteration),
-    captureQuickSwitch: (query, limit, transliteration = false) =>
-      read("capture_quick_switch_json", query, limit, transliteration),
-    queryFacets: scope => read("query_facets_json", JSON.stringify(scope)),
-    parseQuery: async (text, dialect, properties, location) =>
-      JSON.parse(await (await load()).read(["parse_query_json", text, dialect, JSON.stringify(properties)], location)),
-    queryRun: (query, view, context) =>
-      read("query_run_json", JSON.stringify(query), JSON.stringify(view), JSON.stringify(context)),
-    runGraphSearch: (source, pageLimit, blockLimit, _lane, explain, scope, pageMatchScope, views, transliteration) =>
-      read("run_graph_search_json", source, pageLimit, blockLimit, JSON.stringify({
-        explain, scope, pageMatchScope, pageView: views?.page, blockView: views?.block, transliteration,
-      })),
+    ...graphReads(graphRead),
     // ---- assets and the browser ----
     // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
     // file and blanks a PDF or image with no cause. The live backend rejects the same way.

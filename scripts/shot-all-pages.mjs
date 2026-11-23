@@ -10,7 +10,7 @@
 //     `color-scheme: dark` under every bundled theme.
 // Exits non-zero on the first failed assertion. Screenshots go to screenshots/all-pages-*.png.
 //
-// Usage (after `source scripts/env.sh && npm run build`):
+// Usage (after `source scripts/env.sh && npm run build:mock`):
 //   node scripts/shot-all-pages.mjs
 // SHOT_DIST=<dir> previews another build (used to prove the checks fail on pre-fix code).
 import { chromium } from "playwright";

@@ -1,491 +1,35 @@
-// In-memory mock backend seeded with a fixture graph. Used only when running
-// outside Tauri (browser dev / Playwright screenshots). Mirrors the real
-// backend's shape so the UI behaves identically.
-import { bigPageBlocks, embedScrollBlocks, manyRefsPages } from "./mockScrollFixtures";
-import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
+// The browser development backend (ADR 0081): used only outside Tauri and
+// outside a published export, in the dev server, the screenshot harness and the
+// unit tests. It answers no graph question itself: the browser core does, over
+// the fixture files in `src/mock/` (`mockGraph.ts`), through the forward table
+// the published export uses too. What it keeps is host state (assets, PDF
+// highlight records, plugins, session, settings, the conflict demo); the
+// store's write paths beyond one page's text are refused.
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import type { ConfirmOptions } from "./backendInterface";
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
-import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
-import { mockQueryCommands } from "./mockQuery";
+import { graphIdentity, graphReads, graphStoreReads } from "./graphForwards";
+import { mockConflictApi } from "./mockConflicts";
+import { mockGraphFiles, openMockGraph } from "./mockGraph";
 import { mockQuickShareCommands } from "./mockQuickShare";
 import { mockGitCommands } from "./mockGit";
 import { mockPageHost } from "./mockPageHost";
 import { createMockCaptureReceipts } from "./mockCaptureReceipts";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { Highlight, PageRead, PdfState, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
-import { previewDtoSubtree } from "./previewProjection";
-import { hlsPageName } from "./pdf";
-import { lazyHeaderFacets, leadingMarker } from "./markers";
-import { fuzzyScore } from "./editor/autocomplete";
-import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
-import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
-import { searchFold } from "./editor/searchFold";
-import { parseJournalDayIn } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { checkBrowserHandoff } from "./linkSchemePolicy";
-import { marginRegressionPages } from "./mockMarginPages";
-import { guideLevelRegressionPages } from "./mockGuidePages";
-import { mockAliases } from "./mockAliases";
+import { MOCK_ABSENT_METHODS } from "./browserMock";
 
-/** Mock feed membership must use a Logseq journal-title parser, never the
- * host's permissive/non-portable Date string parser. The mock graph's formats
- * (file `dd-MM-yyyy`, title `EEEE, dd-MM-yyyy`) through the one Rust date
- * answerer; its list is those two plus `MMM do, yyyy`, ISO and underscore. */
-function mockJournalDayKey(name: string): number | null {
-  const parsed = parseJournalDayIn(name, "dd-MM-yyyy", "EEEE, dd-MM-yyyy");
-  return parsed ? parsed.y * 10_000 + parsed.m * 100 + parsed.d : null;
-}
+/** What the browser preview says for a question only the desktop app answers. */
+export const MOCK_REFUSAL_MESSAGE = "Not available in the browser preview: the desktop app answers this (ADR 0081).";
 
-function pageRefs(raw: string): string[] {
-  const out: string[] = [];
-  const re = /\[\[([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) out.push(m[1] ?? m[2] ?? m[3]);
-  return out;
-}
-// Block uuids `raw` references, deduped. Mirrors refs::block_ref_ids: labeled
-// `[label](((uuid)))` is matched (and removed) FIRST so the bare `((uuid))` scan
-// doesn't mis-read the triple paren; the bare scan also covers `{{embed ((uuid))}}`.
-function blockRefIds(raw: string): string[] {
-  const out: string[] = [];
-  const push = (id: string) => {
-    id = id.trim();
-    if (id && !out.includes(id)) out.push(id);
-  };
-  const labeled = /\[[^\]]*\]\(\(\(([^)]+)\)\)\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = labeled.exec(raw))) push(m[1]);
-  const bare = /\(\(([^)]+)\)\)/g;
-  const rest = raw.replace(labeled, "");
-  while ((m = bare.exec(rest))) push(m[1]);
-  return out;
-}
-function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefined {
-  const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
-  return m?.[1];
-}
-/** Tags in `raw`: first-seen, case-insensitively deduped, `[#A]` excluded. No lookbehind: pre-16.4 WebKit (GH #256). */
-export function tagsOf(raw: string): string[] {
-  const out: string[] = [];
-  const re = /#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
-  for (let m: RegExpExecArray | null; (m = re.exec(raw)); ) {
-    if (m[2] !== undefined && m.index > 0 && raw[m.index - 1] === "[") continue;
-    const tag = (m[1] ?? m[2]).trim();
-    if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
-  }
-  return out;
-}
-function propertyLines(raw: string): [string, string][] {
-  const out: [string, string][] = [];
-  for (const line of raw.split("\n")) {
-    const m = /^([A-Za-z0-9_./-]+):: ?(.*)$/.exec(line.trim());
-    if (m) out.push([m[1], m[2].trim()]);
-  }
-  return out;
-}
 
-function mockReferencedPageNames(pages: PageDto[]): string[] {
-  const seen = new Map<string, string>();
-  const add = (name: string) => {
-    const trimmed = name.trim();
-    if (trimmed) seen.set(trimmed.toLowerCase(), seen.get(trimmed.toLowerCase()) ?? trimmed);
-  };
-  const addPropertyRefs = (raw: string | null) => {
-    if (!raw) return;
-    for (const [key, value] of propertyLines(raw)) {
-      if (!/^(tags|alias|aliases)$/i.test(key)) continue;
-      const quoted = value.trim();
-      if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
-      for (const name of linkable_property_names(value, false)) add(name);
-    }
-  };
-  const visit = (blocks: BlockDto[]) => blocks.forEach((block) => {
-    pageRefs(block.raw).forEach(add);
-    addPropertyRefs(block.raw);
-    visit(block.children);
-  });
-  for (const page of pages) {
-    addPropertyRefs(page.pre_block);
-    visit(page.blocks);
-  }
-  return [...seen.values()];
-}
-
-let _id = 0;
-const nid = () => `mock-${_id++}`;
 const mockPlugins: InstalledPluginRecord[] = [];
 const mockDiagnostics: DiagnosticFrontendKind[] = [];
 const mockPluginEntries = new Map<string, Uint8Array>();
 let mockPluginRegistryCache: PluginRegistryCacheEnvelope | null = null;
-
-function b(raw: string, children: BlockDto[] = [], collapsed = false, properties?: [string, string][]): BlockDto {
-  // Mirror the real backend: a block carrying an `id::` property uses that uuid as
-  // its store id (so block refs resolve to it and the count badge keys correctly).
-  const m = raw.match(/^\s*id::\s*(.+)$/m);
-  // Marker/priority are the parser's answer, read lazily: the wasm parser is not ready while PAGES builds at import.
-  return lazyHeaderFacets({
-    id: m ? m[1].trim() : nid(),
-    raw,
-    collapsed,
-    children,
-    scheduled: planningOf(raw, "SCHEDULED"),
-    deadline: planningOf(raw, "DEADLINE"),
-    tags: tagsOf(raw),
-    properties: properties ?? propertyLines(raw),
-  });
-}
-
-function mockPagePath(p: PageDto): string {
-  const dir = p.kind === "journal" ? "journals" : "pages";
-  const ext = p.format === "org" ? "org" : "md";
-  return `${dir}/${p.name.replace(/\//g, "___")}.${ext}`;
-}
-
-function mockPageEntry(p: PageDto): PageEntry {
-  return { name: p.name, kind: p.kind, date_key: null, path: mockPagePath(p) };
-}
-
-const PAGES: PageDto[] = [
-  {
-    name: "Jun 14th, 2026",
-    kind: "journal",
-    title: "Jun 14th, 2026",
-    pre_block: null,
-    blocks: [
-      b("## Today"),
-      b("Started the [[Tine]] rewrite — aiming for a #fast native feel.", [
-        b("The outliner is the core; everything hangs off **blocks**."),
-        b("Reading the OG source for the *exact* file format and `mldoc` quirks."),
-      ]),
-      b("TODO [#A] Ship the M0 vertical slice\nSCHEDULED: <2026-06-15 Mon>"),
-      b("DOING Wire up the [[block editor]] with caret preservation"),
-      b("A code block:\n```rust\nfn main() {\n    println!(\"hello, tine\");\n}\n```"),
-      b("A table:\n| Feature | Status |\n| --- | --- |\n| Outliner | done |\n| Queries | partial |"),
-      b("DONE Validate round-trip on the real `shui-graph`"),
-      b("Inline math works too: $E = mc^2$ and references like ((58900000-0000-4000-8000-0000000000b1))."),
-      b("```calc\n1 + 2\n2+4\n5 + 4\nx = 12 * 3\nx / 4\n```"),
-      b("Open tasks across the graph:"),
-      b("{{query (todo TODO DOING)}}"),
-      b("All todos + Prio A {{query (and (task TODO) (priority A))}}\nid:: 1002fa7a-7164-456c-9e53-3032f783711c"),
-    ],
-  },
-  {
-    name: "Jun 13th, 2026",
-    kind: "journal",
-    title: "Jun 13th, 2026",
-    pre_block: null,
-    blocks: [
-      b("Yesterday's notes about [[parameterized complexity]].", [
-        b("n-fold IP shows up again — see [[n-fold IP]]."),
-        b("Key idea:", [b("decompose the constraint matrix into blocks"), b("solve via dynamic programming over the bricks")]),
-      ]),
-      b("LATER Read the new #SODA submission"),
-    ],
-  },
-  {
-    name: "Jun 12th, 2026",
-    kind: "journal",
-    title: "Jun 12th, 2026",
-    pre_block: null,
-    blocks: [
-      b("Set up the [[Tine]] repo and Rust core.", [
-        b("Round-trip tests pass on the real graph."),
-      ]),
-      b("DONE Decide the stack: **Tauri** + *SolidJS*"),
-    ],
-  },
-];
-
-const NAMED: PageDto[] = [
-  {
-    name: "Tine",
-    kind: "page",
-    title: "Tine",
-    pre_block: "title:: Tine\ntags:: project, tooling",
-    blocks: [
-      b("A fast clone of [[Logseq]] built with **Tauri** + *SolidJS*.", [
-        b("Goal: #functional + #visual equivalent."),
-        b("Reads the same markdown graph as OG Logseq."),
-      ]),
-      b("## Architecture"),
-      b("Rust core owns parsing; the frontend owns the live editing tree.\nid:: 58900000-0000-4000-8000-0000000000b1"),
-      b("A PDF asset: [sample.pdf](../assets/sample.pdf)"),
-    ],
-  },
-  // Org-mode rendering parity: same idea as kitchen-sink, but format:"org" so the
-  // org inline rules (*, /, _, +, ~, =, ^^, [[t][d]]) and src/quote blocks render.
-  {
-    name: "org-sink",
-    kind: "page",
-    title: "org-sink",
-    pre_block: "#+TITLE: org-sink\n#+FILETAGS: :demo:org:\n#+ALIAS: org parity",
-    format: "org",
-    blocks: [
-      b("Inline styles: *bold*, /italic/, _underline_, +strike+, ~code~, =verbatim=, ^^highlight^^"),
-      b("Org links: [[Tine]], [[Tine][the project]], and [[https://orgmode.org][Org website]]"),
-      b("Boundary-safe plain text: a/b/c paths, snake_case_var, and 2*3*4 stay literal"),
-      b("TODO [#A] high-priority org task\nSCHEDULED: <2026-06-25 Thu>"),
-      b("DOING in-progress task referencing [[n-fold IP]]"),
-      b("Inline timestamps: met on <2026-06-26 Fri> (active), logged [2026-06-20 Sat] (inactive)"),
-      b("a parent headline", [
-        b("child block under it with /emphasis/"),
-        b("DONE finished child task"),
-      ]),
-      b("Org table:\n| Feature | Status |\n|---------+--------|\n| Outliner | done |\n| Queries | partial |"),
-      b("Org source block:\n#+BEGIN_SRC clojure\n(defn hello [] \"world\")\n#+END_SRC"),
-      b("Org quote block:\n#+BEGIN_QUOTE\nto be or not to be\n#+END_QUOTE"),
-      b("A property drawer stays as content:\n:PROPERTIES:\n:key: value\n:END:"),
-      b("A plain list — org bullets are - and + (in md, - is the outline bullet):\n- milk\n- eggs\n+ also fine"),
-    ],
-  },
-  // Rendering parity harness: one block per construct, so a screenshot makes any
-  // unrendered/mis-rendered syntax obvious at a glance.
-  {
-    name: "kitchen-sink",
-    kind: "page",
-    title: "kitchen-sink",
-    pre_block: null,
-    blocks: [
-      b("Blockquote:\n> a quoted line\n> a second quoted line"),
-      b("Callout NOTE:\n> [!NOTE] Heads up\n> body of the note"),
-      b("Callout WARNING:\n> [!WARNING] Be careful here"),
-      b("Callout TIP:\n> [!TIP] a helpful tip"),
-      b("Horizontal rule below:\n---"),
-      b("Table with alignment:\n| Left | Center | Right |\n|:---|:---:|---:|\n| a | b | c |\n| 1 | 2 | 3 |"),
-      b("Autolink (bare): visit https://logseq.com/docs for details"),
-      b("Autolink (angle): <https://example.com>"),
-      b("Inline math: $E = mc^2$ and chemistry: $\\ce{H2O + CO2}$"),
-      b("Display math:\n$$\\int_0^1 x^2 \\, dx = \\tfrac13$$"),
-      b("DONE finished task with a logbook drawer\n:LOGBOOK:\nCLOCK: [2026-06-16 Tue 09:00:00]--[2026-06-16 Tue 09:30:45] =>  00:30:45\nCLOCK: [2026-06-17 Wed 10:00:00]--[2026-06-17 Wed 10:20:00] =>  00:20:00\n:END:"),
-      b("Task markers: TODO a, DOING b, NOW c, LATER d, WAIT e, DONE f"),
-      b("in-block checklist (+ list inside one bullet — ticks in OG/mobile):\n+ [ ] pack toothbrush\n+ [x] pack charger\n+ [ ] pack passport"),
-      b("in-block nested list:\n+ groceries\n  + milk\n  + eggs\n+ hardware"),
-      b("Numbered list (logseq.order-list-type — the block itself is numbered):", [
-        b("Bump the version\nlogseq.order-list-type:: number"),
-        b("Tag and push\nlogseq.order-list-type:: number", [
-          b("run the test suite\nlogseq.order-list-type:: number"),
-          b("build the installers\nlogseq.order-list-type:: number"),
-        ]),
-        b("Announce on Discord\nlogseq.order-list-type:: number"),
-      ]),
-      b("TODO [#A] high-priority task"),
-      b("Inline styles: **bold**, *italic*, ~~strike~~, ==highlight==, `code`"),
-      b("Video asset (plays inline where the codec is supported; otherwise a click-to-open chip):\n![](../assets/demo_clip.mp4)"),
-      b("Audio asset (⇔ Widen stretches the seek bar for precise scrubbing):\n![](../assets/voice_memo.wav)"),
-      b("Footnote reference[^1] in a sentence.\n[^1]: the footnote definition."),
-      b("Video embed: {{video https://www.youtube.com/watch?v=dQw4w9WgXcQ}}"),
-      b("Tweet embed: {{tweet https://twitter.com/logseq/status/123}}"),
-      b("More embeds: {{twitter https://twitter.com/logseq/status/9}} · {{vimeo 76979871}} · {{bilibili BV1xx411c7mD}}"),
-      b("youtube-timestamp {{youtube-timestamp 125}} · cloze {{cloze the answer\\\\the cue}} · zotero {{zotero-imported-file abc, paper.pdf}}"),
-      b("User macro (config.edn :macros): {{poem red, blue}} and {{hi Martin, kitchen-sink}}"),
-      b("Block user macro:\n{{card Topic, Body text}}"),
-      b("Block reference (bare): see ((64b9c0e2-0000-0000-0000-000000000000)) inline"),
-      b("Labeled block reference: see [Related Work](((64b9c0e2-0000-0000-0000-000000000000))) inline"),
-      b("Project notes", [
-        b("Methods", [
-          b("a nested reference: see ((64b9c0e2-0000-0000-0000-000000000000)) here"),
-        ]),
-      ]),
-      b("Block-ref target: the **Related Work** section\nid:: 64b9c0e2-0000-0000-0000-000000000000"),
-    ],
-  },
-  {
-    name: "Sheets demo",
-    kind: "page",
-    title: "Sheets demo",
-    pre_block: null,
-    blocks: [
-      b(
-        "Readonly grid demo\ntine.view:: grid\ntine.header:: true\ntine.col-widths:: 0=140;1=180;2=220",
-        [
-          b("", [b("Project"), b("Status"), b("Notes")]),
-          b("", [
-            b("TODO Ship [[Tine]] sheet"),
-            b(
-              "Nested sub-grid\ntine.view:: grid",
-              [
-                b("", [b("Inner A"), b("Inner B")]),
-                b("", [b("Inner C")]),
-              ],
-              false,
-              [["tine.view", "grid"]]
-            ),
-            b("Uses tree geometry only"),
-          ]),
-          b("", [b("Ragged row"), b("missing note cell")]),
-          b("", [b("Done"), b("Read-only"), b("Phase 2 adds interaction")]),
-        ],
-        false,
-        [
-          ["tine.view", "grid"],
-          ["tine.header", "true"],
-          ["tine.col-widths", "0=140;1=180;2=220"],
-        ]
-      ),
-      b(
-        "Field table demo\ntine.view:: table\ntine.col-aggregates:: prop:estimate=sum\ntine.fields:: state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text\ntine.formula.effort:: points * 2\ntine.formula.due-soon:: if(isEmpty(due), false, due < today() + \"14d\")\ntine.formula.broken:: points +",
-        [
-          b("TODO [#A] Draft spec #sheets\nSCHEDULED: <2026-07-08 Wed>\nowner:: Martin\nestimate:: 2h\ntopic:: docs\npoints:: 3\nshipped:: false\ndue:: 2026-07-09"),
-          b("DOING Build table renderer #sheets\nowner:: Codex\nestimate:: 5h\ntopic:: ui\npoints:: 8\nshipped:: false\nnote:: stray column"),
-          b("DONE Verify screenshots\nDEADLINE: <2026-07-10 Fri>\nowner:: Codex\ntopic:: infra\npoints:: 1\nshipped:: true\ndue:: 2026-07-07"),
-        ],
-        false,
-        [
-          ["tine.view", "table"],
-          ["tine.col-aggregates", "prop:estimate=sum"],
-          ["tine.fields", "state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text"],
-          ["tine.formula.effort", "points * 2"],
-          ["tine.formula.due-soon", 'if(isEmpty(due), false, due < today() + "14d")'],
-          ["tine.formula.broken", "points +"],
-        ]
-      ),
-      b("{{query (todo TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state"),
-      b(
-        "Reading list by topic\ntine.view:: board\ntine.group-by:: tags",
-        [
-          b("Aaronson survey #reading"),
-          b("n-fold draft #reading #writing"),
-          b("ChoCo rebuttal #writing"),
-        ],
-        false,
-        [
-          ["tine.view", "board"],
-          ["tine.group-by", "tags"],
-        ]
-      ),
-    ],
-  },
-  // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,
-  // each page showing its `icon::`.
-  {
-    name: "Formula1",
-    kind: "page",
-    title: "Formula1",
-    pre_block: "icon:: 🏁\ncolor:: steelblue",
-    blocks: [b("{{namespace Formula1}}"), b("2024 overview [[joplin]]")],
-  },
-  { name: "Formula1/2026", kind: "page", title: "Formula1/2026", pre_block: "icon:: 🏁", blocks: [b("Season 2026")] },
-  {
-    name: "Formula1/2026/08 Austrian Grand Prix",
-    kind: "page",
-    title: "Formula1/2026/08 Austrian Grand Prix",
-    pre_block: "icon:: 🏁",
-    blocks: [b("Race notes")],
-  },
-  {
-    name: "Formula1/2026/09 Italian Grand Prix",
-    kind: "page",
-    title: "Formula1/2026/09 Italian Grand Prix",
-    pre_block: "icon:: 🏁",
-    blocks: [b("Race notes")],
-  },
-  // No "Formula1/2025" page of its own — only this leaf. The Hierarchy must still
-  // synthesize a "Formula1 / 2025" level row (OG parity).
-  {
-    name: "Formula1/2025/12 Abu Dhabi Grand Prix",
-    kind: "page",
-    title: "Formula1/2025/12 Abu Dhabi Grand Prix",
-    pre_block: "icon:: 🏁",
-    blocks: [b("Race notes")],
-  },
-];
-
-if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
-  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(b, Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
-}
-if (typeof location !== "undefined" && /[?&]embedscroll\b/.test(location.search)) {
-  const { source, page } = embedScrollBlocks(b);
-  NAMED.push({ name: "Embed scroll source", kind: "page", title: "Embed scroll source", pre_block: null, blocks: source },
-    { name: "Embed scroll", kind: "page", title: "Embed scroll", pre_block: null, blocks: page });
-}
-if (typeof location !== "undefined" && /[?&]manyrefs\b/.test(location.search)) {
-  for (const page of manyRefsPages(b)) NAMED.push({ ...page, kind: "page", title: page.name, pre_block: null });
-}
-// D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
-// pages and three names with no file of their own.
-if (typeof location !== "undefined" && /[?&]aliasgroups\b/.test(location.search)) {
-  NAMED.push(
-    { name: "Germany", kind: "page", title: "Germany", pre_block: "alias:: DE, Deutschland, Bundesrepublik", blocks: [b("Country notes")] },
-    { name: "Bundesrepublik", kind: "page", title: "Bundesrepublik", pre_block: "alias:: BRD", blocks: [b("Federal politics notes")] },
-  );
-}
-if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
-  NAMED.push(
-    {
-      name: "CM6 code highlight regression",
-      kind: "page",
-      title: "CM6 code highlight regression",
-      pre_block: null,
-      blocks: [
-        b("Click a code body to edit it. Its syntax colours stay visible."),
-        b("```js\n// JavaScript — Unicode stays intact: 文😀\nconst greeting = 'Hello, world!';\nfunction greet(name) {\n  return `${greeting} ${name}`;\n}\ngreet('Tine');\n```"),
-        b("```python\n# Python — same colours in the editor and the view\ndef greet(name):\n    message = 'Hello, world!'\n    return f'{message} {name}'\n\nprint(greet('Tine'))\n```"),
-        b("Before the mixed fence.\n```js\nconst answer = 42;\nanswer.toString();\n```\nAfter the mixed fence."),
-        b("```js\n" + Array.from({ length: 100 }, (_, i) => `// Step ${i}\nconst value${i} = ${i};\nvalue${i}.toString();`).join("\n") + "\n```"),
-      ],
-    },
-    {
-      name: "Preamble regression",
-      kind: "page",
-      title: "Preamble regression",
-      pre_block: "Intro before the first outline marker",
-      blocks: [b("First marked block")],
-    },
-    {
-      name: "First-block properties regression",
-      kind: "page",
-      title: "First-block properties regression",
-      pre_block: null,
-      blocks: [b("alias:: fbpr\ntags:: testing, properties"), b("Visible body")],
-    },
-    {
-      name: "Block embed source regression",
-      kind: "page",
-      title: "Block embed source regression",
-      pre_block: null,
-      blocks: [
-        b("Embedded root\nid:: ui-block-embed-root", [
-          b("Embedded child", [b("Embedded grandchild")]),
-        ]),
-      ],
-    },
-    {
-      name: "Block embed regression",
-      kind: "page",
-      title: "Block embed regression",
-      pre_block: null,
-      blocks: [b("{{embed ((ui-block-embed-root))}}")],
-    },
-    {
-      // GH #439: a whole-page embed among ordinary siblings and children.
-      name: "Page embed regression",
-      kind: "page",
-      title: "Page embed regression",
-      pre_block: null,
-      blocks: [
-        b("Ordinary parent", [
-          b("{{embed [[Page embed source regression]]}}"),
-          b("Ordinary sibling"),
-        ]),
-        b("{{embed [[Page embed source regression]]}}"),
-      ],
-    },
-    {
-      name: "Page embed source regression",
-      kind: "page",
-      title: "Page embed source regression",
-      pre_block: null,
-      blocks: [
-        b("Source root one", [b("Source child", [b("Source grandchild")])]),
-        b("Source root two"),
-      ],
-    },
-    ...[...marginRegressionPages(b), ...guideLevelRegressionPages(b)].map(([name, blocks, format]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks, ...(format ? { format } : {}) })),
-  );
-}
-
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
@@ -502,29 +46,6 @@ const mockAppStrings: Record<string, string> = {};
 const SILENT_WAV_B64 =
   "UklGRmQGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUAGAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIA==";
 
-// Synthesize an hls__ page DTO from stored highlights (mirrors the Rust
-// hls_page_document), so the Notes flow is demoable in the browser.
-function hlsPageDto(name: string): PageDto | null {
-  for (const [pdf, { label, highlights }] of Object.entries(mockHighlights)) {
-    if (hlsPageName(pdf) !== name) continue;
-    const blocks: BlockDto[] = highlights.map((h) => {
-      const lines = [h.text ?? ""];
-      lines.push(`hl-page:: ${h.page}`, `hl-color:: ${h.color}`);
-      if (h.image != null) lines.push("hl-type:: area");
-      lines.push("ls-type:: annotation", `id:: ${h.id}`);
-      return { id: h.id, raw: lines.join("\n"), collapsed: false, children: [] };
-    });
-    return {
-      name,
-      kind: "page",
-      title: label,
-      pre_block: `file:: [${label}](../assets/${pdf})\nfile-path:: ../assets/${pdf}`,
-      blocks,
-    };
-  }
-  return null;
-}
-
 function decodeB64(b64: string): Uint8Array {
   const bin = atob(b64);
   const arr = new Uint8Array(bin.length);
@@ -532,218 +53,41 @@ function decodeB64(b64: string): Uint8Array {
   return arr;
 }
 
-function cloneBlock(block: BlockDto): BlockDto {
-  // Descriptors, not values: keeps the lazy marker/priority accessors lazy.
-  return Object.defineProperties({} as BlockDto, {
-    ...Object.getOwnPropertyDescriptors(block),
-    children: { value: block.children.map(cloneBlock), enumerable: true, writable: true, configurable: true },
-  });
+export interface MockOptions {
+  /** The URL search string whose flags select fixture files (default: the page's). */
+  search?: string;
+  /** Graph files to add or replace (null removes one) before the core opens the graph. */
+  files?: Record<string, string | null>;
 }
 
-function clonePage(page: PageDto): PageDto {
-  return { ...page, blocks: page.blocks.map(cloneBlock) };
-}
-
-function mockGuidePage(title: string, blocks: BlockDto[]): GuidePage {
-  return {
-    title,
-    markdown: `- # ${title}\n`,
-    page: {
-      name: `Tine-guide/${title}`,
-      kind: "page",
-      title,
-      pre_block: null,
-      blocks,
-      format: "md",
-      read_only: true,
-      guide: true,
+/** The browser preview backend over a fresh memory graph of the fixture files. */
+export function mockBackend(options: MockOptions = {}): Backend {
+  const files = mockGraphFiles(options.search ?? globalThis.location?.search ?? "");
+  for (const [path, text] of Object.entries(options.files ?? {})) {
+    if (text === null) files.delete(path);
+    else files.set(path, text);
+  }
+  const graph = openMockGraph(files);
+  const reads = graphReads(graph.read);
+  const pageHost = mockPageHost({
+    page: (path) => reads.getPageByPath(path, undefined) as Promise<PageRead | null>,
+    resolve: (name, kind) => reads.resolvePage(name, kind) as Promise<ResolvedPage>,
+    async submit(key, dto, version) {
+      const answer = await graph.submit(key, dto, version);
+      return "written" in answer ? { version: answer.written.version } : answer;
     },
-  };
-}
-
-function mockGuidePages(): GuidePage[] {
-  return [
-    mockGuidePage("Tine Guide", [
-      b("# Tine Guide", [
-        b("[[Features/Sheets]] - create grids, tables, boards, queries, and formulas"),
-        b("[[Features/Formulas]] - build read-only computed columns with the visual editor"),
-        b("[[Features/Quick capture]] - capture into your graph from anywhere"),
-        b("[[Features/PDF annotation]] - highlight PDFs beside your notes"),
-        b("[[Features/Tips & shortcuts]] - learn the daily commands"),
-      ]),
-    ]),
-    mockGuidePage("Features/Sheets", [
-      b("# Sheets"),
-      b(
-        "## Positional grid\ntine.view:: grid\ntine.header:: true",
-        [
-          b("", [b("Area"), b("Owner"), b("Notes")]),
-          b("", [b("Spec"), b("Martin"), b("Keep v1 narrow")]),
-          b("", [b("Build"), b("Codex"), b("Live grid in the Guide")]),
-        ],
-        false,
-        [["tine.view", "grid"], ["tine.header", "true"]]
-      ),
-      b(
-        "## Formula table\ntine.view:: table\ntine.fields:: status=enum:todo,reading,done;rating=number;done=checkbox\ntine.formula.effort:: rating * 2",
-        [
-          b("Bases study\nstatus:: reading\nrating:: 5\ndone:: false"),
-          b("CSV import notes\nstatus:: todo\nrating:: 3\ndone:: false"),
-        ],
-        false,
-        [
-          ["tine.view", "table"],
-          ["tine.fields", "status=enum:todo,reading,done;rating=number;done=checkbox"],
-          ["tine.formula.effort", "rating * 2"],
-        ]
-      ),
-      b("## Create one yourself", [
-        b("1. Type a heading block and add `tine.view:: grid` under it."),
-        b("2. Add child rows, one bullet per row and one child bullet per cell."),
-        b("3. What you should see: the outline renders as a live grid."),
-      ]),
-    ]),
-    mockGuidePage("Features/Formulas", [
-      b("# Formulas"),
-      b(
-        "## A formula in action\ntine.view:: table\ntine.fields:: task=text;hours=number;done=checkbox\ntine.formula.plan:: if(hours > 3, \"focus block\", \"quick task\")",
-        [
-          b("Sketch the outline\nhours:: 2\ndone:: true"),
-          b("Write the first draft\nhours:: 5\ndone:: false"),
-        ],
-        false,
-        [
-          ["tine.view", "table"],
-          ["tine.fields", "task=text;hours=number;done=checkbox"],
-          ["tine.formula.plan", 'if(hours > 3, "focus block", "quick task")'],
-        ]
-      ),
-      b("## Create one yourself", [
-        b("1. Make a table with a numeric field, then right-click a column header and choose Add formula."),
-        b("2. Build the value from the visual faces, or use the `</> raw` box to type it."),
-        b("3. What you should see: a read-only computed column that evaluates live."),
-      ]),
-    ]),
-    mockGuidePage("Features/Quick capture", [b("# Global quick-capture"), b("## Create one yourself", [b("1. Bind `tine --capture` to a desktop shortcut."), b("2. What you should see: a capture box opens over any app.")])]),
-    mockGuidePage("Features/PDF annotation", [b("# PDF annotation"), b("## Create one yourself", [b("1. Drop a PDF into the graph and open it."), b("2. What you should see: highlights become linked note blocks.")])]),
-    mockGuidePage("Features/Tips & shortcuts", [b("# Tips & shortcuts"), b("## Create one yourself", [b("1. Press Ctrl+K and run a command."), b("2. What you should see: the command runs without leaving the page.")])]),
-    mockGuidePage("Feature showcase", [b("# Feature showcase"), b("## Create one yourself", [b("1. Create one block per construct you want to inspect."), b("2. What you should see: each construct renders live.")])]),
-  ];
-}
-
-function mockGuideCopyName(title: string): string {
-  return `tine-guide/${title}`;
-}
-
-function rewriteMockGuideRefs(raw: string, copied: Map<string, string>): string {
-  return raw.replace(/\[\[([^\]]+)\]\]/g, (match, target: string) => {
-    const to = copied.get(target.trim().toLowerCase());
-    return to ? `[[${to}]]` : match;
+    remove: (path) => graph.replace([[path, null]]),
+    reset: () => graph.reset(),
   });
-}
 
-function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): BlockDto {
-  const raw = rewriteMockGuideRefs(block.raw, copied);
-  return {
-    ...block,
-    id: nid(),
-    raw,
-    children: block.children.map((child) => cloneGuideBlockForCopy(child, copied)),
-    properties: propertyLines(raw),
-  };
-}
-/** Demo/test backend with mutable mock state. Page saves are taken and not written (`mockPageHost`); writeHighlights replaces its list without three-way merge or production failures. */
-// Copy/Export's browser fixture retains local approximations. These are not
-// Backend operations and have no native command; only this mock calls them.
-type MockBackend = Backend & {
-  runQuery(query: string): Promise<RefGroup[]>;
-  runAdvancedQuery(query: string): Promise<{ groups: RefGroup[]; ran: string[]; ignored: string[]; supported: boolean }>;
-};
-export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((blocks): PageDto => ({ name: CONFLICT_DEMO_PAGE, kind: "page", title: CONFLICT_DEMO_PAGE, pre_block: "title:: Project Plan", blocks })), removeAccents = true): MockBackend {
-  const all = [...PAGES, ...NAMED, ...extraPages];
-  const templates = [{ name: "meeting", page: "Templates", kind: "page" as const, blocks: [
-    { id: "t1", raw: "## Meeting [[<% today %>]]", collapsed: false, children: [] },
-    { id: "t2", raw: "Attendees:", collapsed: false, children: [] },
-    { id: "t3", raw: "TODO Follow up", collapsed: false, children: [] },
-  ] }];
-  // Page ownership uses narrow identity; search membership uses the graph fold.
-  const identity = (name: string) => name.toLowerCase().normalize("NFC");
-  const fold = (text: string) => searchFold(text, removeAccents);
-  const find = (name: string) =>
-    all.find((p) => identity(p.name) === identity(name)) ?? null;
-  const { aliasOwners, pageAliasGroup } = mockAliases(all, identity, mockPagePath);
-  const mockResolve = (name: string, kind: "journal" | "page"): ResolvedPage => {
-    const page = all.find((p) => p.kind === kind && identity(p.name) === identity(name));
-    if (page) return { kind: "existing", id: mockPagePath(page), others: [] };
-    const owners = kind === "page" ? aliasOwners(name) : [];
-    if (owners.length) return { kind: "alias", owners };
-    return { kind: "absent", id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
-  };
-
-  // Parse a block's `key:: value` property lines (mirrors the real backend's
-  // block_to_dto), so query results carry `properties` for the table columns and
-  // the aggregation summary (sum/avg of a property).
-  const parseProps = (raw: string): [string, string][] => {
-    const out: [string, string][] = [];
-    for (const line of raw.split("\n")) {
-      const m = /^([A-Za-z][\w-]*):: ?(.*)$/.exec(line.trim());
-      if (m && !["id", "collapsed"].includes(m[1])) out.push([m[1], m[2].trim()]);
-    }
-    return out;
-  };
-
-  // Collect (page, matching blocks) where keep() holds, grouped by page.
-  const collect = (keep: (b: BlockDto) => boolean, exclude?: string): RefGroup[] => {
-    const groups: RefGroup[] = [];
-    for (const p of all) {
-      if (exclude && identity(p.name) === identity(exclude)) continue;
-      const matched: BlockDto[] = [];
-      // Track the ancestor chain so a matched nested block carries a breadcrumb
-      // (like the real backend's query::collect), exercising the block-ref panel.
-      const walk = (bs: BlockDto[], anc: string[]) =>
-        bs.forEach((b) => {
-          if (keep(b)) matched.push({ ...b, breadcrumb: anc, properties: parseProps(b.raw) });
-          walk(b.children, [...anc, b.raw.split("\n")[0] ?? ""]);
-        });
-      walk(p.blocks, []);
-      if (matched.length) groups.push({ page: p.name, kind: p.kind, blocks: matched });
-    }
-    return groups;
-  };
-
-  return {
+  const explicit: Partial<Backend> = {
+    ...reads,
+    ...graphStoreReads(graph.read),
+    ...pageHost,
     async loadGraph() {
-      return { kind: "loaded" as const, binding_generation: 1, meta: {
-        root: "/mock/graph",
-        journals_dir: "journals",
-        pages_dir: "pages",
-        preferred_workflow: "todo",
-        shortcuts: {},
-        start_of_week: 0,
-        block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2,
-        default_journal_template: null,
-        favorites: [],
-        mobile_gestures_disabled_in_block_with_tags: [],
-        journal_page_title_format: "MMM do, yyyy",
-        journal_file_name_format: "yyyy_MM_dd",
-        preferred_format: "md",
-        enable_timetracking: true,
-        show_brackets: true,
-        enable_tooltip: true, file_name_format: "legacy", quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false,
-        enable_search_remove_accents: removeAccents,
-        doc_mode_enter_for_new_block: false,
-        logical_outdenting: false,
-        logbook_with_second_support: true,
-        logbook_enabled_in_timestamped_blocks: true,
-        logbook_enabled_in_all_blocks: false,
-        guide_announced: mockGuideAnnounced,
-        macros: {
-          // Demo user macros so the kitchen-sink exercises inline and block expansions.
-          poem: "Roses are $1, violets are $2.",
-          hi: "Hello, **$1**! See [[$2]].",
-          card: "## $1\n\n$2\n\n+ see [[$1]]",
-        },
-      }};
+      const { meta, config_problem } = await graphIdentity(graph.read);
+      return { kind: "loaded" as const, binding_generation: 1, config_problem,
+        meta: { ...meta, root: "/mock/graph", guide_announced: mockGuideAnnounced } };
     },
     async listKnownGraphs() {
       return [{ path: "/mock/graph", name: "graph" }];
@@ -763,7 +107,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     captureReceipt: createMockCaptureReceipts(),
     async bindCaptureGraph() {
-      const result = await this.loadGraph("");
+      const result = await explicit.loadGraph!("");
       if (result.kind === "focused_existing") throw new Error("mock graph unavailable");
       return result.meta;
     },
@@ -831,101 +175,18 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockPluginRegistryCache = { schemaVersion: 1, indexJson, signature: signature.trim() };
     },
     async setSystemBarAppearance(): Promise<void> {},
-    async closeGraphWindow(): Promise<void> {
-      // No-op in the mock/screenshot harness.
-    },
+    async closeGraphWindow(): Promise<void> {},
     async trayApply() {
       return { supported: false, active: false, problem: null };
     },
-    async openDevtools(): Promise<void> {
-      // No-op in the mock/screenshot harness — no native WebView inspector.
-    },
+    async openDevtools(): Promise<void> {},
     async defaultGraphParent(): Promise<string> {
       return "/mock";
     },
-    async pageInventory(): Promise<PageInventory> {
-      // One row per (kind, folded name), like the real inventory: physical
-      // pages/journals first, then reference-only (and alias) names.
-      const key = (name: string) => name.trim().toLowerCase().normalize("NFC");
-      const rows = new Map<string, PageInventoryEntry>();
-      const add = (name: string, kind: "journal" | "page") => {
-        const slot = `${kind}:${key(name)}`;
-        if (!key(name) || rows.has(slot)) return;
-        rows.set(slot, {
-          key: key(name),
-          name,
-          is_journal: kind === "journal",
-          day: kind === "journal" ? mockJournalDayKey(name) : null,
-          target: mockResolve(name, kind),
-        });
-      };
-      for (const page of all) add(page.name, page.kind);
-      for (const name of mockReferencedPageNames(all)) {
-        if (!rows.has(`journal:${key(name)}`)) add(name, "page");
-      }
-      const entries = [...rows.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-      return { rev: "0", entries, unreadable: [] };
-    },
-    async journalFeedPage(limit: number, beforeDay: number | null) {
-      const now = new Date();
-      const as_of_day = now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
-      const candidates = PAGES
-        .filter((p) => p.kind === "journal")
-        .map((page) => ({ page, day: mockJournalDayKey(page.name) }))
-        .filter((row): row is { page: PageDto; day: number } =>
-          row.day !== null && row.day <= as_of_day && (beforeDay === null || row.day < beforeDay)
-        )
-        .sort((a, b) => b.day - a.day);
-      const rows = candidates.slice(0, limit);
-      const done = rows.length === candidates.length;
-      return {
-        pages: rows.map(({ page }) => ({ ...page, id: mockPagePath(page) })),
-        next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
-        done,
-        as_of_day,
-      };
-    },
-    async journalContentDays(): Promise<number[]> {
-      return [];
-    },
-    async getPage(name: string) {
-      const page = name.startsWith("hls__") ? hlsPageDto(name) : find(name);
-      return page ? { ...page, id: mockPagePath(page) } : null;
-    },
-    async resolvePage(name: string, kind: "journal" | "page") {
-      return mockResolve(name, kind);
-    },
-    pageAliasGroup,
     graphBindingGeneration: () => 1,
-    ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
-    async guidePages(): Promise<GuidePage[]> {
-      return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
-    },
-    async copyGuideIntoGraph(title: string): Promise<GuideCopyResult> {
-      const guides = mockGuidePages();
-      const viewed = guides.find((g) => g.title.toLowerCase() === title.trim().toLowerCase());
-      if (!viewed) throw new Error("unknown bundled guide page");
-      const copied = new Map(guides.map((g) => [g.title.toLowerCase(), mockGuideCopyName(g.title)]));
-      const createdPages: string[] = [];
-      const skippedPages: string[] = [];
-      for (const guide of guides) {
-        const name = mockGuideCopyName(guide.title);
-        if (find(name)) {
-          skippedPages.push(name);
-          continue;
-        }
-        const blocks = guide.page.blocks.map((block) => cloneGuideBlockForCopy(block, copied));
-        all.push({ name, kind: "page", title: name, pre_block: null, blocks, format: "md", read_only: false, guide: false });
-        createdPages.push(name);
-      }
-      if (!mockAssets["quick-capture.png"]) mockAssets["quick-capture.png"] = new Uint8Array([0]);
-      return {
-        name: mockGuideCopyName(viewed.title),
-        created: createdPages.length > 0,
-        created_pages: createdPages,
-        skipped_pages: skippedPages,
-        copied_assets: ["quick-capture.png"],
-      };
+    // The bundled Guide is native content (crates/tine-guide); the preview has none, as a published export.
+    async guidePages() {
+      return [];
     },
     async setGuideAnnounced(announced: boolean): Promise<void> {
       mockGuideAnnounced = announced;
@@ -934,431 +195,43 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async createGraph(dir: string, name: string): Promise<string> {
       return `${dir.replace(/[\\/]$/, "")}/${name.trim()}`; // no real scaffolding in the browser mock
     },
-    async getBacklinks(name: string): Promise<RefGroup[]> {
-      // `?refslatency=ms`: a slow answer, as on a big graph (GH #848).
-      const latency = typeof location === "undefined" ? 0 : Number(new URLSearchParams(location.search).get("refslatency")) || 0;
-      if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
-      const n = name.toLowerCase();
-      return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
-    },
-    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
-      const excluded = name.trim().toLowerCase();
-      const wanted = new Map(targets.map((item) => [
-        `${item.kind}\0${item.page.toLowerCase()}\0${item.block_id}`,
-        item,
-      ]));
-      const entries: BacklinkFilterContext["entries"] = [];
-      const visit = (page: PageDto, block: BlockDto): void => {
-        const key = `${page.kind}\0${page.name.toLowerCase()}\0${block.id}`;
-        const target = wanted.get(key);
-        if (target) {
-          const text: string[] = [];
-          const facets = new Map<string, string>();
-          const subtree = (node: BlockDto) => {
-            text.push(node.raw);
-            for (const ref of pageRefs(node.raw)) {
-              const normalized = ref.trim().toLowerCase();
-              if (normalized && normalized !== excluded && !facets.has(normalized)) facets.set(normalized, ref);
-            }
-            if (node.marker) facets.set(node.marker.toLowerCase(), node.marker);
-            node.children.forEach(subtree);
-          };
-          subtree(block);
-          entries.push({ ...target, text: text.join("\n"), facets: [...facets.values()] });
-        }
-        block.children.forEach((child) => visit(page, child));
-      };
-      for (const page of all) page.blocks.forEach((block) => visit(page, block));
-      return { entries, truncated: entries.length < wanted.size };
-    },
-    async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
-      const n = name.toLowerCase();
-      const matcher = parseSearchQuery(`/\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b/`);
-      return collect(
-        (b) => matcherMatches(matcher, "", b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
-        name
-      );
-    },
     async warmDone(): Promise<boolean> {
       return true;
-    },
-    async getBlockRefCounts(): Promise<Record<string, number>> {
-      const counts: Record<string, number> = {};
-      const walk = (bs: BlockDto[]) =>
-        bs.forEach((b) => {
-          for (const id of blockRefIds(b.raw)) counts[id] = (counts[id] ?? 0) + 1;
-          walk(b.children);
-        });
-      for (const p of all) walk(p.blocks);
-      return counts;
-    },
-    async getBlockReferrers(uuid: string): Promise<RefGroup[]> {
-      // No exclude → same-page referrers included (matches the backend).
-      return collect((b) => blockRefIds(b.raw).includes(uuid));
-    },
-    async renamePage(): Promise<import("./types").RenameDone> {
-      return { outcome: "unchanged", touched: [], renamed: [] }; // no-op in mock
-    },
-    async renameOffer(): Promise<import("./types").RenameOffer> {
-      return { kind: "rename" }; // the mock renames nothing (renamePage above)
-    },
-    async renameWouldChange(old: string, _next: string, texts: import("./types").RenameProbeText[]): Promise<boolean[]> {
-      // The mock has no rename answer to ask: any text spelling the name may
-      // change (over-approximate, so a stuck page refuses rather than loses).
-      const name = old.normalize("NFC").toLowerCase();
-      return texts.map((text) => text.raw.normalize("NFC").toLowerCase().includes(name));
-    },
-    async followPageIdentity(): Promise<import("./types").IdentityFollow> {
-      return { name: null }; // no-op in mock
-    },
-    async pagePrintHtml(name: string, _opts, _sheets): Promise<string> {
-      // Dev-preview stub: a small self-contained doc so the print harness/flow can
-      // render something without the real publish pipeline.
-      return (
-        `<!doctype html><html><head><meta charset="utf-8"><title>${name}</title>` +
-        `<style>body{font-family:Inter,sans-serif;margin:0;padding:24px;line-height:1.6}` +
-        `h1{font-size:1.9rem;margin:0 0 1rem}@page{margin:16mm}@media print{a{color:inherit}}</style>` +
-        `</head><body class="print"><main><h1 class="page">${name}</h1>` +
-        `<ul class="outline"><li>Mock print export of <strong>${name}</strong>.</li>` +
-        `<li>The real document is rendered by tine-core.</li></ul></main></body></html>`
-      );
-    },
-    async runAdvancedQuery(query: string) {
-      // Dev-preview approximation (the real engine runs in the Tauri backend): map
-      // the one head the harness needs — `(task ?b #{"TODO" …})` — so the "switch to
-      // advanced" skeleton returns results in the screenshot harness. Anything else
-      // is reported as unsupported, matching the real ran/ignored contract shape.
-      const markers = query.match(/\b(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED)\b/g) ?? [];
-      if (/\(\s*task\b/i.test(query) && markers.length) {
-        const set = new Set(markers);
-        const groups = collect((b) => {
-          const m = leadingMarker(b.raw);
-          return !!m && set.has(m);
-        });
-        return { groups, ran: ["task"], ignored: [], supported: true };
-      }
-      return { groups: [], ran: [], ignored: [], supported: false };
-    },
-    ...mockQueryCommands,
-    ...mockQuickShareCommands,
-    async runQuery(query: string): Promise<RefGroup[]> {
-      // Simplified mock evaluator: task/todo filter or page-ref filter.
-      if (/\b(todo|task)\b/i.test(query)) {
-        // Uppercase markers only (the lowercase `todo`/`task` keyword is excluded
-        // by the case-sensitive match, so no extra filtering is needed).
-        const named = query.match(/\b(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED)\b/g) ?? [];
-        const set = named.length ? named : ["TODO", "DOING", "NOW", "LATER"];
-        return collect((b) => {
-          const m = leadingMarker(b.raw);
-          return !!m && set.includes(m);
-        });
-      }
-      const tag = /\(\s*tag\s+(?:"((?:[^"\\]|\\.)*)"|([^) \t\r\n]+))\s*\)/i.exec(query);
-      if (tag) {
-        const n = (tag[1] ?? tag[2] ?? "").replace(/\\"/g, "\"").replace(/\\\\/g, "\\").toLowerCase();
-        return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n));
-      }
-      const ref = pageRefs(query)[0];
-      if (ref) {
-        const n = ref.toLowerCase();
-        return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n));
-      }
-      return [];
-    },
-    async exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch> {
-      let remainingRoots = 50;
-      let remainingNodes = 2_000;
-      let remainingBytes = 8 * 1024 * 1024;
-      const estimate = (block: BlockDto) => block.id.length + block.raw.length + 128;
-      const countTree = (root: BlockDto) => {
-        let count = 0;
-        const stack = [root];
-        while (stack.length) {
-          const block = stack.pop()!;
-          count++;
-          for (const child of block.children) stack.push(child);
-        }
-        return count;
-      };
-      const copyTree = (block: BlockDto): BlockDto | null => {
-        const bytes = estimate(block);
-        if (remainingNodes === 0 || bytes > remainingBytes) return null;
-        remainingNodes--;
-        remainingBytes -= bytes;
-        const children: BlockDto[] = [];
-        for (const child of block.children) {
-          const copied = copyTree(child);
-          if (!copied) break;
-          children.push(copied);
-        }
-        return { ...block, children };
-      };
-      const findBlock = (page: PageDto, id: string): BlockDto | null => {
-        const stack = [...page.blocks];
-        while (stack.length) {
-          const block = stack.pop()!;
-          if (block.id === id) return block;
-          for (const child of block.children) stack.push(child);
-        }
-        return null;
-      };
-      const results = [];
-      for (const spec of specs.slice(0, 64)) {
-        // Fixture approximation of the store's one answerer
-        // (`tine_core::query::is_advanced`); the real backend ignores callers.
-        const advanced = /^\s*(\[\s*:find\b|\{\s*:query\b)/.test(spec.query);
-        const groups = advanced
-          ? (await this.runAdvancedQuery(spec.query)).groups
-          : await this.runQuery(spec.query);
-        const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);
-        const hydrated: RefGroup[] = [];
-        let shown = 0;
-        let omittedNodes = 0;
-        for (const group of groups) {
-          const page = find(group.page);
-          if (!page) continue;
-          const blocks: BlockDto[] = [];
-          for (const shallow of group.blocks) {
-            if (remainingRoots === 0) break;
-            remainingRoots--;
-            const source = findBlock(page, shallow.id) ?? shallow;
-            const before = remainingNodes;
-            const copied = copyTree(source);
-            omittedNodes += Math.max(0, countTree(source) - (before - remainingNodes));
-            if (copied) {
-              blocks.push(copied);
-              shown++;
-            }
-          }
-          if (blocks.length) hydrated.push({ page: group.page, kind: group.kind, blocks });
-          if (remainingRoots === 0) break;
-        }
-        results.push({ key: spec.key, groups: hydrated, shown, total, omitted_nodes: omittedNodes });
-      }
-      return { results, omitted_queries: Math.max(0, specs.length - 64) };
     },
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
-    async pageModified(): Promise<PageModified> {
-      // Deterministic, distinct times: the first mock page is the newest.
-      const base = Date.UTC(2026, 5, 15, 12, 0, 0) / 1000;
-      return { rev: "0", modified: all.map((p, i) => [mockPagePath(p), base - i * 3600] as [string, number]) };
-    },
-    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], [], "0"]; },
-    async pageIcons(names: string[]): Promise<Record<string, string>> {
-      const out: Record<string, string> = {};
-      for (const name of names) {
-        const pre = all.find((p) => p.name === name)?.pre_block;
-        const m = pre?.match(/^tine\.icon::\s*(.+)$/m) ?? pre?.match(/^icon::\s*(.+)$/m);
-        if (m) out[name] = m[1].trim();
-      }
-      return out;
-    },
+    // Settings with no browser config edit stay no-ops: a change does not show in loadGraph.
     async setFavorites(): Promise<void> {},
     async setDefaultHome(): Promise<void> {},
     async setPreferredWorkflow(): Promise<void> {},
     async setTimetrackingEnabled(): Promise<void> {},
     async setShowBrackets(): Promise<void> {},
     async setEnableTooltip(): Promise<void> {},
-    async setDocModeEnterForNewBlock(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setLogicalOutdenting(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setPreferredFormat(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setDocModeEnterForNewBlock(): Promise<void> {},
+    async setLogicalOutdenting(): Promise<void> {},
+    async setPreferredFormat(): Promise<void> {},
     async setJournalTitleFormat(): Promise<string[]> {
       return [];
     },
-    async setDefaultJournalTemplate(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setStartOfWeek(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setDefaultJournalTemplate(): Promise<void> {},
+    async setStartOfWeek(): Promise<void> {},
     async openExternal(url: string, confirmedScheme?: string): Promise<void> {
       checkBrowserHandoff(url, confirmedScheme, window.document?.baseURI ?? window.location.href);
       try {
         window.open(url, "_blank", "noreferrer");
       } catch { /* ignore */ }
     },
-    async queryFacets(): Promise<[string, string[]][]> {
-      const map = new Map<string, Set<string>>();
-      const internal = new Set(["id", "collapsed"]);
-      const walk = (bs: BlockDto[]) =>
-        bs.forEach((b) => {
-          for (const line of b.raw.split("\n")) {
-            const m = /^([A-Za-z][\w-]*):: ?(.*)$/.exec(line.trim());
-            if (m && !internal.has(m[1])) {
-              const set = map.get(m[1]) ?? new Set<string>();
-              if (m[2].trim()) set.add(m[2].trim());
-              map.set(m[1], set);
-            }
-          }
-          walk(b.children);
-        });
-      all.forEach((p) => walk(p.blocks));
-      return [...map.entries()].map(([k, vs]) => [k, [...vs].sort()] as [string, string[]]);
+    // The query registry and the OG printer are native; the preview answers as a published export does.
+    async queryRegistry() {
+      return { rows: [], generation: 0 };
     },
-    async search(query: string, limit: number): Promise<RefGroup[]> {
-      const q = fold(query.trim());
-      if (!q) return [];
-      // OG's `((` search: whole words in any order (FTS5) listed before literal
-      // pieces in order (`LIKE '%a%b%'`), cut at the limit (blockPickerMatch.ts).
-      const legOf = (b: BlockDto) => blockPickerLeg(fold(b.raw), q);
-      return mergeBlockPickerLegs(
-        collect((b) => legOf(b) === "words"),
-        collect((b) => legOf(b) === "fragments"),
-        limit,
-      );
+    async queryOgExpressible() {
+      return false;
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names", _views?: { page: import("./editor/queryIr").ViewSettings; block: import("./editor/queryIr").ViewSettings }, _transliteration = false): Promise<QueryExecution> {
-      // Browser-preview approximation only (ADR 0016). Production matching,
-      // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
-      const matcher = parseSearchQuery(source, removeAccents);
-      if (matcher.kind === "invalid") {
-        return {
-          hits: [],
-          diagnostics: [{ code: "invalid_regex", message: matcher.error }],
-          explanation: { branches: [] },
-          cancelled: false,
-        };
-      }
-      const bare = simpleTerm(matcher);
-      const contentOwners = pageMatchScope === "names" ? new Set<string>() : new Set(
-        collect((block) => matcherMatches(matcher, fold(block.raw), block.raw))
-          .map((group) => `${group.kind}:${identity(group.page)}`)
-      );
-      const pageMatches = scope ? [] : all
-        .map((page) => ({ page, score: bare ? fuzzyScore(bare, fold(page.name)) : 0 }))
-        .filter(({ page, score }) => {
-          const nameHit = pageMatchScope !== "content" && (bare ? score > 0 : matcherMatches(matcher, fold(page.name), page.name));
-          const contentHit = contentOwners.has(`${page.kind}:${identity(page.name)}`);
-          return nameHit || contentHit;
-        })
-        .sort((a, b) => b.score - a.score);
-      const pages = pageMatches
-        .slice(0, pageLimit)
-        .map(({ page, score }) => ({
-          entity: "page" as const,
-          page: mockPageEntry(page),
-          display_text: page.name,
-          evidence: [{
-            clause_id: 1,
-            field: "page_name" as const,
-            mode: bare ? "fuzzy" as const : matcher.kind === "regex" ? "regex" as const : "contains" as const,
-            spans: matchHighlights(matcher, page.name),
-            score,
-          }],
-          score,
-          match_class: bare
-            ? fold(page.name) === bare ? "exact" as const
-              : fold(page.name).startsWith(bare) ? "prefix" as const
-              : fold(page.name).includes(bare) ? "substring" as const
-              : "fuzzy" as const
-            : undefined,
-        }));
-      const inScope = (group: RefGroup) => {
-        if (!scope) return true;
-        const page = all.find((candidate) => candidate.kind === group.kind && identity(candidate.name) === identity(group.page));
-        if (!page) return false;
-        return scope.path
-          ? mockPagePath(page) === scope.path
-          : page.kind === scope.pageKind && identity(page.name) === identity(scope.name);
-      };
-      const blockMatches = collect((block) => matcherMatches(matcher, fold(block.raw), block.raw))
-        .filter(inScope)
-        .flatMap((group) => group.blocks.map((block) => ({ group, block })));
-      const blocks = blockMatches
-        .slice(0, Math.max(0, blockLimit))
-        .map(({ group, block }) => {
-          const owner = all.find((candidate) => candidate.kind === group.kind && identity(candidate.name) === identity(group.page));
-          return {
-            entity: "block" as const,
-            page: group.page,
-            kind: group.kind,
-            path: owner ? mockPagePath(owner) : "",
-            block,
-            display_text: block.raw,
-            evidence: [{
-              clause_id: 1,
-              field: "visible_content" as const,
-              mode: matcher.kind === "regex" ? "regex" as const : "contains" as const,
-              spans: matchHighlights(matcher, block.raw),
-            }],
-          };
-        });
-      return {
-        hits: [...pages, ...blocks],
-        diagnostics: [],
-        has_more: {
-          pages: pageLimit > 0 && pageMatches.length > pageLimit,
-          blocks: blockLimit > 0 && blockMatches.length > blockLimit,
-        },
-        explanation: {
-          branches: explain ? [
-            { description: bare ? `Page names fuzzily match “${source}”` : `Page names match “${source}”`, children: [] },
-            { description: `Block content matches “${source}”`, children: [] },
-          ] : [],
-        },
-        cancelled: false,
-      };
-    },
-    async listTemplateNames() { return templates.map(t => t.name); },
-    async listTemplates(name?: string) {
-      return structuredClone(name === undefined ? templates : templates.filter((t) => t.name === name).slice(0, 1));
-    },
-    async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
-      const q = fold(query.trim());
-      return all
-        .filter((p) => fold(p.name).includes(q))
-        .slice(0, limit)
-        .map(mockPageEntry);
-    },
-    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
-      return this.quickSwitch(query, limit);
-    },
-    async resolveBlock(uuid: string): Promise<RefGroup | null> {
-      const find = (blocks: BlockDto[]): BlockDto | null => {
-        for (const block of blocks) {
-          if (block.raw.includes(`id:: ${uuid}`)) return block;
-          const child = find(block.children);
-          if (child) return child;
-        }
-        return null;
-      };
-      for (const p of all) {
-        const found = find(p.blocks);
-        if (found) return { page: p.name, kind: p.kind, blocks: [{ ...found, children: [] }] };
-      }
-      return null;
-    },
-    async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
-      return Promise.all(uuids.map((u) => this.resolveBlock(u)));
-    },
-    async previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null> {
-      let group: RefGroup | null = null;
-      const find = (blocks: BlockDto[]): BlockDto | null => {
-        for (const block of blocks) {
-          if (block.id === uuid || block.raw.includes(`id:: ${uuid}`)) return block;
-          const child = find(block.children);
-          if (child) return child;
-        }
-        return null;
-      };
-      for (const page of all) {
-        const found = find(page.blocks);
-        if (found) {
-          group = { page: page.name, kind: page.kind, blocks: [found] };
-          break;
-        }
-      }
-      if (!group) return null;
-      const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes);
-      return { group: { ...group, blocks }, truncated };
+    async printQuery(): Promise<never> {
+      const { QueryPrintRefusedError } = await import("./queryPrintRefusal");
+      throw new QueryPrintRefusedError("not_applicable", null);
     },
     async readAsset(name: string, maxBytes: number): Promise<Uint8Array> {
       const bytes = mockAssets[name] ?? (name === "sample.pdf" ? decodeB64(SAMPLE_PDF_B64)
@@ -1368,7 +241,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async streamAsset(name: string): Promise<string> {
       // Mock streams buffer bytes; use the existing asset-ingress ceiling.
-      const bytes = await this.readAsset(name, ASSET_INGRESS_MAX_BYTES);
+      const bytes = await explicit.readAsset!(name, ASSET_INGRESS_MAX_BYTES);
       if (!bytes.length) return "";
       const type = name.toLowerCase().endsWith(".wav") ? "audio/wav" : "application/octet-stream";
       return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type }));
@@ -1403,18 +276,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async readTextFile(_path: string): Promise<string> {
       throw new Error("local text files are unavailable in the browser mock");
     },
-    async openAsset(): Promise<void> {
-      // no OS opener in the browser mock
-    },
-    async openPageFile(): Promise<void> {
-      // no OS file manager in the browser mock
-    },
-    async openGraphFile(): Promise<void> {
-      // no OS opener in the browser mock
-    },
-    async editAssetExternal(): Promise<void> {
-      // no external editor in the browser mock
-    },
+    async openAsset(): Promise<void> {},
+    async openPageFile(): Promise<void> {},
+    async openGraphFile(): Promise<void> {},
+    async editAssetExternal(): Promise<void> {},
     async detectMediaEditor(): Promise<string> {
       return ""; // nothing to probe in the browser mock
     },
@@ -1433,32 +298,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async emptyAssetTrash(): Promise<number> {
       return 3;
     },
-    ...mockJournalFiles(),
-    async getPageByPath(path: string) {
-      const page = all.find((p) => mockPagePath(p) === path);
-      if (page) return { ...page, id: path };
-      // The duplicate-day stray opens to its own content (#21); other paths fall
-      // back to the canonical page by name.
-      const stray = path.includes("Friday");
-      return {
-        name: "Friday, 26-06-2026",
-        kind: "journal",
-        title: "Friday, 26-06-2026",
-        pre_block: null,
-        blocks: [{ id: "stray-1", raw: stray ? "something something" : "Tried out the Org demo graph in Tine today", collapsed: false, children: [] }],
-        rev: "mock-rev",
-        format: "org",
-        read_only: false,
-        id: path,
-      };
-    },
-    async mergePages(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async renameFileToPage(): Promise<void> {
-      // no-op in the browser mock
-    },
+    ...mockJournalFiles(graph.text),
     ...mockConflictApi,
+    ...mockQuickShareCommands,
+    ...mockGitCommands,
     async onConflictsChanged(): Promise<() => void> {
       return () => {};
     },
@@ -1511,9 +354,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       }
     },
     async copyAssetFileToClipboard(): Promise<boolean> { return false; },
-    async copyImageToClipboard(): Promise<void> {
-      // no OS clipboard image write in the browser mock
-    },
+    async copyImageToClipboard(): Promise<void> {},
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
     },
@@ -1521,31 +362,22 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async onCustomCssChanged(): Promise<() => void> { return () => {}; },
     async editGlobalCss(): Promise<void> {},
-    async editCustomCss(): Promise<void> {
-      // no OS editor in the browser mock
-    },
-    ...mockGitCommands,
+    async editCustomCss(): Promise<void> {},
     async getBackupKeep(): Promise<number> {
       return 12;
     },
-    async setBackupKeep(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setBackupKeep(): Promise<void> {},
     async getCaptureEnterFiles(): Promise<boolean> {
       return false;
     },
-    async setCaptureEnterFiles(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setCaptureEnterFiles(): Promise<void> {},
     async getLinkFirstMatch(): Promise<boolean> {
       return false; // the legacy key is read-only (migration source); never set
     },
     async getWatchMode(): Promise<string> {
       return "inotify";
     },
-    async setWatchMode(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setWatchMode(): Promise<void> {},
     async listBackups() {
       return [];
     },
@@ -1587,9 +419,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async getSmoothScroll(): Promise<boolean> {
       return false;
     },
-    async setSmoothScroll(_value: boolean): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setSmoothScroll(_value: boolean): Promise<void> {},
     async getAppBool(key: string, fallback: boolean): Promise<boolean> {
       const v = mockAppBools[key];
       return v === undefined ? fallback : v;
@@ -1625,7 +455,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const text = JSON.stringify({ schemaVersion: 1, tool: "tine-graph-bytes", algorithm: "sha256", complete: true, generatedAtUnixMs: Date.now(), files: [], aggregateDigest, errors: [] }, null, 2);
       return { text, suggestedFileName: "tine-graph-verification-mock.json", totalFiles: 0, totalBytes: 0, aggregateDigest, complete: true };
     },
-    async cancelGraphVerification(): Promise<void> { /* no-op in the browser mock */ },
+    async cancelGraphVerification(): Promise<void> {},
     async saveGraphVerificationReport(): Promise<boolean> { return false; },
     async onGraphVerificationProgress(): Promise<() => void> { return () => {}; },
     async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
@@ -1636,6 +466,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async appArchitecture(): Promise<string> { return "x86_64"; },
     async watcherLatencyRecent(): Promise<unknown[]> { return []; },
+    // PDF highlight records are host state; the `hls__` page is graph text the desktop writes.
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },
@@ -1650,14 +481,26 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseHighlights: Highlight[]): Promise<Highlight[]> {
       return (mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights }).highlights;
     },
-    async savePdfAreaImage(
-      pdf: string,
-      page: number,
-      id: string,
-      stamp: number, _bytes: Uint8Array,
-    ): Promise<string> {
+    async savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, _bytes: Uint8Array): Promise<string> {
       return `${pdf.replace(/\.pdf$/i, "")}/${page}_${id}_${stamp}.png`;
     },
     async rollbackPdfAreaImage(): Promise<void> {},
   };
+
+  // Anything else is a store write path or a native answer (rename, merge,
+  // conflict resolution, journal migration, print, publication, the Guide
+  // copy): refused, as the published export refuses what it does not answer.
+  return new Proxy(explicit as Record<string, unknown>, {
+    get(target, property) {
+      if (typeof property !== "string") return undefined;
+      if (property in target) return target[property];
+      if (property === "then" || MOCK_ABSENT_METHODS.has(property)) return undefined;
+      return async () => {
+        throw new Error(MOCK_REFUSAL_MESSAGE);
+      };
+    },
+    has(target, property) {
+      return typeof property === "string" && !MOCK_ABSENT_METHODS.has(property) ? true : property in target;
+    },
+  }) as unknown as Backend;
 }

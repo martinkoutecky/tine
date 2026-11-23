@@ -1,7 +1,7 @@
 // GH #849: an idle page with many linked references must reach a fixed point. Chromium, the engine of the
 // reporter's Windows WebView2: opens the hub, scrolls to the middle of its references, optionally runs a Ctrl+F,
 // then does nothing and records every change of scrollTop, scrollHeight, per-row heights and DOM mutations.
-// Usage: npm run build && node scripts/shot-gh849-idle.mjs [seconds]   (GH849_FIND=0 skips the find step)
+// Usage: npm run build:mock && node scripts/shot-gh849-idle.mjs [seconds]   (GH849_FIND=0 skips the find step)
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";

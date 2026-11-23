@@ -1,10 +1,13 @@
 import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 import { vitestMaxWorkers } from "./scripts/lib/vitest-workers.mjs";
+import { vitestWasmBytes } from "./scripts/lib/vitest-wasm-bytes.mjs";
 
 // Store/editor-logic tests are pure TS (no DOM). Use the node environment and
 // skip the Solid JSX plugin so no jsdom is required.
 export default defineConfig({
+  // The browser core's wasm bytes, read from disk rather than served (see the plugin).
+  plugins: [vitestWasmBytes()],
   // Build-time constants injected by Vite's `define` in prod (vite.config.ts);
   // stub them so modules that read them at import time load in tests.
   define: {
@@ -26,7 +29,7 @@ export default defineConfig({
     // Builds and drives the native tine-store peer: its own mandatory gate,
     // `npm run test:storage-conformance` (vitest.storage.config.ts), after Rust tests.
     exclude: [...configDefaults.exclude, "src/document/host/nativeConformance.test.ts"],
-    setupFiles: ["./src/testSetup.waitFor.ts", "./src/testSetup.parser.ts"],
+    setupFiles: ["./src/testSetup.waitFor.ts", "./src/testSetup.parser.ts", "./src/testSetup.mock.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {

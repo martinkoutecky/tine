@@ -1,5 +1,5 @@
 // GH #879 items 2–3. Run against the built app with its synthetic browser graph:
-// npm run build && node scripts/e2e-code-edit-toolbar.mjs
+// npm run build:mock && node scripts/e2e-code-edit-toolbar.mjs
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { spawn, execFileSync } from "node:child_process";

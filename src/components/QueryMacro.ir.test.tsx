@@ -491,8 +491,9 @@ describe("B1: a TQL block executes through query_run", () => {
       // default — and sending the resolved view rather than the raw reading is
       // what makes a scoped one reach the executor at all.
       // og: the reading's own view goes to the evaluator (the scoped-display
-      // resolver that turns `{}` into `{ view: "list" }` is Q4b's).
-      expect(view).toEqual({});
+      // resolver that turns `{}` into `{ view: "list" }` is Q4b's). The store's
+      // parse answers an empty reading with its empty lists (ADR 0081).
+      expect(view).toEqual({ sort: [], columns: [], aggregates: [] });
     } finally {
       dispose();
     }

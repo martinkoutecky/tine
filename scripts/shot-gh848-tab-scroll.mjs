@@ -1,6 +1,6 @@
 // GH #848: switching tab and back keeps the reading position deep in Linked References. Chromium, the reporter's
 // engine. Records the first row in view (and its offset) and the scrollbar before leaving, and again some time after
-// coming back. Usage: npm run build && node scripts/shot-gh848-tab-scroll.mjs
+// coming back. Usage: npm run build:mock && node scripts/shot-gh848-tab-scroll.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";

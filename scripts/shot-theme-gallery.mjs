@@ -1,7 +1,7 @@
 // Built-in theme gallery acceptance shots. Runs against the built frontend and
 // mock backend, saving full visual checks under subagent-tasks/notes/ plus small
 // crops used by Settings card thumbnails.
-// Usage (after `source scripts/env.sh && npm run build`):
+// Usage (after `source scripts/env.sh && npm run build:mock`):
 //   node scripts/shot-theme-gallery.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";

@@ -143,6 +143,10 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
         const state = held.get(key);
         return state ? [{ key, version: state.version, rev: state.rev }] : [];
       }) : false),
+    // A delete the host applies: the fake disk models the files a test saves,
+    // not every page the test loaded, so a delete answers as for a file that exists.
+    remove: vi.spyOn(b, "pageDelete").mockResolvedValue("applied"),
+    removeFile: vi.spyOn(b, "pageDeleteFile").mockResolvedValue("applied"),
     // A page whose save failed or conflicted still owes its buffer to its file.
     owed: vi.spyOn(b, "pageOwed").mockImplementation(async (_session, paths) =>
       [...held].filter(([key, state]) => (state.conflict || state.failed) && (!paths || paths.includes(key)))
