@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-23
+
 ### Fixed
 
 - The main window and additional graph windows can now be resized down to 390 pt wide on desktop (#1005).
@@ -7544,7 +7546,8 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/martinkoutecky/tine/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/martinkoutecky/tine/compare/v0.9.0...v0.9.1
 [0.9.0-beta.1]: https://github.com/martinkoutecky/tine/compare/v0.8.2...v0.9.0-beta.1
 [0.8.2]: https://github.com/martinkoutecky/tine/compare/v0.8.1...v0.8.2

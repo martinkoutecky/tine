@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.2",
+  "baseTag": "v0.9.1",
+  "focusedAudit": {
+    "required": false,
+    "reason": "Martin authorized the stable patch release on 2026-11-22 (D-20261122-092). The release checklist reserves audits for maintainer requests."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "The main window and additional graph windows can now be resized down to 390 pt wide on desktop (#1005).",
+      "userVisible": true,
+      "regressions": ["UI-GH1005-NARROW-GRAPH-WINDOW"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The native test covers the minimum width. The catalog records Linux evidence for a routed page and the sidebar overlays. macOS tiling and Windows runtime remain unverified.",
+        "refs": ["src-tauri/src/workspace_windows.rs", "tests/ui-regressions/catalog.json"]
+      },
+      "docs": {"status": "update", "reason": "The Guide records the new minimum width for desktop graph windows.", "refs": ["crates/tine-core/src/templates/where-things-are.md"]},
+      "website": {"status": "update", "reason": "The public Guide includes the new desktop window width.", "refs": ["website/guide/start-where-things-are.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Configured Hiccup macros render bare-word arguments like `{{r education}}`, just like their quoted equivalents (#1018).",
+      "userVisible": true,
+      "regressions": ["UI-GH1018-MACRO-BARE-ARG"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The render and Hiccup tests cover inline and block output, bare and quoted arguments, and malformed symbols that remain literal.",
+        "refs": ["src/render/astRender.test.tsx", "src/render/hiccup.test.ts"]
+      },
+      "docs": {"status": "current", "reason": "The existing Hiccup examples remain valid. The release note records the bare-word fix.", "refs": ["crates/tine-core/src/templates/showcase.md"]},
+      "website": {"status": "current", "reason": "The public Guide's Hiccup examples remain valid.", "refs": ["website/guide/feature-showcase.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Enter at the end of an expanded block embed adds a visible first child and moves the caret there, even when the source is folded (#1023).",
+      "userVisible": true,
+      "regressions": ["UI-GH1023-EXPANDED-EMBED-ENTER"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The render regression checks first-child order, caret focus in the embed, the source fold, and one-step Undo.",
+        "refs": ["src/components/Block.embedStructural.test.tsx"]
+      },
+      "docs": {"status": "update", "reason": "The Guide describes Enter and Undo in an expanded embed.", "refs": ["crates/tine-core/src/templates/pages-links-references-search.md"]},
+      "website": {"status": "update", "reason": "The public Guide includes the expanded-embed instructions.", "refs": ["website/guide/reference-pages-links-references-and-search.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Distribution packagers can build the PDF decoder with Debian trixie's Emscripten 3.1.69 using `TINE_PDFJS_EMCC` (#1027).",
+      "userVisible": true,
+      "regressions": ["REG-GH187-GH976-PACKAGER-EMSCRIPTEN"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The build and ABI tests cover the packager compiler override and the older decoder interface. The catalog records matching JPEG 2000 output with the pinned and packager toolchains.",
+        "refs": ["src/pdfjsOpenjpegBuild.test.ts", "src/pdfjsOpenjpegAbi.test.ts", "tests/regressions/non-ui.json"]
+      },
+      "docs": {"status": "update", "reason": "The build notes document the Debian compiler and the packager override.", "refs": ["README.md", "vendor/pdfjs-openjpeg/README.md"]},
+      "website": {"status": "not-applicable", "reason": "The change applies when building distribution packages.", "refs": []},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    }
+  ]
+}
