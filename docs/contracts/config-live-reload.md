@@ -137,20 +137,24 @@ Session state remains outside the graph, with no additional persisted fields.
 | config.edn could not be read at open or on a live reload (not valid UTF-8, too large to parse, or inaccessible) | The graph runs on default settings and its editing UI is read-only: the unknown `:file/name-format` cannot safely name a page write. The transaction guard refuses with typed `Refusal::ConfigUnreadable`; a Settings config read failure carries the same internal `config-unreadable` family. The window shows `ui-failure-config-read`, never the raw read error, in the notice, page banner and Settings error. The cause remains available for diagnostics. The page host's own saves do not consult the transaction guard; this change preserves that policy. Fixing or replacing config.edn lifts the graph restriction and clears the notice through the watcher without a restart; intrinsic Org restrictions remain | Sync delivery; external editor; disk/permission error; an undownloaded or corrupted config |
 | A rename's config.edn write fails after its page files were published (disk full, permission, a lost race) | The pages stay renamed and nothing is rolled back; config.edn keeps its old bytes. The app's rename returns the rename as done with the cause in `config_skipped`, so the window refreshes and toasts that the page was renamed but home and favorites may still name the old page; the CLI keeps the error and reports the rename as uncertain (`IncompleteRename`) | Disk error between the last page step and the config step |
 
-The shared EDN reader supplies complete direct settings, including those before
-a torn suffix. A malformed setting uses its default when the reader can locate
-the next entry. An unreadable `:hidden` value hides graph text until it is
-repaired. If the root or suffix cannot be read, the restriction applies only
-when the reader reached a direct key with the effective name `:hidden`
-before or at the failure, including `:_/hidden` in a namespaced root and
-keys in metadata-wrapped roots. Comments, discarded forms and strings do
-not supply exclusion keys. A config containing only whitespace, commas,
-comments or complete discards uses default settings. Quick share and folder
-export use the same graph scope for page selection.
+The shared EDN reader recovers local settings entry by entry in plain,
+namespaced and metadata-wrapped root maps. It qualifies namespaced keys
+before using them, so `:_/hidden` has the effective name `:hidden`. When
+the reader can locate the next entry after a malformed value, that value
+uses its default and the later entries still apply. An unreadable
+`:hidden` value hides graph text until it is repaired. The reader also
+hides graph text if root recovery stops after reaching a direct `:hidden`
+key, or if it reaches a direct `:hidden` key in a trailing map. If the
+input ends between entries or during a value and the root has no exclusion
+key, previously read settings still apply. Comments, discarded forms and
+strings do not supply exclusion keys. A config containing only whitespace,
+commas, comments or complete discards uses default settings. Quick share
+and folder export use the same graph scope for page selection.
 
-The reader's config input limit is 64 MiB, with a 128-level nesting limit,
-one million nodes and 250,000 forms per complete collection. The same node
-limit bounds the root map's entry recovery.
+Input over the reader's 64 MiB config limit is an unreadable exclusion and
+hides graph text. The reader also has a 128-level nesting limit, a
+one-million-node limit and a 250,000-form limit per complete collection.
+The node limit also bounds root map entry recovery.
 
 Settings writes use the effective map entries from that reader and preserve
 unrelated metadata, discards and comments. In a namespaced map, an inserted

@@ -266,6 +266,8 @@ it.each([
   ['#_ #^:meta {:hidden ["pages/secret.md"]}\r\n', ["public", "secret"]],
   ['{:_/hidden ["pages/secret.md"', ["public", "secret"]],
   ['#:demo{:_/hidden ["pages/secret.md"]}', ["public"]],
+  ['^:meta #:demo{:bad #unknown [] :_/hidden ["pages/secret.md"]}', ["public"]],
+  ['#^:meta {:hidden ["pages/secret.md"] :bad "bad\\q"}', ["public"]],
   ['^:meta #:demo{:_/hidden ["pages/secret.md"', []],
 ] as const)("opens with the exclusions authored in config %j", (source, expected) => {
   const graph = open([

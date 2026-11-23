@@ -1222,15 +1222,77 @@ mod tests {
     }
 
     #[test]
+    fn config_root_spellings_recover_the_same_entries() {
+        let mut failures = Vec::new();
+        for (prefix, key_ns) in [
+            ("", ""),
+            ("#:demo", "_/"),
+            ("^:meta ", ""),
+            ("#^:meta ", ""),
+            ("^:meta #:demo", "_/"),
+            ("#^:meta #:demo", "_/"),
+            ("^:meta #^{:note true} #:demo", "_/"),
+        ] {
+            let hidden = format!(r#":{key_ns}hidden ["pages/Secret.md"]"#);
+            let pages = format!(r#":{key_ns}pages-directory "notes""#);
+            let namespaced = if key_ns.is_empty() {
+                ""
+            } else {
+                r#":hidden [] :pages-directory "namespace-only""#
+            };
+            for broken in [r#"#unknown []"#, r#""bad\q""#, r#"\malformed"#] {
+                let broken = format!(":bad {broken}");
+                for [first, second] in [[&broken, &hidden], [&hidden, &broken]] {
+                    for newline in ["\n", "\r\n"] {
+                        let source = format!(
+                            "{prefix}{{{newline}{namespaced}{newline}{first}{newline}{second}{newline}{pages}{newline}}}"
+                        );
+                        let cfg = Config::parse(&source);
+                        if cfg.hidden != ["pages/Secret.md"]
+                            || cfg.hidden_parse_failed_closed
+                            || cfg.pages_dir != "notes"
+                        {
+                            failures.push(format!(
+                                "{source:?} => hidden={:?}, closed={}, pages_dir={:?}",
+                                cfg.hidden, cfg.hidden_parse_failed_closed, cfg.pages_dir
+                            ));
+                        }
+                        assert!(
+                            Config::parse_for_publication(&source).is_none(),
+                            "{source:?}"
+                        );
+                    }
+                }
+            }
+            for end in [r#"["pages/Secret.md""#, r#"["pages/Secret.md"]"#] {
+                let source = format!("{prefix}{{:{key_ns}hidden {end}");
+                if !Config::parse(&source).hidden_parse_failed_closed {
+                    failures.push(format!("{source:?} => torn config did not fail closed"));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "Wrong config recovery in {} cases:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn oversized_config_fails_closed() {
+        let limit = crate::edn::MAX_INPUT_BYTES;
+        let source = " ".repeat(limit + 1);
+        let cfg = Config::parse(&source[..limit]);
+        assert!(!cfg.hidden_parse_failed_closed);
+        let cfg = Config::parse(&source);
+        assert!(cfg.hidden_parse_failed_closed);
+    }
+
+    #[test]
     fn unreadable_config_counts_only_effective_keys_lexed_before_failure() {
         let mut failures = Vec::new();
         for (read, suffix, closed, pages_dir) in [
-            (
-                "",
-                r#"#:demo{:bad #unknown [] :_/hidden ["pages/Secret.md"]}"#,
-                false,
-                "pages",
-            ),
             ("", r#"^ {:hidden []} {:bad ["torn""#, false, "pages"),
             ("", r#"#:demo{:hidden ["torn""#, false, "pages"),
             ("", r#"{:_/hidden ["torn""#, false, "pages"),
