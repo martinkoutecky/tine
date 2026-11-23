@@ -1,0 +1,96 @@
+- Windowed outline
+	- Child 0
+	- Child 1
+	- Child 2
+	- Child 3
+	- Child 4
+	- Child 5
+	- Child 6
+	- Child 7
+	- Child 8
+	- Child 9
+	- Child 10
+	- Child 11
+	- Child 12
+	- Child 13
+	- Child 14
+	- Child 15
+	- Child 16
+	- Child 17
+	- Child 18
+	- Child 19
+	- Child 20
+	- Child 21
+	- Child 22
+	- Child 23
+	- Child 24
+	- Child 25
+	- Child 26
+	- Child 27
+	- Child 28
+	- Child 29
+	- Child 30
+	- Child 31
+	- Child 32
+	- Child 33
+	- Child 34
+	- Child 35
+	- Child 36
+	- Child 37
+	- Child 38
+	- Child 39
+	- Child 40
+	- Child 41
+	- Child 42
+	- Child 43
+	- Child 44
+	- Child 45
+	- Child 46
+	- Child 47
+	- Child 48
+	- Child 49
+	- Child 50
+	- Child 51
+	- Child 52
+	- Child 53
+	- Child 54
+	- Child 55
+	- Child 56
+	- Child 57
+	- Child 58
+	- Child 59
+	- Child 60
+	- Child 61
+	- Child 62
+	- Child 63
+	- Child 64
+	- Child 65
+	- Child 66
+	- Child 67
+	- Child 68
+	- Child 69
+	- Child 70
+	- Child 71
+	- Child 72
+	- Child 73
+	- Child 74
+	- Child 75
+	- Child 76
+	- Child 77
+	- Child 78
+	- Child 79
+	- Child 80
+	- Child 81
+	- Child 82
+	- Child 83
+	- Child 84
+- Row 0
+- Row 1
+- Row 2
+- Row 3
+- Tail 0
+	- Tail child 0
+- Tail 1
+	- Tail child 1
+- Tail 2
+	- Tail child 2

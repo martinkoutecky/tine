@@ -60,10 +60,22 @@ function manyRefsFiles(): Record<string, string> {
   return files;
 }
 
-/** The generated files a URL's flags add (`?big[&blocks=N][&long]`, `?manyrefs`). */
+/** GH #745 (`?gh745[=2,6,…]`): ten sections of 100 rows, the listed rows of each carrying the `gh745.png`
+ * image (default 5 and 45). The same block texts as `gh745Page` in scripts/lib/gh745-fixture.mjs, which the
+ * native journeys write to disk; scripts/check-gh745-outline-viewport.mjs checks the two agree. */
+function gh745Files(rows: string | null): Record<string, string> {
+  const images = rows ? rows.split(",").map(Number) : [5, 45];
+  const sections = Array.from({ length: 10 }, (_, section): Node => [`Section ${section}`,
+    Array.from({ length: 100 }, (_, row) => `Section ${section} row ${row} text for structural editing`
+      + (images.includes(row) ? "\n![loaded image](../assets/gh745.png)" : ""))]);
+  return { "pages/GH745 outline.md": outline(sections) };
+}
+
+/** The generated files a URL's flags add (`?big[&blocks=N][&long]`, `?manyrefs`, `?gh745[=rows]`). */
 export function generatedFlagFiles(search: string): Record<string, string> {
   const params = new URLSearchParams(search);
   const files: Record<string, string> = {};
+  if (params.has("gh745")) Object.assign(files, gh745Files(params.get("gh745") || null));
   if (/[?&]big\b/.test(search)) {
     const n = Math.min(5000, Math.max(1, Number(params.get("blocks")) || 2000));
     const raws = bigPageRaws(n).map((raw, i) => params.has("long")

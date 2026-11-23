@@ -1,28 +1,31 @@
-// The routed web app with synthetic source pages and the production stylesheet.
-// Playwright sends actual pointer and keyboard input. The mock clipboard
-// captures the two formats at the backend boundary.
+// The routed web app on the browser mock's `?blankhit` fixture pages
+// (src/mock/flags/blankhit/) and the production stylesheet. Playwright sends
+// actual pointer and keyboard input. The mock clipboard captures the two
+// formats at the backend boundary.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
+import { idOf, mockBlockIds } from "./lib/mock-block-ids.mjs";
 
 const block = (id, raw, children = [], collapsed = false) => ({ id, raw, children, collapsed });
-const note = (name, blocks, kind = "page", pre_block = null) => ({ name, title: name, kind, pre_block, blocks });
+// The fixture files' outlines; each block's id is the core's, read at startup.
+const note = (path, name, blocks, kind = "page", pre_block = null) => ({ path, name, title: name, kind, pre_block, blocks });
 const leaf = block("leaf", "Source child");
 const ref = block("ref", "A link to [[Blank Hit]]", [leaf]);
 const short = block("short", "Short outline", [block("short-child", "Short child")]);
 const windowed = block("windowed", "Windowed outline", Array.from({ length: 85 }, (_, i) => block(`child-${i}`, `Child ${i}`)));
-const shortPage = note("Short Blank Hit", [short], "page", "Preamble text");
-const longPage = note("Blank Hit", [windowed, ...Array.from({ length: 4 }, (_, i) => block(`row-${i}`, `Row ${i}`)),
+const shortPage = note("pages/Short Blank Hit.md", "Short Blank Hit", [short], "page", "Preamble text");
+const longPage = note("pages/Blank Hit.md", "Blank Hit", [windowed, ...Array.from({ length: 4 }, (_, i) => block(`row-${i}`, `Row ${i}`)),
   ...Array.from({ length: 3 }, (_, i) => block(`tail-${i}`, `Tail ${i}`, [block(`tail-child-${i}`, `Tail child ${i}`)]))]);
-const refPage = note("Blank Hit Ref", [ref, block("unrelated", "Unrelated source block")]);
+const refPage = note("pages/Blank Hit Ref.md", "Blank Hit Ref", [ref, block("unrelated", "Unrelated source block")]);
 const embedded = block("embedded", "Embedded source", [block("embedded-child", "Embedded child")]);
-const embedSource = note("Embedded Blank Hit", [embedded]);
-const embedPage = note("Embed Blank Hit", [block("embed-host", "{{embed [[Embedded Blank Hit]]}}")]);
-const firstDay = note("Jun 14th, 2026", [block("day-one", "First day")], "journal");
-const secondDay = note("Jun 13th, 2026", [block("day-two", "Second day", [block("day-child", "Second day child")])], "journal");
+const embedSource = note("pages/Embedded Blank Hit.md", "Embedded Blank Hit", [embedded]);
+const embedPage = note("pages/Embed Blank Hit.md", "Embed Blank Hit", [block("embed-host", "{{embed [[Embedded Blank Hit]]}}")]);
+const firstDay = note("journals/2026_06_14.md", "Jun 14th, 2026", [block("day-one", "First day")], "journal");
+const secondDay = note("journals/2026_06_13.md", "Jun 13th, 2026", [block("day-two", "Second day", [block("day-child", "Second day child")])], "journal");
 const fixtures = [shortPage, longPage, refPage, embedSource, embedPage, firstDay, secondDay];
 
 const root = process.cwd();
@@ -40,13 +43,8 @@ const server = await createServer({
   cacheDir: path.resolve("target/793-rule-vite"),
   server: { host: "127.0.0.1", port: 0, strictPort: false, watch: null, hmr: false },
   plugins: [{
-    name: "blank-hit-fixtures", enforce: "pre",
+    name: "blank-hit-baseline", enforce: "pre",
     load(id) { return originals.get(id); },
-    transform(code, id) {
-      if (!id.endsWith("/src/mock.ts")) return;
-      return code.replace("const all = [...PAGES, ...NAMED, ...extraPages];", `const all = ${JSON.stringify(fixtures)};`)
-        .replace("const candidates = PAGES", "const candidates = all");
-    },
   }],
 });
 
@@ -87,8 +85,23 @@ async function separatorPoint(wrapper) {
   });
 }
 
-const first = '[data-block-id="short"]';
-const wide = '[data-block-id="windowed"]';
+await server.listen();
+const address = `${server.resolvedUrls.local[0]}?blankhit`;
+let browser;
+const failures = [];
+try {
+  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  {
+    const probe = await browser.newPage();
+    await probe.goto(address, { waitUntil: "commit" });
+    await probe.locator(".main-content").first().waitFor();
+    const ids = await mockBlockIds(probe, fixtures.map(note => note.path));
+    for (const note of fixtures) for (const row of flatten(note.blocks)) row.id = idOf(ids[note.path], row.raw);
+    await probe.close();
+  }
+const first = `[data-block-id="${short.id}"]`;
+const wide = `[data-block-id="${windowed.id}"]`;
+const childZero = `[data-block-id="${windowed.children[0].id}"]`;
 const day = '.journal-feed-day[data-feed-day="Jun 13th, 2026"]';
 const positive = [
   ["scroller gutter", shortPage, ".main-content", shortPage.blocks],
@@ -96,11 +109,11 @@ const positive = [
   ["preamble row padding", shortPage, ".preamble-block > .block-main", shortPage.blocks],
   ["short row padding", shortPage, `${first} > .block-main`, shortPage.blocks],
   ["short child indentation", shortPage, `${first} > .block-children-container > .block-children`, shortPage.blocks],
-  ["windowed row padding", longPage, ".outline-window [data-block-id='child-0'] > .block-main", longPage.blocks],
+  ["windowed row padding", longPage, `.outline-window ${childZero} > .block-main`, longPage.blocks],
   ["windowed child indentation", longPage, `${wide} > .block-children-container > .block-children`, longPage.blocks],
   ["reference card shell", longPage, ".reference-group", [ref]],
   ["reference card header", longPage, ".reference-group-header", [ref]],
-  ["reference row padding", longPage, '[data-block-id="ref"] > .block-main', [ref]],
+  ["reference row padding", longPage, `[data-block-id="${ref.id}"] > .block-main`, [ref]],
   ["embed accent padding", embedPage, ".embed-page > .live-ref-group", [embedded]],
   ["second journal body", secondDay, `${day} .page-blocks`, secondDay.blocks],
   ["second journal row padding", secondDay, `${day} .page-blocks > .ls-block > .block-main`, secondDay.blocks],
@@ -109,12 +122,6 @@ const positive = [
   ["zoom child indentation", shortPage, ".zoomed-page .block-children", [short]],
 ];
 
-await server.listen();
-let browser;
-const failures = [];
-try {
-  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-  const address = server.resolvedUrls.local[0];
   async function run(name, route, action, targets, getPoint, shouldSelect) {
     if (only && name !== only) return;
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -135,11 +142,11 @@ try {
       if (name.startsWith("zoom ")) await page.locator(`${first} > .block-main .bullet-container`).click();
       if (targets.includes(ref)) {
         await page.locator(".reference-group-header").first().scrollIntoViewIfNeeded();
-        await page.locator('.ls-block:not(.ref-block)[data-block-id="ref"]').waitFor();
+        await page.locator(`.ls-block:not(.ref-block)[data-block-id="${ref.id}"]`).waitFor();
       }
-      if (route === embedPage) await page.locator('.ls-block:not(.ref-block)[data-block-id="embedded"]').waitFor();
-      if (name.startsWith("windowed ")) await page.locator('.outline-window [data-block-id="child-0"]').waitFor();
-      if (route.kind === "journal") await page.locator(`${day} [data-block-id="day-two"]`).waitFor();
+      if (route === embedPage) await page.locator(`.ls-block:not(.ref-block)[data-block-id="${embedded.id}"]`).waitFor();
+      if (name.startsWith("windowed ")) await page.locator(`.outline-window ${childZero}`).waitFor();
+      if (route.kind === "journal") await page.locator(`${day} [data-block-id="${secondDay.blocks[0].id}"]`).waitFor();
       // Expose the intended outline hit on themes where adjacent rows cover
       // the last padding pixel or the guide button covers the indent strip.
       if (name.includes("indentation")) await page.addStyleTag({ content: ".block-children { padding-inline-start: 12px }" });

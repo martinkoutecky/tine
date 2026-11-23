@@ -1,5 +1,6 @@
-// Real frontend + graph-asset cache in Chromium. The Vite-only fixture plugin
-// leaves the shipped mock and production backend unchanged.
+// Real frontend + graph-asset cache in Chromium, on the browser mock's `?gh745`
+// fixture page (src/mockScrollFixtures.ts). The script gives the mock its image
+// asset and, for late-image, holds asset reads, through the app's own backend().
 import { createServer } from "vite";
 import { chromium } from "playwright";
 import fs from "node:fs";
@@ -8,10 +9,14 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { gh745Page, gh745Png } from "./lib/gh745-fixture.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { idOf, mockBlockIds } from "./lib/mock-block-ids.mjs";
 
 const out = process.env.GH745_OUT || "artifacts/gh745-outdent/chromium";
 fs.mkdirSync(out, { recursive: true });
-const fixture = gh745Page((process.env.GH745_IMAGES || Array.from({ length: 22 }, (_, i) => 2 + 4 * i).join(",")).split(",").map(Number));
+const images = (process.env.GH745_IMAGES || Array.from({ length: 22 }, (_, i) => 2 + 4 * i).join(",")).split(",").map(Number);
+const fixture = gh745Page(images);
+const PATH = "pages/GH745 outline.md";
+const png = [...gh745Png(zlib)];
 const baseline = process.env.GH745_BASE === "1";
 const originals = new Map(baseline ? ["src/components/BlockList.tsx", "src/render/inline.tsx", "src/assetCache.ts", "src/editor/caretReveal.ts"].map((file) =>
   [path.resolve(file), execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8" })]) : []);
@@ -19,12 +24,6 @@ const server = await createServer({ cacheDir: path.resolve(out, ".vite"), server
   fs: { allow: [process.cwd(), path.dirname(fs.realpathSync("node_modules/vite"))] } }, plugins: [{
   name: "gh745-fixture", enforce: "pre",
   load(id) { if (originals.has(id)) return originals.get(id); },
-  transform(code, id) {
-    if (!id.endsWith("/src/mock.ts")) return;
-    return code.replace("const all = [...PAGES, ...NAMED, ...extraPages];", `const all = [...PAGES, ...NAMED, ...extraPages, ${JSON.stringify(fixture)}];`)
-      .replace("async readAsset(name: string, maxBytes: number): Promise<Uint8Array> {", "async readAsset(name: string, maxBytes: number): Promise<Uint8Array> {\n      if ((globalThis as any).__gh745AssetGate) await (globalThis as any).__gh745AssetGate;")
-      .replace("const bytes = mockAssets[name] ??", `const bytes = (name === "gh745.png" ? new Uint8Array(${JSON.stringify([...gh745Png(zlib)])}) : mockAssets[name]) ??`);
-  },
 }] });
 await server.listen();
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
@@ -53,9 +52,23 @@ try {
     });
     page.on("pageerror", (error) => console.error(error.message));
     page.on("console", (message) => { if (message.type() === "error") console.error(message.text()); });
-    await page.goto(server.resolvedUrls.local[0]);
+    await page.goto(`${server.resolvedUrls.local[0]}?gh745=${images.join(",")}`);
     try { await page.waitForSelector(".page-title"); }
     catch (error) { await page.screenshot({ path: `${out}/startup-failure.png` }); fs.writeFileSync(`${out}/startup-failure.html`, await page.content()); throw error; }
+    // The classic editor this check measures (CodeMirror is the default), the
+    // image asset, and (late-image) asset reads held until the edit is made.
+    await page.evaluate(async (png) => {
+      (await import("/src/editor/cm6Setting.ts")).setCm6EditorEnabled(false);
+      const { backend } = await import("/src/backend.ts");
+      const api = backend();
+      await api.saveAsset("gh745.png", new Uint8Array(png));
+      const read = api.readAsset.bind(api);
+      api.readAsset = async (...args) => { if (window.__gh745AssetGate) await window.__gh745AssetGate; return read(...args); };
+    }, png);
+    // The core names blocks by position; every fixture row must be on the page, with the same text.
+    const ids = (await mockBlockIds(page, [PATH]))[PATH];
+    const rowId = (section, r) => idOf(ids, fixture.blocks[section].children[r].raw);
+    for (const section of fixture.blocks) [section, ...section.children].forEach(block => idOf(ids, block.raw));
     await page.waitForTimeout(2000);
     // Adapt the canonical navigation helper to Playwright; native journeys use
     // the same helper directly through WebDriver.
@@ -69,7 +82,7 @@ try {
       },
     }, "GH745 outline");
     const row = process.env.GH745_ROW || "90";
-    const target = `[data-block-id="row-5-${row}"] > .block-main .block-content`;
+    const target = `[data-block-id="${rowId(5, Number(row))}"] > .block-main .block-content`;
     for (let i = 0; i < 400; i++) {
       if (await page.locator(target).count()) break;
       await page.evaluate(() => { document.querySelector(".main-content").scrollTop += 600; });
@@ -139,9 +152,9 @@ try {
         continue;
       }
       if (key === "drag") {
-        const bullet = page.locator(`[data-block-id="row-5-${row}"] > .block-main .bullet-container`);
+        const bullet = page.locator(`[data-block-id="${rowId(5, Number(row))}"] > .block-main .bullet-container`);
         const from = await bullet.boundingBox();
-        const to = await page.locator(`[data-block-id="row-5-${Number(row) + 2}"] > .block-main`).boundingBox();
+        const to = await page.locator(`[data-block-id="${rowId(5, Number(row) + 2)}"] > .block-main`).boundingBox();
         await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
         await page.mouse.down();
         await page.mouse.move(to.x + to.width / 2, to.y + to.height - 2, { steps: 8 });

@@ -16,7 +16,7 @@ vi.mock("./inputCapability", async (importOriginal) => ({
 import { App } from "./App";
 import { backend } from "./backend";
 import { initParser } from "./render/parse";
-import { pageByName, resetStore, type PageMail } from "./document";
+import { pageByName, resetStore } from "./document";
 import { endEdit, editingId, startEditing } from "./editorController";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { resetPaneLayoutToSingle } from "./panes";
@@ -24,26 +24,7 @@ import { mainPaneRouter, route } from "./router";
 import { resetMobileNavigationAtBottomForTests } from "./navSettings";
 import { firstLoadDone, setFirstLoadDone } from "./graphSession";
 
-// The browser core's whole-graph page reads say read-only even on the mock's
-// editable graph (ADR 0081; listed in the 5b receipt), so the window would
-// refuse the edit before any save. These journeys are about the toolbar's save
-// path, so the page reads say writable, as the desktop host's do.
-beforeAll(async () => {
-  await initParser();
-  const api = backend();
-  const writable = <T,>(page: T): T => (page ? { ...page, read_only: false } : page);
-  const getPage = api.getPage.bind(api);
-  const getPageByPath = api.getPageByPath.bind(api);
-  const subscribe = api.onPageMail.bind(api);
-  Object.assign(api, {
-    getPage: async (...args: Parameters<typeof getPage>) => writable(await getPage(...args)),
-    getPageByPath: async (...args: Parameters<typeof getPageByPath>) => writable(await getPageByPath(...args)),
-    onPageMail: (cb: (mail: PageMail) => void) => subscribe((mail) => cb(mail.page?.text.kind === "page"
-      ? { ...mail, page: { ...mail.page, text: { ...mail.page.text, dto: writable(mail.page.text.dto) } } }
-      : mail)),
-  });
-  await bindTestHost();
-});
+beforeAll(async () => { await initParser(); await bindTestHost(); });
 
 let disposeApp: (() => void) | undefined;
 afterEach(() => {

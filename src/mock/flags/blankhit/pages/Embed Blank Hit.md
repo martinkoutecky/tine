@@ -1,0 +1,1 @@
+- {{embed [[Embedded Blank Hit]]}}

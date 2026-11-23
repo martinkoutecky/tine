@@ -76,7 +76,7 @@ export function mockBackend(options: MockOptions = {}): Backend {
       const answer = await graph.submit(key, dto, version);
       return "written" in answer ? { version: answer.written.version } : answer;
     },
-    remove: (path) => graph.replace([[path, null]]),
+    write: (path, text) => graph.replace([[path, text]]),
     reset: () => graph.reset(),
   });
 

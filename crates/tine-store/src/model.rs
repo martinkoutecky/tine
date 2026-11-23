@@ -4571,7 +4571,7 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
 /// Whether a page should load read-only: an org file whose on-disk bytes don't
 /// round-trip through Tine's org parser/serializer, so Tine must never rewrite
 /// it (lest it corrupt the user's graph). Markdown pages are always editable.
-fn read_only_org(path: &Path, content: &str) -> bool {
+pub(crate) fn read_only_org(path: &Path, content: &str) -> bool {
     if Format::from_path(path) != Format::Org {
         return false;
     }

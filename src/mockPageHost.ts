@@ -8,7 +8,8 @@ export interface PageHostGraph {
   /** Serialize `dto` over the file's text with the store's page serializer and
    * replace the file: the key's new version, or the desktop host's refusal. */
   submit(key: string, dto: PageDto, version: number): Promise<{ version: number } | { refused: PageRefusal }>;
-  remove(path: string): Promise<void>;
+  /** Replace (null: delete) one file, then recapture the pages it holds. */
+  write(path: string, text: string | null): Promise<void>;
   /** Forget every edit (a window reload reloads the preview's graph). */
   reset(): void;
 }
@@ -46,7 +47,7 @@ export function mockPageHost(graph: PageHostGraph) {
   };
   const admit = (id: number) => { nextId = Math.max(nextId, id + 1); };
   const remove = async (path: string) => {
-    await graph.remove(path);
+    await graph.write(path, null);
     versions.set(path, (versions.get(path) ?? 1) + 1);
     return "applied" as const;
   };
@@ -90,6 +91,16 @@ export function mockPageHost(graph: PageHostGraph) {
     async pageSaveNow() {},
     async pageOwed() { return []; },
     async pageDraftsRetry() {},
+    /** The preview's stand-in for the desktop's file watcher, which scripts
+     * drive (`scripts/repro-carry-blur.mjs`): another program writes `text`
+     * to `path`, the core recaptures it, and the window gets the new text as
+     * unanswered page mail, as from a native external change. */
+    async externalWrite(path: string, text: string) {
+      await graph.write(path, text);
+      versions.set(path, (versions.get(path) ?? 1) + 1);
+      const page = await view(path);
+      for (const listener of listeners) listener({ session, key: path, page, answer: null, notice });
+    },
     async onPageMail(cb: (mail: PageMail) => void) { listeners.add(cb); return () => { listeners.delete(cb); }; },
     async onGraphOpenWaiting() { return () => {}; },
     async onGraphOpenOwnerWaiting() { return () => {}; },

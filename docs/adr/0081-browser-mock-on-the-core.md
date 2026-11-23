@@ -40,7 +40,10 @@ same shape: one engine, with storage behind an interface.
    Journals are named by `:journal/file-name-format` and namespaces by `:file/name-format`, as on disk.
 3. **An edit replaces files.** A page submit goes through `submit_page_json`, the desktop page host's serializer.
    A delete goes through `replace_files`. A later read, search or Open answers the saved text. A window reload
-   reopens the fixture files, as a browser reload of the preview does.
+   reopens the fixture files, as a browser reload of the preview does. The mock's graph is editable, so its page
+   reads are writable (`WholeGraph::page_read_only`: only an Org page that does not round-trip reads read-only),
+   while a published export's are read-only. The host's `externalWrite` (not a `Backend` member) stands in for the
+   desktop's file watcher: scripts write a file through `replace_files` and the window gets it as page mail.
 4. **Write paths beyond one page's text are refused.** Rename, merge, conflict resolution, journal filename
    migration, guide copy, print and the rename probe (`renameWouldChange`, the rename preview) all refuse, with one
    message. Any `Backend` member the mock does not define refuses the same way. End-to-end tests on the real
@@ -69,5 +72,7 @@ same shape: one engine, with storage behind an interface.
   the unit suite about 40% slower.
 - Screenshot and smoke scripts that run against the mock build it with `npm run build:mock`. Scripts that used to
   patch mock source at load time use fixture files or URL flags instead.
-- Fixture block ids that tests or scripts name are `id::` uuids in the fixture files.
+- The core gives each block a positional id (its file and sibling path). Scripts name a fixture block by its
+  text and ask the core for its id (`scripts/lib/mock-block-ids.mjs`); `id::` uuids in the fixture files are what
+  block references and embeds name.
 - Settings changes in the browser preview do not reach `loadGraph` until Decision 6's follow-up.

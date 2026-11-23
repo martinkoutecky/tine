@@ -1,5 +1,6 @@
-// GH #898: routed production App over a synthetic in-memory graph. Browser
-// contexts and HOME/XDG are disposable; no native graph or account is opened.
+// GH #898: routed production App over the browser mock's `?embedsticky` fixture
+// pages (src/mock/flags/embedsticky/). Browser contexts and HOME/XDG are
+// disposable; no native graph or account is opened.
 // STICKY_BASE=<commit> serves the pre-fix modules for the same fail-before check.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -7,6 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
 import { createServer } from "vite";
+import { idOf, mockBlockIds } from "./lib/mock-block-ids.mjs";
 
 const out = path.resolve(process.env.E2E_ARTIFACT_DIR || "target/artifacts/og-embed-sticky-898");
 const label = process.env.STICKY_LABEL || (process.env.STICKY_BASE ? "before" : "after");
@@ -17,7 +19,8 @@ for (const [key, dir] of [["HOME", "home"], ["XDG_DATA_HOME", "data"], ["XDG_CON
 }
 const tested = process.env.STICKY_BASE || `${execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()} + working diff`;
 const b = (id, raw, children = []) => ({ id, raw, collapsed: false, children });
-const dto = (name, blocks) => ({ name, title: name, kind: "page", pre_block: null, blocks });
+// The fixture files' outlines (written to the artifacts); the core's block ids are read at startup.
+const dto = (name, blocks) => ({ path: `pages/${name}.md`, name, title: name, kind: "page", pre_block: null, blocks });
 const uuid = "89800000-0000-4000-8000-000000000898";
 const source = b(uuid, `Source **root**\nid:: ${uuid}`, [b("branch", "Source branch", Array.from({ length: 70 }, (_, i) => b(`leaf-${i}`, `Embedded row ${i}`)))]);
 const tail = () => Array.from({ length: 35 }, (_, i) => b(`tail-${i}`, `Following sibling ${i}`));
@@ -29,16 +32,14 @@ const fixtures = [
 writeFileSync(path.join(out, "synthetic-graph.json"), JSON.stringify(fixtures, null, 2));
 const beforeFiles = ["src/components/Block.tsx", "src/components/StickyAncestor.tsx", "src/editor/caretReveal.ts"];
 const server = await createServer({ server: { port: Number(process.env.STICKY_PORT || 5298), strictPort: false }, plugins: [{
-  name: "sticky-embed-synthetic-graph", enforce: "pre",
+  name: "sticky-embed-baseline", enforce: "pre",
   load(id) {
     const old = beforeFiles.find(name => id.split("?")[0].endsWith(`/${name}`));
     if (old && process.env.STICKY_BASE) return execFileSync("git", ["show", `${process.env.STICKY_BASE}:${old}`], { encoding: "utf8" });
   },
-  transform(code, id) {
-    const file = id.split("?")[0];
-    if (file.endsWith("/src/mock.ts")) return code.replace("export function mockBackend", `NAMED.push(...${JSON.stringify(fixtures)});\nexport function mockBackend`);
-  },
 }] });
+// Fixture block -> the core's id: source root and branch, the 70 embedded rows, the two embed hosts.
+let id;
 let browser, page;
 const results = [], failures = [], errors = [];
 let stage = "startup";
@@ -51,10 +52,24 @@ try {
     page.setDefaultTimeout(30_000);
     page.on("pageerror", error => errors.push(String(error)));
     page.on("console", message => { if (message.type() === "error") console.error(message.text()); });
-    await page.goto(`http://localhost:${server.httpServer.address().port}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.goto(`http://localhost:${server.httpServer.address().port}/?embedsticky`, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await page.locator(".page-title").first().waitFor({ timeout: 60_000 });
+    if (!id) {
+      const ids = await mockBlockIds(page, fixtures.map(f => f.path));
+      const [src, pageHost, blockHost] = fixtures.map(f => ids[f.path]);
+      id = { source: idOf(src, source.raw), branch: idOf(src, "Source branch"),
+        leaves: Array.from({ length: 70 }, (_, i) => idOf(src, `Embedded row ${i}`)),
+        pageHost: idOf(pageHost, "{{embed [[Sticky source]]}}"), blockHost: idOf(blockHost, `{{embed ((${uuid}))}}`) };
+    }
   }
   await fresh();
+  // A reference list can re-render while it settles; a detached match is looked up again.
+  async function scrollTo(locator) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await locator.scrollIntoViewIfNeeded(); }
+      catch (error) { if (attempt >= 4 || !String(error).includes("not attached")) throw error; await page.waitForTimeout(200); }
+    }
+  }
   async function open(name, scope = ".main-content") {
     await page.keyboard.press("Control+k");
     await page.locator(".switcher-input").fill(name);
@@ -66,17 +81,17 @@ try {
     stage = name;
     console.log(`Checking ${name}`);
     const host = page.locator(`${scope} [data-block-id="${hostId}"]`).first();
-    await host.scrollIntoViewIfNeeded();
-    await host.locator('[data-block-id="leaf-20"]').waitFor();
-    await host.evaluate((el, reserved) => {
+    await scrollTo(host);
+    await host.locator(`[data-block-id="${id.leaves[20]}"]`).waitFor();
+    await host.evaluate((el, { reserved, leaf }) => {
       const root = el.closest(".main-content, .right-sidebar");
       root.style.setProperty("--seen-header-height", `${reserved}px`);
       root.dispatchEvent(new Event("seen-notice-resize"));
-      const row = el.querySelector('[data-block-id="leaf-20"] > .block-main');
+      const row = el.querySelector(`[data-block-id="${leaf}"] > .block-main`);
       root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top - 170 - reserved;
-    }, notice);
+    }, { reserved: notice, leaf: id.leaves[20] });
     await page.waitForTimeout(180); // IO paints asynchronously; geometry is the oracle below.
-    const g = await host.evaluate((el, { notice, type, uuid }) => {
+    const g = await host.evaluate((el, { notice, type, uuid, branchId, leafRows }) => {
       const root = el.closest(".main-content, .right-sidebar"), view = root.getBoundingClientRect();
       const pins = [...root.querySelectorAll('.sticky-ancestor button:not([hidden])')].map(button => {
         const holder = button.parentElement, box = button.getBoundingClientRect(), own = holder.parentElement;
@@ -86,17 +101,18 @@ try {
       const wanted = type === "page" ? el.dataset.blockId : uuid;
       const pin = pins.find(pin => pin.id === wanted);
       const sourcePin = pins.find(pin => pin.id === uuid);
-      const branch = pins.find(pin => pin.id === "branch");
+      const branch = pins.find(pin => pin.id === branchId);
       let depth = 0;
       const own = type === "page" ? el : el.querySelector(`[data-block-id="${uuid}"]`);
       for (let p = own.parentElement; p && p !== root; p = p.parentElement) if (p.hasAttribute("data-sticky-parent")) depth++;
       return { pins, wanted, depth, expectedTop: view.top + notice + depth * 30, viewTop: view.top, viewBottom: view.bottom,
         hostMainBottom: el.querySelector(":scope > .block-main").getBoundingClientRect().bottom,
         pin, sourcePin, branch, embeds: el.querySelectorAll(".embed-block").length,
-        childrenOnScreen: [...el.querySelectorAll('[data-block-id^="leaf-"] > .block-main')].some(row => {
+        childrenOnScreen: [...el.querySelectorAll(leafRows)].some(row => {
           const box = row.getBoundingClientRect(); return box.top < view.bottom && box.bottom > view.top + notice + (depth + 1) * 30;
         }) };
-    }, { notice, type, uuid });
+    }, { notice, type, uuid: id.source, branchId: id.branch,
+      leafRows: id.leaves.map(leaf => `[data-block-id="${leaf}"] > .block-main`).join(", ") });
     results.push({ name, ...g });
     await page.screenshot({ path: path.join(out, `${label}-${name}.png`) });
     const problems = [];
@@ -136,7 +152,7 @@ try {
   }
   async function checkCaret() {
     stage = "page-embed-keyboard-caret";
-    const row = page.locator('.main-content [data-block-id="page-host"] [data-block-id="leaf-20"] > .block-main .block-content');
+    const row = page.locator(`.main-content [data-block-id="${id.pageHost}"] [data-block-id="${id.leaves[20]}"] > .block-main .block-content`);
     await row.click();
     await page.keyboard.press("Home");
     await page.evaluate(() => {
@@ -144,54 +160,62 @@ try {
       root.scrollTop += editor.getBoundingClientRect().top - root.getBoundingClientRect().top - 2;
     });
     await page.keyboard.press("ArrowUp");
-    await page.waitForFunction(async () => {
+    await page.waitForFunction(async (leaf) => {
       const editor = document.activeElement, root = editor?.closest(".main-content");
-      if (!root || editor.closest(".ls-block")?.getAttribute("data-block-id") !== "leaf-19") return false;
+      if (!root || editor.closest(".ls-block")?.getAttribute("data-block-id") !== leaf) return false;
       const { editorCaretRow } = await import("/src/editor/caretReveal.ts");
       const g = editorCaretRow(editor, root);
       return g && g.top >= g.visibleTop - 1 && g.bottom <= g.visibleBottom + 1;
-    });
+    }, id.leaves[19]);
     await page.screenshot({ path: path.join(out, `${label}-page-keyboard-caret.png`) });
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
   }
   await open("Sticky page host");
-  await check(".main-content", "page-host", "page", "page-desktop");
+  await check(".main-content", id.pageHost, "page", "page-desktop");
   if (!process.env.STICKY_BASE) await checkCaret();
   // Literal link gestures create real sidebar and split-pane surfaces.
   await page.locator('.main-content .page-ref[data-ref="sticky page host"]').first().click({ modifiers: ["Shift"] });
-  await check(".right-sidebar", "page-host", "page", "page-sidebar", { notice: 46 });
+  await check(".right-sidebar", id.pageHost, "page", "page-sidebar", { notice: 46 });
   await page.keyboard.press("Control+Alt+Backslash");
   await page.waitForFunction(() => document.querySelectorAll(".pane-leaf").length === 2);
   await page.evaluate(() => [...document.querySelectorAll(".pane-leaf")].at(-1).setAttribute("data-sticky-probe", "split"));
   const split = '[data-sticky-probe="split"]';
   await page.locator(`${split} .tab`).first().click();
-  await check(`${split} .main-content`, "page-host", "page", "page-split");
+  await check(`${split} .main-content`, id.pageHost, "page", "page-split");
   await fresh();
   await open("Sticky block host");
-  await check(".main-content", "block-host", "block", "block-desktop");
+  await check(".main-content", id.blockHost, "block", "block-desktop");
   await page.locator('.main-content .page-ref[data-ref="sticky block host"]').first().click({ modifiers: ["Shift"] });
-  await check(".right-sidebar", "block-host", "block", "block-sidebar");
+  await check(".right-sidebar", id.blockHost, "block", "block-sidebar");
   await page.keyboard.press("Control+Alt+Backslash");
   await page.waitForFunction(() => document.querySelectorAll(".pane-leaf").length === 2);
   await page.evaluate(() => [...document.querySelectorAll(".pane-leaf")].at(-1).setAttribute("data-sticky-probe", "split"));
-  await check(`${split} .main-content`, "block-host", "block", "block-split");
+  await check(`${split} .main-content`, id.blockHost, "block", "block-split");
   // Linked References renders the macro host through the same Block boundary.
   await fresh();
   await open("Sticky source");
-  await page.locator(".main-content .linked-references").scrollIntoViewIfNeeded();
-  const linked = page.locator('.main-content .linked-references [data-block-id="page-host"]').first();
-  await linked.waitFor();
-  await linked.scrollIntoViewIfNeeded();
-  await check(".main-content .linked-references", "page-host", "page", "page-linked-references");
-  await page.locator(".linked-references .reference-group").filter({ has: page.locator(".reference-page", { hasText: "Sticky block host" }) }).scrollIntoViewIfNeeded();
-  await check(".main-content .linked-references", "block-host", "block", "block-linked-references");
+  await scrollTo(page.locator(".main-content .linked-references"));
+  // A group mounts its rows near the viewport, and a group above that mounts
+  // grows and pushes it away (the core lists "Sticky block host" first), so
+  // scroll to the group until the host row is there.
+  async function revealGroup(name, rowId) {
+    const group = page.locator(".main-content .linked-references .reference-group").filter({ has: page.locator(".reference-page", { hasText: name }) });
+    const row = group.locator(`[data-block-id="${rowId}"]`).first();
+    for (let attempt = 0; attempt < 10 && !(await row.count()); attempt++) { await scrollTo(group); await page.waitForTimeout(300); }
+    await row.waitFor();
+    await scrollTo(row);
+  }
+  await revealGroup("Sticky page host", id.pageHost);
+  await check(".main-content .linked-references", id.pageHost, "page", "page-linked-references");
+  await revealGroup("Sticky block host", id.blockHost);
+  await check(".main-content .linked-references", id.blockHost, "block", "block-linked-references");
   // A fresh context gives the mobile viewport one pane and the default setting.
   await fresh(true);
   await open("Sticky page host");
-  await check(".main-content", "page-host", "page", "page-mobile");
+  await check(".main-content", id.pageHost, "page", "page-mobile");
   await open("Sticky block host");
-  await check(".main-content", "block-host", "block", "block-mobile");
+  await check(".main-content", id.blockHost, "block", "block-mobile");
   assert.deepEqual(errors, [], "browser exceptions");
   assert.deepEqual(failures, [], "embed parent bullets must pin while their embedded rows remain visible");
   console.log(`PASS: ${results.length} routed App embed pin geometry cases`);

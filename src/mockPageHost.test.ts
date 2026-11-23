@@ -20,7 +20,10 @@ function host(refuse = false) {
       files.set(key, { ...(dto as PageRead), id: key });
       return { version: version + 1 };
     },
-    async remove(path) { files.delete(path); },
+    async write(path, text) {
+      if (text === null) files.delete(path);
+      else files.set(path, page(text.replace(/^- /, "").trimEnd()));
+    },
     reset() { files.set("pages/p.md", page("original")); },
   };
   const h = mockPageHost(graph);
@@ -72,6 +75,19 @@ describe("mockPageHost", () => {
     expect(await h.pageSubmit(1, 1, "pages/p.md", page("x") as PageDto)).toEqual({ reason: "read-only", message: "no" });
     await flush();
     expect(mail).toEqual([]);
+  });
+
+  // scripts/repro-carry-blur.mjs: an external change arrives under an open window.
+  it("delivers an external write as unanswered mail with the new text and a newer version", async () => {
+    const { h, mail } = host();
+    await h.pageOpen(1, 1, { name: "p", kind: "page", path: "pages/p.md" });
+    await flush();
+    await h.externalWrite("pages/p.md", "- outside\n");
+    const pushed = mail.at(-1);
+    expect(pushed?.answer).toBeNull();
+    expect(pushed?.key).toBe("pages/p.md");
+    expect(openText(pushed)).toBe("outside");
+    expect(pushed?.page?.version).toBe(2);
   });
 
   it("deletes a file only at the revision it was read", async () => {

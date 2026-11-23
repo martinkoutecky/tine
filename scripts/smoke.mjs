@@ -37,6 +37,31 @@ try {
 
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForSelector(".ls-block, .page-loading", { timeout: 5000 });
+
+  // 0) Typing saves through the browser core (ADR 0081): type a word into a
+  //    page, leave the editor, and find the word with the Quick Switcher's
+  //    block search, which the core answers from the page file it now holds.
+  await page.keyboard.press("Control+k");
+  await page.locator(".switcher-input").fill("Tine");
+  await page.locator(".switcher-row:not(.block-result) .switcher-name", { hasText: /^Tine$/ }).first().click();
+  const row = page.locator(".main-content .block-content", { hasText: "Reads the same markdown graph" }).first();
+  await row.click();
+  // Either block editor (CodeMirror by default, or the classic textarea).
+  const editor = page.locator("textarea.block-editor, [data-cm6-editor]");
+  if (!(await editor.waitFor({ timeout: 3000 }).then(() => true, () => false))) fail("the block editor did not open: the page reads as read-only");
+  await page.keyboard.press("End");
+  await page.keyboard.type(" smoketyped");
+  await page.keyboard.press("Escape");
+  await sleep(1500); // past the save debounce
+  await page.keyboard.press("Control+k");
+  await page.locator(".switcher-input").fill("smoketyped");
+  const hit = page.locator(".switcher-row.block-result", { hasText: "smoketyped" });
+  if (!(await hit.first().waitFor({ timeout: 5000 }).then(() => true, () => false))) fail("the typed text is not in the core's block search: the edit was not saved");
+  await page.keyboard.press("Escape");
+  // A reload reopens the fixture graph (the edit is forgotten) for the checks below.
+  await page.goto(`http://localhost:${PORT}/`);
+  await page.waitForSelector(".ls-block, .page-loading", { timeout: 5000 });
+  console.log("TYPED: the edit is saved through the core (block search finds it)");
   await sleep(800); // let the feed + queries render
 
   // 1) The journals feed rendered some blocks.
@@ -44,6 +69,12 @@ try {
   if (blocks === 0) fail("no blocks rendered in the feed");
 
   // 2) A {{query}} rendered (header present) and its collapse triangle works.
+  //    The fixture journal's queries sit below the fold (src/mock/graph/journals/),
+  //    and the feed renders blocks near the viewport, so scroll down to them.
+  for (let i = 0; i < 30 && !(await page.locator(".query-header").count()); i++) {
+    await page.evaluate(() => { document.querySelector(".main-content").scrollTop += 600; });
+    await sleep(150);
+  }
   const qHeader = await page.locator(".query-header").count();
   if (qHeader === 0) fail("no query block rendered");
   await page.locator(".query-collapse").first().click();
@@ -81,6 +112,7 @@ try {
   if (errors.length) console.log("ERRORS:\n" + errors.join("\n"));
   await page.screenshot({ path: "screenshots/smoke.png", fullPage: true }).catch(() => {});
   if (editableStruct === 0) fail("sidebar rendered a read-only block, not the live editable <Block>");
+
 
   await browser.close();
   server.kill("SIGKILL");

@@ -134,6 +134,24 @@ impl WholeGraph {
         Ok((view, root))
     }
 
+    /// Whether the page file `id` reads read-only in this view: always in a
+    /// view not built editable ([`Self::from_files`]: a published export, a
+    /// quick share, a store's view); in an editable one, as a disk read
+    /// answers, only an Org file that does not round-trip (whose save the
+    /// page host refuses). Cost: O(1) for Markdown; one parse of the file's
+    /// text for Org.
+    pub fn page_read_only(&self, id: &PageId) -> bool {
+        let Some(MemoryGraph(graph)) = &self.memory else {
+            return true;
+        };
+        let path = graph.root.join(id.as_str());
+        match graph.memory_bytes(&path) {
+            Ok(Some(bytes)) => std::str::from_utf8(&bytes)
+                .map_or(true, |text| crate::model::read_only_org(&path, text)),
+            _ => true,
+        }
+    }
+
     /// Replace files of a view built by [`Self::from_files`] and make this
     /// view the result: `Some(bytes)` writes a file, with the current time
     /// as its modification time (a disk write's), and `None` deletes one.

@@ -34,7 +34,7 @@ impl From<PageRead> for PageWire {
 impl PageWire {
     pub(crate) fn from_view(view: &WholeGraph, id: PageId) -> Option<Self> {
         let mut doc = view.page(&id)?;
-        doc.read_only = true;
+        doc.read_only = view.page_read_only(&id);
         Some(Self { id, doc })
     }
 }
@@ -97,5 +97,43 @@ pub fn journal_feed_page(
         PageSource::View(view) => {
             journals::feed_page_from_view(view, limit, before, through, include_references)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A view's page reads are read-only when the view is (a published
+    /// export) or the page is (an Org file Tine cannot round-trip); an
+    /// editable browser graph's other pages read writable.
+    #[test]
+    fn view_page_reads_follow_the_view_and_the_page() {
+        let files = || {
+            vec![
+                ("pages/Plain.md".to_owned(), b"- text\n".to_vec()),
+                ("pages/Skipped.org".to_owned(), b"* a\n*** c\n".to_vec()),
+                ("journals/2000_01_01.md".to_owned(), b"- day\n".to_vec()),
+            ]
+        };
+        let read_only = |view: &WholeGraph, path: &str| {
+            let answer = get_page_by_path(PageSource::View(view), PageId::from(path)).unwrap();
+            answer.page.expect(path).doc.read_only
+        };
+        let feed_read_only = |view: &WholeGraph| {
+            let page = journal_feed_page(PageSource::View(view), 1, Some(20000102), None, false);
+            page.unwrap().pages[0].doc.read_only
+        };
+        let (editable, _) = WholeGraph::from_files(files(), Vec::new(), true).unwrap();
+        assert!(!read_only(&editable, "pages/Plain.md"));
+        assert!(!feed_read_only(&editable));
+        let plain = get_page(PageSource::View(&editable), "plain", PageKind::Page);
+        assert!(!plain.unwrap().expect("by name").doc.read_only);
+        assert!(read_only(&editable, "pages/Skipped.org"));
+
+        let (published, _) = WholeGraph::from_files(files(), Vec::new(), false).unwrap();
+        assert!(read_only(&published, "pages/Plain.md"));
+        assert!(feed_read_only(&published));
+        assert!(read_only(&published, "pages/Skipped.org"));
     }
 }
