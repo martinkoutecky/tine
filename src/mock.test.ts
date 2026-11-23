@@ -82,14 +82,14 @@ describe("mock backend", () => {
       () => api.renameWouldChange("Tine", "Tine 2", []),
       () => api.mergePages("a", "b", {} as never),
       () => api.resolveSyncConflict("a", "b", {}, "", "", {} as never),
-      () => api.applyJournalFilenameMigrations({} as never),
-      // Proposals too, until the core exposes them (no mock-made rows).
-      () => api.listJournalFilenameMigrations(),
       () => api.copyGuideIntoGraph("Tine Guide", "replace-page"),
       () => api.pagePrintHtml("Tine", {} as never, []),
     ]) await expect(refused()).rejects.toThrow(mockRefusalMessage());
     expect(api.pdfAssetSource).toBeUndefined();
     expect("rescanGraphNow" in api).toBe(false);
+    // Journal filename migration: absent, so Settings shows no panel for it.
+    expect(api.listJournalFilenameMigrations).toBeUndefined();
+    expect(api.applyJournalFilenameMigrations).toBeUndefined();
   });
 
   it("reads the conflict demo's journal files from the core", async () => {
@@ -123,6 +123,76 @@ describe("mock backend", () => {
     expect((await api.getPageByPath("pages/same.md"))?.id).toBe("pages/same.md");
     expect((await api.getPageByPath("pages/same.org"))?.id).toBe("pages/same.org");
     expect((await api.getPageByPath("journals/2026_06_20.md"))?.id).toBe("journals/2026_06_20.md");
+  });
+
+  // Round 2 blocker 1: a delete never erases a submit the preview accepted,
+  // whichever request reaches the core first. Markdown and Org, page and journal.
+  const RACED = [
+    { path: "pages/race.md", text: "- original\n", name: "race", kind: "page" as const },
+    { path: "pages/race.org", text: "* original\n", name: "race", kind: "page" as const },
+    { path: "journals/2026_06_21.md", text: "- original\n", name: "Jun 21st, 2026", kind: "journal" as const },
+    { path: "journals/2026_06_21.org", text: "* original\n", name: "Jun 21st, 2026", kind: "journal" as const },
+  ];
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  async function opened(file: (typeof RACED)[number]) {
+    const api = mockBackend({ search: "", files: { [file.path]: file.text } });
+    const mail: PageMail[] = [];
+    await api.onPageMail((m) => mail.push(m));
+    await api.pageOpen(1, 1, { name: file.name, kind: file.kind, path: file.path });
+    await tick();
+    const text = mail.find((m) => m.answer?.id === 1)?.page?.text;
+    if (text?.kind !== "page") throw new Error("no opened page");
+    const edited: PageDto = { ...text.dto, blocks: [{ ...text.dto.blocks[0], raw: "submitted" }] };
+    const raws = async () => (await api.getPageByPath(file.path))?.blocks.map((block) => block.raw) ?? null;
+    return { api, rev: text.dto.rev!, edited, raws };
+  }
+  for (const file of RACED) {
+    it(`keeps an accepted submit that races an exact delete (${file.path})`, async () => {
+      for (const submitFirst of [true, false]) {
+        const { api, rev, edited, raws } = await opened(file);
+        const submit = () => api.pageSubmit(1, 2, file.path, edited, 1, null, {} as never);
+        const remove = () => api.pageDeleteFile(1, file.path, rev);
+        const [submitted, removed] = submitFirst ? [submit(), remove()] : (() => { const r = remove(); return [submit(), r]; })();
+        // First come, first served: a submit first moves the version the delete was typed on.
+        expect(await removed).toBe(submitFirst ? "refused" : "applied");
+        if (submitFirst) expect(await submitted).toBeNull();
+        if (await submitted === null) expect(await raws()).toEqual(["submitted"]);
+      }
+    });
+
+    it(`keeps an accepted submit that races a delete by name (${file.path})`, async () => {
+      const { api, edited, raws } = await opened(file);
+      const removed = api.pageDelete(1, file.name, file.kind, file.path);
+      const submitted = api.pageSubmit(1, 2, file.path, edited, 1, null, {} as never);
+      expect(await removed).toBe("applied");
+      // The submit then writes the page again: what it accepted is what the graph holds.
+      expect(await submitted).toBeNull();
+      expect(await raws()).toEqual(["submitted"]);
+    });
+
+    it(`refuses a by-name delete pending across a reload, keeping the new session's submit (${file.path})`, async () => {
+      const { api, edited, raws } = await opened(file);
+      const removed = api.pageDelete(1, file.name, file.kind, file.path);
+      const { session } = await api.pageWindowReloaded();
+      expect(await api.pageSubmit(session, 2, file.path, edited, 1, null, {} as never)).toBeNull();
+      expect(await removed).toBe("refused");
+      expect(await raws()).toEqual(["submitted"]);
+    });
+  }
+
+  // Round 2 follow-up 4: a request outlived by a window reload refuses, and
+  // sends no mail, instead of answering success with its mail suppressed.
+  it("refuses an Open or Discard that a window reload outlived, with no mail", async () => {
+    const api = mockBackend({ search: "", files: { "pages/p.md": "- original\n" } });
+    const mail: PageMail[] = [];
+    await api.onPageMail((m) => mail.push(m));
+    const open = api.pageOpen(1, 1, { name: "p", kind: "page", path: null });
+    const discard = api.pageDiscard(1, 2, "pages/p.md");
+    await api.pageWindowReloaded();
+    expect(await open).toEqual({ reason: "not-admitted" });
+    expect(await discard).toEqual({ reason: "not-admitted" });
+    await tick();
+    expect(mail).toEqual([]);
   });
 
   // Blocker 1's core-backed twin: a move is refused before the source is

@@ -7,7 +7,7 @@ import { loadBrowserCore } from "./browserCore";
 import type { GraphRead } from "./publishedGraphRpc";
 import type { BrowserGraph } from "./render/wasm-core/lsdoc_wasm";
 import { generatedFlagFiles } from "./mockScrollFixtures";
-import type { PageDto } from "./types";
+import type { PageDto, PageRead, ResolvedPage } from "./types";
 import type { PageRefusal } from "./document";
 
 const BASE_DIR = "./mock/graph/";
@@ -39,33 +39,43 @@ export function mockFileTimes(paths: readonly string[]): Record<string, number> 
   return Object.fromEntries(ordered.map((path, i) => [path, base - i * 3600]));
 }
 
-/** What `submit_page_json` answers: the key's new version, or the desktop host's refusal. */
-export type MockSubmit = { written: { path: string; text: string; version: number } } | { refused: PageRefusal };
+/** A call on a session a window reload retired: refused before the core runs. */
+export class RetiredGraph extends Error {}
 
-export interface MockGraph {
-  read: GraphRead;
-  /** Replace (or, with null, delete) files, then recapture the pages they hold. */
-  replace(changes: [string, string | null][]): Promise<void>;
-  submit(key: string, dto: PageDto, version: number): Promise<MockSubmit>;
-  /** Forget every edit: the next call reopens the original files, as a
-   * browser reload of the preview does. */
-  reset(): void;
+export type MockGraph = ReturnType<typeof openMockGraph>;
+export type MockGraphSession = ReturnType<typeof openSession>;
+
+/** Open the files as an editable memory graph, one session per window load:
+ * `read` (the app's reads) and `current()` (which a request captures when it
+ * starts) answer the current session, and `reset()` retires it, as a browser
+ * reload of the preview does, so the next session reopens the original files. */
+export function openMockGraph(files: Map<string, string>) {
+  let current = openSession(files, 1);
+  return {
+    read: (call => current.read(call)) as GraphRead,
+    current: () => current,
+    reset() { current.retire(); current = openSession(files, current.session + 1); },
+  };
 }
 
-/** Open the files as an editable memory graph. The core loads on the first
- * call (a session that asks no graph question never loads it), and every call
- * waits on that one open. */
-export function openMockGraph(files: Map<string, string>): MockGraph {
-  const encode = new TextEncoder();
+/** One session's graph, the one owner of which graph a request writes. Its
+ * core loads on its first call (a session that asks no graph question never
+ * loads it). Each call runs in one turn of the core, so no `await` separates a
+ * check from its write, and once the session is retired each call rejects
+ * with `RetiredGraph` before the core runs. */
+function openSession(files: Map<string, string>, session: number) {
+  const encode = (text: string) => new TextEncoder().encode(text);
   let opening: Promise<BrowserGraph> | undefined;
-  const open = () => (opening ??= loadBrowserCore().then(({ BrowserGraph }) => {
-    const paths = [...files.keys()];
-    return new BrowserGraph(paths, paths.map(path => encode.encode(files.get(path)!)),
-      JSON.stringify({ editable: true, times: mockFileTimes(paths) }));
-  }));
+  let retired = false;
   // The bindings throw the core's refusals as strings; callers get Errors, as from the publication worker.
-  async function call<T>(answer: (graph: BrowserGraph) => T): Promise<T> {
-    const graph = await open();
+  async function use<T>(answer: (graph: BrowserGraph) => T): Promise<T> {
+    if (retired) throw new RetiredGraph();
+    const graph = await (opening ??= loadBrowserCore().then(({ BrowserGraph }) => {
+      const paths = [...files.keys()];
+      return new BrowserGraph(paths, paths.map(path => encode(files.get(path)!)),
+        JSON.stringify({ editable: true, times: mockFileTimes(paths) }));
+    }));
+    if (retired) throw new RetiredGraph();
     try {
       return answer(graph);
     } catch (error) {
@@ -73,18 +83,31 @@ export function openMockGraph(files: Map<string, string>): MockGraph {
     }
   }
   return {
-    read: ([method, ...args]) => call(graph => Reflect.apply(graph[method], graph, args) as string),
-    async replace(changes) {
-      await call(graph => graph.replace_files(changes.map(([path]) => path),
-        changes.map(([, text]) => text === null ? null : encode.encode(text))));
-    },
-    async submit(key, dto, version) {
-      return JSON.parse(await call(graph => graph.submit_page_json(key, JSON.stringify(dto), BigInt(version))));
-    },
-    reset() {
-      const closing = opening;
-      opening = undefined;
-      void closing?.then(graph => graph.free(), () => undefined);
+    session,
+    get retired() { return retired; },
+    read: (([method, ...args]) => use(graph => Reflect.apply(graph[method], graph, args) as string)) as GraphRead,
+    /** The page at `path` (null: none) and the core's version of the file, read together. */
+    page: (path: string) => use(graph => ({ page: JSON.parse(graph.get_page_by_path_json(path)).page as PageRead | null,
+      version: Number(graph.version(path)) })),
+    resolve: (name: string, kind: "journal" | "page") =>
+      use(graph => JSON.parse(graph.resolve_page_json(name, kind === "journal")) as ResolvedPage),
+    /** Submit at the file's current version: its new version, or the desktop host's refusal. */
+    submit: (key: string, dto: PageDto) => use((graph): { version: number } | { refused: PageRefusal } => {
+      const answer = JSON.parse(graph.submit_page_json(key, JSON.stringify(dto), graph.version(key)));
+      return "written" in answer ? { version: answer.written.version } : answer;
+    }),
+    /** Whether the core deleted the file at `version` (a stale version deletes nothing). */
+    deleteFile: (path: string, version: number) =>
+      use(graph => "deleted" in JSON.parse(graph.delete_file_json(path, BigInt(version)))),
+    /** Whether the core admitted the delete by name (the desktop's one target). */
+    deleteName: (name: string, kind: "journal" | "page", expectedPath?: string) =>
+      use(graph => "deleted" in JSON.parse(graph.delete_page_json(name, kind === "journal", expectedPath))),
+    /** Replace (null: delete) one file, then recapture the pages it holds. */
+    write: (path: string, text: string | null) =>
+      use(graph => void graph.replace_files([path], [text === null ? null : encode(text)])),
+    retire() {
+      retired = true;
+      void opening?.then(graph => graph.free(), () => undefined);
     },
   };
 }

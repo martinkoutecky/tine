@@ -1,7 +1,7 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi, type Mock } from "vitest";
 import type { JSX } from "solid-js";
 import { render } from "solid-js/web";
-import { backend } from "../backend";
+import { backend, type Backend } from "../backend";
 import { invalidateBinding } from "../binding";
 import { setToasts, toasts } from "../toasts";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
@@ -13,7 +13,18 @@ function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => 
   return { root, dispose: () => { dispose(); root.remove(); } };
 }
 
+// The browser preview leaves the migration methods absent (Settings then shows
+// no panel); these tests give the backend the desktop's two methods.
+type Migrations = Required<Pick<Backend, "listJournalFilenameMigrations" | "applyJournalFilenameMigrations">>;
+function withMigrations(methods: { [K in keyof Migrations]: Mock<Migrations[K]> }) {
+  Object.assign(backend(), methods);
+  return methods;
+}
+
 afterEach(() => {
+  const members = backend() as Partial<Migrations>;
+  delete members.listJournalFilenameMigrations;
+  delete members.applyJournalFilenameMigrations;
   vi.restoreAllMocks();
   setToasts([]);
 });
@@ -21,11 +32,13 @@ afterEach(() => {
 // Master e6f9b6e1ceae: opening a graph proposes journal renames; only this
 // button performs them.
 it("lists proposed journal renames and applies them only after confirmation", async () => {
-  const list = vi.spyOn(backend(), "listJournalFilenameMigrations")
-    .mockResolvedValueOnce([{ from: "Thursday, 25-06-2026.org", to: "2026_06_25.org" }])
-    .mockResolvedValue([]);
+  const { listJournalFilenameMigrations: list, applyJournalFilenameMigrations: apply } = withMigrations({
+    listJournalFilenameMigrations: vi.fn<Migrations["listJournalFilenameMigrations"]>()
+      .mockResolvedValueOnce([{ from: "Thursday, 25-06-2026.org", to: "2026_06_25.org" }])
+      .mockResolvedValue([]),
+    applyJournalFilenameMigrations: vi.fn<Migrations["applyJournalFilenameMigrations"]>().mockResolvedValue({ migrated: 1, skipped: [] }),
+  });
   const confirm = vi.spyOn(backend(), "confirm").mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-  const apply = vi.spyOn(backend(), "applyJournalFilenameMigrations").mockResolvedValue({ migrated: 1, skipped: [] });
   vi.spyOn(backend(), "listJournalConflicts").mockResolvedValue([]);
   const { root, dispose } = mount(() => <JournalFilenamePanel />);
   try {
@@ -50,12 +63,14 @@ it("lists proposed journal renames and applies them only after confirmation", as
 // G3 finding 4: a durable failure from a graph the user already left must not
 // toast into the graph they are now on.
 it("does not toast a stale apply failure into the next graph", async () => {
-  vi.spyOn(backend(), "listJournalFilenameMigrations")
-    .mockResolvedValue([{ from: "Thursday, 25-06-2026.org", to: "2026_06_25.org" }]);
-  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   let reject!: (error: unknown) => void;
-  const apply = vi.spyOn(backend(), "applyJournalFilenameMigrations")
-    .mockReturnValue(new Promise((_, no) => { reject = no; }));
+  const { applyJournalFilenameMigrations: apply } = withMigrations({
+    listJournalFilenameMigrations: vi.fn<Migrations["listJournalFilenameMigrations"]>()
+      .mockResolvedValue([{ from: "Thursday, 25-06-2026.org", to: "2026_06_25.org" }]),
+    applyJournalFilenameMigrations: vi.fn<Migrations["applyJournalFilenameMigrations"]>()
+      .mockReturnValue(new Promise((_, no) => { reject = no; })),
+  });
+  vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   const { root, dispose } = mount(() => <JournalFilenamePanel />);
   try {
     await vi.waitFor(() => expect(root.textContent).toContain("Thursday"));

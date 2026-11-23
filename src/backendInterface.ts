@@ -396,11 +396,13 @@ export interface Backend {
   /** Move one journal file (by exact filename) to the recoverable trash. */
   trashJournalFile(name: string, kind: "delete-page"): Promise<void>;
   /** Title-named journal files and the date names they would get. Opening a
-   *  graph only proposes these renames (master e6f9b6e1ceae). */
-  listJournalFilenameMigrations(): Promise<import("./types").JournalFilenameMigration[]>;
+   *  graph only proposes these renames (master e6f9b6e1ceae). Absent with
+   *  its apply where no file is renamed (the browser preview, a publication):
+   *  Settings then shows no migration panel. */
+  listJournalFilenameMigrations?(): Promise<import("./types").JournalFilenameMigration[]>;
   /** Apply the proposed renames after a snapshot of the graph. */
   /** Renames only these confirmed proposals; stale ones come back as skipped. */
-  applyJournalFilenameMigrations(migrations: import("./types").JournalFilenameMigration[]): Promise<import("./types").JournalMigrationResult>;
+  applyJournalFilenameMigrations?(migrations: import("./types").JournalFilenameMigration[]): Promise<import("./types").JournalMigrationResult>;
   /** Raw contents of one journal file (by exact filename), for inspecting a
    *  duplicate day's files before reconciling. */
   readJournalFile(name: string): Promise<string>;

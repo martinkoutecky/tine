@@ -3,8 +3,9 @@ import type { Backend } from "./backend";
 /** The mock backend's journal-file host state: the conflict demo's inventory
  *  of duplicate days (demoed via `?conflicts`, whose journal files are fixture
  *  files). A file's text is the core's answer (`read_journal_file_json`).
- *  Filename migration proposals, trashing a file and migrating names are the
- *  store's: the mock refuses them until the core exposes them (ADR 0081). */
+ *  Trashing a file is the store's: the mock refuses it until the core exposes
+ *  it (ADR 0081). Filename migration is absent (`MOCK_ABSENT_METHODS`), so
+ *  Settings offers none. */
 export function mockJournalFiles(): Pick<Backend, "listJournalConflicts"> {
   const demo = () => typeof location !== "undefined" && /[?&]conflicts\b/.test(location.search);
   return {

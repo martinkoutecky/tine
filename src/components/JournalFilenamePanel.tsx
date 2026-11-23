@@ -15,13 +15,14 @@ import type { JournalFilenameMigration } from "../types";
  *  (master e6f9b6e1ceae), and this button applies it after a snapshot. Apply
  *  sends exactly the listed (from, to) pairs the user confirmed; the backend
  *  renames only pairs still valid and reports the rest as skipped. Results and
- *  failures are shown only while the graph that listed them is still open. */
+ *  failures are shown only while the graph that listed them is still open.
+ *  Settings renders it only for a backend that has the migration methods. */
 export function JournalFilenamePanel(): JSX.Element {
   const [pending, setPending] = createSignal<JournalFilenameMigration[]>([]);
   const [busy, setBusy] = createSignal(false);
   const load = async () => {
     try {
-      const listed = await readOwned(graphOwner(), backend().listJournalFilenameMigrations());
+      const listed = await readOwned(graphOwner(), backend().listJournalFilenameMigrations!());
       if (listed.kind !== "stale") setPending(listed.value);
     } catch (e) {
       setPending([]);
@@ -42,7 +43,7 @@ export function JournalFilenamePanel(): JSX.Element {
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setBusy(true);
     try {
-      const result = await writeOwned(owner, backend().applyJournalFilenameMigrations(migrations));
+      const result = await writeOwned(owner, backend().applyJournalFilenameMigrations!(migrations));
       if (result.kind === "stale") return;
       const { migrated, skipped } = result.value;
       pushToast(msg("journal-filename-panel-renamed", { count: migrated }), "success");

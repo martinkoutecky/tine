@@ -39,18 +39,25 @@ same shape: one engine, with storage behind an interface.
    or generate) as an editable `BrowserGraph`. Each file is given a fixed time, so recency order is deterministic.
    Journals are named by `:journal/file-name-format` and namespaces by `:file/name-format`, as on disk.
 3. **An edit replaces files.** A page submit goes through `submit_page_json`, the desktop page host's serializer.
-   A delete goes through `replace_files`. A later read, search or Open answers the saved text. A window reload
+   A delete is one core call (`delete_file_json`, `delete_page_json`). A later read, search or Open answers the saved text. A window reload
    reopens the fixture files, as a browser reload of the preview does. The mock's graph is editable, so its page
    reads are writable (`WholeGraph::page_read_only`: only an Org page that does not round-trip reads read-only),
    while a published export's are read-only. The host's `externalWrite` (not a `Backend` member) stands in for the
    desktop's file watcher: scripts write a file through `replace_files` and the window gets it as page mail.
-   The core's page reads carry no file revision, so the mock's page host names one per file (its session and the
-   file's version, which every write moves) and uses it in Open, submit mail, the publication wait and the exact
-   delete. A delete by name refuses when another file claims the same name. A request made before a window reload
-   sends no mail and moves no version after it.
-4. **Write paths beyond one page's text are refused.** Rename, merge, conflict resolution, journal filename
-   migration and its proposals, guide copy, print and the rename probe (`renameWouldChange`, the rename preview) all
-   refuse, with one localized message. A block move to another page is refused before either page is written. Any
+   The core's page reads carry no file revision, so the mock's page host names one per file: its session and the
+   core's version of the file (`BrowserGraph::version`, which every write moves), read when it is named, in Open,
+   submit mail, the publication wait and the exact delete. The host keeps no version of its own. The core decides
+   an exact delete in the call that writes it, under the stale-version rule a submit applies, so no `await`
+   separates the check from the write. A delete by name takes the one file the desktop's would
+   (`pages::delete_target`): it refuses when another file claims the same name, and is resolved and deleted in one
+   call. Each window load is one graph session (`mockGraph.ts`), which owns which graph a request writes: a
+   request captures its session when it starts and makes every graph call through it, and a window reload
+   retires the session, so a call of a pending request refuses before the core runs. That request refuses and
+   sends no mail; its outcome and its mail are decided together.
+4. **Write paths beyond one page's text are refused.** Rename, merge, conflict resolution, guide copy, print and
+   the rename probe (`renameWouldChange`, the rename preview) all refuse, with one localized message. Journal
+   filename migration is absent instead (as in a published export): Settings shows its panel only for a backend
+   that has the methods, so opening Settings asks the preview nothing it refuses. A block move to another page is refused before either page is written. Any
    `Backend` member the mock does not define refuses the same way. End-to-end tests on the real backend cover these
    paths.
 5. **Host state stays host state.** Plugins, assets, highlights, session, workspaces, app settings, diagnostics,

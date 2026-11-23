@@ -16,7 +16,7 @@ import { mockQuickShareCommands } from "./mockQuickShare";
 import { mockGitCommands } from "./mockGit";
 import { mockPageHost } from "./mockPageHost";
 import { createMockCaptureReceipts } from "./mockCaptureReceipts";
-import type { Highlight, PageRead, PdfState, ResolvedPage } from "./types";
+import type { Highlight, PdfState } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { checkBrowserHandoff } from "./linkSchemePolicy";
@@ -73,16 +73,7 @@ export function mockBackend(options: MockOptions = {}): Backend {
   }
   const graph = openMockGraph(files);
   const reads = graphReads(graph.read);
-  const pageHost = mockPageHost({
-    page: (path) => reads.getPageByPath(path, undefined) as Promise<PageRead | null>,
-    resolve: (name, kind) => reads.resolvePage(name, kind) as Promise<ResolvedPage>,
-    async submit(key, dto, version) {
-      const answer = await graph.submit(key, dto, version);
-      return "written" in answer ? { version: answer.written.version } : answer;
-    },
-    write: (path, text) => graph.replace([[path, text]]),
-    reset: () => graph.reset(),
-  }, mockRefusalMessage);
+  const pageHost = mockPageHost(graph, mockRefusalMessage);
 
   const explicit: Partial<Backend> = {
     ...reads,
@@ -495,7 +486,7 @@ export function mockBackend(options: MockOptions = {}): Backend {
   };
 
   // Anything else is a store write path or a native answer (rename, merge,
-  // conflict resolution, journal migration, print, publication, the Guide
+  // conflict resolution, print, publication, the Guide
   // copy): refused, as the published export refuses what it does not answer.
   return new Proxy(explicit as Record<string, unknown>, {
     get(target, property) {

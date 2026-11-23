@@ -1232,7 +1232,7 @@ function BackupsTab(): JSX.Element {
       </Show>
 
       <JournalConflictsPanel />
-      <JournalFilenamePanel />
+      <Show when={backend().listJournalFilenameMigrations}><JournalFilenamePanel /></Show>
       <ConflictOverviewPointer />
     </>
   );

@@ -333,7 +333,7 @@ impl BrowserGraph {
         version: u64,
     ) -> Result<String, JsValue> {
         let dto: tine_core::model::PageDto = input(dto_json)?;
-        let current = version == self.version(key);
+        let current = self.admits(key, version);
         let (bytes, change) = match self.view.submit_page(&PageId::from(key), &dto, current) {
             Ok(written) => written,
             Err(refusal) => return wire(serde_json::json!({ "refused": refusal })),
@@ -348,6 +348,67 @@ impl BrowserGraph {
                 "pages": published.pages,
             }
         }))
+    }
+
+    /// The version of the file `key`: 1 until its first write, then moved by
+    /// every write of it (a submit, a delete, `replace_files`). The browser
+    /// preview's host names its revisions from this answer.
+    pub fn version(&self, key: &str) -> u64 {
+        1 + self.versions.get(key).copied().unwrap_or(0)
+    }
+
+    /// Delete the page file `key`, typed on `version`, under the rule
+    /// `submit_page_json` applies (a stale version is `not-admitted`), in
+    /// this one call. Answers `{"deleted": {answers, pages}}` (as
+    /// `replace_files`), or `{"refused": {"reason": "not-admitted"}}` (the
+    /// desktop host's refusal shape, as a stale submit's), writing nothing:
+    /// a stale version, or no page file at `key`. Cost: one page lookup and
+    /// the incremental capture of the deleted path.
+    pub fn delete_file_json(&mut self, key: &str, version: u64) -> Result<String, JsValue> {
+        if !self.admits(key, version) || self.view.page(&PageId::from(key)).is_none() {
+            return wire(serde_json::json!({ "refused": { "reason": "not-admitted" } }));
+        }
+        let deleted = vec![(key.to_owned(), None)];
+        let change = self.view.replace_files(deleted).map_err(js_error)?;
+        wire(serde_json::json!({ "deleted": self.published(&change) }))
+    }
+
+    /// Delete the page or journal `name` (`journal`): the one file the
+    /// desktop's delete by name takes (`pages::delete_target`), at its
+    /// current version, resolved and deleted in this one call. Answers as
+    /// `delete_file_json`, or `{"deleted": null}` for a name no file claims
+    /// (nothing to delete, as on the desktop). Refuses (`invalid-target`) a
+    /// name several files claim and an `expected_path` that is not the
+    /// claimant, or that still holds a page when no file claims the name (a
+    /// stale target, as on the desktop). Cost: one name resolution, then
+    /// `delete_file_json`'s.
+    pub fn delete_page_json(
+        &mut self,
+        name: &str,
+        journal: bool,
+        expected_path: Option<String>,
+    ) -> Result<String, JsValue> {
+        let kind = if journal {
+            PageKind::Journal
+        } else {
+            PageKind::Page
+        };
+        let expected = expected_path.filter(|path| !path.trim().is_empty());
+        let expected = expected.as_deref();
+        let target = tine_graph_features::pages::delete_target(&self.view, name, kind, expected);
+        let stale = |message: String| {
+            let refusal = serde_json::json!({ "reason": "invalid-target", "message": message });
+            wire(serde_json::json!({ "refused": refusal }))
+        };
+        match target {
+            Ok(Some(id)) => self.delete_file_json(id.as_str(), self.version(id.as_str())),
+            // The displayed file holds a page, but not this name's.
+            Ok(None) if expected.is_some_and(|path| self.view.page(&path.into()).is_some()) => {
+                stale("stale page target".to_owned())
+            }
+            Ok(None) => wire(serde_json::json!({ "deleted": null })),
+            Err(error) => stale(error.to_string()),
+        }
     }
 
     /// The desktop `read_journal_file` answer (a JSON string): one top-level
@@ -406,8 +467,10 @@ impl BrowserGraph {
 }
 
 impl BrowserGraph {
-    fn version(&self, key: &str) -> u64 {
-        1 + self.versions.get(key).copied().unwrap_or(0)
+    /// Whether a write of `key` typed on `version` is current: the one stale
+    /// rule a submit and a delete apply.
+    fn admits(&self, key: &str, version: u64) -> bool {
+        version == self.version(key)
     }
 
     /// A publication's window payloads; moves the version of every file it

@@ -10,6 +10,28 @@ export class BrowserGraph {
      */
     config_problem_json(): string;
     /**
+     * Delete the page file `key`, typed on `version`, under the rule
+     * `submit_page_json` applies (a stale version is `not-admitted`), in
+     * this one call. Answers `{"deleted": {answers, pages}}` (as
+     * `replace_files`), or `{"refused": {"reason": "not-admitted"}}` (the
+     * desktop host's refusal shape, as a stale submit's), writing nothing:
+     * a stale version, or no page file at `key`. Cost: one page lookup and
+     * the incremental capture of the deleted path.
+     */
+    delete_file_json(key: string, version: bigint): string;
+    /**
+     * Delete the page or journal `name` (`journal`): the one file the
+     * desktop's delete by name takes (`pages::delete_target`), at its
+     * current version, resolved and deleted in this one call. Answers as
+     * `delete_file_json`, or `{"deleted": null}` for a name no file claims
+     * (nothing to delete, as on the desktop). Refuses (`invalid-target`) a
+     * name several files claim and an `expected_path` that is not the
+     * claimant, or that still holds a page when no file claims the name (a
+     * stale target, as on the desktop). Cost: one name resolution, then
+     * `delete_file_json`'s.
+     */
+    delete_page_json(name: string, journal: boolean, expected_path?: string | null): string;
+    /**
      * The desktop `export_query_subtrees` answer for its `specs` JSON.
      */
     export_query_subtrees_json(specs_json: string): string;
@@ -121,6 +143,12 @@ export class BrowserGraph {
      * The desktop `tagged_pages` answer.
      */
     tagged_pages_json(name: string): string;
+    /**
+     * The version of the file `key`: 1 until its first write, then moved by
+     * every write of it (a submit, a delete, `replace_files`). The browser
+     * preview's host names its revisions from this answer.
+     */
+    version(key: string): bigint;
 }
 
 /**
@@ -515,6 +543,8 @@ export interface InitOutput {
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly browsergraph_capture_quick_switch_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly browsergraph_config_problem_json: (a: number) => [number, number, number, number];
+    readonly browsergraph_delete_file_json: (a: number, b: number, c: number, d: bigint) => [number, number, number, number];
+    readonly browsergraph_delete_page_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly browsergraph_export_query_subtrees_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_get_backlink_filter_context_json: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly browsergraph_get_backlinks_json: (a: number, b: number, c: number) => [number, number, number, number];
@@ -547,6 +577,7 @@ export interface InitOutput {
     readonly browsergraph_search_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly browsergraph_submit_page_json: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
     readonly browsergraph_tagged_pages_json: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly browsergraph_version: (a: number, b: number, c: number) => bigint;
     readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];

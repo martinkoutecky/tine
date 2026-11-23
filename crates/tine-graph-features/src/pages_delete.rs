@@ -5,7 +5,7 @@
 use std::io;
 
 use tine_core::model::PageKind;
-use tine_store::{Area, FileRev, PageHost, PageOperation, Store, StoreError};
+use tine_store::{Area, FileRev, PageHost, PageId, PageOperation, Store, StoreError, WholeGraph};
 
 use super::{error, existing, refreshed_view, text_file, validate_target};
 use crate::store_error;
@@ -29,8 +29,7 @@ pub fn delete_page_expected(
     expected_path: Option<&str>,
 ) -> io::Result<PageOperation> {
     let graph = refreshed_view(store)?;
-    let ids = existing(graph.resolve(name, kind == PageKind::Journal));
-    let Some(id) = ids.first() else {
+    let Some(id) = delete_target(&graph, name, kind, expected_path)? else {
         if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
             let file = text_file(store, path)?;
             match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
@@ -46,11 +45,30 @@ pub fn delete_page_expected(
         }
         return Ok(PageOperation::Applied);
     };
-    validate_target(&ids, expected_path)?;
     let (checked, _) = store
         .read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES))
         .map_err(store_error)?;
-    Ok(host.delete(session, id, Some(&checked[..])))
+    Ok(host.delete(session, &id, Some(&checked[..])))
+}
+
+/// The one page file a delete by `name` takes in `graph`, the rule the
+/// desktop's [`delete_page_expected`] and the browser preview's delete share:
+/// None for a name no file claims; a name several files claim (a Markdown and
+/// an Org page, a day's two journals) refuses as ambiguous, and an
+/// `expected_path` that is not the claimant refuses as a stale target. Cost:
+/// one name resolution.
+pub fn delete_target(
+    graph: &WholeGraph,
+    name: &str,
+    kind: PageKind,
+    expected_path: Option<&str>,
+) -> io::Result<Option<PageId>> {
+    let ids = existing(graph.resolve(name, kind == PageKind::Journal));
+    if ids.is_empty() {
+        return Ok(None);
+    }
+    validate_target(&ids, expected_path)?;
+    Ok(ids.into_iter().next())
 }
 
 /// Delete exactly the page file at graph-relative `path`, which the window

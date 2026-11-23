@@ -29,7 +29,7 @@ use refusal::unsaved_error;
 pub use refusal::{save_page_unchanged, MergeRefused, RewriteBlocked};
 #[path = "pages_delete.rs"]
 mod delete;
-pub use delete::{delete_page_expected, delete_page_file};
+pub use delete::{delete_page_expected, delete_page_file, delete_target};
 use rename_plan::{plan_rename, RenamePlan};
 use rename_report::{site_exceptions, survivor_check, IncompleteRename, StepChecks};
 pub use rename_report::{

@@ -73,6 +73,9 @@ export const OPTIONAL_METHODS = new Set([
   "orphanDrafts",
   "recoverOrphanDrafts",
   "deleteOldBackups",
+  // A publication renames no journal file, so Settings shows no migration panel.
+  "listJournalFilenameMigrations",
+  "applyJournalFilenameMigrations",
   "loadDrafts",
   "storeDraft",
   "retireDraft",
@@ -365,9 +368,6 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
       return { sync_conflicts: [], vcs_markers: [], queue: [] };
     },
     async listJournalConflicts() {
-      return [];
-    },
-    async listJournalFilenameMigrations() {
       return [];
     },
     async listOrphanAssets() {

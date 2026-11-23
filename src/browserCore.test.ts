@@ -421,3 +421,39 @@ it("a submitted page is read back as its new text", () => {
     graph.free();
   }
 });
+
+// The preview's exact delete: the core decides it under the submit's stale rule.
+it("deletes a page file only at the version the core holds", () => {
+  const graph = editable([["pages/Note.md", "- first\n"]]);
+  try {
+    expect(graph.version("pages/Note.md")).toBe(1n);
+    const page = JSON.parse(graph.get_page_json("Note", false));
+    graph.submit_page_json("pages/Note.md", JSON.stringify(page), 1n);
+    expect(graph.version("pages/Note.md")).toBe(2n);
+    expect(JSON.parse(graph.delete_file_json("pages/Note.md", 1n))).toEqual({ refused: { reason: "not-admitted" } });
+    expect(JSON.parse(graph.get_page_json("Note", false))).toMatchObject({ id: "pages/Note.md" });
+    expect(JSON.parse(graph.delete_file_json("pages/Note.md", 2n)).deleted.pages).toEqual([
+      { path: "pages/Note.md", name: "Note", kind: "page", created: false, removed: true },
+    ]);
+    expect(graph.version("pages/Note.md")).toBe(3n);
+    expect(JSON.parse(graph.delete_file_json("pages/Note.md", 3n))).toEqual({ refused: { reason: "not-admitted" } });
+  } finally {
+    graph.free();
+  }
+});
+
+// The preview's delete by name takes the desktop's one target.
+it("deletes by name only the name's one claimant", () => {
+  const graph = editable([["pages/Same.md", "- md\n"], ["pages/Same.org", "* org\n"], ["pages/One.md", "- one\n"]]);
+  try {
+    expect(JSON.parse(graph.delete_page_json("Same", false))).toMatchObject({ refused: { reason: "invalid-target" } });
+    expect(JSON.parse(graph.delete_page_json("One", false, "pages/Same.md"))).toMatchObject({ refused: { reason: "invalid-target" } });
+    expect(JSON.parse(graph.delete_page_json("Absent", false))).toEqual({ deleted: null });
+    expect(JSON.parse(graph.delete_page_json("Absent", false, "pages/One.md"))).toMatchObject({ refused: { reason: "invalid-target" } });
+    expect(JSON.parse(graph.delete_page_json("One", false, "pages/One.md")).deleted).toBeTruthy();
+    expect(JSON.parse(graph.get_page_by_path_json("pages/One.md")).page).toBeNull();
+    expect(JSON.parse(graph.get_page_by_path_json("pages/Same.md")).page).toBeTruthy();
+  } finally {
+    graph.free();
+  }
+});

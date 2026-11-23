@@ -60,6 +60,75 @@ class __tine_raw_BrowserGraph {
         }
     }
     /**
+     * Delete the page file `key`, typed on `version`, under the rule
+     * `submit_page_json` applies (a stale version is `not-admitted`), in
+     * this one call. Answers `{"deleted": {answers, pages}}` (as
+     * `replace_files`), or `{"refused": {"reason": "not-admitted"}}` (the
+     * desktop host's refusal shape, as a stale submit's), writing nothing:
+     * a stale version, or no page file at `key`. Cost: one page lookup and
+     * the incremental capture of the deleted path.
+     * @param {string} key
+     * @param {bigint} version
+     * @returns {string}
+     */
+    delete_file_json(key, version) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_delete_file_json(this.__wbg_ptr, ptr0, len0, version);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Delete the page or journal `name` (`journal`): the one file the
+     * desktop's delete by name takes (`pages::delete_target`), at its
+     * current version, resolved and deleted in this one call. Answers as
+     * `delete_file_json`, or `{"deleted": null}` for a name no file claims
+     * (nothing to delete, as on the desktop). Refuses (`invalid-target`) a
+     * name several files claim and an `expected_path` that is not the
+     * claimant, or that still holds a page when no file claims the name (a
+     * stale target, as on the desktop). Cost: one name resolution, then
+     * `delete_file_json`'s.
+     * @param {string} name
+     * @param {boolean} journal
+     * @param {string | null} [expected_path]
+     * @returns {string}
+     */
+    delete_page_json(name, journal, expected_path) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(expected_path) ? 0 : passStringToWasm0(expected_path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_delete_page_json(this.__wbg_ptr, ptr0, len0, journal, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * The desktop `export_query_subtrees` answer for its `specs` JSON.
      * @param {string} specs_json
      * @returns {string}
@@ -889,6 +958,19 @@ class __tine_raw_BrowserGraph {
         } finally {
             wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
         }
+    }
+    /**
+     * The version of the file `key`: 1 until its first write, then moved by
+     * every write of it (a submit, a delete, `replace_files`). The browser
+     * preview's host names its revisions from this answer.
+     * @param {string} key
+     * @returns {bigint}
+     */
+    version(key) {
+        const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.browsergraph_version(this.__wbg_ptr, ptr0, len0);
+        return BigInt.asUintN(64, ret);
     }
 }
 

@@ -5,12 +5,14 @@
 import type { Backend } from "./backendInterface";
 
 /** Backend members the browser mock leaves absent: optional native-only
- * surfaces, so the browser fallbacks in `backend.ts` take over. */
+ * surfaces, so the browser fallbacks in `backend.ts` take over, and a
+ * capability's surface (journal filename migration) is not shown. */
 export const MOCK_ABSENT_METHODS = new Set([
   "orphanDrafts", "recoverOrphanDrafts", "tineLinks", "ownerProtectionStatus", "retryOwnerProtection",
   "registerUnlinkedReference", "registerQuerySubscription", "pdfAssetSource", "readExternalPdf",
   "onOwnerFlushRequest", "onOwnerPageRenamed", "ownerFlushAnswer", "onGraphChangedBulk", "onGraphWatchStatus",
   "onGraphRescanComplete", "rescanGraphNow", "deleteOldBackups", "diagnosticTimingEvent",
+  "listJournalFilenameMigrations", "applyJournalFilenameMigrations",
 ]);
 
 /** Whether this build carries the browser mock: a compile-time answer, so a
