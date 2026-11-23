@@ -84,7 +84,62 @@ fn a1_an_identical_bullet_swap_reaches_the_index() {
 /// another key, so no key has two pages.
 #[test]
 fn a3_a_source_rewrite_never_reallocates_a_moved_key() {
-    a3_case("pages/A.md", "pages/B.md", "- bee\n");
+    a3_case(Live::new, "pages/A.md", "pages/B.md", "- bee\n");
+}
+
+/// Blocker 2 of the 40c9ce0f4 review: the move completes before the first
+/// graph view, with no snapshot to show that A held the key. The receiver's
+/// publication registers the keys it took from A's version, so A's rewrite
+/// after launch does not hand the key out again. Fails on 40c9ce0f4.
+#[test]
+fn r4_a_move_before_the_first_view_keeps_the_key_off_the_source() {
+    a3_case(Live::unviewed, "pages/A.md", "pages/B.md", "- bee\n");
+    a3_case(Live::unviewed, "pages/A.org", "pages/B.org", "* bee\n");
+}
+
+/// Blocker 1 of the 40c9ce0f4 review: B moved above A, then a soft line in
+/// B that the bytes reparse as a child (`- c`, `** c`). The custody reply,
+/// sent while the save is debounced, carries the keys the publication then
+/// installs: B never shows A's positional key. Fails on 40c9ce0f4. The
+/// variants the review names as unaffected (Markdown `+ c` and `* c` stay
+/// text, an exact answer; Org `* c` adds a root) answer as the row too.
+#[test]
+fn r4_a_reparsed_childs_reply_carries_the_published_keys() {
+    let (md, org) = (("pages/p.md", "- A\n- B\n"), ("pages/p.org", "* A\n* B\n"));
+    let cases = [
+        (md, "B\n- c"),
+        (org, "B\n** c"),
+        (md, "B\n+ c"),
+        (md, "B\n* c"),
+        (org, "B\n* c"),
+    ];
+    for ((rel, text), typed) in cases {
+        let live = Live::new(&[(rel, text)]);
+        let (key, page) = live.open(rel);
+        let save = |dto: &PageDto, version: u64| {
+            let (id, session) = (live.id(), live.host.session());
+            let kinds = [EditKind::SaveBlock];
+            (live.host)
+                .submit(session, id, &key, dto, version, None, &kinds)
+                .unwrap();
+            live.answer(&key, id)
+        };
+        let mut dto = page_dto(&page);
+        dto.blocks.swap(0, 1);
+        let version = save(&dto, page.version).answer.unwrap().version;
+        let swapped = pairs(&dto.blocks);
+        row_when(&live, rel, "B above A", |row| *row == swapped[..]);
+        live.submits_wait();
+        dto.blocks[0].raw = typed.into();
+        let reply = save(&dto, version).page.unwrap();
+        let reply = match &reply.text {
+            MailText::Page { dto } => pairs(&dto.blocks),
+            _ => pairs(&dto.blocks),
+        };
+        let row = row_when(&live, rel, "the edit published", |row| *row != swapped[..]);
+        assert_eq!(reply, row, "{rel} {typed:?}: the reply's keys differ");
+        live.host.stop();
+    }
 }
 
 /// Blocker 1 of the cee055d33 review, at `move_blocks`: the receiver, listed
@@ -98,11 +153,14 @@ fn r3_a_receivers_authored_id_does_not_hide_the_moved_keys_holder() {
     tine_core::projection::assign_runtime_ids_reserving(&mut doc.roots, "pages/S.md", None);
     let key = doc.roots[0].uuid.to_string();
     let receiver = format!("- bee\n  id:: {key}\n");
-    a3_case("pages/S.md", "pages/R.md", &receiver);
+    a3_case(Live::new, "pages/S.md", "pages/R.md", &receiver);
 }
 
-fn a3_case(a: &str, b: &str, b_text: &str) {
-    let live = Live::new(&[(a, "- moved\n- stays\n"), (b, b_text)]);
+fn a3_case(live: fn(&[(&str, &str)]) -> Live, a: &str, b: &str, b_text: &str) {
+    let bullet = if a.ends_with(".org") { "*" } else { "-" };
+    let text = |body: &str| body.replace('-', bullet);
+    let live = live(&[(a, &text("- moved\n- stays\n")), (b, b_text)]);
+    let viewed = !live.store.first_view_pending();
     let (a_key, a_page) = live.open(a);
     let (b_key, b_page) = live.open(b);
     let (mut source, mut receiver) = (page_dto(&a_page), page_dto(&b_page));
@@ -110,16 +168,28 @@ fn a3_case(a: &str, b: &str, b_text: &str) {
     let moved = block.id.clone();
     receiver.blocks.push(block);
     let (id, session) = (live.id(), live.host.session());
-    (live.host)
-        .move_blocks(
+    let admit = || {
+        (live.host).move_blocks(
             session,
             id,
             (&a_key, &source, a_page.version),
             (&b_key, &receiver, b_page.version),
             &[EditKind::MoveBlocks],
         )
-        .unwrap();
+    };
+    if viewed {
+        admit().unwrap();
+    } else {
+        // Admitted with no published snapshot (the launch's first view is
+        // pending): nothing visible tells that A holds the key.
+        live.pause(true);
+        live.store.without_snapshot_for_tests(admit).unwrap();
+        live.pause(false);
+    }
     live.answer(&a_key, id);
+    if !viewed {
+        live.store.whole_graph_reconciled().unwrap();
+    }
     row_when(&live, b, "B holds the moved key", |row| {
         row.iter().any(|(_, key)| *key == moved)
     });
@@ -134,8 +204,9 @@ fn a3_case(a: &str, b: &str, b_text: &str) {
         assert!(Instant::now() < deadline, "A never released");
         std::thread::sleep(Duration::from_millis(20));
     }
-    live.rewrite_externally(a, "- new first\n- stays\n");
-    live.until_indexed(a, "- new first\n- stays\n");
+    let rewrite = text("- new first\n- stays\n");
+    live.rewrite_externally(a, &rewrite);
+    live.until_indexed(a, &rewrite);
     let row = row_when(&live, a, "A's rewrite", |row| row.len() == 2);
     assert!(
         !row.iter().any(|(_, key)| *key == moved),

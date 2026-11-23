@@ -69,6 +69,8 @@ impl Unit {
                 roots: vec![],
                 org: false,
             }),
+            filled: false,
+            moved: Vec::new(),
             kinds: vec![EditKind::SaveBlock],
         };
         self.book.pending.insert((key.clone(), id), handoff);
@@ -284,6 +286,20 @@ impl Live {
     }
 
     fn build(files: &[(&str, &str)], checkpoint: bool, watch: crate::WatchMode) -> Self {
+        Self::start(files, checkpoint, watch, true)
+    }
+
+    /// A store whose first graph view has not happened yet (launch).
+    fn unviewed(files: &[(&str, &str)]) -> Self {
+        Self::start(files, false, crate::WatchMode::Notify, false)
+    }
+
+    fn start(
+        files: &[(&str, &str)],
+        checkpoint: bool,
+        watch: crate::WatchMode,
+        view: bool,
+    ) -> Self {
         let dir = match std::env::var_os("TINE_HOST_FS_ROOT") {
             Some(base) => tempfile::tempdir_in(base).unwrap(),
             None => tempfile::tempdir().unwrap(),
@@ -309,7 +325,9 @@ impl Live {
         };
         let store = Arc::new(Store::open(&given, options).unwrap().0);
         // A loaded index: what it holds afterwards was published to it.
-        store.whole_graph_reconciled().unwrap();
+        if view {
+            store.whole_graph_reconciled().unwrap();
+        }
         let root = store.graph.root.clone();
         let (sender, mail) = mpsc::channel();
         let kinds = Kinds::default();

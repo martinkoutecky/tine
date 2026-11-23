@@ -537,6 +537,7 @@ fn saved_of(bytes: &str, doc: tine_core::doc::Document) -> crate::model::page_id
     crate::model::page_ids::SaveHandoff {
         bytes: Arc::from(bytes.as_bytes()),
         doc: Arc::new(doc),
+        moved: Vec::new(),
     }
 }
 

@@ -40,13 +40,24 @@ pub(crate) enum Input<'a> {
 pub(crate) struct SaveHandoff {
     pub(crate) bytes: Arc<[u8]>,
     pub(crate) doc: Arc<Document>,
+    /// A move's receiver: the keys it took from the source, registered to
+    /// it when these bytes publish ([`PageIds::moved`]).
+    pub(crate) moved: Vec<BlockId>,
 }
 
 impl SaveHandoff {
-    /// The document, when `published` are its bytes. O(bytes), no parse.
-    pub(crate) fn of(self, published: Option<&Arc<[u8]>>) -> Option<Arc<Document>> {
+    /// The document, when `published` are its bytes, whose moved keys
+    /// `ids` then registers to `path`. O(bytes), no parse.
+    pub(crate) fn of(
+        self,
+        published: Option<&Arc<[u8]>>,
+        (ids, path): (&PageIds, &Path),
+    ) -> Option<Arc<Document>> {
         let same = published
             .is_some_and(|bytes| Arc::ptr_eq(bytes, &self.bytes) || **bytes == *self.bytes);
+        if same && !self.moved.is_empty() {
+            ids.moved(self.moved, path);
+        }
         same.then_some(self.doc)
     }
 }

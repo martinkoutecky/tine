@@ -344,8 +344,8 @@ impl Graph {
         bytes: Option<Arc<[u8]>>,
         saved: Option<page_ids::SaveHandoff>,
     ) -> Result<OwnerPublished, ()> {
-        let doc = saved.and_then(|saved| saved.of(bytes.as_ref()));
         let path = self.root.join(self.held.spellings().spelling(key));
+        let doc = saved.and_then(|saved| saved.of(bytes.as_ref(), (&self.ids, &path)));
         let rev = bytes
             .as_deref()
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
@@ -380,8 +380,9 @@ impl Graph {
             let Some(indexed) = keys.get_mut(key) else {
                 return Err(());
             };
+            // A confirmed deletion is terminal: the path's S(P) ends.
             if bytes.is_none() {
-                self.held.claims.lock().unwrap().remove(&path);
+                self.end_path(&path);
             }
             let same = match (indexed.as_ref(), &bytes) {
                 (Some(Some(before)), Some(after)) => Arc::ptr_eq(before, after),
@@ -429,8 +430,12 @@ impl Graph {
                             });
                         self.put_row(pages, row);
                     }
-                    // The owner's absence: settled like a transition.
+                    // The owner's absence: settled like a transition, after a
+                    // deletion's row retires (never withheld into a claim).
                     None => {
+                        if bytes.is_none() {
+                            self.retire_row(&mut guard, &path, true);
+                        }
                         self.settle(&mut guard, self.authority(&path), &path, before);
                     }
                 }

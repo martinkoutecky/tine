@@ -2379,6 +2379,7 @@ fn r2_a_seed_with_other_keys_at_the_checkpoints_revision_keeps_one_owner() {
     let handoff = crate::model::page_ids::SaveHandoff {
         bytes: Arc::clone(&saved),
         doc: Arc::new(doc),
+        moved: Vec::new(),
     };
     graph.hold_unhosted(rel);
     assert!(graph.publish_owned(rel, Some(saved), Some(handoff)).is_ok());

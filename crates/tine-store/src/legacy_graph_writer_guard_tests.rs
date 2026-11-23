@@ -241,6 +241,11 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
     ),
     (
         "crates/tine-store/src/model/page_ids_tests.rs",
+        "r4_an_owners_confirmed_deletion_ends_the_path",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
         "r2_a_rescan_after_a_move_keeps_each_key_on_one_page",
         "sync_file_internal",
     ),

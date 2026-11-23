@@ -505,6 +505,32 @@ fn r2_a_failed_owner_parse_keeps_the_claim() {
     }
 }
 
+/// Blocker 3 of the 40c9ce0f4 review: the owner's confirmed deletion of
+/// its held page ends the path's S(P). No claim stays, before or after the
+/// release and the watcher's reread of the absent file; a same-byte
+/// recreation takes fresh keys and a fresh witness. Fails on 40c9ce0f4.
+#[test]
+fn r4_an_owners_confirmed_deletion_ends_the_path() {
+    for (rel, text, saved) in cases() {
+        let (_temp, graph) = graph(&[(rel, text)]);
+        let keys = structural_save(&graph, rel, text, saved);
+        let path = graph.root.join(rel);
+        let witness = graph.witness(&path);
+        fs::remove_file(&path).unwrap();
+        assert!(graph.publish_owned(rel, None, None).is_ok(), "{rel}");
+        let claimed = || graph.held.claims.lock().unwrap().contains_key(&path);
+        assert!(!claimed(), "{rel}: the deleted page's claim stays");
+        let _ = graph.release(rel);
+        let _ = graph.sync_file_internal(&path, None);
+        assert!(!claimed(), "{rel}: a claim after the release");
+        fs::write(&path, saved).unwrap();
+        let _ = graph.sync_file_internal(&path, None);
+        let now = self::keys(&row(&graph, rel));
+        assert!(!now.contains(&keys[0]), "{rel}: the old keys came back");
+        assert_ne!(graph.witness(&path), witness, "{rel}: the old witness");
+    }
+}
+
 /// Finding 3: a hold of an unchanged row claims nothing, so its release
 /// leaves no claim behind.
 #[test]

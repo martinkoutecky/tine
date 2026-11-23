@@ -3425,6 +3425,17 @@ impl Graph {
         abs: &Path,
         bytes: &[u8],
     ) -> io::Result<Option<PageDto>> {
+        self.page_dto_keyed(abs, bytes, None)
+    }
+
+    /// [`Self::page_dto_for_bytes`], served from `keyed` when given: the
+    /// keyed parse of exactly `bytes` (an inexact answer's filled handoff).
+    pub(crate) fn page_dto_keyed(
+        &self,
+        abs: &Path,
+        bytes: &[u8],
+        keyed: Option<Arc<Document>>,
+    ) -> io::Result<Option<PageDto>> {
         validate_parse_bytes_for_path(bytes, abs)?;
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -3436,8 +3447,9 @@ impl Graph {
         // Contained here, not by each caller: the page host's mail has no
         // other guard, and a parser or projection panic must reach it as an
         // unreadable page, never unwind through its driver (merge review F1).
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.dto_of(&entry, content)
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match keyed {
+            Some(doc) => Self::dto_from(&entry, &doc, content),
+            None => self.dto_of(&entry, content),
         }))
         .map(Some)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
@@ -3453,6 +3465,13 @@ impl Graph {
     /// for Org, one serialization); one parse otherwise.
     fn dto_of(&self, entry: &PageEntry, content: &str) -> PageDto {
         Self::dto_from(entry, &self.keyed_of(entry, content), content)
+    }
+
+    /// The keyed document the owner captures for `bytes` as the page file
+    /// at `abs`, as its mail would serve them; None for no page path.
+    pub(crate) fn keyed_for_bytes(&self, abs: &Path, bytes: &[u8]) -> Option<Arc<Document>> {
+        let content = std::str::from_utf8(bytes).ok()?;
+        Some(self.keyed_of(&self.page_entry_in(abs, Some(content))?, content))
     }
 
     /// The keyed document [`Self::dto_of`] serves for `content`.

@@ -226,7 +226,8 @@ fn page_mail(store: &Store, key: PageKey, mail: Mail, facts: MailFacts) -> PageM
             },
             None => MailText::NoFile,
             Some(bytes) => match crate::bench_events::mail_parse(&facts.spelling, || {
-                graph.page_dto_for_bytes(&graph.root.join(&facts.spelling), bytes)
+                let abs = graph.root.join(&facts.spelling);
+                graph.page_dto_keyed(&abs, bytes, facts.keyed.clone())
             }) {
                 Ok(Some(dto)) => MailText::Page { dto: Box::new(dto) },
                 Ok(None) => MailText::Unreadable {

@@ -867,11 +867,14 @@ impl Store {
         (snapshot.as_ref()).is_some_and(|snapshot| snapshot.name_by_path.contains_key(path))
     }
 
-    /// Whether a page other than `path` holds `key` as a runtime key, by the
-    /// published snapshot and the registry (`PageIds::held_elsewhere`).
-    pub(crate) fn held_elsewhere(&self, key: &tine_core::BlockId, path: &Path) -> bool {
-        let snapshot = self.changes.snapshot.read().unwrap();
-        (snapshot.as_ref()).is_some_and(|now| self.graph.ids.held_elsewhere(key, path, &now.graph))
+    /// Run `f` with no published snapshot, as before a launch publishes
+    /// one, then restore it.
+    #[cfg(test)]
+    pub(crate) fn without_snapshot_for_tests<R>(&self, f: impl FnOnce() -> R) -> R {
+        let taken = self.changes.snapshot.write().unwrap().take();
+        let out = f();
+        *self.changes.snapshot.write().unwrap() = taken;
+        out
     }
 
     pub(crate) fn publish_own(

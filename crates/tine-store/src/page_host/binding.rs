@@ -7,15 +7,16 @@ use super::driver::{Deadline, Driver, Owner, Sink, State, SystemClock, Unanswere
 use super::production::ProductionIo;
 use super::progress::{backoff, Clock, Notice, Progress, Stopping};
 use super::*;
-use crate::model::page_ids::SaveHandoff;
+use crate::model::page_ids::{self, SaveHandoff};
 use crate::model::{bytes_hold_block_id, content_rev};
 use crate::store::PublishedObservations;
 use crate::{ChangeKind, EditKind, FileId, FileRev, Origin, PageId, Store, Why};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tine_core::doc::Document;
 use tine_core::model::PageDto;
 use tine_core::projection::{for_each_runtime_key, key_census};
+use tine_core::BlockId;
 
 /// The graph binding's page host. Every command carries the window
 /// generation and a strictly increasing request id (§3.1).
@@ -351,6 +352,12 @@ pub struct PublishedRevision {
 struct Handoff {
     bytes: Text,
     document: Arc<Document>,
+    /// The serializer left blocks unkeyed, which `PageIds` keyed once: the
+    /// answer is inexact, and its mail and publication share `document`.
+    filled: bool,
+    /// A move's receiver: the keys it takes from the source's version, which
+    /// its matching publication registers to it (guard 1, A3).
+    moved: Vec<BlockId>,
     kinds: Vec<EditKind>,
 }
 
@@ -367,6 +374,8 @@ pub(super) struct MailFacts {
     pub binding: BindingNotice,
     /// The window session current when the mail was collected.
     pub session: u64,
+    /// An inexact answer's filled handoff, when the mail's bytes are its own.
+    pub keyed: Option<Arc<Document>>,
 }
 
 /// The page notices the binding keeps beside the host's (A2, REVIEW-3a).
@@ -558,13 +567,12 @@ impl Book {
                     let Some(handoff) = self.pending.remove(&(page.clone(), answer.id)) else {
                         continue;
                     };
-                    // A block the window sent without a key is keyed by the
-                    // store (`Graph::page_ids`): the answer is inexact, so the
-                    // window receives the page with its keys (phase A guard 2).
-                    if answer.took && !key_census(&handoff.document.roots).0 {
-                        answered.insert((page.clone(), answer.id), handoff.bytes.clone());
-                    }
+                    // A block the window sent without a key was keyed in
+                    // `serialize`: the answer is inexact, so the window gets
+                    // the page with those keys (phase A guard 2).
                     if answer.took {
+                        let keyed = handoff.filled.then(|| handoff.document.clone());
+                        answered.insert((page.clone(), answer.id), (handoff.bytes.clone(), keyed));
                         for kind in &handoff.kinds {
                             self.took([page.clone()], *kind);
                         }
@@ -591,10 +599,13 @@ impl Book {
                     }) {
                         self.twins.remove(page);
                     }
-                    let handoff = self.versions.get_mut(page).and_then(|v| v.remove(version));
+                    let mut handoff = self.versions.get_mut(page).and_then(|v| v.remove(version));
+                    let moved = handoff.as_mut().map(|h| std::mem::take(&mut h.moved));
                     let document = handoff.filter(|h| h.bytes == *bytes).map(|h| h.document);
-                    let document = (document.zip(bytes.clone()))
-                        .map(|(doc, bytes)| SaveHandoff { bytes, doc });
+                    let document = (document.zip(bytes.clone())).map(|(doc, bytes)| {
+                        let moved = moved.unwrap_or_default();
+                        SaveHandoff { bytes, doc, moved }
+                    });
                     self.retry.remove(page);
                     delivery.publications.push(Publication {
                         key: page.clone(),
@@ -681,13 +692,13 @@ impl Book {
             let Some(mail) = host.receive(&page) else {
                 continue;
             };
-            let exact = match (&mail.page, &mail.answer) {
-                (Some(state), Some(answer)) => {
-                    answer.took
-                        && state.version == answer.version
-                        && answered.get(&(page.clone(), answer.id)) == Some(&state.buf)
+            let own = match (&mail.page, &mail.answer) {
+                (Some(state), Some(answer)) if answer.took && state.version == answer.version => {
+                    (answered.get(&(page.clone(), answer.id)))
+                        .filter(|(bytes, _)| *bytes == state.buf)
+                        .map(|(_, keyed)| keyed.clone())
                 }
-                _ => false,
+                _ => None,
             };
             let refused = mail
                 .answer
@@ -698,11 +709,12 @@ impl Book {
                 mail,
                 MailFacts {
                     notice: Notice::default(),
-                    content: !exact,
+                    content: !matches!(own, Some(None)),
                     refused,
                     spelling: String::new(),
                     binding: BindingNotice::default(),
                     session: 0,
+                    keyed: own.flatten(),
                 },
             ));
         }
@@ -738,6 +750,7 @@ impl Book {
                         spelling: String::new(),
                         binding: BindingNotice::default(),
                         session: 0,
+                        keyed: None,
                     },
                 ));
             }
@@ -1078,9 +1091,20 @@ impl PageHost {
         let old = source.and_then(|text| text.as_deref());
         let (bytes, document) = tx.serialize_host_input(&file, dto, old)?;
         let bytes: Text = Some(Arc::from(bytes));
+        // Holes (a soft line reparsed as a child) are keyed here, once: the
+        // inexact reply and the publication then carry the same keys.
+        let mut document = Arc::new(document);
+        let filled = key_census(&document.roots).0;
+        if filled {
+            let input = page_ids::Input::Pair(document, page_ids::Trust::Window);
+            let graph = &self.store.graph;
+            document = graph.page_ids(&graph.root.join(spelling), spelling, input, None);
+        }
         let handoff = Handoff {
             bytes: bytes.clone(),
-            document: Arc::new(document),
+            document,
+            filled,
+            moved: Vec::new(),
             kinds: kinds.to_vec(),
         };
         Ok((bytes, handoff))
@@ -1133,19 +1157,33 @@ impl PageHost {
     ) -> Result<(), PageRefusal> {
         let (source_key, source_dto, source_version) = source;
         let (receiver_key, receiver_dto, receiver_version) = receiver;
-        let (spelling, old, ..) = self.source(source_key, source_version, None);
+        let (spelling, source_old, ..) = self.source(source_key, source_version, None);
         let (source_text, source_handoff) =
-            self.serialize(&spelling, source_dto, old.as_ref(), kinds)?;
+            self.serialize(&spelling, source_dto, source_old.as_ref(), kinds)?;
+        // The moved blocks keep their keys (accepted as today): the keys the
+        // receiver takes from the source version's keyed base (the window's
+        // handoff for it, else the owner's capture of its bytes) go with the
+        // receiver's publication, which registers them (guard 1, A3).
+        let page = source_key.to_owned();
+        let handoff = move |state: &State<ProductionIo, SystemClock>| {
+            let versions = state.book.versions.get(&page)?;
+            Some(Arc::clone(&versions.get(&source_version)?.document))
+        };
+        let base = self.driver.shared.read(handoff).ok().flatten();
+        let base = base.or_else(|| {
+            let (graph, bytes) = (&self.store.graph, source_old.flatten()?);
+            graph.keyed_for_bytes(&graph.root.join(&spelling), &bytes)
+        });
+        let mut held = HashSet::new();
+        for_each_runtime_key(base.as_ref().map_or(&[][..], |b| &b.roots), &mut |key| {
+            held.insert(key.clone());
+        });
         let (spelling, old, ..) = self.source(receiver_key, receiver_version, None);
-        let (receiver_text, receiver_handoff) =
+        let (receiver_text, mut receiver_handoff) =
             self.serialize(&spelling, receiver_dto, old.as_ref(), kinds)?;
-        // The moved blocks keep their keys (accepted as today): the keys
-        // the receiver now holds that another page held are registered to
-        // it, so no other page's allocation reuses them (guard 1, A3).
-        let receiver_path = self.store.graph.root.join(&spelling);
-        let mut moved = Vec::new();
+        let moved = &mut receiver_handoff.moved;
         for_each_runtime_key(&receiver_handoff.document.roots, &mut |key| {
-            if self.store.held_elsewhere(key, &receiver_path) {
+            if held.contains(key) {
                 moved.push(key.clone());
             }
         });
@@ -1168,9 +1206,7 @@ impl PageHost {
                 (source_key.into(), source_handoff),
                 (receiver_key.into(), receiver_handoff),
             ],
-        )?;
-        self.store.graph.ids.moved(moved, &receiver_path);
-        Ok(())
+        )
     }
 
     /// `page_discard` (§3.1): the window consumed its unsent input first.

@@ -12,6 +12,7 @@ pub(super) fn publish(graph: &Graph, key: &str, bytes: &str, doc: Option<Documen
     let saved = doc.map(|doc| page_ids::SaveHandoff {
         bytes: Arc::clone(&bytes),
         doc: Arc::new(doc),
+        moved: Vec::new(),
     });
     assert!(graph.publish_owned(key, Some(bytes), saved).is_ok());
 }
