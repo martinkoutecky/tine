@@ -140,6 +140,12 @@ pub(crate) fn bracket_name(to: &str, org: bool) -> Option<String> {
     reference_spelling("[[Old]]", 2..5, to, org, "explicit_link", &[])
 }
 
+/// A Markdown link that reads as exactly one reference to `name`.
+/// At most two local parses, returning `None` when neither spelling works.
+pub fn markdown_page_link(name: &str) -> Option<String> {
+    bracket_name(name, false).map(|spelling| format!("[[{spelling}]]"))
+}
+
 /// The parser's one reference of `rule` has exactly `name`, optionally at
 /// the required range. Used for site-specific name spellings.
 pub(crate) fn reads_reference(

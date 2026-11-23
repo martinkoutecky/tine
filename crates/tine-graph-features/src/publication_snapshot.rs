@@ -11,29 +11,13 @@ use std::fmt::Write as _;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use tine_core::config::{macro_definition_spans, top_level_entry_spans, Config};
+use tine_core::config::{macro_definition_spans, Config};
 use tine_core::edn::{self, Edn};
 use tine_core::model::PageKind;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
 
 const CONFIG_PATH: &str = "logseq/config.edn";
-
-const READING_KEYS: &[&str] = &[
-    ":pages-directory",
-    ":journals-directory",
-    ":journal/page-title-format",
-    ":date-formatter",
-    ":journal/file-name-format",
-    ":preferred-format",
-    ":file/name-format",
-    ":block-hidden-properties",
-    ":property/separated-by-commas",
-    ":property-pages/enabled?",
-    ":property-pages/excludelist",
-    ":ignored-page-references-keywords",
-    ":start-of-week",
-];
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SourceFile<'a> {
@@ -112,7 +96,7 @@ impl HomePage {
         Ok(Self { name, path })
     }
 
-    pub fn source(&self, pages: &[CorpusPage], query: Option<&str>) -> MemoryFile {
+    pub fn source(&self, pages: &[CorpusPage], query: Option<&str>) -> io::Result<MemoryFile> {
         let mut text = format!("title:: {}\n\n", self.name);
         if let Some(query) = query {
             text.push_str("- ");
@@ -120,20 +104,20 @@ impl HomePage {
             text.push('\n');
         } else {
             for page in pages {
-                text.push_str(&format!("- [[{}]]\n", page.name));
+                let link = tine_core::refs::markdown_page_link(&page.name).ok_or_else(|| {
+                    refusal("a published page title could not be written as a link")
+                })?;
+                writeln!(text, "- {link}").unwrap();
             }
         }
-        (self.path.clone(), Arc::new(text.into_bytes()))
+        Ok((self.path.clone(), Arc::new(text.into_bytes())))
     }
 }
 
-fn reduced_config(source: &str, home: &str, names: &HashSet<String>) -> String {
+fn reduced_config(config: &Config, source: &str, home: &str, names: &HashSet<String>) -> String {
     let mut out = String::from("{\n");
-    for (key, value) in READING_KEYS
-        .iter()
-        .filter_map(|key| top_level_entry_spans(source, key))
-    {
-        writeln!(out, "{key} {value}").unwrap();
+    for (key, value) in config.publication_reading_values() {
+        writeln!(out, "{key} {}", edn::to_string(&value)).unwrap();
     }
     let macros = macro_definition_spans(source, names);
     if !macros.is_empty() {
@@ -216,9 +200,8 @@ pub(crate) fn snapshot(
 ) -> io::Result<Vec<u8>> {
     let config = selecting_view.config();
     let names = page_macros(corpus, config);
-    let reduced = reduced_config(config.source().unwrap_or(""), home, &names);
-    let generated_path = generated.as_ref().map(|(path, _)| path.clone());
-    files.extend(generated);
+    let reduced = reduced_config(config, config.source().unwrap_or(""), home, &names);
+    files.extend(generated.iter().cloned());
     files.push((CONFIG_PATH.into(), Arc::new(reduced.into_bytes())));
     if quick_share {
         crate::share_admission::check_sizes(
@@ -228,23 +211,26 @@ pub(crate) fn snapshot(
         )
         .map_err(|error| refusal(error.to_string()))?;
     }
-    let (closed, _) = WholeGraph::from_files(files.clone())?;
-    if carried(config) != carried(closed.config()) {
+    let (read_config, pages, home_document) = tine_store::publish::publication_page_identities(
+        files.clone(),
+        generated
+            .as_ref()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )?;
+    if config.publication_reading_values() != read_config.publication_reading_values() {
         return Err(refusal(
             "the reduced config did not preserve the graph's reading settings",
         ));
     }
-    let actual = closed.corpus(None, true);
-    let expected_pages = corpus.pages.len() + usize::from(generated_path.is_some());
-    let identities: HashSet<_> = actual
-        .pages
+    let expected_pages = corpus.pages.len() + usize::from(generated.is_some());
+    let identities: HashSet<_> = pages
         .iter()
-        .map(|page| (page.id.as_str(), page.name.as_str(), page.kind))
+        .map(|(path, name, kind)| (path.as_str(), name.as_str(), *kind))
         .collect();
-    if generated_path
+    if generated
         .as_ref()
-        .is_some_and(|path| !identities.contains(&(path.as_str(), home, PageKind::Page)))
-        || actual.pages.len() != expected_pages
+        .is_some_and(|(path, _)| !identities.contains(&(path.as_str(), home, PageKind::Page)))
+        || pages.len() != expected_pages
         || files.len() != expected_pages + 1
         || corpus
             .pages
@@ -256,11 +242,10 @@ pub(crate) fn snapshot(
         ));
     }
     if quick_share {
-        crate::share_admission::check_blocks(&actual)
+        let documents = corpus.pages.iter().map(|page| page.document.as_ref());
+        crate::share_admission::check_blocks(documents.chain(home_document.as_ref()))
             .map_err(|error| refusal(error.to_string()))?;
     }
-    drop(actual);
-    drop(closed);
     let files = files
         .iter()
         .map(|(path, bytes)| {
@@ -322,16 +307,22 @@ impl Snapshot<'_> {
             .filter(|file| file.path == CONFIG_PATH)
             .count();
         let file_count = self.files.len();
-        let (config, mut pages) = tine_store::publish::publication_page_names(
+        let (config, mut pages, _) = tine_store::publish::publication_page_identities(
             self.files
                 .into_iter()
-                .map(|file| (file.path.into_owned(), file.text.into_owned().into_bytes()))
+                .map(|file| {
+                    (
+                        file.path.into_owned(),
+                        Arc::new(file.text.into_owned().into_bytes()),
+                    )
+                })
                 .collect(),
+            None,
         )?;
         let home = config.default_home.as_deref();
         if config_count != 1
             || pages.len() + 1 != file_count
-            || !pages.iter().any(|(_, name)| Some(name.as_str()) == home)
+            || !pages.iter().any(|(_, name, _)| Some(name.as_str()) == home)
         {
             return Err(refusal("invalid publication membership"));
         }
@@ -339,83 +330,192 @@ impl Snapshot<'_> {
         pages.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         Ok(pages
             .into_iter()
-            .filter_map(|(_, name)| (include_home || Some(name.as_str()) != home).then_some(name))
+            .filter_map(|(_, name, _)| {
+                (include_home || Some(name.as_str()) != home).then_some(name)
+            })
             .collect())
     }
-}
-
-fn carried(config: &Config) -> impl PartialEq + std::fmt::Debug + '_ {
-    // Exhaustive on purpose. A new Config field needs a disclosure decision.
-    let Config {
-        journals_dir,
-        pages_dir,
-        start_of_week,
-        block_hidden_properties,
-        separated_by_commas,
-        ignored_page_references_keywords,
-        property_pages_enabled,
-        property_pages_excludelist,
-        journal_file_name_format,
-        journal_page_title_format,
-        preferred_format,
-        file_name_format,
-        // Filtered, replaced, or derived from the retained entries.
-        macros: _,
-        default_home: _,
-        journal_config_diagnostics: _,
-        // Device, publication, private graph and editing settings.
-        default_journal_queries: _,
-        disable_scheduled_and_deadline_query: _,
-        scheduled_future_days: _,
-        hidden: _,
-        hidden_parse_failed_closed: _,
-        preferred_workflow: _,
-        shortcuts: _,
-        all_pages_public: _,
-        linked_references_collapsed_threshold: _,
-        ref_default_open_blocks_level: _,
-        default_journal_template: _,
-        favorites: _,
-        mobile_gestures_disabled_in_block_with_tags: _,
-        quick_capture_template_text: _,
-        quick_capture_template_media: _,
-        quick_capture_default_page: _,
-        quick_capture_insert_today: _,
-        quick_capture_redirect_page: _,
-        favorites_page: _,
-        enable_timetracking: _,
-        enable_search_remove_accents: _,
-        show_brackets: _,
-        enable_tooltip: _,
-        enable_journals: _,
-        doc_mode_enter_for_new_block: _,
-        logical_outdenting: _,
-        logbook: _,
-        guide_announced: _,
-    } = config;
-    (
-        (
-            journals_dir,
-            pages_dir,
-            start_of_week,
-            block_hidden_properties,
-            separated_by_commas,
-            ignored_page_references_keywords,
-            property_pages_enabled,
-            property_pages_excludelist,
-        ),
-        (
-            journal_file_name_format,
-            journal_page_title_format,
-            preferred_format,
-            file_name_format,
-        ),
-    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_config_carries_only_effective_reading_values() {
+        let source = r#"{:block-hidden-properties #{:secret ; Private Hidden
+            "a private :String-Lookalike" :other}, :property/separated-by-commas #{:comma ; Private Comma
+            :ns/other, [:Nested-Lookalike]}, :ignored-page-references-keywords #{:literal ; Private Ignored
+            :other}, :property-pages/excludelist #{:exclude ; Private Exclude
+            :other}, :property-pages/enabled? {:note "Private Page"}
+            :journal/page-title-format false :date-formatter "dd.MM.yyyy"
+            :preferred-format "ORG" :file/name-format :triple-lowbar
+            :start-of-week 1}"#;
+        let (graph, _) = WholeGraph::from_files(vec![
+            ("pages/Source.md".into(), b"- body\n".to_vec()),
+            (CONFIG_PATH.into(), source.as_bytes().to_vec()),
+        ])
+        .unwrap();
+        let corpus = graph.corpus(None, true);
+        let mut leaks = Vec::new();
+        for quick_share in [false, true] {
+            let bytes = crate::build_graph::with_build_graph_text(
+                &graph,
+                &corpus.pages,
+                "did not build",
+                |_, built, files| {
+                    snapshot(
+                        &graph,
+                        &built,
+                        files,
+                        "Source",
+                        "",
+                        "Source",
+                        None,
+                        quick_share,
+                    )
+                },
+            )
+            .unwrap();
+            let written = if quick_share {
+                serde_json::from_slice::<ShareDocument>(&bytes)
+                    .unwrap()
+                    .snapshot
+            } else {
+                serde_json::from_slice::<Snapshot>(&bytes).unwrap()
+            };
+            let config = &written
+                .files
+                .iter()
+                .find(|file| file.path == CONFIG_PATH)
+                .unwrap()
+                .text;
+            let actual = Config::parse(config);
+            let expected = Config::parse(source);
+            assert_eq!(
+                actual.publication_reading_values(),
+                expected.publication_reading_values()
+            );
+            assert_eq!(actual.block_hidden_properties, ["secret", "other"]);
+            assert_eq!(actual.separated_by_commas, ["comma", "ns/other"]);
+            assert_eq!(
+                actual.ignored_page_references_keywords,
+                ["literal", "other"]
+            );
+            assert_eq!(actual.property_pages_excludelist, ["exclude", "other"]);
+            assert!(actual.property_pages_enabled);
+            for private in [
+                "Private Hidden",
+                "Private Comma",
+                "Private Ignored",
+                "Private Exclude",
+                "Private Page",
+                "String-Lookalike",
+                "Nested-Lookalike",
+            ] {
+                if config.contains(private) {
+                    leaks.push((quick_share, private));
+                }
+            }
+        }
+        assert!(
+            leaks.is_empty(),
+            "private content in publications: {leaks:?}"
+        );
+    }
+
+    #[test]
+    fn generated_home_links_use_the_full_page_titles() {
+        let titles = ["Ends]", "Middle]]Here", "A ]] [[ B", r"Slash\]]Here"];
+        let (graph, _) = WholeGraph::from_files(
+            titles
+                .iter()
+                .enumerate()
+                .map(|(i, title)| {
+                    (
+                        format!("pages/{i}.md"),
+                        format!("title:: {title}\n\n- body\n").into_bytes(),
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+        let corpus = graph.corpus(None, true);
+        let home = HomePage::new(&graph, &corpus.pages, "Home").unwrap();
+        let (_, source) = home.source(&corpus.pages, None).unwrap();
+        let document = tine_core::doc::parse(std::str::from_utf8(&source).unwrap());
+        let targets = document
+            .roots
+            .iter()
+            .map(|block| {
+                block
+                    .projection()
+                    .reference_source()
+                    .explicit
+                    .iter()
+                    .map(|reference| reference.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let expected = corpus
+            .pages
+            .iter()
+            .map(|page| vec![page.name.clone()])
+            .collect::<Vec<_>>();
+        assert_eq!(expected.len(), titles.len());
+        assert!(titles
+            .iter()
+            .all(|title| expected.contains(&vec![title.to_string()])));
+        assert_eq!(targets, expected);
+    }
+
+    #[test]
+    fn share_preparation_parses_each_selected_source_once() {
+        use tine_store::cost_counters;
+
+        let body = "- selected body with [[Ref]]\n".repeat(60);
+        let (graph, _) = WholeGraph::from_files(
+            (0..200)
+                .map(|i| (format!("pages/Page {i:03}.md"), body.as_bytes().to_vec()))
+                .collect(),
+        )
+        .unwrap();
+        let selected = graph.corpus(None, true);
+        let mut samples = Vec::new();
+        for _ in 0..3 {
+            cost_counters::reset();
+            let started = std::time::Instant::now();
+            crate::build_graph::with_build_graph_text(
+                &graph,
+                &selected.pages,
+                "did not build",
+                |built, corpus, files| {
+                    let home = HomePage::new(built, &corpus.pages, "Home").unwrap();
+                    snapshot(
+                        &graph,
+                        &corpus,
+                        files,
+                        "Home",
+                        "",
+                        "Home",
+                        Some(home.source(&corpus.pages, None)?),
+                        true,
+                    )
+                },
+            )
+            .unwrap();
+            let counts = cost_counters::snapshot();
+            let sample = (
+                counts.full_reads,
+                counts.preamble_reads,
+                counts.parses,
+                counts.corpus,
+            );
+            eprintln!("share writer: 200 pages, 12000 selected blocks, full reads/preambles/parses/corpora={sample:?}, elapsed={:?}", started.elapsed());
+            samples.push(sample);
+        }
+        assert_eq!(samples, [(201, 201, 201, 1); 3]);
+    }
 
     #[test]
     fn snapshot_keeps_reachable_macros_and_drops_shadowed_builtins() {
@@ -467,7 +567,7 @@ mod tests {
                 display,
                 "",
                 &home.name,
-                Some(home.source(&[], None)),
+                Some(home.source(&[], None).unwrap()),
                 false,
             )
             .unwrap();
@@ -601,7 +701,7 @@ mod tests {
         ])
         .unwrap();
         let names = page_macros(&graph.corpus(None, true), &config);
-        let reduced = reduced_config(&source, "Source", &names);
+        let reduced = reduced_config(&config, &source, "Source", &names);
         assert!(!reduced.contains("private"), "{reduced}");
         let macros = Config::parse(&reduced).macros;
         for name in [
@@ -628,9 +728,10 @@ mod tests {
              :macros {:greeting "shadowed" "greeting" ; keep odd spacing
              "Hello $1" :ns/other "other" :unused "Unused Secret" :bad 7 :ignored "after bad"}}"#,
             r#"{:date-formatter "dd.MM.yyyy" :start-of-week -1 :preferred-format "ORG" :favorites ["torn"#,
+            r#"{:journal/page-title-format "yyyy-MM-dd" :date-formatter "Private Fallback"}"#,
         ] {
-            let reduced = reduced_config(source, "Public Home", &used);
             let expected = Config::parse(source);
+            let reduced = reduced_config(&expected, source, "Public Home", &used);
             let actual = Config::parse(&reduced);
             assert_eq!(actual.default_home.as_deref(), Some("Public Home"));
             assert_eq!(
@@ -643,14 +744,38 @@ mod tests {
                     .collect()
             );
             assert!(actual.favorites.is_empty());
-            assert_eq!(carried(&actual), carried(&expected));
-            for key in READING_KEYS {
-                assert_eq!(
-                    top_level_entry_spans(&reduced, key),
-                    top_level_entry_spans(source, key),
-                    "{key}"
-                );
-            }
+            assert_eq!(actual.pages_dir, expected.pages_dir);
+            assert_eq!(actual.journals_dir, expected.journals_dir);
+            assert_eq!(
+                actual.journal_page_title_format,
+                expected.journal_page_title_format
+            );
+            assert_eq!(
+                actual.journal_file_name_format,
+                expected.journal_file_name_format
+            );
+            assert_eq!(actual.preferred_format, expected.preferred_format);
+            assert_eq!(actual.file_name_format, expected.file_name_format);
+            assert_eq!(
+                actual.block_hidden_properties,
+                expected.block_hidden_properties
+            );
+            assert_eq!(actual.separated_by_commas, expected.separated_by_commas);
+            assert_eq!(
+                actual.property_pages_enabled,
+                expected.property_pages_enabled
+            );
+            assert_eq!(
+                actual.property_pages_excludelist,
+                expected.property_pages_excludelist
+            );
+            assert_eq!(
+                actual.ignored_page_references_keywords,
+                expected.ignored_page_references_keywords
+            );
+            assert_eq!(actual.start_of_week, expected.start_of_week);
+            assert!(!reduced.contains("comment"));
+            assert!(!reduced.contains("Private Fallback"));
             assert!(!reduced.contains("Unused Secret") && !reduced.contains("Private Favorite"));
         }
     }
@@ -675,7 +800,7 @@ mod tests {
                 "Home",
                 "2026-11-22T00:00:00Z",
                 &home.name,
-                Some(home.source(&corpus.pages, None)),
+                Some(home.source(&corpus.pages, None).unwrap()),
                 false,
             )
         };

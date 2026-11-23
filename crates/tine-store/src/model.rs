@@ -450,7 +450,7 @@ fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
 
 /// Parse a page file's bytes into a [`Document`] using the parser for its
 /// format (org headlines vs markdown bullets), chosen by the path's extension.
-fn parse_doc(path: &Path, content: &str) -> Document {
+pub(crate) fn parse_doc(path: &Path, content: &str) -> Document {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
     unchanged_save::counted_parse();

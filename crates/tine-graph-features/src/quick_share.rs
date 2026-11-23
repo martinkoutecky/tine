@@ -439,7 +439,9 @@ pub fn prepare(
                 &title,
                 created_at,
                 home_name,
-                home.as_ref().map(|home| home.source(&corpus.pages, None)),
+                home.as_ref()
+                    .map(|home| home.source(&corpus.pages, None))
+                    .transpose()?,
                 true,
             )?;
             Ok((title, snapshot))

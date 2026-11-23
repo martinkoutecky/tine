@@ -1,6 +1,6 @@
 //! Generation-2 limits at the source and opened graph boundaries.
 use std::io;
-use tine_core::Corpus;
+use tine_core::doc::Document;
 
 pub(crate) const MAX_BLOCKS: usize = 200_000;
 pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;
@@ -29,11 +29,11 @@ pub fn check_sizes(
 
 /// Admit the outlines that graph loading checked and parsed. Visits at most
 /// one block past the limit, with no source reads or reparsing.
-pub fn check_blocks(corpus: &Corpus) -> io::Result<()> {
+pub fn check_blocks<'a>(documents: impl IntoIterator<Item = &'a Document>) -> io::Result<()> {
     let mut remaining = MAX_BLOCKS;
     let mut levels = Vec::new();
-    for page in &corpus.pages {
-        levels.push(page.document.roots.iter());
+    for document in documents {
+        levels.push(document.roots.iter());
         while let Some(level) = levels.last_mut() {
             let Some(block) = level.next() else {
                 levels.pop();
@@ -71,7 +71,14 @@ mod tests {
         )
         .unwrap();
         let (graph, _) = WholeGraph::from_files(files).unwrap();
-        check_blocks(&graph.corpus(None, false)).unwrap();
+        check_blocks(
+            graph
+                .corpus(None, false)
+                .pages
+                .iter()
+                .map(|p| p.document.as_ref()),
+        )
+        .unwrap();
         let count = cost_counters::snapshot();
         eprintln!(
             "share_open sources=2 blocks=20000 outline_parses={} elapsed={:?}",

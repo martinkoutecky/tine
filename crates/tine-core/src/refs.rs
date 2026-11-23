@@ -10,7 +10,7 @@ pub use page_identity::page_key;
 
 #[path = "refs_label.rs"]
 pub(crate) mod label;
-pub use label::FileLabel;
+pub use label::{markdown_page_link, FileLabel};
 
 /// Comparison form for page identity. NFC composition requires allocation; this
 /// deliberately delegates to the canonical key so cache scans cannot drift.

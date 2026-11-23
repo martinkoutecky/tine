@@ -314,6 +314,122 @@ impl Default for LogbookSettings {
 }
 
 impl Config {
+    /// Effective reading settings for a source publication, excluding defaults.
+    /// O(retained settings and their values), with no access to authored text.
+    pub fn publication_reading_values(&self) -> Vec<(&'static str, crate::edn::Edn)> {
+        use crate::edn::Edn;
+
+        // Exhaustive so that a new field requires a disclosure decision.
+        let Self {
+            journals_dir,
+            pages_dir,
+            start_of_week,
+            block_hidden_properties,
+            separated_by_commas,
+            ignored_page_references_keywords,
+            property_pages_enabled,
+            property_pages_excludelist,
+            journal_file_name_format,
+            journal_page_title_format,
+            preferred_format,
+            file_name_format,
+            // Filtered, replaced, or derived from the retained entries.
+            macros: _,
+            default_home: _,
+            journal_config_diagnostics: _,
+            // Device, publication, private graph and editing settings.
+            default_journal_queries: _,
+            disable_scheduled_and_deadline_query: _,
+            scheduled_future_days: _,
+            hidden: _,
+            hidden_parse_failed_closed: _,
+            preferred_workflow: _,
+            shortcuts: _,
+            all_pages_public: _,
+            linked_references_collapsed_threshold: _,
+            ref_default_open_blocks_level: _,
+            default_journal_template: _,
+            favorites: _,
+            mobile_gestures_disabled_in_block_with_tags: _,
+            quick_capture_template_text: _,
+            quick_capture_template_media: _,
+            quick_capture_default_page: _,
+            quick_capture_insert_today: _,
+            quick_capture_redirect_page: _,
+            favorites_page: _,
+            enable_timetracking: _,
+            enable_search_remove_accents: _,
+            show_brackets: _,
+            enable_tooltip: _,
+            enable_journals: _,
+            doc_mode_enter_for_new_block: _,
+            logical_outdenting: _,
+            logbook: _,
+            guide_announced: _,
+        } = self;
+        let defaults = Self::default();
+        let set =
+            |members: &[String]| Edn::Set(members.iter().cloned().map(Edn::Keyword).collect());
+        [
+            (
+                ":pages-directory",
+                (pages_dir != &defaults.pages_dir).then(|| Edn::Str(pages_dir.clone())),
+            ),
+            (
+                ":journals-directory",
+                (journals_dir != &defaults.journals_dir).then(|| Edn::Str(journals_dir.clone())),
+            ),
+            (
+                ":journal/page-title-format",
+                journal_page_title_format.clone().map(Edn::Str),
+            ),
+            (
+                ":journal/file-name-format",
+                journal_file_name_format.clone().map(Edn::Str),
+            ),
+            (
+                ":preferred-format",
+                (*preferred_format == crate::model::Format::Org)
+                    .then(|| Edn::Keyword("org".into())),
+            ),
+            (
+                ":file/name-format",
+                (*file_name_format == FileNameFormat::TripleLowbar)
+                    .then(|| Edn::Keyword("triple-lowbar".into())),
+            ),
+            (
+                ":block-hidden-properties",
+                (!block_hidden_properties.is_empty()).then(|| set(block_hidden_properties)),
+            ),
+            (
+                ":property/separated-by-commas",
+                (!separated_by_commas.is_empty()).then(|| set(separated_by_commas)),
+            ),
+            (
+                ":property-pages/enabled?",
+                (*property_pages_enabled != defaults.property_pages_enabled)
+                    .then_some(Edn::Bool(*property_pages_enabled)),
+            ),
+            (
+                ":property-pages/excludelist",
+                (!property_pages_excludelist.is_empty()).then(|| set(property_pages_excludelist)),
+            ),
+            (
+                ":ignored-page-references-keywords",
+                (!ignored_page_references_keywords.is_empty())
+                    .then(|| set(ignored_page_references_keywords)),
+            ),
+            (
+                ":start-of-week",
+                (*start_of_week != defaults.start_of_week)
+                    .then_some(Edn::Int((*start_of_week).into())),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|value| (key, value)))
+        .collect()
+    }
+
     /// The graph's journal date answerer: the one place the two config
     /// strings become a [`crate::date::JournalFormat`] (I-12, CM step 2).
     pub fn journal_format(&self) -> crate::date::JournalFormat {
@@ -1105,28 +1221,6 @@ fn read_keyword(s: &str, key: &str) -> Option<usize> {
     root_keyword(s, key, false)
 }
 
-/// The separate authored key and value spans for a complete root entry.
-/// Reading a complete entry before a torn suffix follows `Config::parse`.
-pub fn top_level_entry_spans<'a>(s: &'a str, key: &str) -> Option<(&'a str, &'a str)> {
-    let at = find_top_level_keyword(s, key).or_else(|| read_keyword(s, key))?;
-    let value = skip_blank(s, at + key.len());
-    if value == s.len() || matches!(s.as_bytes()[value], b'}' | b']' | b')') {
-        return None;
-    }
-    let end = form_end(s, value);
-    let form = &s[value..end];
-    // A torn collection or string would consume the following generated key.
-    let closed = match form.as_bytes().first()? {
-        b'{' => match_close_brace(s, value) < s.len(),
-        b'[' => match_close_bracket(s, value) < s.len(),
-        b'(' => match_close(s, value, b'(', b')') < s.len(),
-        b'#' if form.starts_with("#{") => match_close_brace(s, value + 1) < s.len(),
-        b'"' => read_string_at(s, value).is_some(),
-        _ => true,
-    };
-    closed.then_some((&s[at..at + key.len()], form))
-}
-
 fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
     let open = skip_blank(s, 0);
     if s.as_bytes().get(open) != Some(&b'{') {
@@ -1169,16 +1263,17 @@ fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
     if b.get(from) != Some(&b'#') || b.get(from + 1) != Some(&b'{') {
         return Vec::new();
     }
-    let brace = from + 1;
-    let close = match_close_brace(edn, brace);
-    // Sets hold only keywords (no strings), so a `;` is always a comment — drop
-    // the commented tail of each line before collecting keywords.
-    edn[brace + 1..close]
-        .lines()
-        .map(|l| &l[..l.find(';').unwrap_or(l.len())])
-        .flat_map(str::split_whitespace)
-        .filter_map(|t| t.strip_prefix(':'))
-        .map(str::to_string)
+    let close = match_close_brace(edn, from + 1);
+    use crate::edn::Edn;
+    let Some(Edn::Set(members)) = edn.get(from..=close).and_then(crate::edn::parse_strict) else {
+        return Vec::new();
+    };
+    members
+        .into_iter()
+        .filter_map(|member| match member {
+            Edn::Keyword(name) => Some(name),
+            _ => None,
+        })
         .collect()
 }
 

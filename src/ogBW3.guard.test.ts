@@ -14,7 +14,8 @@ it("I-22: CSV drop uses the existing bounded regular-file reader; exemplar devic
 });
 it("I-20: snapshot projects held sources, never live pages; exemplar publication_snapshot::snapshot", () => {
   const body = source("crates/tine-graph-features/src/publication_snapshot.rs").split("fn snapshot(")[1].split("impl Snapshot")[0];
-  expect(body).toContain("WholeGraph::from_files(files.clone())");
+  expect(body).toMatch(/publication_page_identities\(\s*files\.clone\(\),/);
+  expect(body).not.toContain("WholeGraph::from_files");
   expect(body).toContain("selecting_view.config()");
   expect(body).not.toContain("store.page(");
 });

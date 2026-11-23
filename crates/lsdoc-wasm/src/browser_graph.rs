@@ -48,8 +48,11 @@ impl BrowserGraph {
                     "share-too-large: a shared source could not be read as an outline",
                 ));
             }
-            tine_graph_features::share_admission::check_blocks(&graph.view.corpus(None, false))
-                .map_err(|error| js_error(format!("share-too-large: {error}")))?;
+            let corpus = graph.view.corpus(None, false);
+            tine_graph_features::share_admission::check_blocks(
+                corpus.pages.iter().map(|p| p.document.as_ref()),
+            )
+            .map_err(|error| js_error(format!("share-too-large: {error}")))?;
         }
         Ok(graph)
     }

@@ -724,7 +724,7 @@ fn publish_at(
                 &request.name,
                 &export_time(epoch)?,
                 &home.name,
-                Some(home.source(&corpus.pages, query.as_deref())),
+                Some(home.source(&corpus.pages, query.as_deref())?),
                 false,
             )?;
             Ok((files, snap))

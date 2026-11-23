@@ -19,11 +19,13 @@ reading configuration determine every answer. An unshared page has no
 influence. Queries run in the viewer, so relative dates use the viewing day.
 Assets, stored answers and baked query results are outside the document.
 
-`logseq/config.edn` carries the authored key and value spans, separated by one
-space, for page and journal
-directories, journal title and filename formats (including `:date-formatter`),
+`logseq/config.edn` writes fresh EDN from the config reader's effective values
+for page and journal directories, journal title and filename formats
+(`:date-formatter` is a fallback for the title format),
 preferred format, filename format, hidden block properties, comma-separated
 properties, property pages, ignored reference keywords and start of week.
+Only the parsed keyword members of each retained set travel. Defaults may be
+omitted. Comments and ignored values carry no reading settings.
 The macro map carries effective definitions named by parser-recognized calls
 in shared sources and transitively in those definitions. Definition values are
 read in both Markdown and Org. Arguments that a definition places in a macro
@@ -39,7 +41,7 @@ This is the same snapshot used for folder exports, documented in
 The writer admits 200 selected pages plus a generated home, 1 MiB per source
 string, 32 MiB of document JSON, 6 MiB gzip and 8 MiB envelope text. The writer
 and browser core check file and string limits before opening the sources and
-count at most 200,000 blocks from the opened graph. Graph loading checks
+cap the published outlines at 200,000 blocks. Graph loading checks
 source outline depth. The viewer checks document JSON depth (512) before
 decoding JSON. Its query worker admits the first 256 distinct live query
 locations per opened share through the ordinary query entry. A later location
@@ -51,9 +53,12 @@ response carrying the core's existing JSON wire answer. A worker load, graph
 open or worker failure displays a reader error. Reloading opens a new session.
 The viewer's CSP admits workers only from its own origin.
 
-A source whose page identity or reading settings change on reopening refuses
-publication. This covers defective serialization and an incomplete reading
-setting in `config.edn`. Correct the source or configuration and review again.
+The writer reads the published sources' page identities from their preambles
+under the reduced config. It checks the effective reading settings and the
+path, name and kind of every selected page and the generated home. The share
+block count uses the private build's parsed pages and the parsed generated
+home. A mismatch refuses publication. Correct the source or configuration and
+review again.
 
 `tests/fixtures/quick-share/g2/` covers the pages selection, page queries,
 excluded comments and reduced configuration. The deployed `/s/2/` viewer

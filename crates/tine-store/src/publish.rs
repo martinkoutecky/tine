@@ -21,28 +21,40 @@ use std::cell::RefCell;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tine_core::config::Config;
+use tine_core::doc::Document;
+use tine_core::model::PageKind;
 
-/// Read a memory source's config and physical page names by path.
+type PageIdentity = (String, String, PageKind);
+
+/// Read publication sources' config and physical page identities and parse
+/// the generated page, when supplied, from its held bytes.
 /// Cost: one config read, one path listing and one preamble observation per
-/// ordinary page. Uses the store's title and journal claims. Invalid layout
-/// and unreadable page identities are refused.
-pub fn publication_page_names(
-    files: Vec<(String, Vec<u8>)>,
-) -> io::Result<(tine_core::config::Config, Vec<(String, String)>)> {
+/// ordinary page, plus one parse of the generated page. Uses the store's
+/// title and journal claims. Invalid layout, unreadable identities and an
+/// unparseable generated page are refused.
+pub fn publication_page_identities(
+    files: Vec<(String, Arc<Vec<u8>>)>,
+    generated: Option<(&str, &[u8])>,
+) -> io::Result<(Config, Vec<PageIdentity>, Option<Document>)> {
     let graph = Graph::in_memory_with_config(
         files
             .into_iter()
-            .map(|(path, bytes)| {
-                (
-                    path,
-                    crate::model::file_source::Content::Bytes(std::sync::Arc::new(bytes)),
-                    None,
-                )
-            })
+            .map(|(path, bytes)| (path, crate::model::file_source::Content::Bytes(bytes), None))
             .collect(),
     )?;
-    let names = graph.physical_page_names()?;
-    Ok((graph.config, names))
+    let pages = graph.physical_page_identities()?;
+    let generated = generated
+        .map(|(path, bytes)| {
+            let path = Path::new(path);
+            let content = crate::model::validate_parse_text(bytes, path)?;
+            std::panic::catch_unwind(|| crate::model::parse_doc(path, content)).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, crate::model::ParserPanicked)
+            })
+        })
+        .transpose()?;
+    Ok((graph.config, pages, generated))
 }
 
 // `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,

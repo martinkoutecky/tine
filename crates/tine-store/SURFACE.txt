@@ -384,8 +384,8 @@ struct store::Listing
 ## Publication (ceiling: 13)
 # R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
 fn publish::query_publication_destination
-# Prior membership needs just physical names from held sources, without a WholeGraph or index capture.
-fn publish::publication_page_names
+# Publication closure and prior membership read identities from held source preambles, without building an index.
+fn publish::publication_page_identities
 fn publish::Store::publish
 fn publish::SiteWriter::write
 enum publish::PublishDest

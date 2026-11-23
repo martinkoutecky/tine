@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read};
 use tine_core::model::PreambleRead;
 
 impl Graph {
-    pub(crate) fn physical_page_names(&self) -> io::Result<Vec<(String, String)>> {
+    pub(crate) fn physical_page_identities(&self) -> io::Result<Vec<(String, String, PageKind)>> {
         let (entries, failures) = list_graph_pages(self);
         if !failures.is_empty() {
             return Err(io::Error::new(
@@ -17,7 +17,7 @@ impl Graph {
         }
         Ok(entries
             .into_iter()
-            .map(|entry| (self.rel_path(&entry.path), entry.name))
+            .map(|entry| (self.rel_path(&entry.path), entry.name, entry.kind))
             .collect())
     }
 
