@@ -62,6 +62,7 @@ mod transaction_publish;
 use page_identity::effective_page_name;
 // Conceptual model conformance (census Q2): the harness runs the launch
 // walk's provisional names against the answered ones.
+use derived::PriorFrom;
 #[cfg(test)]
 pub(crate) use derived::{BUILD_FOLD_INDEX_BYTES, BUILD_LOCK_PROBES, BUILD_LOCK_TIME};
 #[cfg(test)]
@@ -72,8 +73,7 @@ pub(crate) use page_identity::{
     graph_text_watch_relevant,
 };
 use page_parse::{
-    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content, parse_page_unkeyed,
-    prime_projections,
+    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content, prime_projections,
 };
 
 use crate::path_identity::canonical_existing_path;
@@ -3433,22 +3433,7 @@ impl Graph {
 
     /// The keyed document [`Self::dto_of`] serves for `content`.
     fn keyed_of(&self, entry: &PageEntry, content: &str) -> Arc<Document> {
-        let rev = content_rev(content);
-        let row = (self.cached_observation(&entry.path))
-            .filter(|(_, _, disk)| disk.rev == rev)
-            .map(|(_, doc, _)| doc)
-            .or_else(|| {
-                let claims = self.held.claims.lock().unwrap();
-                let claim = claims
-                    .get(&entry.path)
-                    .filter(|(_, _, disk)| disk.rev == rev);
-                claim.map(|(_, doc, _)| Arc::clone(doc))
-            });
-        row.unwrap_or_else(|| {
-            let (doc, _) = page_parse::parse_page_unkeyed(entry, content);
-            let (input, prior) = (page_ids::Input::Observed(doc), self.prior_doc(&entry.path));
-            self.page_ids(&entry.path, entry.rel_path_str(), input, prior.as_ref())
-        })
+        self.keyed(entry, content, PriorFrom::Now).0
     }
 
     /// The DTO of `doc`, the keyed document of `content` as `entry`.
@@ -4257,7 +4242,7 @@ impl Graph {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::old_source_parse();
             let (mut old, opts) = parse_doc_with_opts(path, source);
-            self.key_save_base(&mut old, path);
+            self.key_save_base(&mut old, path, &doc);
             prime_projections(&old);
             (old, opts)
         });

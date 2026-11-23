@@ -29,8 +29,8 @@ impl Graph {
     /// no owner provenance, so a held page makes the launch a full build
     /// (R2): the whole checkpoint is declined. A seed (a page read or saved
     /// before the install, S6) folds into its row when the checkpoint holds
-    /// its bytes' revision and outline: the seed's document, with the keys
-    /// already served, is installed. Any other seed declines the checkpoint
+    /// its bytes' revision and keyed outline, so the snapshot and block index
+    /// serve the keys already served. Any other seed declines the checkpoint
     /// (`Seeded`): the build adopts it. The caller holds the store writer,
     /// under which holds change.
     pub(in crate::model) fn install_checkpoint_rows(
@@ -51,25 +51,25 @@ impl Graph {
             return Err(Fallback::PageHeld);
         }
         let mut claims = self.held.claims.lock().unwrap();
-        let mut pages = Arc::clone(pages);
         if !claims.is_empty() {
             let revs: HashMap<&Path, &str> = (disk_revs.iter())
                 .map(|(path, rev)| (path.as_path(), rev.as_str()))
                 .collect();
             for (path, (_, seed, disk)) in claims.iter() {
-                let slot = (revs.get(path.as_path()) == Some(&disk.rev.as_str()))
-                    .then(|| index.by_path.get(path).copied())
+                // The row the snapshot and block index are built from holds
+                // the seed's keys: nothing to fold.
+                let same = (revs.get(path.as_path()) == Some(&disk.rev.as_str()))
+                    .then(|| index.by_path.get(path).and_then(|&slot| pages.get(slot)))
                     .flatten()
-                    .filter(|&slot| pages.get(slot).is_some_and(|(_, row)| **row == **seed));
-                let Some(slot) = slot else {
+                    .is_some_and(|(_, row)| row.same_keyed_outline(seed));
+                if !same {
                     return Err(Fallback::Seeded);
-                };
-                Arc::make_mut(&mut pages).get_mut(slot).unwrap().1 = Arc::clone(seed);
+                }
             }
             claims.clear();
         }
         drop(claims);
-        guard.pages = Some(pages);
+        guard.pages = Some(Arc::clone(pages));
         *self.derived.observed_mtimes.write().unwrap() = Arc::clone(observed_mtimes);
         *self.derived.page_index_failures.write().unwrap() = failures;
         self.derived.index_retired.write().unwrap().clear();

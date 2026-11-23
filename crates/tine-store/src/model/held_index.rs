@@ -9,7 +9,6 @@
 //! no host running nothing is held, every source is the file, and builds
 //! and reads do the I/O they did before.
 
-use super::derived::Row;
 use super::entry_identity::{fold_leaf, Identity, Memo};
 use super::*;
 use std::collections::HashSet;
@@ -70,42 +69,6 @@ impl Graph {
 
     /// The one per-page seam (A-H1): where a build or read takes the page
     /// at `path` from. With no host, `Disk` for every page.
-    /// The row for the owner's `bytes` of `key`, keyed against the path's
-    /// prior S(P): `row`, its current row document, else `claim`, the row its
-    /// hold retired or the seed a publication left before the cache existed
-    /// (R1, GH #623; D5, S6). A claim of exactly these bytes under the same
-    /// entry is reused whole when the owner supplies no document (T3: no
-    /// parse). Otherwise [`Self::owned_row`]: `doc`, the serializer's keyed
-    /// parse of these bytes, is installed (Pair); bytes it did not save keep
-    /// the prior's keys when they hold its outline (Observed).
-    pub(super) fn claimed_row(
-        &self,
-        key: &str,
-        bytes: &[u8],
-        doc: Option<Arc<Document>>,
-        claim: Option<Row>,
-        row: Option<&Arc<Document>>,
-    ) -> io::Result<Option<Row>> {
-        let rev = std::str::from_utf8(bytes).ok().map(content_rev);
-        let prior = row
-            .cloned()
-            .or_else(|| claim.as_ref().map(|(_, doc, _)| Arc::clone(doc)));
-        let reuse = claim.filter(|(_, _, disk)| doc.is_none() && rev.as_ref() == Some(&disk.rev));
-        if let Some((old, document, disk)) = reuse {
-            let Some(entry) = self.owned_entry(key, bytes) else {
-                return Ok(None);
-            };
-            if entry.path == old.path
-                && entry.kind == old.kind
-                && entry.name == old.name
-                && entry.date_key == old.date_key
-            {
-                return Ok(Some((entry, document, disk)));
-            }
-        }
-        self.owned_row(key, bytes, doc, prior.as_ref())
-    }
-
     pub(crate) fn source(&self, path: &Path) -> Source {
         self.source_of(&self.held_identity(path))
     }

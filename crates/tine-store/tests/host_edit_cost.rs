@@ -339,9 +339,11 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
         );
         // Every in-memory revision (`FileRev::from_bytes`, O(page bytes)) on
         // the same path. The publication's bookkeeping adds none: it keeps
-        // the revision its indexing hashed (#964 review F1; was 11).
+        // the revision its indexing hashed (#964 review F1; was 11). Was 10
+        // until runtime ids phase A r2: a read keys its bytes once
+        // (`Graph::keyed`), with the revision it looked its prior up by.
         assert_eq!(
-            hashes, 10,
+            hashes, 9,
             "PC-4: a successful own publication hashes its bytes once, in indexing \
              (aged={aged}); exemplar page_host/binding_bridge.rs index()"
         );

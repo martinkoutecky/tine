@@ -120,6 +120,9 @@ impl Graph {
         // Each file's stamp comes from its directory entry in the listing
         // above (no per-file open on Windows), taken before its read.
         let listing_stamp = |path: &Path| listing_stamps.get(path).cloned();
+        // Each page is keyed by the owner against its S(P): a seed, else the
+        // rows an invalidation retired, else (Rescan) the rows it replaces.
+        let retired = self.build_prior(replace);
         let parse_one = |mut e: PageEntry| {
             let phase = tine_core::clock::Instant::now();
             let (stamp, observed) = match listing_stamp(&e.path) {
@@ -141,8 +144,8 @@ impl Graph {
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = tine_core::clock::Instant::now();
-                    let parsed =
-                        isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)));
+                    let from = PriorFrom::Build(retired.as_deref());
+                    let parsed = isolate_page_parse(e, |e| Some(self.keyed(e, &content, from)));
                     clock.parse(phase.elapsed());
                     parsed
                 }
@@ -413,6 +416,7 @@ impl Graph {
         let config = self.current_config();
         let format = self.current_journal_format();
         let journals = self.journals_path();
+        let retired = self.rebuild_prior();
         for path in paths {
             // A config change rereads every page (eligibility, formats).
             if *path == self.root.join("logseq/config.edn") {
@@ -489,7 +493,8 @@ impl Graph {
                 pass.discovery
                     .push((crate::FileId::from(rel.clone()), error.into()));
             }
-            let parsed = isolate_page_parse(entry, |entry| Some(parse_page_content(entry, &read)));
+            let from = PriorFrom::Build(retired.as_deref());
+            let parsed = isolate_page_parse(entry, |e| Some(self.keyed(e, &read, from)));
             if let Err(PageParseFailure::Panic(entry, _)) = &parsed {
                 pass.named.push(entry.clone());
             }

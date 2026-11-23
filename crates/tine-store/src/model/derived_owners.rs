@@ -160,8 +160,8 @@ impl Graph {
                     {
                         return (false, renamed);
                     } else {
-                        let prior = self.prior_in(pages, path);
-                        match self.owned_row(&key, &bytes, None, prior.as_ref()) {
+                        let from = PriorFrom::Locked(pages);
+                        match self.owned_row(&key, &bytes, None, from) {
                             Ok(Some(row)) => self.put_row(Arc::make_mut(pages), row),
                             Ok(None) => {
                                 self.retire_row(cache, path, true);
@@ -227,16 +227,15 @@ impl Graph {
         self.hold_indexed(key, current);
     }
 
+    /// The row's S(P) becomes the path's claim only where the settle
+    /// withholds it (T5): a hold of the unchanged row leaves it visible and
+    /// claims nothing.
     fn hold_indexed(&self, key: String, current: Option<Arc<[u8]>>) {
         let path = self.root.join(self.held.spellings().spelling(&key));
-        let claim = self.cached_observation(&path);
         self.transition(|| {
             let mut keys = self.held.keys.write().unwrap();
             if keys.contains_key(&key) {
                 return None;
-            }
-            if let Some(claim) = claim {
-                self.held.claims.lock().unwrap().insert(path.clone(), claim);
             }
             keys.insert(key, current.map(Some));
             Some(vec![path])
@@ -356,21 +355,20 @@ impl Graph {
         // serializer's document moves a key among them.
         let mut row = None;
         let mut named = None;
-        let mut claim = self.held.claims.lock().unwrap().remove(&path);
-        // The row the bytes give against `prior` (the claim is taken only
-        // when there are bytes).
-        let derive = |claim: &mut Option<Row>, prior: Option<&Arc<Document>>| {
+        // The row the bytes give against the path's S(P). Its claim stays
+        // until a row replaces it (`put_row`, the seed) or the owner has no
+        // file: a failed parse keeps it.
+        let derive = |from: PriorFrom<'_>| {
             let bytes = bytes.as_deref()?;
-            (self.claimed_row(key, bytes, doc.clone(), claim.take(), prior)).ok()?
+            (self.owned_row(key, bytes, doc.clone(), from)).ok()?
         };
         let built = self.cache_built();
+        let claimed = || self.held.claims.lock().unwrap().contains_key(&path);
         if built && (self.cached_rev(&path) != rev || doc.is_some()) {
-            let current =
-                (self.with_cached(&path, |row| row.map(|(_, doc)| Arc::clone(doc)))).flatten();
-            row = derive(&mut claim, current.as_ref());
-        } else if !built && (doc.is_some() || claim.is_some()) {
+            row = derive(PriorFrom::Now);
+        } else if !built && (doc.is_some() || claimed()) {
             // The seed: this publication's S(P), for the build (S6).
-            if let Some(seed) = derive(&mut claim, None) {
+            if let Some(seed) = derive(PriorFrom::Now) {
                 self.held.claims.lock().unwrap().insert(path.clone(), seed);
             }
         }
@@ -380,11 +378,11 @@ impl Graph {
         {
             let mut keys = self.held.keys.write().unwrap();
             let Some(indexed) = keys.get_mut(key) else {
-                if let Some(claim) = claim {
-                    self.held.claims.lock().unwrap().insert(path.clone(), claim);
-                }
                 return Err(());
             };
+            if bytes.is_none() {
+                self.held.claims.lock().unwrap().remove(&path);
+            }
             let same = match (indexed.as_ref(), &bytes) {
                 (Some(Some(before)), Some(after)) => Arc::ptr_eq(before, after),
                 (Some(None), None) => true,
@@ -417,7 +415,7 @@ impl Graph {
                 // Derived before the lock unless the installed row changed
                 // since (the writer excludes that; this keeps it exact).
                 if row.is_none() {
-                    row = derive(&mut claim, self.prior_in(cache, &path).as_ref());
+                    row = derive(PriorFrom::Locked(cache));
                 }
                 match row.take() {
                     Some(row) => {

@@ -265,6 +265,18 @@ enum Authority {
 
 pub(super) type Row = (PageEntry, Arc<Document>, DiskObs);
 
+/// Where [`Graph::prior_at`] looks for a path's S(P).
+#[derive(Clone, Copy)]
+pub(super) enum PriorFrom<'a> {
+    /// The installed rows now (under the cache lock), else the claims; with
+    /// no cache, as a build would ([`Self::Build`] with the pending prior).
+    Now,
+    /// Rows the caller holds the cache lock over, else the claims.
+    Locked(&'a Pages),
+    /// A build's: the claims (seeds), else `retired` (T10, Rescan).
+    Build(Option<&'a page_parse::RebuildPrior>),
+}
+
 /// A row derived from an owner's bytes, bound to them.
 struct Owned {
     key: String,
@@ -385,20 +397,20 @@ impl Graph {
 
     /// The row `key`'s owner bytes give: its entry named from `bytes`, and
     /// its document from the same bytes, keyed by [`Graph::page_ids`] against
-    /// `prior`, the path's S(P) (its row, claim or seed). `saved`, when given,
+    /// the path's S(P) ([`Self::prior_at`] in `from`). `saved`, when given,
     /// is the serializer's keyed parse of exactly these bytes for this target
     /// and version (D4; the host binds it to the bytes it published): it is
     /// installed whole, with no parse here. With none, the bytes are ones the
-    /// owner did not save (Observed): parsed once, and the prior is kept when
-    /// they hold its outline. Takes no cache lock. `Ok(None)` when the path
-    /// is no cacheable page; `Err` when it is one and these bytes give no
-    /// row, which the caller lists unreadable.
+    /// owner did not save ([`Self::keyed`]: an S(P) of these bytes reused
+    /// whole, else Observed). Takes no cache lock but `from`'s. `Ok(None)`
+    /// when the path is no cacheable page; `Err` when it is one and these
+    /// bytes give no row, which the caller lists unreadable.
     pub(super) fn owned_row(
         &self,
         key: &str,
         bytes: &[u8],
         saved: Option<Arc<Document>>,
-        prior: Option<&Arc<Document>>,
+        from: PriorFrom<'_>,
     ) -> io::Result<Option<Row>> {
         let Some(mut entry) = self.owned_listing(key) else {
             return Ok(None);
@@ -407,25 +419,18 @@ impl Graph {
         let content = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let _ = self.name_from(&mut entry, content);
-        let (doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (input, disk) = match saved {
-                Some(saved) => {
-                    #[cfg(test)]
-                    if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
-                        panic!("deterministic test sentinel for a page projection panic");
-                    }
-                    (
-                        page_ids::Input::Pair(saved, page_ids::Trust::Window),
-                        DiskObs::of(content),
-                    )
+        let (doc, disk) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match saved {
+            Some(saved) => {
+                #[cfg(test)]
+                if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
+                    panic!("deterministic test sentinel for a page projection panic");
                 }
-                None => {
-                    let (doc, disk) = parse_page_unkeyed(&entry, content);
-                    (page_ids::Input::Observed(doc), disk)
-                }
-            };
-            let doc = self.page_ids(&entry.path, entry.rel_path_str(), input, prior);
-            (doc, disk)
+                let prior = self.prior_at(&entry.path, None, from).map(|(doc, _)| doc);
+                let input = page_ids::Input::Pair(saved, page_ids::Trust::Window);
+                let doc = self.page_ids(&entry.path, entry.rel_path_str(), input, prior.as_ref());
+                (doc, DiskObs::of(content))
+            }
+            None => self.keyed(&entry, content, from),
         }))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?;
         Ok(Some((entry, doc, disk)))
@@ -446,6 +451,18 @@ impl Graph {
     /// installs (T10).
     pub(super) fn rebuild_prior(&self) -> Option<Arc<page_parse::RebuildPrior>> {
         self.derived.rebuild_prior.lock().unwrap().clone()
+    }
+
+    /// The rows a whole-graph build keys against (T10): what the last
+    /// invalidation retired, else, for a Rescan (`replace`), the installed
+    /// rows it replaces.
+    pub(super) fn build_prior(&self, replace: bool) -> Option<Arc<page_parse::RebuildPrior>> {
+        let cache = self.derived.cache.read().unwrap();
+        self.rebuild_prior().or_else(|| {
+            let pages = cache.pages.clone().filter(|_| replace)?;
+            let revs = self.derived.disk_revs.read().unwrap().clone();
+            Some(Arc::new(page_parse::RebuildPrior { pages, revs }))
+        })
     }
 
     /// Apply the published day's existing claimant order to its parsed rows.
@@ -481,9 +498,8 @@ impl Graph {
                 }
             }
             Source::Held(bytes) => {
-                let prior = self.prior_doc(&winner.path);
                 let row = (self.held_key(&winner.path))
-                    .map(|key| self.owned_row(&key, &bytes, None, prior.as_ref()));
+                    .map(|key| self.owned_row(&key, &bytes, None, PriorFrom::Now));
                 let mut cache = self.derived.cache.write().unwrap();
                 match (row, cache.pages.as_mut()) {
                     (Some(Ok(Some(row))), Some(pages)) => {
@@ -872,14 +888,9 @@ impl Graph {
                 .published()
                 .into_iter()
                 .map(|(key, bytes)| {
-                    // Against the path's prior S(P): its claim or seed, else
-                    // the row the invalidation retired (T10, S6).
-                    let path = self.root.join(self.held.spellings().spelling(&key));
-                    let claim = self.held.claims.lock().unwrap().get(&path).cloned();
-                    let retired = (prior.as_deref())
-                        .and_then(|prior| prior.doc(&self.rel_path(&path)).cloned());
+                    // Against the path's prior S(P) (T10, S6).
                     let row = self
-                        .claimed_row(&key, &bytes, None, claim, retired.as_ref())
+                        .owned_row(&key, &bytes, None, PriorFrom::Now)
                         .unwrap_or_else(|error| {
                             let rel = self.held.spellings().spelling(&key).to_string();
                             if contained::is_parser_panic(&error) {
@@ -1051,27 +1062,33 @@ impl Graph {
             unreadable,
         );
         let old_index = self.derived.cache_index.write().unwrap().replace(index);
-        let old_revs = std::mem::replace(&mut *self.derived.disk_revs.write().unwrap(), revs);
+        let mut old_revs = std::mem::replace(&mut *self.derived.disk_revs.write().unwrap(), revs);
         let old_anchors =
             std::mem::replace(&mut *self.derived.vcs_anchored.write().unwrap(), anchored);
         self.forget_cold_moves();
-        // Each installed path's prior S(P) (its claim or seed, else the row
-        // the invalidation retired) is superseded: its witness moves when the
-        // keyed outline did. Nothing to do on a launch with neither.
-        let prior = self.derived.rebuild_prior.lock().unwrap().take().or(prior);
-        let mut claims = self.held.claims.lock().unwrap();
-        if prior.is_some() || !claims.is_empty() {
-            for (entry, doc) in guard
+        // Each installed path's prior S(P) ([`Self::prior_at`]: its claim or
+        // seed, else the row an invalidation or this Rescan retired) is
+        // superseded: its witness moves when the keyed outline did. Nothing
+        // to do on a launch with neither.
+        let mut prior = self.derived.rebuild_prior.lock().unwrap().take().or(prior);
+        if let (None, Some(pages)) = (&prior, old_cache.pages.clone()) {
+            let revs = std::mem::take(&mut old_revs);
+            prior = Some(Arc::new(page_parse::RebuildPrior { pages, revs }));
+        }
+        if prior.is_some() || !self.held.claims.lock().unwrap().is_empty() {
+            let pages = guard
                 .pages
                 .as_deref()
                 .into_iter()
-                .flat_map(|pages| pages.iter())
-            {
-                let before = (claims.remove(&entry.path).map(|(_, doc, _)| doc))
-                    .or_else(|| prior.as_deref()?.doc(entry.rel_path_str()).cloned());
-                self.ids.installed(&entry.path, before.as_ref(), doc);
+                .flat_map(|pages| pages.iter());
+            for (entry, doc) in pages {
+                let before = self.prior_at(&entry.path, None, PriorFrom::Build(prior.as_deref()));
+                self.held.claims.lock().unwrap().remove(&entry.path);
+                self.ids
+                    .installed(&entry.path, before.map(|(doc, _)| doc).as_ref(), doc);
             }
             // A retired path the build no longer finds has ended.
+            let claims = self.held.claims.lock().unwrap();
             let index = self.derived.cache_index.read().unwrap();
             let gone = (prior.as_deref().into_iter())
                 .flat_map(|prior| prior.pages.iter())
@@ -1085,7 +1102,6 @@ impl Graph {
                 self.ids.ended(&entry.path);
             }
         }
-        drop(claims);
         if replace {
             // The cache and its listing are visible at the new generation together.
             self.cache_gen.fetch_add(1, Ordering::Release);
@@ -1167,34 +1183,49 @@ impl Graph {
 
     // ---- one-page installs --------------------------------------------------
 
-    /// `path`'s prior S(P) document: its row in `pages`, else its claim or
-    /// seed. The caller holds the cache lock.
-    fn prior_in(&self, pages: &Pages, path: &Path) -> Option<Arc<Document>> {
-        let slot = self.cached_page_index_for_path(pages, path);
-        slot.and_then(|slot| pages.get(slot))
-            .map(|(_, doc)| Arc::clone(doc))
-            .or_else(|| self.claimed_doc(path))
-    }
-
-    /// `path`'s claim or seed document.
-    pub(super) fn claimed_doc(&self, path: &Path) -> Option<Arc<Document>> {
+    /// The one prior selection (capture, rebuild, launch, Rescan, save base,
+    /// owner publication and install; T10, S6, D5): `path`'s S(P) is its row,
+    /// else its claim or seed, else the row a whole-cache invalidation or a
+    /// Rescan retired ([`PriorFrom`]). The first of these whose bytes are at
+    /// `rev` is served whole (`true`: no parse); else the first, whose keys
+    /// bytes holding its outline keep.
+    pub(super) fn prior_at(
+        &self,
+        path: &Path,
+        rev: Option<&str>,
+        from: PriorFrom<'_>,
+    ) -> Option<(Arc<Document>, bool)> {
+        let (pages, retired) = match from {
+            PriorFrom::Now => {
+                let guard = self.derived.cache.read().unwrap();
+                return match guard.pages.as_deref() {
+                    Some(pages) => self.prior_at(path, rev, PriorFrom::Locked(pages)),
+                    None => {
+                        let retired = self.rebuild_prior();
+                        self.prior_at(path, rev, PriorFrom::Build(retired.as_deref()))
+                    }
+                };
+            }
+            PriorFrom::Locked(pages) => (Some(pages), None),
+            PriorFrom::Build(retired) => (None, retired),
+        };
+        let row = pages.and_then(|pages| pages.get(self.cached_page_index_for_path(pages, path)?));
+        let row = row.map(|(_, doc)| {
+            (
+                doc,
+                self.derived.disk_revs.read().unwrap().get(path).cloned(),
+            )
+        });
         let claims = self.held.claims.lock().unwrap();
-        claims.get(path).map(|(_, doc, _)| Arc::clone(doc))
-    }
-
-    /// `path`'s prior S(P) document now: its row, else its claim or seed;
-    /// between an invalidation and the rebuild's install, the row the
-    /// invalidation retired (T10's complete prior), so a read or a
-    /// publication in that window keys as the rebuild will.
-    pub(crate) fn prior_doc(&self, path: &Path) -> Option<Arc<Document>> {
-        let guard = self.derived.cache.read().unwrap();
-        match guard.pages.as_deref() {
-            Some(pages) => self.prior_in(pages, path),
-            None => self.claimed_doc(path).or_else(|| {
-                let rel = path.strip_prefix(&self.root).ok()?.to_str()?;
-                self.rebuild_prior()?.doc(rel).cloned()
-            }),
-        }
+        let claim = (claims.get(path)).map(|(_, doc, disk)| (doc, Some(disk.rev.clone())));
+        // The canonical slash-relative path, as the retired listing is keyed.
+        let old = retired.and_then(|retired| retired.row(path, &self.rel_path(path)));
+        let mut candidates = [row, claim, old].into_iter().flatten();
+        let exact =
+            rev.and_then(|rev| (candidates.clone()).find(|(_, at)| at.as_deref() == Some(rev)));
+        let at = exact.is_some();
+        let (doc, _) = exact.or_else(|| candidates.next())?;
+        Some((Arc::clone(doc), at))
     }
 
     /// Keep `path`'s installed row as its claim before a withholding
@@ -1222,7 +1253,8 @@ impl Graph {
         if !self.admits_row(&path, &disk.rev) {
             return;
         }
-        let before = self.prior_in(pages, &path);
+        let before = self.prior_at(&path, None, PriorFrom::Locked(pages));
+        let before = before.map(|(doc, _)| doc);
         self.held.claims.lock().unwrap().remove(&path);
         self.ids.installed(&path, before.as_ref(), &doc);
         self.derived.touched.lock().unwrap().insert(path.clone());
@@ -1334,7 +1366,9 @@ impl Graph {
         // an index failure) instead of escaping later from the capture under
         // the writer lock, which would poison it (one bad file must never
         // stop the graph).
-        let prior = self.prior_doc(&entry.path);
+        let prior = self
+            .prior_at(&entry.path, None, PriorFrom::Now)
+            .map(|(doc, _)| doc);
         let doc = self.page_ids(&entry.path, entry.rel_path_str(), input, prior.as_ref());
         let path = entry.path.clone();
         let mut guard = self.derived.cache.write().unwrap();

@@ -2,7 +2,7 @@
 //! foreign-key registry (A3), intake (A2) and the cost pins (A9, A20, T10).
 //! These use phase A's own API, so they have no baseline twin.
 
-use super::page_ids::{Input, Trust, CLASSES, VALIDATION_SETS};
+use super::page_ids::{Input, Trust, CLASSES, REGISTRY_VISITS, VALIDATION_SETS};
 use super::page_ids_compat as compat;
 use super::unchanged_save::take_parses;
 use super::*;
@@ -325,4 +325,55 @@ fn a2_untrusted_intake_drops_repeated_and_foreign_keys() {
     assert!(keys[1] != "k" && keys[2] != "theirs", "{keys:?}");
     let distinct: HashSet<_> = keys.iter().collect();
     assert_eq!(distinct.len(), 3, "{keys:?}");
+}
+
+/// Blocker 2 of the ee4ea5b9a review: a one-block own save of a page with
+/// no moved keys visits no registry entry, whether the registry holds 0,
+/// 100 or 10,000 keys of another page.
+#[test]
+fn r2_an_unrelated_save_does_no_registry_work_at_any_registry_size() {
+    for size in [0, 100, 10_000] {
+        let rel = "pages/a.md";
+        let (_temp, graph) = graph(&[(rel, "- a\n".into()), ("pages/b.md", "- b\n".into())]);
+        graph.with_pages(|_| ());
+        let b = graph.root.join("pages/b.md");
+        let moved = (0..size).map(|at| tine_core::BlockId::from(format!("m{at}").as_str()));
+        graph.ids.moved(moved, &b);
+        assert_eq!(graph.ids.registry_len(), size);
+        graph.hold_unhosted(rel);
+        compat::publish(&graph, rel, "- a\n", None);
+        let saved = "- a edited\n";
+        let doc = keyed(&graph, rel, saved, &keys(&doc_of(&graph, rel)));
+        REGISTRY_VISITS.with(|visits| visits.set(0));
+        compat::publish(&graph, rel, saved, Some(doc));
+        let visits = REGISTRY_VISITS.with(|visits| visits.replace(0));
+        assert_eq!(visits, 0, "registry entries visited at size {size}");
+        assert_eq!(graph.ids.registry_len(), size, "{size}: B's keys stay");
+    }
+}
+
+/// Finding 5 of the ee4ea5b9a review: the witness map holds one entry per
+/// live path created or changed this session (a cold-built row has none).
+/// A page renamed N times (each a deletion at the old path and a creation
+/// at the new one) leaves the map at the live paths' count.
+#[test]
+fn r2_the_witness_map_holds_the_live_paths_after_renames() {
+    let (_temp, graph) = graph(&[("pages/other.md", "- o\n".into())]);
+    graph.with_pages(|_| ());
+    let other = graph.root.join("pages/other.md");
+    fs::write(&other, "- o\n- changed\n").unwrap();
+    let _ = graph.sync_file_internal(&other, None);
+    let mut from = graph.root.join("pages/p0.md");
+    fs::write(&from, "- p\n").unwrap();
+    let _ = graph.sync_file_internal(&from, None);
+    assert_eq!(graph.ids.witnesses(), 2, "changed and created");
+    for at in 1..=50 {
+        let to = graph.root.join(format!("pages/p{at}.md"));
+        fs::rename(&from, &to).unwrap();
+        let _ = graph.forget_file_internal(&from);
+        let _ = graph.sync_file_internal(&to, None);
+        assert!(graph.cached_rev(&to).is_some(), "renamed {at}");
+        assert_eq!(graph.ids.witnesses(), 2, "after {at} renames");
+        from = to;
+    }
 }

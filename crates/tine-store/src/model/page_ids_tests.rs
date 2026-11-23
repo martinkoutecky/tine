@@ -219,6 +219,70 @@ fn t10_a_read_and_a_publication_before_the_rebuild_keep_the_saved_keys() {
     }
 }
 
+/// Finding 6 of the ee4ea5b9a review (DS-4): the save base's keys decide
+/// only which old block a saved block's layout comes from, so a save writes
+/// the bytes develop (16cee4693) writes. The deleted lineage test's cases at
+/// the save boundary, in Markdown and Org with mixed line terminators: a
+/// fresh row (unchanged, reordered, reordered and edited), and a row whose
+/// keys a save moved, saved again unchanged and reordered. The expected
+/// strings are develop's output for these saves.
+#[test]
+fn a_save_writes_the_bytes_develop_writes() {
+    let mut written = Vec::new();
+    for (rel, source, moved) in [
+        ("pages/p.md", "- p\r\n- p\n- r\r\n", "- r\r\n- p\r\n- p\n"),
+        ("pages/p.org", "* p\r\n* p\n* r\r\n", "* r\r\n* p\r\n* p\n"),
+    ] {
+        let (_temp, graph) = graph(&[(rel, source)]);
+        graph.with_pages(|_| ());
+        let path = graph.root.join(rel);
+        let save = |dto: &PageDto, existing: &str| {
+            let (bytes, _) = graph
+                .prepare_page_bytes(dto, &path, Some(existing))
+                .unwrap();
+            String::from_utf8(bytes).unwrap()
+        };
+        let dto = graph
+            .load_page(&graph.entry_for_path(&path).unwrap())
+            .unwrap();
+        let mut swapped = dto.clone();
+        swapped.blocks.swap(0, 2);
+        let mut edited = swapped.clone();
+        edited.blocks[1].raw.push_str(" edited");
+        for dto in [&dto, &swapped, &edited] {
+            written.push(save(dto, source));
+        }
+        // The window moves `r` first and saves; the row keeps its keys.
+        let mut window = dto.clone();
+        window.blocks.rotate_right(1);
+        assert_eq!(save(&window, source), moved, "{rel}: the moving save");
+        let keys: Vec<String> = window.blocks.iter().map(|b| b.id.clone()).collect();
+        graph.hold_unhosted(rel);
+        compat::publish(&graph, rel, source, None);
+        fs::write(&path, moved).unwrap();
+        compat::publish(&graph, rel, moved, Some(keyed(&graph, rel, moved, &keys)));
+        let mut again = window.clone();
+        again.blocks.swap(1, 2);
+        for dto in [&window, &again] {
+            written.push(save(dto, moved));
+        }
+    }
+    eprintln!("SAVE-BYTES {written:?}");
+    let expected: [&str; 10] = [
+        "- p\r\n- p\n- r\r\n",
+        "- r\r\n- p\n- p\r\n",
+        "- r\r\n- p edited\n- p\r\n",
+        "- r\r\n- p\r\n- p\n",
+        "- r\r\n- p\r\n- p\n",
+        "* p\r\n* p\n* r\r\n",
+        "* r\r\n* p\n* p\r\n",
+        "* r\r\n* p edited\n* p\r\n",
+        "* r\r\n* p\r\n* p\n",
+        "* r\r\n* p\r\n* p\n",
+    ];
+    assert_eq!(written, expected, "develop's bytes");
+}
+
 /// A7: the page is held and saved before the cache exists; the build that
 /// follows installs the save's keys (its seed), not positional ones.
 #[test]
@@ -286,6 +350,173 @@ fn a18_a_case_only_spelling_move_keeps_the_keys() {
         "keys moved with the file"
     );
     assert_eq!(graph.cached_rev(&from), None, "nothing at the old spelling");
+}
+
+/// Blocker 1 of the ee4ea5b9a review: A's first block moves to B (both
+/// open, the transfer registers the key to B). A Rescan keys every page
+/// against its current row: with B open and A closed, A does not take the
+/// moved key back positionally; with B closed, B keeps the keys it served.
+#[test]
+fn r2_a_rescan_after_a_move_keeps_each_key_on_one_page() {
+    for (a, b, text_a, text_b, moved_a, moved_b) in [
+        (
+            "pages/a.md",
+            "pages/b.md",
+            "- a1\n- a2\n",
+            "- b1\n",
+            "- a2\n",
+            "- a1\n- b1\n",
+        ),
+        (
+            "pages/a.org",
+            "pages/b.org",
+            "* a1\n* a2\n",
+            "* b1\n",
+            "* a2\n",
+            "* a1\n* b1\n",
+        ),
+    ] {
+        for b_open in [true, false] {
+            let case = format!("{a} B open={b_open}");
+            let (_temp, graph) = graph(&[(a, text_a), (b, text_b)]);
+            graph.with_pages(|_| ());
+            let (ka, kb) = (keys(&row(&graph, a)), keys(&row(&graph, b)));
+            for (rel, text) in [(a, text_a), (b, text_b)] {
+                graph.hold_unhosted(rel);
+                compat::publish(&graph, rel, text, None);
+            }
+            let served_b = vec![ka[0].clone(), kb[0].clone()];
+            fs::write(graph.root.join(a), moved_a).unwrap();
+            compat::publish(
+                &graph,
+                a,
+                moved_a,
+                Some(keyed(&graph, a, moved_a, &ka[1..])),
+            );
+            fs::write(graph.root.join(b), moved_b).unwrap();
+            compat::publish(
+                &graph,
+                b,
+                moved_b,
+                Some(keyed(&graph, b, moved_b, &served_b)),
+            );
+            (graph.ids).moved([ka[0].as_str().into()], &graph.root.join(b));
+            let closed = if b_open { a } else { b };
+            let _ = graph.release(closed);
+            let _ = graph.sync_file_internal(&graph.root.join(closed), None);
+            assert!(
+                graph.rebuild_cache_cancellable(|| false),
+                "{case}: installs"
+            );
+            if b_open {
+                let now = keys(&row(&graph, a));
+                assert_eq!(now, ka[1..], "{case}: A keeps its key, not B's");
+            } else {
+                assert_eq!(keys(&row(&graph, b)), served_b, "{case}: B's served keys");
+            }
+        }
+    }
+}
+
+/// Blocker 1: a save before the cache exists leaves a seed; the page closes
+/// before the launch build installs (before the build starts, and while it
+/// parses, which the launch patch re-derives). The installed row is the
+/// save's keys.
+#[test]
+fn r2_a_save_seed_released_before_the_launch_install_keeps_its_keys() {
+    for (rel, text, saved) in cases() {
+        for mid_warm in [false, true] {
+            let case = format!("{rel} mid_warm={mid_warm}");
+            let (_temp, graph) = graph(&[(rel, text), ("pages/other.md", "- o\n")]);
+            let keys: Vec<String> = (0..4)
+                .map(|at| format!("6b1e0c3a-0000-4000-8000-00000000002{at}"))
+                .collect();
+            let save = || {
+                graph.hold_unhosted(rel);
+                fs::write(graph.root.join(rel), saved).unwrap();
+                compat::publish(&graph, rel, saved, Some(keyed(&graph, rel, saved, &keys)));
+                let _ = graph.release(rel);
+            };
+            if mid_warm {
+                let pause: crate::store::TestPause = Default::default();
+                *graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&pause));
+                std::thread::scope(|scope| {
+                    let warm = scope.spawn(|| graph.warm_page_cache_cancellable(&|| false));
+                    let (state, ready) = &*pause;
+                    let mut state = state.lock().unwrap();
+                    while !state.0 {
+                        state = ready.wait(state).unwrap();
+                    }
+                    drop(state);
+                    save();
+                    pause.0.lock().unwrap().1 = true;
+                    pause.1.notify_all();
+                    let _ = warm.join().unwrap();
+                });
+                *graph.warm_after_first_page_pause.lock().unwrap() = None;
+            } else {
+                save();
+                assert!(graph.warm_page_cache_cancellable(&|| false), "{case}");
+            }
+            graph.with_pages(|_| ());
+            assert_eq!(self::keys(&row(&graph, rel)), keys, "{case}");
+        }
+    }
+}
+
+/// Finding 3: after an invalidation, a read of another outline leaves a
+/// seed; the file then reverts to the saved bytes, the retired row's
+/// revision. The read and the rebuilt row take the retired row's keys.
+#[test]
+fn r2_a_revert_to_the_retired_revision_keeps_the_saved_keys() {
+    for (rel, text, saved) in cases() {
+        let (_temp, graph) = graph(&[(rel, text)]);
+        let keys = structural_save(&graph, rel, text, saved);
+        let path = graph.root.join(rel);
+        let _ = graph.release(rel);
+        let _ = graph.sync_file_internal(&path, None);
+        graph.invalidate_cache();
+        fs::write(&path, text).unwrap();
+        let _ = graph.load_page(&graph.entry_for_path(&path).unwrap());
+        fs::write(&path, saved).unwrap();
+        assert_eq!(self::keys(&served(&graph, rel, saved)), keys, "{rel}: read");
+        graph.with_pages(|_| ());
+        assert_eq!(self::keys(&row(&graph, rel)), keys, "{rel}: the row");
+    }
+}
+
+/// Finding 3: an owner publication whose parse fails does not consume the
+/// path's claim; the next publication of the saved outline keeps its keys.
+#[test]
+fn r2_a_failed_owner_parse_keeps_the_claim() {
+    for (rel, text, saved) in cases() {
+        let (_temp, graph) = graph(&[(rel, text)]);
+        let keys = structural_save(&graph, rel, text, saved);
+        let path = graph.root.join(rel);
+        let _ = graph.release(rel);
+        let _ = graph.sync_file_internal(&path, None);
+        graph.hold_unhosted(rel);
+        let bad = format!("- {TEST_PAGE_PARSE_PANIC_SENTINEL}\n");
+        let _ = graph.publish_owned(rel, Some(Arc::from(bad.as_bytes())), None);
+        let bytes = saved.replace('\n', "\r\n");
+        fs::write(&path, &bytes).unwrap();
+        compat::publish(&graph, rel, &bytes, None);
+        assert_eq!(self::keys(&row(&graph, rel)), keys, "{rel}");
+    }
+}
+
+/// Finding 3: a hold of an unchanged row claims nothing, so its release
+/// leaves no claim behind.
+#[test]
+fn r2_a_hold_of_an_unchanged_row_leaves_no_claim() {
+    for (rel, text, _) in cases() {
+        let (_temp, graph) = graph(&[(rel, text)]);
+        graph.with_pages(|_| ());
+        graph.held.spellings().spell(rel, rel);
+        graph.hold_current(rel.into());
+        let _ = graph.release(rel);
+        assert!(graph.held.claims.lock().unwrap().is_empty(), "{rel}");
+    }
 }
 
 /// Cold build and whole-cache rebuild time and peak RSS on a synthetic

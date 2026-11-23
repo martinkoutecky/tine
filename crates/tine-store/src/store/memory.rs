@@ -197,13 +197,20 @@ impl WholeGraph {
                 // another page owns, is filled anew (intake, A2). Raw bytes
                 // are parsed once and observed: they keep the page's runtime
                 // ids when they hold its outline, as the desktop's
-                // reconciliation of a disk write does (D2).
+                // reconciliation of a disk write does (D2). An authored
+                // `id::` elsewhere is no runtime ownership.
                 let old = &self._snapshot.graph;
                 let owned_elsewhere = |key: &tine_core::BlockId| {
+                    let runtime = |doc: &tine_core::doc::Document| {
+                        let mut held = false;
+                        tine_core::projection::for_each_runtime_key(&doc.roots, &mut |at| {
+                            held |= at == key;
+                        });
+                        held
+                    };
                     graph.ids.owner_of(key).is_some_and(|owner| owner != path)
-                        || old
-                            .block_owner_page(&key.text(), false)
-                            .is_some_and(|(_, (entry, _))| entry.path != path)
+                        || (old.block_owner_page(&key.text(), false))
+                            .is_some_and(|(_, (entry, doc))| entry.path != path && runtime(doc))
                 };
                 let input = match prepared {
                     Some(document) => Some(Input::Pair(

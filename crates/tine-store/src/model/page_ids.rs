@@ -3,16 +3,17 @@
 //! install of a page's keyed document asks [`Graph::page_ids`] with one
 //! [`Input`] and the path's prior S(P) (its row, else its claim or seed).
 //!
-//! **Witness W**, one counter per session: it advances when a path is
-//! created again after it ended, and when an installed keyed outline differs
-//! from the prior's ([`Document::same_keyed_outline`]); a path unchanged
-//! this session has W 0. Phase A issues W; the window adopts it in phase B.
+//! **Witness W**, one counter per session: a path's S(P) takes a fresh value
+//! when it is created and when an installed keyed outline differs from the
+//! prior's ([`Document::same_keyed_outline`]); its entry leaves when the path
+//! ends. A path a launch built and nothing changed since has W 0. Phase A
+//! issues W; the window adopts it in phase B.
 //!
 //! **Foreign-key registry**: the page each moved key lives on (`move_blocks`
 //! transfers, the same-file spelling move), so allocation on any other page
 //! skips it (A3). Empty after a restart, free while empty; an entry leaves
-//! when its page no longer holds the key. Memory: one u64 per changed path,
-//! O(moved keys).
+//! when its page no longer holds the key or ends. Memory: one u64 per live
+//! path created or changed this session, O(moved keys).
 
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,7 +65,44 @@ pub(crate) enum Trust<'a> {
 pub(crate) struct PageIds {
     counter: AtomicU64,
     witness: Mutex<HashMap<PathBuf, u64>>,
-    foreign: RwLock<HashMap<BlockId, PathBuf>>,
+    foreign: RwLock<Registry>,
+}
+
+/// The foreign-key registry: each moved key's page, and each page's moved
+/// keys, so a page's cleanup visits only its own entries. Every mutation
+/// updates both.
+#[derive(Default)]
+struct Registry {
+    owner: HashMap<BlockId, PathBuf>,
+    keys: HashMap<PathBuf, HashSet<BlockId>>,
+}
+
+impl Registry {
+    fn insert(&mut self, key: BlockId, to: &Path) {
+        match self.owner.insert(key.clone(), to.to_path_buf()) {
+            Some(from) if from != to => self.unlist(&from, &key),
+            _ => {}
+        }
+        self.keys.entry(to.to_path_buf()).or_default().insert(key);
+    }
+
+    fn unlist(&mut self, path: &Path, key: &BlockId) {
+        if let Some(keys) = self.keys.get_mut(path) {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.keys.remove(path);
+            }
+        }
+    }
+
+    /// `path`'s entries leave: O(its moved keys).
+    fn end(&mut self, path: &Path) {
+        for key in self.keys.remove(path).into_iter().flatten() {
+            #[cfg(test)]
+            count_registry_visit();
+            self.owner.remove(&key);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -73,6 +111,8 @@ thread_local! {
     pub(crate) static CLASSES: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
     /// Validation sets allocated on this thread.
     pub(crate) static VALIDATION_SETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Registry entries this thread's cleanups visited.
+    pub(crate) static REGISTRY_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -84,11 +124,22 @@ fn count_class(at: usize) {
     });
 }
 
+#[cfg(test)]
+fn count_registry_visit() {
+    REGISTRY_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
 impl PageIds {
     /// The witness of `path`'s installed keyed outline (module doc).
     #[cfg(test)]
     pub(crate) fn witness(&self, path: &Path) -> u64 {
         self.witness.lock().unwrap().get(path).copied().unwrap_or(0)
+    }
+
+    /// Witness entries: one per live path created or changed this session.
+    #[cfg(test)]
+    pub(crate) fn witnesses(&self) -> usize {
+        self.witness.lock().unwrap().len()
     }
 
     fn advance(&self, path: &Path) {
@@ -99,7 +150,8 @@ impl PageIds {
             .insert(path.to_path_buf(), next);
     }
 
-    /// `after` was installed for `path` over `before` (its prior S(P)).
+    /// `after` was installed for `path` over `before`, its prior S(P) (None:
+    /// the path's S(P) is created, and takes a fresh W).
     pub(crate) fn installed(
         &self,
         path: &Path,
@@ -108,64 +160,76 @@ impl PageIds {
     ) {
         let same = before
             .is_some_and(|before| Arc::ptr_eq(before, after) || before.same_keyed_outline(after));
-        if !same && (before.is_some() || self.witness.lock().unwrap().contains_key(path)) {
+        if !same {
             self.advance(path);
         }
-        if !self.foreign.read().unwrap().is_empty() {
+        if self.foreign.read().unwrap().keys.contains_key(path) {
             self.retain_held(path, after);
         }
     }
 
-    /// `path`'s S(P) ended (confirmed deletion): an old witness never
-    /// validates a row created there later, and its moved keys are free.
+    /// `path`'s S(P) ended (confirmed deletion): its witness and its moved
+    /// keys leave; a row created there later takes a fresh W.
     pub(crate) fn ended(&self, path: &Path) {
-        self.advance(path);
-        let mut foreign = self.foreign.write().unwrap();
-        foreign.retain(|_, owner| owner != path);
+        self.witness.lock().unwrap().remove(path);
+        self.foreign.write().unwrap().end(path);
     }
 
     /// The same file now lives at `to` (a confirmed same-file spelling move):
     /// its keys go with it, as moved keys, and W advances there.
     pub(crate) fn respelled(&self, from: &Path, to: &Path, doc: &Document) {
+        self.ended(from);
         self.advance(to);
-        self.advance(from);
         let mut foreign = self.foreign.write().unwrap();
-        foreign.retain(|_, owner| owner != from);
-        for_each_runtime_key(&doc.roots, &mut |key| {
-            foreign.insert(key.clone(), to.to_path_buf());
-        });
+        for_each_runtime_key(&doc.roots, &mut |key| foreign.insert(key.clone(), to));
     }
 
-    /// `keys` moved to `to` with a `move_blocks` transfer (guard 1 of phase
-    /// A: accepted and registered, as moves keep their keys today).
+    /// `keys` moved to `to` with a `move_blocks` transfer or an accepted
+    /// foreign submission (guard 1 of phase A: accepted and registered, as
+    /// moves keep their keys today).
     pub(crate) fn moved(&self, keys: impl IntoIterator<Item = BlockId>, to: &Path) {
         let mut foreign = self.foreign.write().unwrap();
         for key in keys {
-            foreign.insert(key, to.to_path_buf());
+            foreign.insert(key, to);
         }
     }
 
     /// The page a moved `key` lives on, if one does.
     pub(crate) fn owner_of(&self, key: &BlockId) -> Option<PathBuf> {
-        self.foreign.read().unwrap().get(key).cloned()
+        self.foreign.read().unwrap().owner.get(key).cloned()
     }
 
     #[cfg(test)]
     pub(crate) fn registry_len(&self) -> usize {
-        self.foreign.read().unwrap().len()
+        self.foreign.read().unwrap().owner.len()
     }
 
-    /// Entries for `path` whose key `doc` no longer holds leave.
+    /// `path`'s entries whose key `doc` no longer holds leave: O(its moved
+    /// keys + its blocks), only for a page that has moved keys.
     fn retain_held(&self, path: &Path, doc: &Document) {
-        let mut foreign = self.foreign.write().unwrap();
-        if !foreign.values().any(|owner| owner == path) {
-            return;
-        }
         let mut held = HashSet::new();
         for_each_runtime_key(&doc.roots, &mut |key| {
             held.insert(key.clone());
         });
-        foreign.retain(|key, owner| owner != path || held.contains(key));
+        let mut foreign = self.foreign.write().unwrap();
+        let Some(keys) = foreign.keys.get_mut(path) else {
+            return;
+        };
+        let mut gone = Vec::new();
+        keys.retain(|key| {
+            #[cfg(test)]
+            count_registry_visit();
+            held.contains(key) || {
+                gone.push(key.clone());
+                false
+            }
+        });
+        if keys.is_empty() {
+            foreign.keys.remove(path);
+        }
+        for key in gone {
+            foreign.owner.remove(&key);
+        }
     }
 }
 
@@ -194,7 +258,11 @@ impl Graph {
             }
             Input::Pair(mut doc, trust) => {
                 if let Trust::Untrusted(owned_elsewhere) = trust {
-                    validate_keys(&mut Arc::make_mut(&mut doc).roots, owned_elsewhere);
+                    let roots = &mut Arc::make_mut(&mut doc).roots;
+                    let accepted = validate_keys(roots, owned_elsewhere, prior.map(|p| &**p));
+                    if !accepted.is_empty() {
+                        self.ids.moved(accepted, path);
+                    }
                 }
                 if let Some(prior) = prior.filter(|prior| prior.same_keyed_outline(&doc)) {
                     #[cfg(test)]
@@ -220,7 +288,8 @@ impl Graph {
             (true, true) => 2,
         });
         {
-            let foreign = self.ids.foreign.read().unwrap();
+            let registry = self.ids.foreign.read().unwrap();
+            let foreign = &registry.owner;
             let reserved = |key: &BlockId| foreign.get(key).is_some_and(|owner| owner != path);
             let reserved: Option<&dyn Fn(&BlockId) -> bool> =
                 (!foreign.is_empty()).then_some(&reserved);
@@ -239,23 +308,44 @@ impl Graph {
 
 /// Intake of unproven keys: one hash insert per block and one ownership
 /// probe per key. A repeated key, or one `owned_elsewhere`, becomes a hole
-/// (filled by the caller).
-fn validate_keys(blocks: &mut [DocBlock], owned_elsewhere: &dyn Fn(&BlockId) -> bool) {
+/// (filled by the caller). Returns the accepted keys `base` (the page's
+/// prior) does not hold: the page's runtime ownership from now on.
+fn validate_keys(
+    blocks: &mut [DocBlock],
+    owned_elsewhere: &dyn Fn(&BlockId) -> bool,
+    base: Option<&Document>,
+) -> Vec<BlockId> {
     fn walk(
         blocks: &mut [DocBlock],
-        seen: &mut HashSet<BlockId>,
+        (seen, base): (&mut HashSet<BlockId>, &HashSet<BlockId>),
         owned_elsewhere: &dyn Fn(&BlockId) -> bool,
+        accepted: &mut Vec<BlockId>,
     ) {
         for block in blocks {
-            if !block.uuid.is_empty()
-                && (!seen.insert(block.uuid.clone()) || owned_elsewhere(&block.uuid))
-            {
+            if block.uuid.is_empty() {
+                // A hole already: filled by the caller.
+            } else if !seen.insert(block.uuid.clone()) || owned_elsewhere(&block.uuid) {
                 block.uuid = BlockId::default();
+            } else if !base.contains(&block.uuid) {
+                accepted.push(block.uuid.clone());
             }
-            walk(&mut block.children, seen, owned_elsewhere);
+            walk(&mut block.children, (seen, base), owned_elsewhere, accepted);
         }
     }
     #[cfg(test)]
     VALIDATION_SETS.with(|sets| sets.set(sets.get() + 1));
-    walk(blocks, &mut HashSet::new(), owned_elsewhere);
+    let mut held = HashSet::new();
+    if let Some(base) = base {
+        for_each_runtime_key(&base.roots, &mut |key| {
+            held.insert(key.clone());
+        });
+    }
+    let mut accepted = Vec::new();
+    walk(
+        blocks,
+        (&mut HashSet::new(), &held),
+        owned_elsewhere,
+        &mut accepted,
+    );
+    accepted
 }

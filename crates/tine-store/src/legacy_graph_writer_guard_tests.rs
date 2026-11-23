@@ -220,8 +220,38 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
         "sync_file_internal",
     ),
     (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "r2_the_witness_map_holds_the_live_paths_after_renames",
+        "forget_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_cost_tests.rs",
+        "r2_the_witness_map_holds_the_live_paths_after_renames",
+        "sync_file_internal",
+    ),
+    (
         "crates/tine-store/src/model/page_ids_tests.rs",
         "a4_a_config_rebuild_keeps_a_structurally_saved_pages_keys",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "r2_a_failed_owner_parse_keeps_the_claim",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "r2_a_rescan_after_a_move_keeps_each_key_on_one_page",
+        "sync_file_internal",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "r2_a_revert_to_the_retired_revision_keeps_the_saved_keys",
+        "invalidate_cache",
+    ),
+    (
+        "crates/tine-store/src/model/page_ids_tests.rs",
+        "r2_a_revert_to_the_retired_revision_keeps_the_saved_keys",
         "sync_file_internal",
     ),
     (

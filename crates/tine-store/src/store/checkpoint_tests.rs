@@ -2354,3 +2354,54 @@ fn a19_a_read_before_the_checkpoint_installs_keeps_its_keys() {
     });
     assert_eq!(row, served, "installed={installed}: the served keys");
 }
+
+/// Finding 4 of the ee4ea5b9a review: before the checkpoint installs, an
+/// own save of A's unchanged bytes gives its block a key that is not the
+/// checkpoint's (a seed at the checkpoint's revision, other keys). The row
+/// keeps the save's key, and an installed checkpoint's block index finds
+/// the block under it: the row and the snapshot never disagree.
+#[test]
+fn r2_a_seed_with_other_keys_at_the_checkpoints_revision_keeps_one_owner() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    let bytes = fs::read(&cp).unwrap();
+    let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
+    let graph = crate::model::Graph::open(&header.root);
+    let (rel, text) = ("pages/A.md", "- links [[One]]\n");
+    let path = graph.root.join(rel);
+    let key = "5f0c1a2b-0000-4000-8000-0000000000a1";
+    let mut doc = crate::model::parse_doc(&path, text);
+    doc.roots[0].uuid = key.into();
+    let saved: Arc<[u8]> = Arc::from(text.as_bytes());
+    let handoff = crate::model::page_ids::SaveHandoff {
+        bytes: Arc::clone(&saved),
+        doc: Arc::new(doc),
+    };
+    graph.hold_unhosted(rel);
+    assert!(graph.publish_owned(rel, Some(saved), Some(handoff)).is_ok());
+    let _ = graph.release(rel);
+    let body = decode(&bytes, &header.root, &header.config_key, &|| None).unwrap();
+    let config = (*graph.current_config()).clone();
+    let installed = graph.checkpoint_install(body.graph, config);
+    if let Ok((snapshot, _)) = &installed {
+        let owner = snapshot.block_owner_page(key, false);
+        let owner = owner.map(|(_, (entry, _))| entry.path.clone());
+        assert_eq!(owner, Some(path.clone()), "the snapshot's index");
+    }
+    let row = graph.with_pages(|pages| {
+        let (_, doc) = (pages.iter().find(|(entry, _)| entry.path == path)).expect("A has a row");
+        doc.roots
+            .iter()
+            .map(|b| b.uuid.to_string())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        row,
+        [key],
+        "installed={}: the save's key",
+        installed.is_ok()
+    );
+}
