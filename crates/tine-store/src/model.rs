@@ -176,6 +176,24 @@ pub(crate) fn missing_config_problem(
         .into()
     })
 }
+/// The config a graph uses when its `config.edn` exists but could not be
+/// read, and the problem it reports: the one mapping graph open (desktop and
+/// browser) and live reload share. Bytes over the store's parse limit are over
+/// the EDN reader's limit too (both 64 MiB), so they take the reader's verdict
+/// for oversized input, which fails closed; any other read error keeps the
+/// defaults. Cost: one type check.
+pub(crate) fn config_of_read_error(error: io::Error) -> (Config, Option<crate::IoError>) {
+    let too_large = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ParseInputTooLarge>());
+    let config = if too_large {
+        Config::over_read_limit()
+    } else {
+        Config::default()
+    };
+    (config, Some(error.into()))
+}
+
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     read_parse_input_in(&FileSource::Disk, path).map(std::borrow::Cow::into_owned)
 }
@@ -2869,7 +2887,10 @@ impl Graph {
                 missing_config_problem(&source, &path),
                 None,
             ),
-            Err(error) => (Config::default(), Some(error.into()), None),
+            Err(error) => {
+                let (config, problem) = config_of_read_error(error);
+                (config, problem, None)
+            }
         };
         let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, source, config, journal_format);

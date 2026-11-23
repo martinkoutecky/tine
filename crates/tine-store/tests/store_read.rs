@@ -263,6 +263,82 @@ fn a_repaired_hidden_value_restores_the_graph_text() {
     store.close();
 }
 
+/// EDN model R4a: a config.edn over the read limit fails closed although the
+/// store's bounded read refuses it before the reader sees it, and the read
+/// problem is still reported. One test per path: desktop open, browser open,
+/// live reload.
+fn oversized_config() -> Vec<u8> {
+    vec![b' '; crate::model::PARSE_INPUT_MAX_BYTES as usize + 1]
+}
+
+fn assert_closed(config: &crate::ConfigState) {
+    assert!(config.config.hidden_parse_failed_closed);
+    assert!(config.problem.is_some(), "the config problem is reported");
+}
+
+fn polled_store(f: &Fixture) -> Store {
+    let options = OpenOptions {
+        approved_external_assets: None,
+        watch: crate::WatchMode::Poll,
+        launch_checkpoint: None,
+    };
+    Store::open(&f.0, options).unwrap().0
+}
+
+#[test]
+fn an_oversized_config_hides_pages_on_desktop_open() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+    f.put("logseq/config.edn", &oversized_config());
+    let store = polled_store(&f);
+    assert!(store.page_named("Note", PageKind::Page).unwrap().is_none());
+    assert_closed(&store.config());
+    store.close();
+}
+
+#[test]
+fn an_oversized_config_hides_pages_on_browser_open() {
+    let pages = |config: Vec<u8>| {
+        let (browser, _) = crate::WholeGraph::from_files(vec![
+            ("logseq/config.edn".to_owned(), config),
+            ("pages/Note.md".to_owned(), b"- before\n".to_vec()),
+        ])
+        .unwrap();
+        let names: Vec<_> = (browser.corpus(None, false).pages.iter())
+            .map(|page| page.name.clone())
+            .collect();
+        (names, browser)
+    };
+    let (control, _) = pages(b"{}".to_vec());
+    assert!(!control.is_empty(), "control: Note is listed");
+    let (names, browser) = pages(oversized_config());
+    assert!(names.is_empty(), "{names:?}");
+    assert_closed(browser.config());
+}
+
+#[test]
+fn an_oversized_config_hides_pages_on_live_reload() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+    f.put("logseq/config.edn", b"{}");
+    let store = polled_store(&f);
+    assert!(store.page_named("Note", PageKind::Page).unwrap().is_some());
+    f.put("logseq/config.edn", &oversized_config());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // A page hidden by a reload is refused by name (`InvalidTarget`).
+    while matches!(store.page_named("Note", PageKind::Page), Ok(Some(_))) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "oversized config not taken in"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_closed(&store.config());
+    store.close();
+}
+
 #[test]
 fn page_reads_and_publishes_external_edit() {
     let _integration_guard = crate::test_transactions::integration_lock();

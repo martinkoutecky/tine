@@ -59,6 +59,9 @@ const onlyTrivia = [
 const witnesses = [
   "", " , \n", "#_ :dropped", "; just a comment", "1 #unknown []", "{:pages-directory \"notes\"} #unknown []",
   "{:pages-directory \"notes\" :bad #unknown []}",
+  // `##` with a complete operand other than NaN/Inf/-Inf: upstream rejects it.
+  ...["##unknown", "##nil", "##true", "##1", "##:kw", '##"s"', units`##\c`, "##[]", "##()", "##{}", "###{}"]
+    .flatMap((value) => [value, `{:bad ${value} :hidden []}`]),
   ...literals,
   ...onlyTrivia,
   ...discardedTags.flatMap((tag) => [`[#_ ${tag} 1]`, `[#_ [${tag}] 1]`, `#_ ${tag} 1`]),

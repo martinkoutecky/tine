@@ -152,7 +152,9 @@ commas, comments or complete discards uses default settings. Quick share
 and folder export use the same graph scope for page selection.
 
 Input over the reader's 64 MiB config limit is an unreadable exclusion and
-hides graph text. The reader also has a 128-level nesting limit, a
+hides graph text. A `config.edn` the store's equal 64 MiB read limit
+refuses before the reader sees it takes that same verdict, on desktop open,
+browser open and live reload, and the read problem is still reported. The reader also has a 128-level nesting limit, a
 one-million-node limit and a 250,000-form limit per complete collection.
 The node limit also bounds root map entry recovery.
 

@@ -444,6 +444,13 @@ impl Config {
         Self::parse_settings(crate::edn::config_entries(edn))
     }
 
+    /// The config of input over the reader's byte limit, for a caller whose
+    /// bounded read refused it before [`Config::parse`]: the reader's own
+    /// verdict for such input (unreadable exclusion, EDN model R4a).
+    pub fn over_read_limit() -> Config {
+        Self::parse_settings(Err(UnreadableExclusion))
+    }
+
     /// The typed config from Logseq's first-form framing for publication.
     /// Refuses a malformed form or a non-map. Empty source uses defaults.
     /// This reads the entire admitted form once, within the config size limit.
@@ -1240,7 +1247,24 @@ mod tests {
             } else {
                 r#":hidden [] :pages-directory "namespace-only""#
             };
-            for broken in [r#"#unknown []"#, r#""bad\q""#, r#"\malformed"#] {
+            // `##` with a complete operand other than NaN/Inf/-Inf is damaged like any other value.
+            let symbolic = [
+                "##unknown",
+                "##nil",
+                "##true",
+                "##1",
+                "##:kw",
+                r#"##"s""#,
+                r"##\c",
+                "##[]",
+                "##()",
+                "##{}",
+                "###{}",
+            ];
+            for broken in [r#"#unknown []"#, r#""bad\q""#, r#"\malformed"#]
+                .into_iter()
+                .chain(symbolic)
+            {
                 let broken = format!(":bad {broken}");
                 for [first, second] in [[&broken, &hidden], [&hidden, &broken]] {
                     for newline in ["\n", "\r\n"] {

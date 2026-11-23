@@ -692,20 +692,24 @@ impl<'a> Reader<'a> {
                 self.i += 2;
                 let symbol = self.form(depth + 1)?;
                 let raw = match symbol.leaf.as_ref().and_then(Edn::as_str) {
-                    Some("NaN") if symbol.is_symbol() => "##NaN",
-                    Some("Inf") if symbol.is_symbol() => "##Inf",
-                    Some("-Inf") if symbol.is_symbol() => "##-Inf",
-                    _ => return None,
+                    Some("NaN") if symbol.is_symbol() => Some("##NaN"),
+                    Some("Inf") if symbol.is_symbol() => Some("##Inf"),
+                    Some("-Inf") if symbol.is_symbol() => Some("##-Inf"),
+                    _ => None,
                 };
-                leaf = Some(if self.legacy_values() {
-                    Edn::Symbol(raw.into())
-                } else {
-                    Edn::Float(match raw {
+                leaf = match raw {
+                    // A complete unknown operand is a damaged value, like an unsupported tag.
+                    None => {
+                        self.invalid()?;
+                        None
+                    }
+                    Some(raw) if self.legacy_values() => Some(Edn::Symbol(raw.into())),
+                    Some(raw) => Some(Edn::Float(match raw {
                         "##Inf" => f64::INFINITY,
                         "##-Inf" => f64::NEG_INFINITY,
                         _ => f64::NAN,
-                    })
-                });
+                    })),
+                };
                 Kind::Atom
             }
             b'#' if self.s[start..].starts_with(b"#<") => return None,
