@@ -760,10 +760,8 @@ impl<'a> Reader<'a> {
                 let ch = self.src[self.i..].chars().next()?;
                 self.i += ch.len_utf8();
                 if !(macro_terminator(ch, false) || invalid_constituent(ch)) {
-                    let rest = self.i;
-                    self.token(false);
                     // Upstream's token scanner throws at a non-constituent.
-                    if self.src[rest..self.i].contains(invalid_constituent) {
+                    if self.token(false) {
                         return None;
                     }
                 }
@@ -788,9 +786,12 @@ impl<'a> Reader<'a> {
             b'#' if self.s[start..].starts_with(b"#:") => {
                 self.i += 2;
                 let namespace_start = self.i;
-                self.token(false);
+                let invalid = self.token(false);
                 let namespace = &self.src[namespace_start..self.i];
-                if !valid_name(namespace) || (namespace.contains('/') && namespace != "/") {
+                if invalid
+                    || !valid_name(namespace)
+                    || (namespace.contains('/') && namespace != "/")
+                {
                     return None;
                 }
                 while let Some(c) = self.src[self.i..].chars().next() {
@@ -894,17 +895,18 @@ impl<'a> Reader<'a> {
                     return None;
                 }
                 let numeric = !keyword && starts_numeric(&self.src[start..]);
-                self.token(numeric);
+                let invalid = self.token(numeric);
                 if self.i == start {
                     return None;
                 }
                 let token = &self.src[token_start..self.i];
                 // The token scanner throws at a non-constituent; the number scanner reads past it.
-                if !numeric && self.mode != Mode::Macro && token.contains(invalid_constituent) {
+                if !numeric && self.mode != Mode::Macro && invalid {
                     return None;
                 }
                 leaf = match token {
                     _ if keyword
+                        && !invalid
                         && !token.starts_with(':')
                         && valid_name(token)
                         && !token.contains("::") =>
@@ -931,7 +933,7 @@ impl<'a> Reader<'a> {
                                     && crate::query::date_token::DateToken::parse(token).is_some()))
                             .then(|| Edn::Symbol(token.into()))
                         }),
-                    _ if valid_name(token) || self.mode == Mode::Macro => {
+                    _ if (!invalid && valid_name(token)) || self.mode == Mode::Macro => {
                         Some(Edn::Symbol(token.into()))
                     }
                     _ => None,
@@ -952,13 +954,18 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn token(&mut self, numeric: bool) {
+    /// Advances over one token and says whether it held a non-constituent, so no caller
+    /// walks the token a second time.
+    fn token(&mut self, numeric: bool) -> bool {
+        let mut invalid = false;
         while let Some(c) = self.src[self.i..].chars().next() {
             if macro_terminator(c, numeric) {
                 break;
             }
+            invalid |= invalid_constituent(c);
             self.i += c.len_utf8();
         }
+        invalid
     }
 
     fn legacy_values(&self) -> bool {
@@ -1099,11 +1106,7 @@ impl<'a> Reader<'a> {
 }
 
 fn valid_name(token: &str) -> bool {
-    if token.is_empty()
-        || token.ends_with(':')
-        || token.starts_with("::")
-        || token.chars().any(invalid_constituent)
-    {
+    if token.is_empty() || token.ends_with(':') || token.starts_with("::") {
         return false;
     }
     if token == "/" {
