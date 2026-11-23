@@ -77,12 +77,38 @@ function generate(depth) {
 
 for (let i = 0; i < 256; i++) witnesses.push(generate(i % 5 + 1));
 
+const radixWitness = "9r0317076505470440520";
+const radixDuplicates = [
+  `{${radixWitness} :a 53345449898862296 :b}`,
+  `#{${radixWitness} 53345449898862296}`,
+];
+const radixLiterals = [radixWitness, "-9r000", "+10R000", "2r000"];
+for (let radix = 2; radix <= 36; radix++) {
+  const digits = "0123456789abcdefghijklmnopqrstuvwxyz".slice(0, radix);
+  const chunk = Math.floor(Math.log(0xffffffff / 36) / Math.log(radix));
+  const safeInteger = Number.MAX_SAFE_INTEGER.toString(radix).length;
+  // Straddle each boundary in both the significant digits and the full spelling.
+  const lengths = new Set([chunk, 2 * chunk, safeInteger]
+    .flatMap((boundary) => [boundary - 2, boundary - 1, boundary, boundary + 1]));
+  for (const length of lengths) {
+    for (const sign of ["", "+", "-"]) {
+      for (const separator of ["r", "R"]) {
+        const value = choose(digits.slice(1)) +
+          Array.from({ length: length - 1 }, () => choose(digits)).join("");
+        radixLiterals.push(`${sign}${radix}${separator}0${value}`);
+      }
+    }
+  }
+}
+witnesses.push(...radixLiterals, ...radixDuplicates);
+
 const query = '[:find ?b :where (task ?b #{"TODO" #_ "DONE"})]';
 const streams = [
   query,
   `${query} :inputs [#_ :ignored :current-page] :note #:ns{:_/key 1}`,
   ...discardedTags.flatMap((tag) => [`${query} :note ${tag}`, `${query} #_ ${tag} :note 1`]),
   ...literals.map((literal) => `${query} :note ${literal}`),
+  ...radixDuplicates.map((literal) => `${query} :note [{:nested ${literal}}]`),
 ];
 const cases = [
   ...[...new Set(witnesses)].flatMap((source) => [[first, source], [strict, source]]),

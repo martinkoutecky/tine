@@ -140,15 +140,20 @@ Session state remains outside the graph, with no additional persisted fields.
 The shared EDN reader supplies complete direct settings, including those before
 a torn suffix. A malformed setting uses its default when the reader can locate
 the next entry. A malformed `:hidden` exclusion hides graph text until it is
-repaired.
+repaired. If the root or its suffix cannot be read, the same restriction
+applies when the unreadable text may contain `:hidden` or its namespaced-map
+spelling `:_/hidden`, including in a metadata-wrapped root. Quick share and
+folder export use that graph scope for page selection.
 
 The reader's config input limit is 64 MiB, with a 128-level nesting limit,
 one million nodes and 250,000 forms per complete collection. The same node
 limit bounds the root map's entry recovery.
 
 Settings writes use the effective map entries from that reader and preserve
-unrelated metadata, discards and comments. A missing final setting value in a
-closed map can be repaired. The saved map must pass a complete EDN read.
+unrelated metadata, discards and comments. In a namespaced map, an inserted
+unqualified key uses `:_/key` and a qualified key keeps its namespace. A missing
+final setting value in a closed map can be repaired. The saved map must pass a
+complete EDN read.
 
 ## 5. What this does not close
 

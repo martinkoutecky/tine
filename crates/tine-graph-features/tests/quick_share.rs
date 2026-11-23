@@ -167,6 +167,85 @@ fn both_writers_report_omitted_config_when_logseq_cannot_read_it() {
 }
 
 #[test]
+fn malformed_namespaced_hidden_stays_out_of_both_publication_selectors() {
+    let _integration_guard = crate::integration_lock();
+    let mut admissions = Vec::new();
+    for newline in ["\n", "\r\n"] {
+        for root_prefix in ["#:demo", "^:meta #:demo", "#^:meta #:demo"] {
+            for (damage, entries) in [
+                ("valid control", ":_/hidden [\"pages/Secret.md\"]}"),
+                ("torn vector", ":_/hidden [\"pages/Secret.md\""),
+                ("torn root", ":_/hidden [\"pages/Secret.md\"]"),
+                ("invalid escape", r#":_/hidden ["pages/Secret.md" "\q"]}"#),
+                (
+                    "unknown sibling tag",
+                    ":_/hidden [\"pages/Secret.md\"]\n :other #unknown []}",
+                ),
+                (
+                    "duplicate effective key",
+                    ":_/hidden [\"pages/Secret.md\"]\n :_/hidden []}",
+                ),
+            ] {
+                let root = base();
+                let graph = root.join("graph");
+                let exports = root.join("exports");
+                fs::create_dir_all(graph.join("logseq")).unwrap();
+                fs::create_dir_all(graph.join("pages")).unwrap();
+                fs::create_dir_all(&exports).unwrap();
+                let source = format!("{root_prefix}{{\n {entries}\n").replace('\n', newline);
+                fs::write(graph.join("logseq/config.edn"), &source).unwrap();
+                fs::write(graph.join("pages/Secret.md"), "- Synthetic secret\n").unwrap();
+                let store = Store::open(&graph, Default::default()).unwrap().0;
+                store.whole_graph().unwrap();
+
+                let share = quick_share::prepare(
+                    &store,
+                    &request("@page and name = 'Secret'", "Share"),
+                    CREATED_AT,
+                );
+                let folder = tine_graph_features::publish_query::publish_live_home(
+                    &store,
+                    &exports,
+                    "Folder",
+                    true,
+                    true,
+                    Some("Secret"),
+                    &[(
+                        "index.html".into(),
+                        b"<html><head><title>Tine</title></head></html>".to_vec(),
+                    )],
+                );
+                let label = format!("{root_prefix} / {newline:?} / {damage}");
+                for (selector, error, expected) in [
+                    (
+                        "quick share",
+                        share.err(),
+                        "query selects no pages to share",
+                    ),
+                    (
+                        "live folder",
+                        folder.err(),
+                        "requested home page is not among the exported pages",
+                    ),
+                ] {
+                    match error {
+                        Some(error) => {
+                            assert!(error.to_string().contains(expected), "{label}: {error}")
+                        }
+                        None => admissions.push(format!("{label} / {selector}")),
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        admissions.is_empty(),
+        "Secret admitted by:\n{}",
+        admissions.join("\n")
+    );
+}
+
+#[test]
 fn quick_share_envelope_round_trips_and_refuses_damage() {
     let _integration_guard = crate::integration_lock();
     let payload = b"the share document";

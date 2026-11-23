@@ -445,7 +445,7 @@ impl Config {
         let settings = Settings(entries.as_deref().unwrap_or_default());
         let mut cfg = Self::parse_settings(&settings);
         // An unreadable root must not silently discard an authored exclusion.
-        if entries.is_none() && edn.contains(":hidden") {
+        if entries.is_none() && crate::edn::may_contain_hidden_setting(edn) {
             cfg.hidden_parse_failed_closed = true;
         }
         cfg
@@ -1199,6 +1199,25 @@ mod tests {
             let cfg = Config::parse(bad);
             assert!(cfg.hidden.is_empty(), "{bad}");
             assert!(cfg.hidden_parse_failed_closed, "master fails closed: {bad}");
+        }
+    }
+
+    #[test]
+    fn unreadable_config_suffix_with_either_hidden_spelling_fails_closed() {
+        for (prefix, key) in [
+            ("", ":hidden"),
+            ("#:demo", ":_/hidden"),
+            ("^:meta #:demo", ":_/hidden"),
+            ("#^:meta #:demo", ":_/hidden"),
+        ] {
+            let suffix = format!("{prefix}{{{key} [\"pages/Secret.md\"");
+            for newline in ["\n", "\r\n"] {
+                let root = format!("{prefix}{{}}{newline}");
+                let cfg = Config::parse(&format!("{root}{suffix}"));
+                assert!(cfg.hidden_parse_failed_closed, "{root}{suffix}");
+                let cfg = Config::parse(&format!("{root}; {suffix}"));
+                assert!(!cfg.hidden_parse_failed_closed, "{root}; {suffix}");
+            }
         }
     }
 

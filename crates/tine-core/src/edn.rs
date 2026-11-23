@@ -409,6 +409,11 @@ pub(crate) fn map_entries(form: Form) -> Option<Vec<(Form, Option<Form>)>> {
     Some(std::iter::from_fn(|| Some((children.next()?, children.next()))).collect())
 }
 
+// A failed read cannot distinguish an exclusion from text that resembles one.
+pub(crate) fn may_contain_hidden_setting(source: &str) -> bool {
+    source.contains(":hidden") || source.contains(":_/hidden")
+}
+
 struct Reader<'a> {
     s: &'a [u8],
     i: usize,
@@ -445,7 +450,7 @@ impl<'a> Reader<'a> {
     fn safe_config_suffix(&mut self) -> bool {
         // Local config fails closed when an unreadable suffix could hide an
         // authored exclusion. The publication framing reads the first form.
-        !self.src[self.i..].contains(":hidden")
+        !may_contain_hidden_setting(&self.src[self.i..])
             || (self.trivia(0).is_some() && !self.invalid && self.i == self.src.len())
     }
 
@@ -1041,7 +1046,7 @@ fn radix_number(source: &str, base: u32, exact: bool) -> Option<f64> {
     }
     // V8's parseInt approximates other radices using exact u32 chunks.
     let (mut total, mut part, mut scale) = (0.0, 0, 1);
-    for byte in digits.bytes() {
+    for byte in digits.trim_start_matches('0').bytes() {
         if scale * base > u32::MAX / 36 {
             total = total * f64::from(scale) + f64::from(part);
             (part, scale) = (0, 1);

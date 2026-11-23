@@ -327,7 +327,7 @@ fn map_open(source: &str, map: &Form) -> usize {
 
 fn insert_key(content: &mut String, map: &Form, key: &str, value: &str, top_level: bool) {
     let open = map_open(content, map);
-    let key = if content.as_bytes()[map.span.start] == b'#' {
+    let key = if content.as_bytes()[map.span.start] == b'#' && !key.contains('/') {
         format!(":_/{key}")
     } else {
         format!(":{key}")

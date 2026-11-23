@@ -1,6 +1,5 @@
 (ns edn-reader-oracle
   (:require [clojure.edn :as edn]
-            ["node:fs" :as fs]
             ["node:buffer" :refer [Buffer]]))
 
 (defn code-units [text]
@@ -49,5 +48,10 @@
         "observe-strict" (when (= 2 (count value)) (observe (first value)))
         (observe value)))))
 
-(let [cases (js->clj (.parse js/JSON (fs/readFileSync 0 "utf8")))]
-  (println (.stringify js/JSON (clj->js (mapv read-case cases)))))
+(let [chunks (array)
+      input (.setEncoding js/process.stdin "utf8")]
+  (.on input "data" #(.push chunks %))
+  (.on input "end"
+       (fn []
+         (let [cases (js->clj (.parse js/JSON (.join chunks "")))]
+           (println (.stringify js/JSON (clj->js (mapv read-case cases))))))))

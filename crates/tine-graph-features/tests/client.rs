@@ -480,6 +480,82 @@ fn config_setters_match_legacy_values_and_bytes() {
 }
 
 #[test]
+fn config_setters_insert_qualified_keys_in_namespaced_roots() {
+    let _integration_guard = crate::integration_lock();
+    type Setter = fn(&Store) -> std::io::Result<()>;
+    type ReadsBack = fn(&tine_core::config::Config) -> bool;
+    let operations: [(Setter, &str, ReadsBack); 8] = [
+        (
+            |s| config::set_show_brackets(s, false),
+            ":ui/show-brackets? false",
+            |c| !c.show_brackets,
+        ),
+        (
+            |s| config::set_timetracking_enabled(s, false),
+            ":feature/enable-timetracking? false",
+            |c| !c.enable_timetracking,
+        ),
+        (
+            |s| config::set_enable_tooltip(s, false),
+            ":ui/enable-tooltip? false",
+            |c| !c.enable_tooltip,
+        ),
+        (
+            |s| config::set_doc_mode_enter_for_new_block(s, true),
+            ":shortcut/doc-mode-enter-for-new-block? true",
+            |c| c.doc_mode_enter_for_new_block,
+        ),
+        (
+            |s| config::set_logical_outdenting(s, true),
+            ":editor/logical-outdenting? true",
+            |c| c.logical_outdenting,
+        ),
+        (
+            |s| config::set_guide_announced(s, true),
+            ":tine/guide-announced? true",
+            |c| c.guide_announced,
+        ),
+        (
+            |s| config::set_journal_page_title_format(s, "yyyy-MM-dd"),
+            r#":journal/page-title-format "yyyy-MM-dd""#,
+            |c| c.journal_page_title_format.as_deref() == Some("yyyy-MM-dd"),
+        ),
+        (
+            |s| config::set_favorites(s, &["Starred".into()], Some("Favorites")),
+            ":_/favorites [\"Starred\"]\n\n :tine/favorites-page \"Favorites\"",
+            |c| c.favorites == ["Starred"] && c.favorites_page.as_deref() == Some("Favorites"),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for prefix in ["#:ui", "^:meta #:ui", "#^:meta #:ui"] {
+        for (setter, entry, reads_back) in operations {
+            let (root, store) = fixture("config-namespaced-insert");
+            fs::create_dir_all(root.join("logseq")).unwrap();
+            let path = root.join("logseq/config.edn");
+            let source = format!("{prefix}{{}}\n");
+            fs::write(&path, &source).unwrap();
+            store.refresh(tine_store::Depth::Stamps).unwrap();
+            if let Err(error) = setter(&store) {
+                assert_eq!(fs::read_to_string(&path).unwrap(), source);
+                failures.push(format!("{prefix} / {entry}: {error}"));
+                continue;
+            }
+            let saved = fs::read_to_string(&path).unwrap();
+            assert_eq!(saved, format!("{prefix}{{\n {entry}\n}}\n"));
+            assert!(tine_core::edn::parse_strict(&saved).is_some(), "{saved}");
+            let settings = store.config();
+            assert_eq!(settings.source(), Some(saved.as_str()));
+            assert!(reads_back(&settings), "{saved}");
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "settings refused:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn custom_css_matches_legacy_present_absent_and_unreadable() {
     let _integration_guard = crate::integration_lock();
     for (index, (name, contents)) in [
