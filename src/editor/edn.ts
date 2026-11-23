@@ -1,4 +1,4 @@
-// I-4/I-12: authored EDN structure belongs to query_edn.rs, shared with native.
+// I-4/I-12: the native EDN reader supplies authored structure.
 // These clients never discover delimiters or edit spans in JavaScript.
 import { query_edn_json } from "../render/wasm/lsdoc_wasm.js";
 import { QueryPrintRefusedError } from "../backend";
@@ -9,6 +9,7 @@ function call<T>(source: string, operation: string, value = ""): T {
 export interface EdnOptions { title: string | null; collapsed: boolean; table: boolean }
 export interface EdnForm { span: { start: number; end: number }; kind: string; children: EdnForm[] }
 export function readEdn(source: string): EdnForm | null { return call(source, "read"); }
+export function readImageMetaSpans(source: string): EdnForm | null { return call(source, "image_meta"); }
 /** Slice a Rust byte span; pass pre-encoded bytes when reading several forms. */
 export function ednSlice(source: string | Uint8Array, form: EdnForm): string {
   const bytes = typeof source === "string" ? new TextEncoder().encode(source) : source;

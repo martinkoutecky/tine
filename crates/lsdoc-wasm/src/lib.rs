@@ -937,6 +937,9 @@ pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
         "options" => serde_json::to_string(&tine_core::query_edn::options(source)).unwrap(),
         "title" => serde_json::to_string(&tine_core::query_edn::edit_title(source, value)).unwrap(),
         "read" => serde_json::to_string(&tine_core::query_edn::read(source)).unwrap(),
+        "image_meta" => {
+            serde_json::to_string(&tine_core::edn::read_image_metadata(source)).unwrap()
+        }
         "split" => {
             serde_json::to_string(&tine_core::query_edn::split_trailing_map(source)).unwrap()
         }

@@ -5,10 +5,7 @@
 //! O(sidecar bytes + output bytes), no I/O. The guarded feature save owns I/O.
 
 use super::{highlight_id, Edn};
-use crate::{
-    edn,
-    query_edn::{self, Form},
-};
+use crate::edn::{self, Form};
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 
@@ -281,22 +278,19 @@ fn patch<'a>(
     }
 }
 
-pub(super) fn write(new: &Edn, old: Option<&Edn>, source: &str) -> String {
+pub(super) fn write(new: &Edn, old: Option<(&Form, &Edn)>, source: &str) -> String {
     let newline = if source.contains("\r\n") {
         "\r\n"
     } else {
         "\n"
     };
-    if let (Some(old), Some(form)) = (
-        old,
-        query_edn::read_with_limit(source, edn::MAX_INPUT_BYTES),
-    ) {
+    if let Some((form, old)) = old {
         return format!(
             "{}{}{}",
             &source[..form.span.start],
             patch(
                 source,
-                &form,
+                form,
                 old,
                 new,
                 advance(0, &source[..form.span.start]),

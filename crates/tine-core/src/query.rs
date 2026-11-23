@@ -31,7 +31,7 @@ mod columns_resolution_tests;
 #[cfg(test)]
 mod conformance;
 #[allow(missing_docs)]
-mod date_token;
+pub(crate) mod date_token;
 #[cfg(test)]
 mod grouping_resolution_tests;
 #[allow(missing_docs)]

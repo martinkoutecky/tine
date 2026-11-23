@@ -66,11 +66,7 @@ fn merge_highlight(loaded: &Highlight, local: &Highlight, disk: &Highlight) -> H
 mod tests;
 
 fn valid_edn(raw: &str) -> io::Result<()> {
-    if raw.trim().is_empty()
-        || matches!(
-            tine_core::edn::parse_strict(raw),
-            Some(tine_core::edn::Edn::Map(_))
-        )
+    if raw.trim().is_empty() || matches!(pdf::parse_sidecar(raw), Some(tine_core::edn::Edn::Map(_)))
     {
         Ok(())
     } else {
@@ -334,7 +330,7 @@ fn rollback_pdf_area_file(
             )
         })?;
         valid_edn(&raw)?;
-        let parsed = tine_core::edn::parse_strict(&raw).ok_or_else(|| {
+        let parsed = pdf::parse_sidecar(&raw).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "PDF sidecar missing highlights")
         })?;
         let entries = parsed

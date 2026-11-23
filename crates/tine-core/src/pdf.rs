@@ -232,7 +232,7 @@ fn highlight_to(h: &Highlight) -> Edn {
 
 /// Parse `assets/<key>.edn` contents into highlights.
 pub fn parse_highlights(edn_str: &str) -> Vec<Highlight> {
-    let Some(root) = edn::parse_strict(edn_str) else {
+    let Some(root) = parse_sidecar(edn_str) else {
         return Vec::new();
     };
     root.get("highlights")
@@ -246,7 +246,7 @@ pub fn parse_highlights(edn_str: &str) -> Vec<Highlight> {
 /// fit-width default is their visual equivalent and the original EDN remains
 /// untouched until the user actually changes the view.
 pub fn parse_pdf_state(edn_str: &str) -> PdfState {
-    let Some(root) = edn::parse_strict(edn_str) else {
+    let Some(root) = parse_sidecar(edn_str) else {
         return PdfState::default();
     };
     let highlights = root
@@ -348,7 +348,8 @@ fn merge_highlight(existing: Option<&Edn>, h: &Highlight) -> Edn {
 /// and layout; new records use Logseq's Fipp layout. No I/O is performed here;
 /// the feature layer owns validation and the guarded revision-checked write.
 pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String {
-    let root = edn::parse_strict(existing_edn);
+    let form = sidecar_form(existing_edn);
+    let root = form.as_ref().map(edn::Form::value);
     let existing_by_id: HashMap<&str, &Edn> = root
         .as_ref()
         .and_then(|r| r.get("highlights"))
@@ -409,7 +410,20 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
     if !had_extra {
         pairs.push((kw("extra"), Edn::Map(vec![])));
     }
-    sidecar::write(&Edn::Map(pairs), root.as_ref(), existing_edn)
+    sidecar::write(
+        &Edn::Map(pairs),
+        form.as_ref().zip(root.as_ref()),
+        existing_edn,
+    )
+}
+
+fn sidecar_form(source: &str) -> Option<edn::Form> {
+    edn::read(source, edn::MAX_INPUT_BYTES, edn::Mode::PdfSidecar)
+}
+
+/// Read a bounded PDF sidecar, including its legacy CR-only comment lines.
+pub fn parse_sidecar(source: &str) -> Option<Edn> {
+    sidecar_form(source).map(|form| form.value())
 }
 
 // ----------------------------------------------------------------- hls__ page

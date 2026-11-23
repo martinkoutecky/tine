@@ -81,18 +81,16 @@ Config publications and frontend updates do not depend on cache invalidation.
 A setter changes only its own **top-level** key: the key is found among the
 root map's direct entries, never inside a nested map (master DUP-3), and only
 at a key position: a keyword that is an earlier entry's VALUE and spells the key
-is not the key (`{:backup :favorites :private "keep"}` has no `:favorites`). The
-readers and every setter share that one selector
-(`config::find_keyword_at_map_level`). A
+is not the key (`{:backup :favorites :private "keep"}` has no `:favorites`).
+Setters use authored edit spans so they can repair an incomplete entry. A
 scalar setter replaces only the value token. Comments, unknown keys, nested
 maps and spacing elsewhere survive byte for byte. A missing, empty or
 comment-only file gets a new map after its comments.
 
 Collection boundaries skip EDN character literals, including escaped delimiters
 (`\}`, `\]`), named characters (`\newline`, `\space`) and Unicode characters
-(`\u007D`, `\é`). The shared scanner owns this for both readers and setters:
-an unrelated character must neither truncate the root before `:hidden` nor
-leave part of a replaced collection behind (audit L7s1-01).
+(`\u007D`, `\é`). This keeps an unrelated character from truncating the
+root before `:hidden` or leaving part of a replaced collection behind.
 
 Renaming the page `:default-home` names, or a namespace parent of it, rewrites
 `:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
@@ -139,8 +137,10 @@ Session state remains outside the graph, with no additional persisted fields.
 | config.edn could not be read at open or on a live reload (not valid UTF-8, too large to parse, or inaccessible) | The graph runs on default settings and its editing UI is read-only: the unknown `:file/name-format` cannot safely name a page write. The transaction guard refuses with typed `Refusal::ConfigUnreadable`; a Settings config read failure carries the same internal `config-unreadable` family. The window shows `ui-failure-config-read`, never the raw read error, in the notice, page banner and Settings error. The cause remains available for diagnostics. The page host's own saves do not consult the transaction guard; this change preserves that policy. Fixing or replacing config.edn lifts the graph restriction and clears the notice through the watcher without a restart; intrinsic Org restrictions remain | Sync delivery; external editor; disk/permission error; an undownloaded or corrupted config |
 | A rename's config.edn write fails after its page files were published (disk full, permission, a lost race) | The pages stay renamed and nothing is rolled back; config.edn keeps its old bytes. The app's rename returns the rename as done with the cause in `config_skipped`, so the window refreshes and toasts that the page was renamed but home and favorites may still name the old page; the CLI keeps the error and reports the rename as uncertain (`IncompleteRename`) | Disk error between the last page step and the config step |
 
-A malformed config never blocks opening the graph: the reader is lenient and
-pages open as usual.
+The shared EDN reader supplies complete direct settings, including those before
+a torn suffix. A malformed setting uses its default when the reader can locate
+the next entry. A malformed `:hidden` exclusion hides graph text until it is
+repaired.
 
 ## 5. What this does not close
 

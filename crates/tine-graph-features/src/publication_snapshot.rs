@@ -425,6 +425,104 @@ mod tests {
     }
 
     #[test]
+    fn publication_config_refuses_unreadable_sets_and_drops_edn_trivia() {
+        let keys = [
+            ":block-hidden-properties",
+            ":property/separated-by-commas",
+            ":ignored-page-references-keywords",
+            ":property-pages/excludelist",
+        ];
+        let cases = [
+            ("hashbang LF", "#{:public\n#! note :Private\n}", true),
+            ("hashbang CRLF", "#{:public\r\n#! note :Private\r\n}", true),
+            ("semicolon bare CR", "#{:public ; note\r :Private\n}", true),
+            ("hashbang bare CR", "#{:public #! note\r :Private\n}", true),
+            ("metadata", "#{:public ^ :Private []}", true),
+            ("dispatch metadata", "#{:public #^ :Private []}", true),
+            ("discarded metadata", "#{:public #_ ^ :Private []}", true),
+            ("auto-resolved keyword", "#{:public ::Private}", false),
+            ("trailing colon", "#{:public :Private:}", false),
+            ("empty namespace", "#{:public :/Private}", false),
+            ("missing name", "#{:public :Private/}", false),
+            ("double namespace", "#{:public :ns/Private/other}", false),
+            ("colon in namespace", "#{:public :Private:/name}", false),
+            ("digit after namespace", "#{:public :Private/1name}", false),
+            ("duplicate member", "#{:public :Private :Private}", false),
+            (
+                "duplicate nested map key",
+                "#{:public {:Private 1 :Private 2}}",
+                false,
+            ),
+            (
+                "duplicate nested set member",
+                "#{:public #{:Private :Private}}",
+                false,
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (label, value, keep_public) in cases {
+            for key in keys {
+                let source =
+                    format!("{{:start-of-week 1 {key} {value} :property-pages/enabled? false}}");
+                let (graph, _) = WholeGraph::from_files(vec![
+                    ("pages/Source.md".into(), b"- body\n".to_vec()),
+                    (CONFIG_PATH.into(), source.into_bytes()),
+                ])
+                .unwrap();
+                let corpus = graph.corpus(None, true);
+                for quick_share in [false, true] {
+                    let bytes = crate::build_graph::with_build_graph_text(
+                        &graph,
+                        &corpus.pages,
+                        "did not build",
+                        |_, built, files| {
+                            snapshot(
+                                &graph,
+                                &built,
+                                files,
+                                "Source",
+                                "",
+                                "Source",
+                                None,
+                                quick_share,
+                            )
+                        },
+                    )
+                    .unwrap();
+                    let written = if quick_share {
+                        serde_json::from_slice::<ShareDocument>(&bytes)
+                            .unwrap()
+                            .snapshot
+                    } else {
+                        serde_json::from_slice::<Snapshot>(&bytes).unwrap()
+                    };
+                    let config = &written
+                        .files
+                        .iter()
+                        .find(|file| file.path == CONFIG_PATH)
+                        .unwrap()
+                        .text;
+                    let expected = if keep_public {
+                        format!("{{:start-of-week 1 {key} #{{:public}} :property-pages/enabled? false}}")
+                    } else {
+                        "{:start-of-week 1 :property-pages/enabled? false}".into()
+                    };
+                    if config.contains("Private")
+                        || Config::parse(config).publication_reading_values()
+                            != Config::parse(&expected).publication_reading_values()
+                    {
+                        failures.push((label, key, quick_share, config.to_string()));
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "incorrect reading values in publications: {failures:#?}"
+        );
+    }
+
+    #[test]
     fn generated_home_links_use_the_full_page_titles() {
         let titles = ["Ends]", "Middle]]Here", "A ]] [[ B", r"Slash\]]Here"];
         let (graph, _) = WholeGraph::from_files(

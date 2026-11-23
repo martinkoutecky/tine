@@ -643,7 +643,12 @@ pub(super) fn advanced_pred_inner(
     let mut ran = Vec::new();
     let mut ignored = Vec::new();
     let Some(declaration) = crate::query_edn::advanced(query_src) else {
-        return (None, ran, vec!["query-vector".into()]);
+        let refused = if crate::query_edn::declares_option(query_src, ":result-transform") {
+            "result-transform"
+        } else {
+            "query-vector"
+        };
+        return (None, ran, vec![refused.into()]);
     };
     let Some((find, pulls_entity)) = advanced_find(&declaration.vector) else {
         return (None, ran, vec!["find projection".into()]);

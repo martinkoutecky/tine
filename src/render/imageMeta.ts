@@ -1,8 +1,6 @@
-// Logseq media metadata (`![a](x.png){:width 200, :height "40%"}`). The brace
-// is an EDN map, so keys and values come from the shared EDN reader
-// (query_edn.rs), never from a substring scan: a quoted value that merely
-// contains `:width 999` must not be read as the width key (I-12, UI-OG-C5-P6-IMAGEMETA).
-import { ednSlice, readEdn, unquoteEdnString } from "../editor/edn";
+// Logseq image braces use EDN delimiters and also accept bare CSS lengths
+// and repeated keys. The shared reader supplies the ordered entries.
+import { ednSlice, readImageMetaSpans, unquoteEdnString } from "../editor/edn";
 
 const SIZE = /^(?:\d+%?|\d+px)$/;
 
@@ -19,7 +17,7 @@ function sizeOf(kind: string, text: string): string | undefined {
  * An unreadable brace yields no size. O(brace bytes) with one WASM read. */
 export function parseImageMetaBrace(brace: string | undefined): { width?: string; height?: string } {
   if (!brace) return {};
-  const form = readEdn(brace);
+  const form = readImageMetaSpans(brace);
   if (!form || form.kind !== "map") return {};
   const bytes = new TextEncoder().encode(brace);
   const out: { width?: string; height?: string } = {};

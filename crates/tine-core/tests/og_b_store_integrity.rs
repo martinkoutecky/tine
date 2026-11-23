@@ -61,25 +61,34 @@ fn exact_l03_unicode_rename_input_is_already_fixed() {
 }
 
 #[test]
-fn config_readers_have_one_root_selector_and_one_string_decoder() {
+fn config_values_come_from_the_shared_edn_reader() {
     let source = include_str!("../src/config.rs");
     let readers = source
-        .split("fn read_string_at")
+        .split("pub fn parse(edn: &str)")
         .nth(1)
         .unwrap()
         .split("#[cfg(test)]")
         .next()
         .unwrap();
-    assert!(!readers.contains("find_keyword("),
-        "I-12: config readers must use the setters' root selector; exemplar config::find_top_level_keyword");
-    for second_decoder in ["fn unescape", "fn decode_hidden_string"] {
-        assert!(!source.contains(second_decoder),
-            "I-12: all config strings use edn::parse_strict through config::read_string_at; remove {second_decoder}");
+    for second_decoder in [
+        "fn unescape",
+        "fn decode_hidden_string",
+        "fn read_string_at",
+    ] {
+        assert!(
+            !source.contains(second_decoder),
+            "I-12: all config values use the shared EDN reader; remove {second_decoder}"
+        );
     }
     assert!(
-        readers.contains("crate::edn::parse_strict"),
-        "I-12: config::read_string_at is the EDN decoder's client"
+        readers.contains("crate::edn::config_entries"),
+        "I-12: Config::parse consumes the EDN reader's entries"
     );
+    assert!(!readers
+        .split("fn edn_str_end")
+        .next()
+        .unwrap()
+        .contains("form_end("));
 }
 
 #[test]

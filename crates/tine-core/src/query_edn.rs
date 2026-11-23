@@ -8,261 +8,21 @@
 //! with `None`; callers retain the original source and surface a typed refusal.
 //! Cost O(source bytes), bounded to 1 MiB and a fixed depth. No I/O or graph state.
 //! `inspect_begin_query` supplies the live/export BEGIN_QUERY payload decision.
-//! Scalar decoding and string writing use `edn`, the existing EDN value owner.
+//! The shared EDN reader validates forms before the query layer selects fields.
 
-use crate::edn::{self, Edn};
+use crate::edn::{self, Edn, Mode};
 use serde::Serialize;
-use std::ops::Range;
 
-const MAX_BYTES: usize = 1024 * 1024;
-const MAX_DEPTH: usize = 128;
+pub(crate) use crate::edn::js_whitespace;
+pub use crate::edn::{string_end, Form, Kind};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Form {
-    pub span: Range<usize>,
-    pub kind: Kind,
-    pub children: Vec<Form>,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Kind {
-    Map,
-    Vector,
-    List,
-    Set,
-    String,
-    Atom,
-    Tagged,
-}
-
-struct Reader<'a> {
-    source: &'a str,
-    at: usize,
-    dialect: Dialect,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Dialect {
-    Spans,
-    Query,
-    Macro,
-}
-
-// tools.reader uses ECMAScript \s plus comma. Templates share the whitespace
-// set without comma, as in JS trim.
-pub(crate) fn js_whitespace(c: char) -> bool {
-    c == '\u{feff}' || (c != '\u{0085}' && c.is_whitespace())
-}
-
-impl Reader<'_> {
-    fn byte(&self) -> Option<u8> {
-        self.source.as_bytes().get(self.at).copied()
-    }
-    fn whitespace(&self, c: char) -> bool {
-        match self.dialect {
-            Dialect::Spans => c.is_ascii_whitespace(),
-            Dialect::Query | Dialect::Macro => js_whitespace(c),
-        }
-    }
-    fn trivia(&mut self, depth: usize) -> Option<()> {
-        loop {
-            match self.byte() {
-                Some(b',') => self.at += 1,
-                Some(b';') => {
-                    while !matches!(self.byte(), None | Some(b'\n'))
-                        && !(self.dialect == Dialect::Spans && self.byte() == Some(b'\r'))
-                    {
-                        self.at += 1;
-                    }
-                }
-                Some(b'#') if self.source[self.at..].starts_with("#_") => {
-                    self.at += 2;
-                    self.form(depth + 1)?;
-                }
-                _ => match self.source[self.at..].chars().next() {
-                    Some(c) if self.whitespace(c) => self.at += c.len_utf8(),
-                    _ => return Some(()),
-                },
-            }
-        }
-    }
-    fn form(&mut self, depth: usize) -> Option<Form> {
-        // An advanced query's existing parenthesis limit excludes its enclosing
-        // map/vector and clause data, so keep room for those wrappers here.
-        if depth >= MAX_DEPTH + if self.dialect == Dialect::Query { 4 } else { 0 } {
-            return None;
-        }
-        self.trivia(depth)?;
-        let start = self.at;
-        let mut children = Vec::new();
-        let kind = match self.byte()? {
-            b'[' if self.dialect == Dialect::Macro && self.source[start..].starts_with("[[") => {
-                let end = self.source[start + 2..].find("]]")?;
-                self.at = start + 2 + end + 2;
-                Kind::Atom
-            }
-            b'{' | b'[' | b'(' => {
-                let (kind, close) = match self.byte()? {
-                    b'{' => (Kind::Map, b'}'),
-                    b'[' => (Kind::Vector, b']'),
-                    _ => (Kind::List, b')'),
-                };
-                self.at += 1;
-                loop {
-                    self.trivia(depth)?;
-                    if self.byte()? == close {
-                        self.at += 1;
-                        break;
-                    }
-                    children.push(self.form(depth + 1)?);
-                }
-                if kind == Kind::Map && children.len() % 2 != 0 {
-                    return None;
-                }
-                kind
-            }
-            b'"' => {
-                self.at = string_end(self.source, start)?;
-                if !matches!(
-                    edn::parse_strict(&self.source[start..self.at]),
-                    Some(Edn::Str(_))
-                ) {
-                    return None;
-                }
-                Kind::String
-            }
-            b'#' if self.source[start..].starts_with("#{") => {
-                self.at += 1;
-                self.at += 1;
-                loop {
-                    self.trivia(depth)?;
-                    if self.byte()? == b'}' {
-                        self.at += 1;
-                        break;
-                    }
-                    children.push(self.form(depth + 1)?);
-                }
-                Kind::Set
-            }
-            // Clojure reader macros an authored datalog query may carry: the
-            // anonymous-fn literal `#( .. )` reads as a list, a regex literal
-            // `#".."` as a string. Neither changes any key or value boundary.
-            b'#' if self.source[start..].starts_with("#(") => {
-                self.at += 1;
-                return self.form(depth).map(|mut form| {
-                    form.span.start = start;
-                    form
-                });
-            }
-            b'#' if self.source[start..].starts_with("#\"") => {
-                self.at = string_end(self.source, start + 1)?;
-                Kind::String
-            }
-            b'#' if !self.source[start..].starts_with("##")
-                && !self.source[start..].starts_with("#'") =>
-            {
-                self.token()?;
-                if self.at == start + 1 {
-                    return None;
-                }
-                let tag = &self.source[start..self.at];
-                let value = self.form(depth + 1)?;
-                if self.dialect == Dialect::Query
-                    && !matches!(
-                        (tag, value.kind),
-                        ("#uuid" | "#inst", Kind::String)
-                            | ("#queue" | "#js", Kind::Vector)
-                            | ("#js", Kind::Map)
-                    )
-                {
-                    return None;
-                }
-                children.push(value);
-                Kind::Tagged
-            }
-            b')' | b']' | b'}' => return None,
-            _ => {
-                self.token()?;
-                let token = &self.source[start..self.at];
-                if token == ":" {
-                    return None;
-                }
-                Kind::Atom
-            }
-        };
-        Some(Form {
-            span: start..self.at,
-            kind,
-            children,
-        })
-    }
-    fn token(&mut self) -> Option<()> {
-        let start = self.at;
-        if self.byte() == Some(b'\\') {
-            self.at += 1;
-            self.at += self.source.get(self.at..)?.chars().next()?.len_utf8();
-        }
-        while let Some(c) = self.source[self.at..].chars().next() {
-            if self.whitespace(c)
-                || matches!(c, ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '"')
-            {
-                break;
-            }
-            self.at += c.len_utf8();
-        }
-        (self.at > start).then_some(())
-    }
-}
-
-/// End of one EDN string; delimiter protection shares this with macro_text.
-/// Escape validity belongs to the scalar decoder, not this extent operation.
-pub fn string_end(source: &str, at: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut i = at + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'"' => return Some(i + 1),
-            _ => i += 1,
-        }
-    }
-    None
-}
-
-/// Exactly one form, allowing trivia/discards before and after it.
+/// Exactly one form, allowing trivia and discards before and after it.
 pub fn read(source: &str) -> Option<Form> {
-    read_with_limit(source, MAX_BYTES)
-}
-
-/// Reuse authored spans for sidecars with the value parser's larger byte bound.
-/// Depth and string validation remain identical to `read`; O(source bytes).
-pub(crate) fn read_with_limit(source: &str, max_bytes: usize) -> Option<Form> {
-    if source.len() > max_bytes {
-        return None;
-    }
-    let mut reader = Reader {
-        source,
-        at: 0,
-        dialect: Dialect::Spans,
-    };
-    let form = reader.form(0)?;
-    reader.trivia(0)?;
-    (reader.at == source.len()).then_some(form)
+    edn::read(source, edn::QUERY_BYTES, Mode::Edn)
 }
 
 fn map(source: &str) -> Option<Form> {
-    let form = read(source)?;
-    if form.kind != Kind::Map {
-        return None;
-    }
-    // Duplicate keys are ambiguous for mutation, even if EDN readers accept them.
-    let mut keys = std::collections::HashSet::new();
-    for pair in form.children.chunks_exact(2) {
-        if !keys.insert(source[pair[0].span.clone()].to_string()) {
-            return None;
-        }
-    }
-    Some(form)
+    read(source).filter(|form| form.kind == Kind::Map)
 }
 
 #[derive(Default, Serialize)]
@@ -279,15 +39,15 @@ pub fn options(source: &str) -> Option<Options> {
     let form = map(source)?;
     let mut options = Options::default();
     for pair in form.children.chunks_exact(2) {
-        let value = &source[pair[1].span.clone()];
+        let value = pair[1].leaf.as_ref();
         match &source[pair[0].span.clone()] {
             ":title" => {
-                if let Some(Edn::Str(title)) = edn::parse_strict(value) {
-                    options.title = Some(title);
+                if let Some(Edn::Str(title)) = value {
+                    options.title = Some(title.clone());
                 }
             }
-            ":collapsed?" => options.collapsed = value == "true",
-            ":table-view?" => options.table = value == "true",
+            ":collapsed?" => options.collapsed = value == Some(&Edn::Bool(true)),
+            ":table-view?" => options.table = value == Some(&Edn::Bool(true)),
             _ => (),
         }
     }
@@ -339,33 +99,10 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
     ))
 }
 
-/// Every top-level form of an authored query source, in order (the query
-/// vector, then any trailing `:inputs [..]`-style option pairs). Trivia and
-/// `#_` discards are skipped. Malformed, oversized or too-deep EDN yields
-/// `None`. O(source bytes).
-fn top_level_forms(source: &str, dialect: Dialect) -> Option<Vec<Form>> {
-    if source.len() > MAX_BYTES {
-        return None;
-    }
-    let mut reader = Reader {
-        source,
-        at: 0,
-        dialect,
-    };
-    let mut forms = Vec::new();
-    loop {
-        reader.trivia(0)?;
-        if reader.at == source.len() {
-            return Some(forms);
-        }
-        forms.push(reader.form(0)?);
-    }
-}
-
 /// One direct option value in an advanced map or vector-plus-options stream.
 /// Duplicate declarations refuse rather than choosing one arbitrarily.
 pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
-    let forms = top_level_forms(source, Dialect::Query)?;
+    let forms = edn::forms(source, Mode::Query)?;
     let value = option_form(source, option_pairs(&forms), key)?;
     Some(&source[value.span.clone()])
 }
@@ -400,7 +137,7 @@ pub(crate) struct Advanced<'a> {
 /// Effective vector and positional inputs from one bounded EDN read.
 /// The map is Logseq syntax. The bare vector plus options is Tine syntax.
 pub(crate) fn advanced(source: &str) -> Option<Advanced<'_>> {
-    let forms = top_level_forms(source, Dialect::Query)?;
+    let forms = edn::forms(source, Mode::Query)?;
     let options = option_pairs(&forms);
     let vector = match forms.first()? {
         form if form.kind == Kind::Vector => form,
@@ -449,7 +186,7 @@ pub fn removes_block_children(source: &str) -> bool {
 /// not a declaration (I-12: the EDN owner decides, not a substring). Unreadable
 /// EDN declares nothing. O(source bytes).
 pub fn declares_option(source: &str, key: &str) -> bool {
-    let Some(forms) = top_level_forms(source, Dialect::Query) else {
+    let Some(forms) = edn::forms(source, Mode::QuerySyntax) else {
         return false;
     };
     option_pairs(&forms)
@@ -461,7 +198,7 @@ pub fn declares_option(source: &str, key: &str) -> bool {
 /// Logseq page references in the query form remain opaque authored atoms.
 pub fn split_trailing_map(source: &str) -> (String, String) {
     let unchanged = || (source.trim().into(), String::new());
-    let Some(forms) = top_level_forms(source, Dialect::Macro) else {
+    let Some(forms) = edn::forms(source, Mode::Macro) else {
         return unchanged();
     };
     if let Some(last) = forms.last().filter(|last| {
@@ -501,11 +238,18 @@ pub enum BeginQueryMatch {
 pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     use BeginQueryMatch::{Supported, Unsupported};
     let source = payload.trim_matches(js_whitespace);
-    let forms = top_level_forms(source, Dialect::Query).unwrap_or_default();
-    let [form] = forms.as_slice() else {
-        return Unsupported {
-            reason: "malformed EDN query map",
-        };
+    let form = match edn::read_query_map(source) {
+        Ok(form) => form,
+        Err(key) => {
+            return Unsupported {
+                reason: match key {
+                    Some(":query") => "duplicate :query entry",
+                    Some(":inputs") => "expected :inputs to be a vector or list",
+                    Some(":title") => "expected :title to be a string",
+                    _ => "malformed EDN query map",
+                },
+            };
+        }
     };
     if form.kind != Kind::Map {
         return Unsupported {
@@ -521,15 +265,10 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
         let value = &source[pair[1].span.clone()];
         match &source[pair[0].span.clone()] {
             ":query" => {
-                if query.is_some() {
-                    return Unsupported {
-                        reason: "duplicate :query entry",
-                    };
-                }
                 query = Some(value);
             }
             ":inputs" => {
-                if inputs.is_some() || !matches!(pair[1].kind, Kind::Vector | Kind::List) {
+                if !matches!(pair[1].kind, Kind::Vector | Kind::List) {
                     return Unsupported {
                         reason: "expected :inputs to be a vector or list",
                     };
@@ -542,13 +281,13 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
             ":result-transform" => result_transform = Some(value),
             ":rules" => rules = Some(value),
             ":title" => {
-                if title.is_some() || pair[1].kind != Kind::String {
+                if pair[1].kind != Kind::String {
                     return Unsupported {
                         reason: "expected :title to be a string",
                     };
                 }
-                if let Some(Edn::Str(text)) = edn::parse_strict(value) {
-                    title = Some(text);
+                if let Some(Edn::Str(text)) = pair[1].leaf.as_ref() {
+                    title = Some(text.clone());
                 }
             }
             _ => (),

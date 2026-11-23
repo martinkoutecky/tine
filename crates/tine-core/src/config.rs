@@ -1,11 +1,9 @@
 //! `logseq/config.edn` readers and the shared selectors used by its setters.
 //!
-//! Config values are located by the root-map selector shared with graph-feature
-//! setters. Only direct entries own settings, including in nested settings maps.
-//! Surgical setters preserve unrelated bytes, comments and arbitrary forms;
-//! readers decode string tokens through `edn::parse_strict`, the same decoder
-//! used by sidecars. Missing or malformed individual values use defaults.
+//! Direct settings consume effective values from the shared EDN reader.
+//! Surgical setters locate authored spans to preserve unrelated bytes.
 
+use crate::edn::{Edn, Form, Kind};
 use std::collections::HashMap;
 
 /// OG shortcut values retain a single string or all vector alternatives over IPC.
@@ -443,76 +441,92 @@ impl Config {
     /// values. A journal date pattern with parts Tine does not support keeps its
     /// value and adds a `journal_config_diagnostics` entry (card g4czVA).
     pub fn parse(edn: &str) -> Config {
-        // Locate only direct root entries, as the graph-feature setters do.
-        // Arbitrary unrelated forms need not fit the small sidecar value model.
+        let entries = crate::edn::config_entries(edn);
+        let settings = Settings(entries.as_deref().unwrap_or_default());
         let mut cfg = Config::default();
-        let journal = parse_journal_settings(edn);
+        // An unreadable root must not silently discard an authored exclusion.
+        if entries.is_none() && edn.contains(":hidden") {
+            cfg.hidden_parse_failed_closed = true;
+        }
+        let journal = parse_journal_settings(&settings);
         cfg.default_journal_queries = journal.queries;
         cfg.disable_scheduled_and_deadline_query = journal.disable;
         cfg.scheduled_future_days = journal.future_days;
         cfg.journal_config_diagnostics = journal.diagnostics;
-        if let Some(v) = string_value(edn, ":journals-directory") {
+        if let Some(v) = settings.string(":journals-directory") {
             cfg.journals_dir = v;
         }
-        if let Some(v) = string_value(edn, ":pages-directory") {
+        if let Some(v) = settings.string(":pages-directory") {
             cfg.pages_dir = v;
         }
-        match parse_hidden_paths(edn) {
+        match settings.hidden() {
             Ok(hidden) => cfg.hidden = hidden,
             Err(()) => cfg.hidden_parse_failed_closed = true,
         }
-        if let Some(v) = keyword_value(edn, ":preferred-workflow") {
+        if let Some(v) = settings.keyword(":preferred-workflow") {
             cfg.preferred_workflow = if v == "todo" {
                 Workflow::Todo
             } else {
                 Workflow::Now
             };
         }
-        cfg.shortcuts = parse_shortcuts(edn);
-        cfg.all_pages_public =
-            bool_value(edn, ":publishing/all-pages-public?").unwrap_or(cfg.all_pages_public);
-        if let Some(n) = int_value(edn, ":start-of-week") {
+        cfg.shortcuts = parse_shortcuts(settings.get(":shortcuts"));
+        cfg.all_pages_public = settings
+            .boolean(":publishing/all-pages-public?")
+            .unwrap_or(cfg.all_pages_public);
+        if let Some(n) = settings.integer(":start-of-week") {
             if n <= 6 {
                 cfg.start_of_week = n;
             }
         }
-        cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
-        if let Some(n) = int_value(edn, ":ref/linked-references-collapsed-threshold") {
+        cfg.block_hidden_properties = settings.keyword_set(":block-hidden-properties");
+        if let Some(n) = settings.integer(":ref/linked-references-collapsed-threshold") {
             cfg.linked_references_collapsed_threshold = n;
         }
-        if let Some(n) = integer_value(edn, ":ref/default-open-blocks-level") {
+        if let Some(n) = settings.signed(":ref/default-open-blocks-level") {
             cfg.ref_default_open_blocks_level = n;
         }
-        cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
+        cfg.separated_by_commas = settings.keyword_set(":property/separated-by-commas");
         cfg.ignored_page_references_keywords =
-            parse_keyword_set(edn, ":ignored-page-references-keywords");
-        cfg.property_pages_enabled =
-            bool_value(edn, ":property-pages/enabled?").unwrap_or(cfg.property_pages_enabled);
-        cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
-        cfg.default_journal_template = nested_string(edn, ":default-templates", ":journals")
+            settings.keyword_set(":ignored-page-references-keywords");
+        cfg.property_pages_enabled = settings
+            .boolean(":property-pages/enabled?")
+            .unwrap_or(cfg.property_pages_enabled);
+        cfg.property_pages_excludelist = settings.keyword_set(":property-pages/excludelist");
+        cfg.default_journal_template = settings
+            .nested_string(":default-templates", ":journals")
             .map(|name| name.trim().to_owned())
             .filter(|name| !name.is_empty());
-        cfg.default_home =
-            nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
-        cfg.favorites = parse_string_vector(edn, ":favorites");
+        cfg.default_home = settings
+            .nested_string(":default-home", ":page")
+            .filter(|s| !s.trim().is_empty());
+        cfg.favorites = settings.string_vector(":favorites");
         cfg.mobile_gestures_disabled_in_block_with_tags =
-            nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
-        cfg.quick_capture_template_text = nested_string(edn, ":quick-capture-templates", ":text");
-        cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
-        cfg.quick_capture_default_page =
-            nested_string(edn, ":quick-capture-options", ":default-page")
-                .filter(|name| !name.trim().is_empty());
-        cfg.quick_capture_insert_today =
-            nested_true(edn, ":quick-capture-options", ":insert-today?");
-        cfg.quick_capture_redirect_page =
-            nested_true(edn, ":quick-capture-options", ":redirect-page?");
-        cfg.favorites_page =
-            string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
-        let file_format = string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
+            settings.nested_string_vector(":mobile", ":gestures/disabled-in-block-with-tags");
+        cfg.quick_capture_template_text =
+            settings.nested_string(":quick-capture-templates", ":text");
+        cfg.quick_capture_template_media =
+            settings.nested_string(":quick-capture-templates", ":media");
+        cfg.quick_capture_default_page = settings
+            .nested_string(":quick-capture-options", ":default-page")
+            .filter(|name| !name.trim().is_empty());
+        cfg.quick_capture_insert_today = settings
+            .nested_bool(":quick-capture-options", ":insert-today?")
+            .unwrap_or(cfg.quick_capture_insert_today);
+        cfg.quick_capture_redirect_page = settings
+            .nested_bool(":quick-capture-options", ":redirect-page?")
+            .unwrap_or(cfg.quick_capture_redirect_page);
+        cfg.favorites_page = settings
+            .string(":tine/favorites-page")
+            .filter(|s| !s.trim().is_empty());
+        let file_format = settings
+            .string(":journal/file-name-format")
+            .filter(|s| !s.is_empty());
         let title_format = [":journal/page-title-format", ":date-formatter"]
             .into_iter()
             .find_map(|key| {
-                string_value(edn, key)
+                settings
+                    .string(key)
                     .filter(|s| !s.is_empty())
                     .map(|v| (key, v))
             });
@@ -533,8 +547,9 @@ impl Config {
         // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
         // its schema also accepts the keyword form `:preferred-format :org` — read
         // both so a keyword-configured graph isn't silently treated as markdown.
-        if let Some(v) = string_value(edn, ":preferred-format")
-            .or_else(|| keyword_value(edn, ":preferred-format"))
+        if let Some(v) = settings
+            .string(":preferred-format")
+            .or_else(|| settings.keyword(":preferred-format"))
         {
             if v.eq_ignore_ascii_case("org") {
                 cfg.preferred_format = crate::model::Format::Org;
@@ -542,48 +557,48 @@ impl Config {
         }
         // `:file/name-format` is a keyword (`:triple-lowbar` | `:legacy`). Absent
         // ⇒ legacy, matching OG's `(or (:file/name-format config) :legacy)`.
-        cfg.file_name_format = match keyword_value(edn, ":file/name-format").as_deref() {
+        cfg.file_name_format = match settings.keyword(":file/name-format").as_deref() {
             Some("triple-lowbar") => FileNameFormat::TripleLowbar,
             _ => FileNameFormat::Legacy,
         };
-        cfg.macros = parse_macros(edn);
-        cfg.enable_timetracking =
-            bool_value(edn, ":feature/enable-timetracking?").unwrap_or(cfg.enable_timetracking);
-        cfg.enable_search_remove_accents =
-            read_keyword(edn, ":feature/enable-search-remove-accents?")
-                .map(|at| {
-                    let from = skip_blank(edn, at + ":feature/enable-search-remove-accents?".len());
-                    !edn[from..].strip_prefix("false").is_some_and(|rest| {
-                        rest.chars().next().is_none_or(|ch| {
-                            ch.is_whitespace() || matches!(ch, ',' | '}' | ']' | ')' | ';' | '#')
-                        })
-                    })
-                })
-                .unwrap_or(cfg.enable_search_remove_accents);
-        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(cfg.show_brackets);
-        cfg.enable_tooltip = bool_value(edn, ":ui/enable-tooltip?").unwrap_or(cfg.enable_tooltip);
-        cfg.enable_journals =
-            bool_value(edn, ":feature/enable-journals?").unwrap_or(cfg.enable_journals);
-        cfg.doc_mode_enter_for_new_block =
-            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?")
-                .unwrap_or(cfg.doc_mode_enter_for_new_block);
-        cfg.logical_outdenting =
-            bool_value(edn, ":editor/logical-outdenting?").unwrap_or(cfg.logical_outdenting);
+        cfg.macros = macro_entries(settings.get(":macros"), |_, _, value| value.to_owned());
+        cfg.enable_timetracking = settings
+            .boolean(":feature/enable-timetracking?")
+            .unwrap_or(cfg.enable_timetracking);
+        cfg.enable_search_remove_accents = settings
+            .get(":feature/enable-search-remove-accents?")
+            .map(|form| form.leaf != Some(Edn::Bool(false)))
+            .unwrap_or(cfg.enable_search_remove_accents);
+        cfg.show_brackets = settings
+            .boolean(":ui/show-brackets?")
+            .unwrap_or(cfg.show_brackets);
+        cfg.enable_tooltip = settings
+            .boolean(":ui/enable-tooltip?")
+            .unwrap_or(cfg.enable_tooltip);
+        cfg.enable_journals = settings
+            .boolean(":feature/enable-journals?")
+            .unwrap_or(cfg.enable_journals);
+        cfg.doc_mode_enter_for_new_block = settings
+            .boolean(":shortcut/doc-mode-enter-for-new-block?")
+            .unwrap_or(cfg.doc_mode_enter_for_new_block);
+        cfg.logical_outdenting = settings
+            .boolean(":editor/logical-outdenting?")
+            .unwrap_or(cfg.logical_outdenting);
         let default = cfg.logbook;
         cfg.logbook = LogbookSettings {
-            with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
+            with_second_support: settings
+                .nested_bool(":logbook/settings", ":with-second-support?")
                 .unwrap_or(default.with_second_support),
-            enabled_in_timestamped_blocks: nested_bool(
-                edn,
-                ":logbook/settings",
-                ":enabled-in-timestamped-blocks",
-            )
-            .unwrap_or(default.enabled_in_timestamped_blocks),
-            enabled_in_all_blocks: nested_bool(edn, ":logbook/settings", ":enabled-in-all-blocks")
+            enabled_in_timestamped_blocks: settings
+                .nested_bool(":logbook/settings", ":enabled-in-timestamped-blocks")
+                .unwrap_or(default.enabled_in_timestamped_blocks),
+            enabled_in_all_blocks: settings
+                .nested_bool(":logbook/settings", ":enabled-in-all-blocks")
                 .unwrap_or(default.enabled_in_all_blocks),
         };
-        cfg.guide_announced =
-            bool_value(edn, ":tine/guide-announced?").unwrap_or(cfg.guide_announced);
+        cfg.guide_announced = settings
+            .boolean(":tine/guide-announced?")
+            .unwrap_or(cfg.guide_announced);
         cfg
     }
 
@@ -596,25 +611,13 @@ impl Config {
 }
 
 // ---------------------------------------------------------------------------
-// Shared scanner family — byte-offset, string/comment/escape-aware. Used by
-// BOTH the readers above and the writers above. `;` comment handling lives in
-// `find_keyword_at_map_level` (so there's no separate comment-strip pass).
+// Edit locations in authored text, including incomplete settings a setter can
+// repair. These helpers never supply effective values.
 // ---------------------------------------------------------------------------
 
-/// Index just past the closing quote of an EDN string opening at byte `open` (a
-/// `"`), skipping `\"` / `\\`. Returns end-of-string if unterminated. (`"` is
-/// ASCII → the returned index is a char boundary.)
+/// Index past the closing quote, or EOF for an unterminated string.
 pub fn edn_str_end(s: &str, open: usize) -> usize {
-    let b = s.as_bytes();
-    let mut i = open + 1;
-    while i < b.len() {
-        match b[i] {
-            b'\\' => i += 2,
-            b'"' => return i + 1,
-            _ => i += 1,
-        }
-    }
-    s.len()
+    crate::edn::string_end(s, open).unwrap_or(s.len())
 }
 
 /// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
@@ -638,10 +641,8 @@ fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
             i = form_end(s, i);
             continue;
         }
-        if c == b';' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
+        if let Some(end) = crate::edn::comment_end(s, i, false) {
+            i = end;
             continue;
         }
         if c == openc {
@@ -728,16 +729,15 @@ fn form_end(s: &str, at: usize) -> usize {
 /// there is no value before `close`. A string's end is escape-aware; a non-string
 /// token ends at the next whitespace/comma/brace/quote.
 pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
+    let s = s.get(..close)?;
     let b = s.as_bytes();
     let mut i = from;
     loop {
         while i < close && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
             i += 1;
         }
-        if i < close && b[i] == b';' {
-            while i < close && b[i] != b'\n' {
-                i += 1; // a `;` comment between key and value isn't the value
-            }
+        if let Some(end) = crate::edn::comment_end(s, i, false) {
+            i = end;
             continue;
         }
         break;
@@ -760,14 +760,7 @@ pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usi
     Some((start, i, false))
 }
 
-// ---------------------------------------------------------------------------
-// Readers — root ownership is shared with `find_top_level_keyword`; complete
-// values before a torn suffix are still readable. Strings use the EDN decoder;
-// the shared scanners.
-// ---------------------------------------------------------------------------
-
-/// First non-blank byte at/after `from`, skipping whitespace, commas, and `;`
-/// comments (a comment can sit between a key and its value).
+/// First non-blank byte at/after `from`, skipping whitespace, commas and comments.
 pub fn skip_blank(s: &str, from: usize) -> usize {
     let b = s.as_bytes();
     let mut i = from;
@@ -775,35 +768,17 @@ pub fn skip_blank(s: &str, from: usize) -> usize {
         while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
             i += 1;
         }
-        if i < b.len() && b[i] == b';' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        break;
+        let Some(end) = crate::edn::comment_end(s, i, false) else {
+            break;
+        };
+        i = end;
     }
     i
 }
 
 /// Decode one complete string token with the shared EDN value parser.
-fn read_string_at(s: &str, open: usize) -> Option<String> {
-    let end = edn_str_end(s, open);
-    match crate::edn::parse_strict(s.get(open..end)?)? {
-        crate::edn::Edn::Str(value) => Some(value),
-        _ => None,
-    }
-}
-
-/// Read a direct root setting with the shared selector and EDN decoder.
-fn journal_setting_value(edn: &str, key: &str) -> Option<Option<crate::edn::Edn>> {
-    let start = read_keyword(edn, key)?;
-    let from = skip_blank(edn, start + key.len());
-    Some(if from < edn.len() {
-        crate::edn::parse_strict(&edn[from..form_end(edn, from)])
-    } else {
-        None
-    })
+fn journal_setting_value(settings: &Settings<'_>, key: &str) -> Option<Option<Edn>> {
+    Some(settings.entry(key)?.as_ref().map(Form::value))
 }
 
 // OG query-title accepts vectors as hiccup. Extract only static text children;
@@ -861,11 +836,11 @@ struct JournalSettings {
     diagnostics: Vec<String>,
 }
 
-fn parse_journal_settings(edn: &str) -> JournalSettings {
+fn parse_journal_settings(settings: &Settings<'_>) -> JournalSettings {
     let mut cfg = JournalSettings::default();
     use crate::edn::{self, Edn};
     let horizon = ":scheduled/future-days";
-    if let Some(value) = journal_setting_value(edn, horizon) {
+    if let Some(value) = journal_setting_value(settings, horizon) {
         match value {
             Some(Edn::Int(n)) if i32::try_from(n).is_ok() => cfg.future_days = Some(n as i32),
             _ => cfg.diagnostics.push(format!(
@@ -874,7 +849,7 @@ fn parse_journal_settings(edn: &str) -> JournalSettings {
         }
     }
     let disable = ":feature/disable-scheduled-and-deadline-query?";
-    if let Some(value) = journal_setting_value(edn, disable) {
+    if let Some(value) = journal_setting_value(settings, disable) {
         match value {
             Some(Edn::Bool(b)) => cfg.disable = b,
             _ => cfg
@@ -882,7 +857,7 @@ fn parse_journal_settings(edn: &str) -> JournalSettings {
                 .push(format!("{disable} must be true or false; using false.")),
         }
     }
-    let Some(value) = journal_setting_value(edn, ":default-queries") else {
+    let Some(value) = journal_setting_value(settings, ":default-queries") else {
         return cfg;
     };
     let Some(Edn::Map(_)) = value.as_ref() else {
@@ -931,263 +906,126 @@ fn parse_journal_settings(edn: &str) -> JournalSettings {
     cfg
 }
 
-/// String value following `key`, e.g. `:journals-directory "journals"`.
-fn string_value(edn: &str, key: &str) -> Option<String> {
-    let start = read_keyword(edn, key)?;
-    let from = skip_blank(edn, start + key.len());
-    (edn.as_bytes().get(from) == Some(&b'"'))
-        .then(|| read_string_at(edn, from))
-        .flatten()
+struct Settings<'a>(&'a [(Form, Option<Form>)]);
+
+impl Settings<'_> {
+    fn entry(&self, key: &str) -> Option<&Option<Form>> {
+        let key = key.strip_prefix(':').unwrap_or(key);
+        self.0.iter().find_map(|(name, value)| {
+            matches!(&name.leaf, Some(Edn::Keyword(name)) if name == key).then_some(value)
+        })
+    }
+
+    fn get(&self, key: &str) -> Option<&Form> {
+        self.entry(key)?.as_ref()
+    }
+
+    fn string(&self, key: &str) -> Option<String> {
+        match self.get(key)?.leaf.as_ref()? {
+            Edn::Str(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn keyword(&self, key: &str) -> Option<String> {
+        match self.get(key)?.leaf.as_ref()? {
+            Edn::Keyword(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn boolean(&self, key: &str) -> Option<bool> {
+        match self.get(key)?.leaf.as_ref()? {
+            Edn::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    fn integer(&self, key: &str) -> Option<u32> {
+        match self.get(key)?.leaf.as_ref()? {
+            Edn::Int(value) => (*value).try_into().ok(),
+            _ => None,
+        }
+    }
+
+    fn signed(&self, key: &str) -> Option<i32> {
+        match self.get(key)?.leaf.as_ref()? {
+            Edn::Int(value) => Some((*value).clamp(i32::MIN.into(), i32::MAX.into()) as i32),
+            _ => None,
+        }
+    }
+
+    fn keyword_set(&self, key: &str) -> Vec<String> {
+        self.get(key)
+            .filter(|form| form.kind == Kind::Set)
+            .map_or_else(Vec::new, |form| {
+                form.children
+                    .iter()
+                    .filter_map(|item| match &item.leaf {
+                        Some(Edn::Keyword(name)) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+    }
+
+    fn hidden(&self) -> Result<Vec<String>, ()> {
+        let Some(value) = self.entry("hidden") else {
+            return Ok(Vec::new());
+        };
+        let value = value.as_ref().ok_or(())?;
+        if value.kind == Kind::Vector
+            && (value.span.len() > 64 * 1024 || value.children.len() > 256)
+        {
+            return Err(());
+        }
+        Ok(strings_in_vector(Some(value)))
+    }
+
+    fn string_vector(&self, key: &str) -> Vec<String> {
+        strings_in_vector(self.get(key))
+    }
+
+    fn nested_string(&self, outer: &str, key: &str) -> Option<String> {
+        match nested(self.get(outer)?, key)?.leaf.as_ref()? {
+            Edn::Str(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn nested_bool(&self, outer: &str, key: &str) -> Option<bool> {
+        match nested(self.get(outer)?, key)?.leaf.as_ref()? {
+            Edn::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    fn nested_string_vector(&self, outer: &str, key: &str) -> Vec<String> {
+        strings_in_vector(self.get(outer).and_then(|form| nested(form, key)))
+    }
 }
 
-/// Keyword value (`:foo` → `foo`) following `key`.
-fn keyword_value(edn: &str, key: &str) -> Option<String> {
-    let start = read_keyword(edn, key)?;
-    let from = skip_blank(edn, start + key.len());
-    let b = edn.as_bytes();
-    if b.get(from) != Some(&b':') {
+fn nested<'a>(form: &'a Form, key: &str) -> Option<&'a Form> {
+    if form.kind != Kind::Map {
         return None;
     }
-    let vstart = from + 1;
-    let mut j = vstart;
-    while j < b.len()
-        && !matches!(
-            b[j],
-            b' ' | b'\t' | b'\n' | b'\r' | b',' | b'}' | b')' | b']'
-        )
-    {
-        j += 1;
-    }
-    Some(edn[vstart..j].to_string())
-}
-
-/// Boolean value (`true`/`false`) following `key`.
-fn bool_value(edn: &str, key: &str) -> Option<bool> {
-    let start = read_keyword(edn, key)?;
-    let from = skip_blank(edn, start + key.len());
-    if edn[from..].starts_with("true") {
-        Some(true)
-    } else if edn[from..].starts_with("false") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-/// Non-negative integer following `key`.
-fn int_value(edn: &str, key: &str) -> Option<u32> {
-    let start = read_keyword(edn, key)?;
-    let from = skip_blank(edn, start + key.len());
-    let digits: String = edn[from..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    digits.parse().ok()
-}
-
-/// The value after `key` when it is one EDN integer, of either sign (OG's
-/// `integer?`): `5.5`, `"5"`, `5N` and `1e3` are not, so the caller keeps its
-/// default. A magnitude beyond `i32` saturates, which no level can tell apart.
-fn integer_value(edn: &str, key: &str) -> Option<i32> {
-    let start = read_keyword(edn, key)?;
-    let from = skip_blank(edn, start + key.len());
-    if from >= edn.len() {
-        return None;
-    }
-    let token = &edn[from..form_end(edn, from)];
-    let (negative, digits) = match token.as_bytes().first()? {
-        b'-' => (true, &token[1..]),
-        b'+' => (false, &token[1..]),
-        _ => (false, token),
-    };
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let magnitude = digits.parse::<i64>().unwrap_or(i64::MAX);
-    let signed = if negative { -magnitude } else { magnitude };
-    Some(signed.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
-}
-
-/// Read `:hidden` as a bounded vector of strings. An invalid value hides all
-/// graph text rather than silently turning an intended exclusion into none.
-fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
-    // A torn root must still expose an authored :hidden vector to its bounded
-    // validator; a missing closing brace must not turn exclusions into none.
-    let Some(start) = read_keyword(edn, ":hidden") else {
-        return Ok(Vec::new());
-    };
-    let from = skip_blank(edn, start + ":hidden".len());
-    // OG treats a non-vector value as no configured hidden paths.
-    if edn.as_bytes().get(from) != Some(&b'[') {
-        return Ok(Vec::new());
-    }
-    let mut scan_end = from.saturating_add(64 * 1024).min(edn.len());
-    while !edn.is_char_boundary(scan_end) {
-        scan_end -= 1;
-    }
-    let close_relative = match_close_bracket(&edn[from..scan_end], 0);
-    if close_relative == scan_end - from {
-        return Err(());
-    }
-    let close = from + close_relative;
-    let bytes = edn.as_bytes();
-    let mut paths = Vec::new();
-    let mut entries = 0usize;
-    let mut i = from + 1;
-    while i < close {
-        match bytes[i] {
-            b' ' | b'\t' | b'\n' | b'\r' | b',' => i += 1,
-            b';' => {
-                while i < close && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'"' => {
-                let end = edn_str_end(&edn[..close + 1], i);
-                entries += 1;
-                if end > close || bytes.get(end - 1) != Some(&b'"') || entries > 256 {
-                    return Err(());
-                }
-                paths.push(read_string_at(edn, i).ok_or(())?);
-                i = end;
-            }
-            b'#' if bytes.get(i + 1) == Some(&b'_') => {
-                i = skip_hidden_form(edn, skip_blank(edn, i + 2), close, 0)?;
-            }
-            _ => {
-                entries += 1;
-                if entries > 256 {
-                    return Err(());
-                }
-                i = skip_hidden_form(edn, i, close, 0)?;
-            }
-        }
-    }
-    Ok(paths)
-}
-
-fn skip_hidden_form(edn: &str, start: usize, close: usize, depth: usize) -> Result<usize, ()> {
-    if depth >= 32 || start >= close {
-        return Err(());
-    }
-    let bytes = edn.as_bytes();
-    let (open, left, right) = match bytes[start] {
-        b'[' => (start, b'[', b']'),
-        b'{' => (start, b'{', b'}'),
-        b'(' => (start, b'(', b')'),
-        b'#' if bytes.get(start + 1) == Some(&b'{') => (start + 1, b'{', b'}'),
-        b'#' if bytes.get(start + 1) == Some(&b'_') => {
-            return skip_hidden_form(edn, skip_blank(edn, start + 2), close, depth + 1);
-        }
-        b'"' => {
-            let end = edn_str_end(&edn[..close + 1], start);
-            return (end <= close && bytes.get(end - 1) == Some(&b'"'))
-                .then_some(end)
-                .ok_or(());
-        }
-        _ => {
-            let mut end = start;
-            while end < close
-                && !matches!(
-                    bytes[end],
-                    b' ' | b'\t' | b'\r' | b'\n' | b',' | b']' | b'}' | b')' | b';'
-                )
-            {
-                end += 1;
-            }
-            return (end > start).then_some(end).ok_or(());
-        }
-    };
-    let end = match_close(&edn[..close + 1], open, left, right);
-    (end < close).then_some(end + 1).ok_or(())
-}
-
-/// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
-/// string-aware so a value containing `]` doesn't end the vector early.
-fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = read_keyword(edn, key) else {
-        return Vec::new();
-    };
-    string_vector_at(edn, skip_blank(edn, start + key.len()))
-}
-
-/// The quoted strings of the `[...]` vector opening at byte `from`; empty when
-/// there is no `[` there.
-fn string_vector_at(edn: &str, from: usize) -> Vec<String> {
-    let b = edn.as_bytes();
-    if b.get(from) != Some(&b'[') {
-        return Vec::new();
-    }
-    let close = match_close_bracket(edn, from);
-    let mut out = Vec::new();
-    let mut i = from + 1;
-    while i < close {
-        match b[i] {
-            b'"' => {
-                if let Some(value) = read_string_at(edn, i) {
-                    out.push(value);
-                }
-                i = edn_str_end(edn, i);
-            }
-            b';' => {
-                while i < close && b[i] != b'\n' {
-                    i += 1; // skip a `;` comment (a commented-out entry isn't a value)
-                }
-            }
-            _ => i += 1,
-        }
-    }
-    out
-}
-
-/// A vector of strings for `inner` directly inside the map following `outer`
-/// (`:mobile {:gestures/disabled-in-block-with-tags ["kanban"]}`). Nested
-/// extension maps cannot shadow either key.
-fn nested_string_vector(edn: &str, outer: &str, inner: &str) -> Vec<String> {
-    let Some(key) = read_keyword(edn, outer) else {
-        return Vec::new();
-    };
-    let Some((open, close)) = balanced_map_at(edn, skip_blank(edn, key + outer.len())) else {
-        return Vec::new();
-    };
-    let Some(irel) = find_keyword_at_map_level(&edn[open + 1..close], inner) else {
-        return Vec::new();
-    };
-    string_vector_at(edn, skip_blank(edn, open + 1 + irel + inner.len()))
-}
-
-/// A direct string entry in a direct root settings map. Nested extension
-/// maps cannot shadow either the outer setting or its inner entry.
-fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
-    let key = read_keyword(edn, outer)?;
-    let (open, close) = balanced_map_at(edn, skip_blank(edn, key + outer.len()))?;
-    let irel = find_keyword_at_map_level(&edn[open + 1..close], inner)?;
-    let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
-    (edn.as_bytes().get(vfrom) == Some(&b'"'))
-        .then(|| read_string_at(edn, vfrom))
-        .flatten()
-}
-
-/// Whether a direct boolean entry in a direct root settings map is the literal
-/// `true` (followed by a delimiter, so `trueish` is not). A nested extension
-/// map cannot shadow either key; any other value is `false`.
-fn nested_true(edn: &str, outer: &str, inner: &str) -> bool {
-    let Some(key) = read_keyword(edn, outer) else {
-        return false;
-    };
-    let Some((open, close)) = balanced_map_at(edn, skip_blank(edn, key + outer.len())) else {
-        return false;
-    };
-    let Some(irel) = find_keyword_at_map_level(&edn[open + 1..close], inner) else {
-        return false;
-    };
-    let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
-    let value = &edn[vfrom..close];
-    value.strip_prefix("true").is_some_and(|rest| {
-        rest.chars()
-            .next()
-            .is_none_or(|c| c.is_whitespace() || matches!(c, ',' | ';' | '}' | ']' | ')'))
+    let key = key.strip_prefix(':').unwrap_or(key);
+    form.children.chunks_exact(2).find_map(|pair| {
+        matches!(&pair[0].leaf, Some(Edn::Keyword(name)) if name == key).then_some(&pair[1])
     })
+}
+
+fn strings_in_vector(form: Option<&Form>) -> Vec<String> {
+    form.filter(|form| form.kind == Kind::Vector)
+        .map_or_else(Vec::new, |form| {
+            form.children
+                .iter()
+                .filter_map(|item| match &item.leaf {
+                    Some(Edn::Str(value)) => Some(value.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
 }
 
 /// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
@@ -1212,157 +1050,37 @@ pub fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
 /// shadow first and the setter spliced over it (master DUP-3, 4ae2f6f4f).
 /// `None` when the key is absent or there is no balanced root map.
 pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
-    root_keyword(s, key, true)
-}
-
-// Readers keep complete values before a torn later form. Writers additionally
-// require a balanced root before applying any edit; both share root ownership.
-fn read_keyword(s: &str, key: &str) -> Option<usize> {
-    root_keyword(s, key, false)
-}
-
-fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
-    let open = skip_blank(s, 0);
-    if s.as_bytes().get(open) != Some(&b'{') {
-        return None;
-    }
-    let close = match_close_brace(s, open);
-    if require_balanced && close == s.len() {
-        return None;
-    }
+    let (open, close) = root_map_bounds(s)?;
     find_keyword_at_map_level(&s[open + 1..close], key).map(|at| open + 1 + at)
 }
 
-/// Boolean value for `inner` inside the map following `outer`, e.g.
-/// `:logbook/settings {:with-second-support? false}`.
-fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
-    let start = read_keyword(edn, outer)?;
-    let from = skip_blank(edn, start + outer.len());
-    if edn.as_bytes().get(from) != Some(&b'{') {
-        return None;
-    }
-    let close = match_close_brace(edn, from);
-    let irel = find_keyword_at_map_level(&edn[from + 1..close], inner)?;
-    let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
-    if edn[vfrom..close].starts_with("true") {
-        Some(true)
-    } else if edn[vfrom..close].starts_with("false") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-/// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
-fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = read_keyword(edn, key) else {
-        return Vec::new();
+/// The direct `:shortcuts` entries, with their supported binding shapes.
+fn parse_shortcuts(form: Option<&Form>) -> HashMap<String, ShortcutBinding> {
+    let Some(form) = form.filter(|form| form.kind == Kind::Map) else {
+        return HashMap::new();
     };
-    let from = skip_blank(edn, start + key.len());
-    let b = edn.as_bytes();
-    if b.get(from) != Some(&b'#') || b.get(from + 1) != Some(&b'{') {
-        return Vec::new();
-    }
-    let close = match_close_brace(edn, from + 1);
-    use crate::edn::Edn;
-    let Some(Edn::Set(members)) = edn.get(from..=close).and_then(crate::edn::parse_strict) else {
-        return Vec::new();
-    };
-    members
-        .into_iter()
-        .filter_map(|member| match member {
-            Edn::Keyword(name) => Some(name),
-            _ => None,
+    form.children
+        .chunks_exact(2)
+        .filter_map(|pair| {
+            let Some(Edn::Keyword(key)) = &pair[0].leaf else {
+                return None;
+            };
+            let value = &pair[1];
+            let binding = match &value.leaf {
+                Some(Edn::Str(value)) => ShortcutBinding::Single(value.clone()),
+                Some(Edn::Bool(false)) => ShortcutBinding::Single("false".into()),
+                _ if value.kind == Kind::Vector => {
+                    let bindings = strings_in_vector(Some(value));
+                    if bindings.len() != value.children.len() {
+                        return None;
+                    }
+                    ShortcutBinding::Multiple(bindings)
+                }
+                _ => return None,
+            };
+            Some((key.clone(), binding))
         })
         .collect()
-}
-
-/// The `:shortcuts {…}` map as command-id → binding. Values: `"binding"` |
-/// `false` (disable) | `["b1" "b2"]` (all alternatives). String/brace-aware.
-fn parse_shortcuts(edn: &str) -> HashMap<String, ShortcutBinding> {
-    let mut map = HashMap::new();
-    let Some(start) = read_keyword(edn, ":shortcuts") else {
-        return map;
-    };
-    let from = skip_blank(edn, start + ":shortcuts".len());
-    let b = edn.as_bytes();
-    if b.get(from) != Some(&b'{') {
-        return map;
-    }
-    let close = match_close_brace(edn, from);
-    let mut i = from + 1;
-    while i < close {
-        i = skip_blank(edn, i);
-        if i >= close || b[i] != b':' {
-            break; // not a keyword key — stop rather than desync
-        }
-        let kstart = i + 1;
-        let mut j = kstart;
-        while j < close && !matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-            j += 1;
-        }
-        let key = edn[kstart..j].to_string();
-        let vfrom = skip_blank(edn, j);
-        if vfrom >= close {
-            break;
-        }
-        match b[vfrom] {
-            b'"' => {
-                if let Some(value) = read_string_at(edn, vfrom) {
-                    map.insert(key, ShortcutBinding::Single(value));
-                }
-                i = edn_str_end(edn, vfrom);
-            }
-            b'[' => {
-                let vclose = match_close_bracket(edn, vfrom);
-                if let Some(crate::edn::Edn::Vec(values)) =
-                    edn.get(vfrom..=vclose).and_then(crate::edn::parse_strict)
-                {
-                    // A malformed alternative cannot silently become a key.
-                    if values
-                        .iter()
-                        .all(|value| matches!(value, crate::edn::Edn::Str(_)))
-                    {
-                        let bindings = values
-                            .into_iter()
-                            .filter_map(|value| {
-                                if let crate::edn::Edn::Str(value) = value {
-                                    Some(value)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        map.insert(key, ShortcutBinding::Multiple(bindings));
-                    }
-                }
-                i = vclose + 1;
-            }
-            _ => {
-                if edn[vfrom..close].starts_with("false") {
-                    map.insert(key, ShortcutBinding::Single("false".to_string()));
-                }
-                let mut k = vfrom;
-                while k < close && !matches!(b[k], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-                    k += 1;
-                }
-                i = k;
-            }
-        }
-    }
-    map
-}
-
-/// `:macros {"name" "template" :name "template" …}` — name→template map. Keys
-/// are strings or keywords, mixed freely (GH #854): OG looks a macro up by its
-/// name string, then by `(keyword name)` (`frontend/components/block.cljs`), so
-/// a keyword key `:ns/name` is the macro `ns/name` (namespace kept, as
-/// `(keyword "ns/name")` is `:ns/name`), and a string key wins over a keyword
-/// key of the same name. Values are template strings (with `$1..$N`
-/// placeholders the frontend fills in). Stops cleanly on the first other key or
-/// value rather than desyncing on unexpected EDN.
-fn parse_macros(edn: &str) -> HashMap<String, String> {
-    macro_entries(edn, |value, _, _| value)
 }
 
 /// Effective macro definitions requested by name, in authored order, as
@@ -1374,10 +1092,14 @@ pub fn macro_definition_spans<'a>(
     if names.is_empty() {
         return Vec::new();
     }
-    let mut entries: Vec<_> = macro_entries(edn, |_, key, value| (key, value))
-        .into_iter()
-        .filter_map(|(name, span)| names.contains(&name).then_some(span))
-        .collect();
+    let entries = crate::edn::config_entries(edn);
+    let settings = Settings(entries.as_deref().unwrap_or_default());
+    let mut entries: Vec<_> = macro_entries(settings.get(":macros"), |key, value, _| {
+        (key.span.clone(), value.span.clone())
+    })
+    .into_iter()
+    .filter_map(|(name, span)| names.contains(&name).then_some(span))
+    .collect();
     entries.sort_unstable_by_key(|(key, _)| key.start);
     entries
         .into_iter()
@@ -1385,81 +1107,31 @@ pub fn macro_definition_spans<'a>(
         .collect()
 }
 
+// Logseq looks up the string key before its keyword counterpart. The config
+// model stops at the first pair outside the supported name/template shapes.
 fn macro_entries<T>(
-    edn: &str,
-    entry: impl Fn(String, std::ops::Range<usize>, std::ops::Range<usize>) -> T,
+    form: Option<&Form>,
+    entry: impl Fn(&Form, &Form, &str) -> T,
 ) -> HashMap<String, T> {
     let mut map = HashMap::new();
-    let Some(start) = read_keyword(edn, ":macros") else {
+    let Some(form) = form.filter(|form| form.kind == Kind::Map) else {
         return map;
     };
-    let from = skip_blank(edn, start + ":macros".len());
-    let b = edn.as_bytes();
-    if b.get(from) != Some(&b'{') {
-        return map;
-    }
-    let close = match_close_brace(edn, from);
     let mut string_keys = std::collections::HashSet::new();
-    let mut i = from + 1;
-    while i < close {
-        i = skip_blank(edn, i);
-        if i >= close {
-            break;
-        }
-        let start = i;
-        let (key, keyword) = match b[i] {
-            b'"' => {
-                let Some(key) = read_string_at(edn, i) else {
-                    break;
-                };
-                i = edn_str_end(edn, i);
-                (key, false)
-            }
-            b':' => {
-                let kstart = i + 1;
-                let mut j = kstart;
-                while j < close
-                    && !matches!(
-                        b[j],
-                        b' ' | b'\t'
-                            | b'\n'
-                            | b'\r'
-                            | b','
-                            | b'"'
-                            | b';'
-                            | b'{'
-                            | b'}'
-                            | b'['
-                            | b']'
-                            | b'('
-                            | b')'
-                    )
-                {
-                    j += 1;
-                }
-                i = j;
-                (edn[kstart..j].to_string(), true)
-            }
-            _ => break, // neither a string nor a keyword key
+    for pair in form.children.chunks_exact(2) {
+        let (key, keyword) = match &pair[0].leaf {
+            Some(Edn::Keyword(key)) => (key, true),
+            Some(Edn::Str(key)) => (key, false),
+            _ => break,
         };
-        let key_span = start..i;
-        let Some((vfrom, end, true)) = next_value_span(edn, i, close) else {
-            break; // value must be a string
-        };
-        let Some(val) = read_string_at(edn, vfrom) else {
+        let Some(Edn::Str(template)) = &pair[1].leaf else {
             break;
         };
-        i = end;
-        if key.is_empty() {
-            continue;
+        if !keyword {
+            string_keys.insert(key);
         }
-        if keyword {
-            if !string_keys.contains(&key) {
-                map.insert(key, entry(val, key_span, vfrom..end));
-            }
-        } else {
-            string_keys.insert(key.clone());
-            map.insert(key, entry(val, key_span, vfrom..end));
+        if !key.is_empty() && (!keyword || !string_keys.contains(key)) {
+            map.insert(key.clone(), entry(&pair[0], &pair[1], template));
         }
     }
     map
@@ -2110,6 +1782,13 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_dispatch_cannot_supply_a_later_setting_boundary() {
+        let config =
+            Config::parse("{:ignored #<unreadable payload :block-hidden-properties #{:Private}}");
+        assert!(config.block_hidden_properties.is_empty());
+    }
+
+    #[test]
     fn collection_readers_skip_comments_and_read_compact_edn() {
         // `;` comments INSIDE a vector/set are not read as values (the up-front
         // strip_edn_comments pass was removed; the collection scans skip comments).
@@ -2120,15 +1799,18 @@ mod tests {
             cfg.block_hidden_properties,
             vec!["public".to_string(), "icon".to_string()]
         );
-        // Compact (whitespace-free) EDN: the key boundary now includes `[` / `#`.
+        // A vector opener terminates a keyword, but a '#' belongs to it.
         assert_eq!(
             Config::parse("{:favorites[\"X\"]}").favorites,
             vec!["X".to_string()]
         );
         assert_eq!(
-            Config::parse("{:block-hidden-properties#{:id}}").block_hidden_properties,
-            vec!["id".to_string()]
+            Config::parse("{:block-hidden-properties #{:id}}").block_hidden_properties,
+            ["id"]
         );
+        assert!(Config::parse("{:block-hidden-properties#{:id}}")
+            .block_hidden_properties
+            .is_empty());
     }
 
     #[test]
