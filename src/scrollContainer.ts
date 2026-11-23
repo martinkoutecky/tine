@@ -138,22 +138,26 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
   // continues just below it rather than at a fixed inset: below this box when
   // it straddles the top (its own rows change), below a pinned ancestor header
   // (it never moves with the content; three pins cover 90 px), and below
-  // another query (every mounted query reruns in the same turn, and this root
-  // shares one snapshot). A row of another query is kept only as a fallback.
+  // another query (it may rerun in the same turn, and this root shares one
+  // snapshot). A row of another query is kept only as a fallback. The raw hit
+  // is classified before promotion to its row: a table, board or page result
+  // has no row of its own and would promote to the row hosting its query.
+  // Only misses spend the budget; each skip passes a whole obstruction, and
+  // the walk ends at the bottom of the view.
   let anchor: Element | null = null, fallback: Element | null = null;
   const x = viewport.left + viewport.width / 2;
-  for (let probe = 0, y = viewport.top + 2; probe < 8 && !(y >= viewport.bottom); probe++) {
+  for (let misses = 0, y = viewport.top + 2; misses < 8 && !(y >= viewport.bottom);) {
     let next = y + (y < viewport.top + 32 ? 30 : 32);
     if (y >= box.top && y < box.bottom) { y = box.bottom + 1; continue; }
     const hit = elementFromPointIn(root, x, y);
+    const blocker: Element | null = !hit || !root.contains(hit) ? null : el.contains(hit) ? el : hit.closest(".sticky-ancestor, .query-block");
     const candidate = hit?.closest(".block-main, h1, .query-header") ?? hit;
-    if (candidate && root.contains(candidate) && !candidate.contains(el)) {
-      const skip = el.contains(candidate) ? el : candidate.closest(".sticky-ancestor, .query-block");
-      if (!skip) { anchor = candidate; break; }
-      if (skip !== el && !skip.matches(".sticky-ancestor")) fallback ??= candidate;
-      const edge = skip === el ? bottom : skip.getBoundingClientRect().bottom;
-      if (edge >= y) next = edge + 1;
-    }
+    if (blocker && blocker !== root && root.contains(blocker)) {
+      if (blocker !== el && !blocker.matches(".sticky-ancestor")) fallback ??= candidate && blocker.contains(candidate) ? candidate : hit;
+      const edge = blocker === el ? bottom : blocker.getBoundingClientRect().bottom;
+      if (edge >= y) { y = edge + 1; continue; }
+    } else if (candidate && root.contains(candidate) && !candidate.contains(el)) { anchor = candidate; break; }
+    misses++;
     y = next;
   }
   anchor ??= fallback;

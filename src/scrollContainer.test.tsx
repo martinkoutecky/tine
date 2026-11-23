@@ -250,10 +250,13 @@ it("anchors on flowing content, not on a pinned ancestor header at the top of th
 // GH #944 residual (review of 4ed1c2f7b, traced on WebKitGTK): fixed probes at 2, 32 and 64 px found no anchor when the
 // rerunning query straddled the view top (every probe hit its own rows) or when three pinned ancestors (30 px each)
 // covered all three probes, and an anchor inside a second query that reruns in the same turn moved with that query.
+// Round 2: six or more pins plus the queries used up an 8-probe budget that counted skips, and a hit in a second query's
+// table (no row of its own inside the query) promoted to the row hosting that query, which misses that query's change.
 // Geometry is stubbed (jsdom has no layout): view 0..600, pins stacked at the top, the queries, then the reader.
 describe("GH #944: the reader's text holds when a query above it reruns", () => {
-  const cases = [0, 1, 2, 3, 4].flatMap(pins => (["straddle", "above"] as const).flatMap(place => [1, 2].map(queries => ({ pins, place, queries }))));
-  it.each(cases)("$pins pins, the query $place the top, $queries queries changing", async ({ pins, place, queries }) => {
+  const cases = [0, 1, 2, 3, 4, 6, 8].flatMap(pins => (["straddle", "above"] as const).flatMap(place => [
+    { pins, place, queries: 1, result: "list" }, { pins, place, queries: 2, result: "list" }, { pins, place, queries: 2, result: "table" }]));
+  it.each(cases)("$pins pins, the query $place the top, $queries queries changing, the second a $result", async ({ pins, place, queries, result }) => {
     const root = document.createElement("div"), reader = document.createElement("div");
     reader.className = "block-main";
     const query = (): [HTMLElement, HTMLElement] => {
@@ -262,12 +265,16 @@ describe("GH #944: the reader's text holds when a query above it reruns", () => 
       return [host, row];
     };
     const [a, aRow] = query(), [b, bRow] = query();
+    // A table result: the hit is a cell inside the query, and the nearest row is the one hosting the query.
+    const hostRow = document.createElement("div"), cell = document.createElement("td");
+    hostRow.className = "block-main";
+    if (result === "table") { bRow.replaceWith(cell); hostRow.append(b); }
     const headers = Array.from({ length: pins }, () => {
       const sticky = document.createElement("div"), button = document.createElement("button");
       sticky.className = "sticky-ancestor"; sticky.append(button);
       return sticky;
     });
-    root.append(...headers, a, ...(queries === 2 ? [b] : []), reader); document.body.append(root);
+    root.append(...headers, a, ...(queries === 2 ? [result === "table" ? hostRow : b] : []), reader); document.body.append(root);
     let scroll = 500, shrinkA = 0, shrinkB = 0;
     Object.defineProperty(root, "scrollTop", { configurable: true, get: () => scroll, set: value => { scroll = value; } });
     const pinned = pins * 30;
@@ -284,12 +291,13 @@ describe("GH #944: the reader's text holds when a query above it reruns", () => 
     vi.spyOn(a, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().aTop, bottom: geometry().aBottom }) as DOMRect);
     vi.spyOn(b, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().bTop, bottom: geometry().bBottom }) as DOMRect);
     vi.spyOn(reader, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().reader }) as DOMRect);
+    vi.spyOn(hostRow, "getBoundingClientRect").mockImplementation(() => ({ top: geometry().bTop }) as DOMRect);
     for (const row of [aRow, bRow]) vi.spyOn(row, "getBoundingClientRect").mockImplementation(() => ({ top: (row === aRow ? geometry().aTop : geometry().bTop) }) as DOMRect);
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: (_x: number, y: number) => {
       const g = geometry();
       if (y < pinned) return headers[Math.floor(y / 30)].firstElementChild;
       if (y >= g.aTop && y < g.aBottom) return aRow;
-      if (queries === 2 && y >= g.bTop && y < g.bBottom) return bRow;
+      if (queries === 2 && y >= g.bTop && y < g.bBottom) return result === "table" ? cell : bRow;
       return y >= g.reader ? reader : root;
     } });
     try {

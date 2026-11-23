@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { remote } from 'webdriverio';
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from './e2e-capabilities.mjs';
 import { ensureMainWindow } from './lib/e2e-main-window.mjs';
-import { openJournals } from './lib/e2e-navigation.mjs';
+import { openJournals, openPageByName } from './lib/e2e-navigation.mjs';
 import { generateRealisticGraph } from './generate-realistic-graph.mjs';
 import { installFoldProbe, summarizeFold, classifyFold } from './lib/gh944-fold-probe.mjs';
 import { accountHomeFixture, assertAppLease } from './lib/e2e-account-home.mjs';
@@ -57,6 +57,15 @@ for (let offset = -2; offset <= 5; offset++) {
   if (offset >= 0) tasks.push(`- TODO deadline ${offset}\n  DEADLINE: ${org(date(offset))}`);
 }
 fs.writeFileSync(path.join(graph, 'pages/Tasks.md'), tasks.join('\n') + '\n');
+const residualPage = 'Query Scroll Witness';
+const residualTask = 'tick the query scroll witness';
+fs.writeFileSync(path.join(graph, 'pages', `${residualPage}.md`), [
+  '- {{query (and (task TODO) [[Scroll Test Tasks]])}}',
+  `- TODO ${residualTask} [[Scroll Test Tasks]]`,
+  ...Array.from({ length: 30 }, (_, i) => `- reader scroll room ${i}`),
+].join('\n') + '\n');
+fs.writeFileSync(path.join(graph, 'pages', 'Scroll Test Tasks.md'),
+  Array.from({ length: 16 }, (_, i) => `- TODO scroll result ${i} [[Scroll Test Tasks]]\n`).join(''));
 // Every older day is referenced, so each day carries a Linked References section like a real graph.
 fs.writeFileSync(path.join(graph, 'pages/Refs.md'),
   Array.from({ length: 8 }, (_, i) => `- note about [[${title(date(-(i + 1)))}]]`).join('\n') + '\n');
@@ -107,7 +116,7 @@ const center = id => browser.execute(id => {
 const blockId = text => browser.execute(text => {
   const hit = [...document.querySelectorAll('.main-content .ls-block')]
     .filter(el => !el.closest('.agenda-block, .journal-linked-references, .query-block'))
-    .find(el => el.querySelector('.block-content')?.textContent.replace(/\s+/g, ' ').includes(text));
+    .find(el => el.querySelector(`[data-rendered-block="${el.dataset.blockId}"]`)?.textContent.replace(/\s+/g, ' ').includes(text));
   return hit?.dataset.blockId ?? null;
 }, text);
 const state = id => browser.execute(id => {
@@ -186,6 +195,44 @@ async function typeThenClick(phase) {
   await browser.keys('Escape');
   fs.writeFileSync(path.join(out, 'gh944-fold-probe.json'), JSON.stringify(results, null, 2));
 }
+
+async function tickBelowStraddlingQuery() {
+  await openPageByName(browser, residualPage);
+  let id;
+  await browser.waitUntil(async () => {
+    id = await blockId(residualTask);
+    return !!id;
+  }, { timeout: 20_000, timeoutMsg: 'query scroll witness task did not render' });
+  const measure = (place = false) => browser.execute((id, text, place) => {
+    const scroller = document.querySelector('.main-content');
+    const query = scroller.querySelector('.query-block');
+    const row = [...scroller.querySelectorAll(`[data-block-id="${id}"]`)].find(el => !query?.contains(el));
+    if (!query || !row) return null;
+    const viewport = scroller.getBoundingClientRect();
+    if (place) scroller.scrollTop += query.getBoundingClientRect().bottom - viewport.top - viewport.height / 4;
+    const box = query.getBoundingClientRect(), witness = row.getBoundingClientRect();
+    return { inQuery: query.textContent.includes(text), height: box.height,
+      straddles: box.top < viewport.top && box.bottom > viewport.top,
+      witnessVisible: witness.top >= viewport.top && witness.bottom <= viewport.bottom,
+      witnessTop: witness.top - viewport.top };
+  }, id, residualTask, place);
+  await browser.waitUntil(async () => (await measure())?.inQuery, { timeout: 20_000, timeoutMsg: 'task never appeared in the query' });
+  let before, after;
+  await browser.waitUntil(async () => {
+    before = await measure(true);
+    return before?.inQuery && before.straddles && before.witnessVisible;
+  }, { timeout: 20_000, timeoutMsg: 'could not place the reader just below the straddling query' });
+  await pointerClick(await clickEl(id, '.block-task-checkbox'));
+  await browser.waitUntil(async () => {
+    after = await measure();
+    return (await state(id)).done && after && !after.inQuery && after.height < before.height;
+  }, { timeout: 20_000, timeoutMsg: 'ticking the task did not shorten the query' });
+  const displacement = after.witnessTop - before.witnessTop;
+  console.log(`GH944 routed query: height ${before.height} → ${after.height}, reader displacement ${displacement}px`);
+  results.routedQuery = { before, after, displacement };
+  if (!after.witnessVisible || Math.abs(displacement) > 2) throw new Error(`reader moved ${displacement}px below the straddling query`);
+}
+
 try {
   target = await startWebdriverApplication(app, env, nativePort);
   log = fs.openSync(path.join(run, 'driver.log'), 'w');
@@ -250,7 +297,11 @@ try {
   }
   // The journey passes only if every measured phase held the reader (C837's fits-the-window cases are by design).
   const measured = results.phases.filter(p => p.classification);
-  if (!measured.length) throw new Error('no phase was measured');
+  if (!only || only.test('routed-straddling-query')) {
+    stage = 'routed-straddling-query';
+    await tickBelowStraddlingQuery();
+  }
+  if (!measured.length && !results.routedQuery) throw new Error('no phase was measured');
   const moved = measured.filter(p => /^jump|^target-gone/.test(p.classification));
   if (moved.length) throw new Error(`the reader moved: ${moved.map(p => `${p.phase}=${p.classification} final=${p.summary.finalDisplacement?.toFixed(1)}`).join(', ')}`);
   results.semanticPassed = true;
