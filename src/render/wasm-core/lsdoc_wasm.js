@@ -660,6 +660,34 @@ class __tine_raw_BrowserGraph {
         }
     }
     /**
+     * The desktop `read_journal_file` answer (a JSON string): one top-level
+     * journal file's text, from an editable graph's files. Throws what the
+     * desktop refuses (a bad name, no such file, too large, not UTF-8), and
+     * in a read-only graph, which keeps no files.
+     * @param {string} name
+     * @returns {string}
+     */
+    read_journal_file_json(name) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.browsergraph_read_journal_file_json(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * Replace files: `files[i]` (bytes, or null to delete) at the
      * graph-relative `paths[i]`, under the constructor's path rules, then
      * recapture the changed pages (`WholeGraph::replace_files`). Answers

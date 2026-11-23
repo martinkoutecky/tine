@@ -32,6 +32,19 @@ export interface TestHost {
   notice(key: string, notice: Partial<MailNotice>, page?: Partial<MailPage>): void;
 }
 
+/** A page host that takes a cross-page move, for tests of the client's moves:
+ * the browser preview's host refuses one (ADR 0081 Decision 4), so the test's
+ * host submits both endpoints' texts on the move's id, source first. Returns
+ * the `pageMove` spy. */
+export function acceptPageMoves() {
+  const b = backend();
+  // The host's own submit, not a test's later `pageSubmit` spy: a move is no submit the window sent.
+  const submit = b.pageSubmit.bind(b);
+  return vi.spyOn(b, "pageMove").mockImplementation(async (session, id, [key, dto, version], receiver, kinds) =>
+    (await submit(session, id, key, dto, version, null, kinds))
+      ?? submit(session, id, receiver[0], receiver[1], receiver[2], null, kinds));
+}
+
 export async function bindTestHost(): Promise<TestHost> {
   const b = backend();
   const subscribe = b.onPageMail.bind(b);

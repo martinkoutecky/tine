@@ -52,12 +52,18 @@ try {
   await page.keyboard.press("End");
   await page.keyboard.type(" smoketyped");
   await page.keyboard.press("Escape");
-  await sleep(1500); // past the save debounce
-  await page.keyboard.press("Control+k");
-  await page.locator(".switcher-input").fill("smoketyped");
+  // The save lands after its debounce: search again until the core's block
+  // search finds the word, or give up at the deadline.
   const hit = page.locator(".switcher-row.block-result", { hasText: "smoketyped" });
-  if (!(await hit.first().waitFor({ timeout: 5000 }).then(() => true, () => false))) fail("the typed text is not in the core's block search: the edit was not saved");
-  await page.keyboard.press("Escape");
+  let found = false;
+  for (const deadline = Date.now() + 10_000; !found && Date.now() < deadline;) {
+    await page.keyboard.press("Control+k");
+    await page.locator(".switcher-input").fill("");
+    await page.locator(".switcher-input").fill("smoketyped");
+    found = await hit.first().waitFor({ timeout: 1000 }).then(() => true, () => false);
+    await page.keyboard.press("Escape");
+  }
+  if (!found) fail("the typed text is not in the core's block search: the edit was not saved");
   // A reload reopens the fixture graph (the edit is forgotten) for the checks below.
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForSelector(".ls-block, .page-loading", { timeout: 5000 });

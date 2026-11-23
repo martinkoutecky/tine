@@ -44,8 +44,6 @@ export type MockSubmit = { written: { path: string; text: string; version: numbe
 
 export interface MockGraph {
   read: GraphRead;
-  /** The current text of a graph file. */
-  text(path: string): Promise<string | undefined>;
   /** Replace (or, with null, delete) files, then recapture the pages they hold. */
   replace(changes: [string, string | null][]): Promise<void>;
   submit(key: string, dto: PageDto, version: number): Promise<MockSubmit>;
@@ -58,12 +56,11 @@ export interface MockGraph {
  * call (a session that asks no graph question never loads it), and every call
  * waits on that one open. */
 export function openMockGraph(files: Map<string, string>): MockGraph {
-  let texts = new Map(files);
   const encode = new TextEncoder();
   let opening: Promise<BrowserGraph> | undefined;
   const open = () => (opening ??= loadBrowserCore().then(({ BrowserGraph }) => {
-    const paths = [...texts.keys()];
-    return new BrowserGraph(paths, paths.map(path => encode.encode(texts.get(path)!)),
+    const paths = [...files.keys()];
+    return new BrowserGraph(paths, paths.map(path => encode.encode(files.get(path)!)),
       JSON.stringify({ editable: true, times: mockFileTimes(paths) }));
   }));
   // The bindings throw the core's refusals as strings; callers get Errors, as from the publication worker.
@@ -77,26 +74,16 @@ export function openMockGraph(files: Map<string, string>): MockGraph {
   }
   return {
     read: ([method, ...args]) => call(graph => Reflect.apply(graph[method], graph, args) as string),
-    async text(path) {
-      return texts.get(path);
-    },
     async replace(changes) {
       await call(graph => graph.replace_files(changes.map(([path]) => path),
         changes.map(([, text]) => text === null ? null : encode.encode(text))));
-      for (const [path, text] of changes) {
-        if (text === null) texts.delete(path);
-        else texts.set(path, text);
-      }
     },
     async submit(key, dto, version) {
-      const answer: MockSubmit = JSON.parse(await call(graph => graph.submit_page_json(key, JSON.stringify(dto), BigInt(version))));
-      if ("written" in answer) texts.set(answer.written.path, answer.written.text);
-      return answer;
+      return JSON.parse(await call(graph => graph.submit_page_json(key, JSON.stringify(dto), BigInt(version))));
     },
     reset() {
       const closing = opening;
       opening = undefined;
-      texts = new Map(files);
       void closing?.then(graph => graph.free(), () => undefined);
     },
   };

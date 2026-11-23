@@ -152,6 +152,32 @@ impl WholeGraph {
         }
     }
 
+    /// The bytes of the graph-relative file `rel` in a view built editable
+    /// ([`Self::from_files`]), as [`crate::Store::read`] reads a live file
+    /// with a limit: `InvalidData` past `max_bytes`, `NotFound` for no such
+    /// file, and `Unsupported` in a view not built editable, which keeps no
+    /// files. The browser preview's raw file reads (a duplicate journal
+    /// day's text) answer from it. Cost: O(file bytes), one copy (a file the
+    /// graph holds parsed is serialized once).
+    pub fn file_bytes(&self, rel: &str, max_bytes: Option<u64>) -> io::Result<Vec<u8>> {
+        let Some(MemoryGraph(graph)) = &self.memory else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "only a graph built editable from files keeps its files",
+            ));
+        };
+        let bytes = graph
+            .memory_bytes(&graph.root.join(rel))?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no file {rel:?}")))?;
+        if max_bytes.is_some_and(|max| bytes.len() as u64 > max) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{rel:?} is larger than the read limit"),
+            ));
+        }
+        Ok(bytes.to_vec())
+    }
+
     /// Replace files of a view built by [`Self::from_files`] and make this
     /// view the result: `Some(bytes)` writes a file, with the current time
     /// as its modification time (a disk write's), and `None` deletes one.

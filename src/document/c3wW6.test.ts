@@ -13,7 +13,7 @@ import { outlineMaxDepth } from "../editor/outline";
 import type { ClipboardBlock, ClipboardPayloadSlot } from "../clipboard";
 import type { BlockDto, PageDto } from "../types";
 import { answerOpensFromDocument } from "./host/documentHost.test.support";
-import { bindTestHost } from "./host/wiring.test.support";
+import { acceptPageMoves, bindTestHost } from "./host/wiring.test.support";
 import { transferInProgress } from "./host/wiring";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
@@ -58,6 +58,7 @@ describe("og c3w W6", () => {
     const moved = uuid(1);
     loadFeed([page("A", [block(moved, "original"), block(uuid(2), "stays")]), page("B", [block(uuid(3), "b")])]);
     setRaw(moved, "typed");
+    acceptPageMoves();
     await moveBlock(moved, null, 0, "B");
     expect(doc.byId[moved].page).toBe("B");
     expect(await flushAll()).toBe(true);

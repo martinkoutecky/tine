@@ -181,7 +181,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 22)
+## Reads (ceiling: 23)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
@@ -214,6 +214,11 @@ fn store::WholeGraph::page
 # not round-trip). `WholeGraph::page` answers the parsed document, which holds no
 # editability; a parameter cannot tell it whether its own view was built editable.
 fn store::WholeGraph::page_read_only
+# Browser core 5b round 1 (22 -> 23): a raw file read of an editable view (the
+# preview's `read_journal_file`, a duplicate day's text). `Store::read` reads live
+# files and takes no view; `WholeGraph::page` answers a parsed document, not the
+# file's bytes, which a file that does not round-trip changes.
+fn store::WholeGraph::file_bytes
 # A-V4b: a write parses the exact bytes its revision guards; `page` reads the
 # file itself, and for a page a host holds answers the host's bytes (A-V4).
 fn store::Store::page_of

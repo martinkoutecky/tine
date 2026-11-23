@@ -77,6 +77,13 @@ export class BrowserGraph {
      */
     query_run_json(query_json: string, view_json: string, context_json?: string | null): string;
     /**
+     * The desktop `read_journal_file` answer (a JSON string): one top-level
+     * journal file's text, from an editable graph's files. Throws what the
+     * desktop refuses (a bad name, no such file, too large, not UTF-8), and
+     * in a read-only graph, which keeps no files.
+     */
+    read_journal_file_json(name: string): string;
+    /**
      * Replace files: `files[i]` (bytes, or null to delete) at the
      * graph-relative `paths[i]`, under the constructor's path rules, then
      * recapture the changed pages (`WholeGraph::replace_files`). Answers
@@ -532,6 +539,7 @@ export interface InitOutput {
     readonly browsergraph_query_explain_empty_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly browsergraph_query_facets_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_query_run_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly browsergraph_read_journal_file_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_replace_files: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly browsergraph_resolve_blocks_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly browsergraph_resolve_page_json: (a: number, b: number, c: number, d: number) => [number, number, number, number];

@@ -16,7 +16,7 @@ import { clearRecent, recentPages, setRecentPages } from "../ui";
 import { graphEpoch, setGraphMeta } from "../graphSession";
 import { installKeybindings } from "../keybindings";
 import { setToasts, toasts } from "../toasts";
-import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { acceptPageMoves, bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { STALE_VERSION } from "../document/host/protocol";
 
 beforeAll(async () => { await initParser(); });
@@ -72,6 +72,7 @@ describe("batch 11e page identity and journal continuity", () => {
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${id}"]`)).not.toBeNull());
       // A move between pages runs through the page host, which the app binds at startup.
       await bindTestHost();
+      acceptPageMoves();
       startEditing(id, 2);
       await vi.waitFor(() => expect(maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)).not.toBeNull());
       const editor = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)!;

@@ -13,7 +13,7 @@ import { backend } from "../../backend";
 import type { BlockDto, PageDto } from "../../types";
 import { transferInProgress } from "../host/wiring";
 import { answerOpensFromDocument } from "../host/documentHost.test.support";
-import { bindTestHost } from "../host/wiring.test.support";
+import { acceptPageMoves, bindTestHost } from "../host/wiring.test.support";
 
 beforeAll(() => initParser());
 afterEach(async () => {
@@ -155,7 +155,7 @@ describe("target-relative multi-root drag (GH #240)", () => {
     answerOpensFromDocument(await bindTestHost());
     clearSeededFacets();
     const before = snapshot();
-    const move = vi.spyOn(backend(), "pageMove");
+    const move = acceptPageMoves();
     const submit = vi.spyOn(backend(), "pageSubmit");
 
     expect(await moveBlocksRelative(["source-two", "source-one"], "destination-target", "before")).toBe(true);
@@ -198,7 +198,7 @@ describe("target-relative multi-root drag (GH #240)", () => {
     ]);
     clearSeededFacets();
     answerOpensFromDocument(await bindTestHost());
-    const move = vi.spyOn(backend(), "pageMove");
+    const move = acceptPageMoves();
     const submit = vi.spyOn(backend(), "pageSubmit");
 
     expect(await moveBlocksRelative(["moved"], "target", "child")).toBe(true);

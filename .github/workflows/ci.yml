@@ -707,11 +707,20 @@ jobs:
       - name: Install bench browser (Playwright Chromium)
         run: npx playwright install --with-deps chromium
 
+      # The bench opens the browser mock (`?big`). A ref with `build:mock` (ADR 0081)
+      # keeps the mock out of `build`, so build that; older refs bundle it in `build`.
       - name: Build candidate and both baseline refs
         run: |
-          npm run build
-          npm --prefix .bench/immutable run build
-          npm --prefix .bench/previous run build
+          build_bench() {
+            if node -e "process.exit(require(require('path').resolve(process.argv[1], 'package.json')).scripts?.['build:mock'] ? 0 : 1)" "$1"; then
+              npm --prefix "$1" run build:mock
+            else
+              npm --prefix "$1" run build
+            fi
+          }
+          build_bench .
+          build_bench .bench/immutable
+          build_bench .bench/previous
 
       - name: Measure immutable baseline, previous release, and candidate in interleaved rounds
         run: |

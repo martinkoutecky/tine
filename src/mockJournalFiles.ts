@@ -1,12 +1,11 @@
 import type { Backend } from "./backend";
 
-type JournalFileMethods = "listJournalConflicts" | "readJournalFile" | "listJournalFilenameMigrations";
-
-/** The mock backend's journal-file surface (host state): duplicate days,
- *  title-named files and their proposed date names (demoed via `?conflicts`,
- *  whose journal files are fixture files). Trashing a file and migrating names
- *  are store write paths: the mock refuses them (ADR 0081). */
-export function mockJournalFiles(text: (path: string) => Promise<string | undefined>): Pick<Backend, JournalFileMethods> {
+/** The mock backend's journal-file host state: the conflict demo's inventory
+ *  of duplicate days (demoed via `?conflicts`, whose journal files are fixture
+ *  files). A file's text is the core's answer (`read_journal_file_json`).
+ *  Filename migration proposals, trashing a file and migrating names are the
+ *  store's: the mock refuses them until the core exposes them (ADR 0081). */
+export function mockJournalFiles(): Pick<Backend, "listJournalConflicts"> {
   const demo = () => typeof location !== "undefined" && /[?&]conflicts\b/.test(location.search);
   return {
     async listJournalConflicts() {
@@ -23,15 +22,6 @@ export function mockJournalFiles(text: (path: string) => Promise<string | undefi
           ],
         },
       ];
-    },
-    async readJournalFile(name: string): Promise<string> {
-      const source = await text(`journals/${name}`);
-      if (source === undefined) throw new Error(`journal file ${name} is not in the browser preview graph`);
-      return source;
-    },
-    async listJournalFilenameMigrations() {
-      // Not the conflicted 26th: the backend never proposes a duplicate day.
-      return demo() ? [{ from: "Thursday, 25-06-2026.org", to: "2026_06_25.org" }] : [];
     },
   };
 }

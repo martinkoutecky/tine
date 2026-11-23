@@ -44,16 +44,26 @@ same shape: one engine, with storage behind an interface.
    reads are writable (`WholeGraph::page_read_only`: only an Org page that does not round-trip reads read-only),
    while a published export's are read-only. The host's `externalWrite` (not a `Backend` member) stands in for the
    desktop's file watcher: scripts write a file through `replace_files` and the window gets it as page mail.
+   The core's page reads carry no file revision, so the mock's page host names one per file (its session and the
+   file's version, which every write moves) and uses it in Open, submit mail, the publication wait and the exact
+   delete. A delete by name refuses when another file claims the same name. A request made before a window reload
+   sends no mail and moves no version after it.
 4. **Write paths beyond one page's text are refused.** Rename, merge, conflict resolution, journal filename
-   migration, guide copy, print and the rename probe (`renameWouldChange`, the rename preview) all refuse, with one
-   message. Any `Backend` member the mock does not define refuses the same way. End-to-end tests on the real
-   backend cover these paths.
+   migration and its proposals, guide copy, print and the rename probe (`renameWouldChange`, the rename preview) all
+   refuse, with one localized message. A block move to another page is refused before either page is written. Any
+   `Backend` member the mock does not define refuses the same way. End-to-end tests on the real backend cover these
+   paths.
 5. **Host state stays host state.** Plugins, assets, highlights, session, workspaces, app settings, diagnostics,
-   git, quick share, the conflict-demo inventory and the guide flag are not graph questions. They stay in
-   TypeScript.
+   git, quick share, the conflict-demo inventory (the `?conflicts` duplicate day) and the guide flag are not graph
+   questions. They stay in TypeScript. A journal file's text is the core's answer (`read_journal_file_json`).
 6. **Config setters stay no-ops** until the core exposes `config.edn` edits. The `tine-graph-features` setters
    operate on a `Store`; exposing them as a `BrowserGraph` command is Rust work with a wasm-size cost, left to a
    later slice.
+   - **Scope exception.** This departs from slice 5's Rule 6
+     (`tine-agents/specs/notes/browser-core/SLICE-5.md`), which has the setters edit `logseq/config.edn` through
+     the core and `replace_files`, so a Settings change shows in `loadGraph`. Slice 5 ships without it. The
+     preview keeps its earlier behaviour: a setter changes nothing, and `loadGraph` answers the fixture config. The
+     exception closes when the core exposes the slice 4b config edits as a `BrowserGraph` command.
 7. **Loading.** `backend.ts` reaches the mock only through `src/browserMock.ts`, by one dynamic import, outside
    Tauri and outside a published export, and only in builds that carry it: the dev server, the tests and
    `npm run build:mock`. The core loads on the mock's first graph question.

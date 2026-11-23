@@ -7,3 +7,5 @@ backend-backend-open-graph-folder = Open graph folder
 
 backend-backend-choose-a-file = Choose a file
 
+
+backend-browser-preview-refused = Not available in the browser preview: the desktop app answers this.

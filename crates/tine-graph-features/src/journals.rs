@@ -1167,6 +1167,16 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
     String::from_utf8(bytes).map_err(|_| tine_store::not_utf8())
 }
 
+/// [`read_journal_file`] over a view built editable from files (the browser
+/// preview's graph): the same name check, byte cap and UTF-8 refusal, from
+/// the bytes the view holds. Cost O(file bytes).
+pub fn read_view_journal_file(view: &WholeGraph, name: &str) -> io::Result<String> {
+    journal_name(name)?;
+    let rel = format!("{}/{name}", view.config().config.journals_dir);
+    let bytes = view.file_bytes(&rel, Some(tine_store::PARSE_INPUT_MAX_BYTES))?;
+    String::from_utf8(bytes).map_err(|_| tine_store::not_utf8())
+}
+
 /// Trash one top-level journal with a revision guard, retrying an external
 /// conflict four times. Cost O(file bytes) per attempt.
 /// One host operation deletes the page (DESIGN §3.1); the host
@@ -1206,4 +1216,39 @@ pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Res
         crate::retained::unsaved,
         plan,
     )
+}
+
+/// The browser preview's raw journal read answers the file's exact bytes from
+/// an editable view (also an Org file that does not round-trip), refuses what
+/// the desktop read refuses, and refuses in a read-only view (a published
+/// export), which keeps no files.
+#[cfg(test)]
+#[test]
+fn view_journal_read_answers_the_held_bytes() {
+    let files = || {
+        vec![
+            ("journals/2026_06_26.org".to_owned(), b"* day\n".to_vec()),
+            (
+                "journals/Friday, 26-06-2026.org".to_owned(),
+                b"* a\n*** c\n".to_vec(),
+            ),
+            ("pages/p.md".to_owned(), b"- p\n".to_vec()),
+        ]
+    };
+    let (editable, _) = WholeGraph::from_files(files(), Vec::new(), true).unwrap();
+    let read = |name: &str| read_view_journal_file(&editable, name);
+    assert_eq!(read("Friday, 26-06-2026.org").unwrap(), "* a\n*** c\n");
+    assert_eq!(read("2026_06_26.org").unwrap(), "* day\n");
+    assert_eq!(
+        read("absent.md").unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
+    assert_eq!(
+        read("../pages/p.md").unwrap_err().kind(),
+        io::ErrorKind::InvalidInput
+    );
+    assert_eq!(read("").unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    let (published, _) = WholeGraph::from_files(files(), Vec::new(), false).unwrap();
+    let refused = read_view_journal_file(&published, "2026_06_26.org").unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
 }

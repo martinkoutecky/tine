@@ -7,7 +7,7 @@ import { backend, type Backend } from "../../backend";
 import { setToasts, toasts } from "../../toasts";
 import { deletePage, isConflicted, loadFeed, moveBlock, pageByName, resetStore } from "../index";
 import { startEditing } from "../../editorController";
-import { bindTestHost, type TestHost } from "../host/wiring.test.support";
+import { acceptPageMoves, bindTestHost, type TestHost } from "../host/wiring.test.support";
 import type { PageDto } from "../../types";
 
 const moved = { id: "delete-group-move", raw: "X", collapsed: false, children: [] };
@@ -28,7 +28,7 @@ async function setup(holdA = false): Promise<{ host: TestHost; move: MockInstanc
   // The user is editing A's other block: the window holds A, so the host's
   // mail for A reaches it.
   if (holdA) startEditing(staying.id);
-  const move = vi.spyOn(backend(), "pageMove");
+  const move = acceptPageMoves();
   const submit = vi.spyOn(backend(), "pageSubmit");
   const remove = vi.spyOn(backend(), "pageDelete").mockResolvedValue("applied");
   await moveBlock(moved.id, null, 0, "B");

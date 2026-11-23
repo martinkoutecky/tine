@@ -9,7 +9,7 @@ import { doc } from "../model";
 import { setToasts, toasts } from "../../toasts";
 import { initParser } from "../../render/parse";
 import { startEditing } from "../../editorController";
-import { bindTestHost, mailPage, submittedPages } from "../host/wiring.test.support";
+import { acceptPageMoves, bindTestHost, mailPage, submittedPages } from "../host/wiring.test.support";
 import type { BlockDto, PageRead } from "../../types";
 
 let serial = 0;
@@ -31,7 +31,7 @@ describe("save review regressions on the page host", () => {
     loadFeed([{ ...page("A", []), blocks: [moved] }, { ...page("B", []), blocks: [stay] }]);
     const host = await bindTestHost();
     startEditing(stay.id); // the user is on B: the window holds it
-    const move = vi.spyOn(backend(), "pageMove");
+    const move = acceptPageMoves();
     const submit = vi.spyOn(backend(), "pageSubmit");
     await moveBlock(moved.id, null, 0, "B");
     await vi.waitFor(() => expect(move).toHaveBeenCalledOnce());

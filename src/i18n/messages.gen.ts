@@ -76,6 +76,7 @@ export interface MessageArgs {
   "backend-backend-choose-a-file": {};
   "backend-backend-open-graph-folder": {};
   "backend-backend-tine": {};
+  "backend-browser-preview-refused": {};
   "backup-delete-old": {};
   "backup-delete-old-confirm": { "path": string | number };
   "backup-delete-old-failed": { "error": string | number };

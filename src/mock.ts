@@ -21,9 +21,13 @@ import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { checkBrowserHandoff } from "./linkSchemePolicy";
 import { MOCK_ABSENT_METHODS } from "./browserMock";
+import { t } from "./i18n";
 
-/** What the browser preview says for a question only the desktop app answers. */
-export const MOCK_REFUSAL_MESSAGE = "Not available in the browser preview: the desktop app answers this (ADR 0081).";
+/** What the browser preview says for a question only the desktop app answers
+ * (ADR 0081 Decision 4), in the active locale. */
+export function mockRefusalMessage(): string {
+  return t("backend-browser-preview-refused");
+}
 
 
 const mockPlugins: InstalledPluginRecord[] = [];
@@ -78,7 +82,7 @@ export function mockBackend(options: MockOptions = {}): Backend {
     },
     write: (path, text) => graph.replace([[path, text]]),
     reset: () => graph.reset(),
-  });
+  }, mockRefusalMessage);
 
   const explicit: Partial<Backend> = {
     ...reads,
@@ -298,7 +302,10 @@ export function mockBackend(options: MockOptions = {}): Backend {
     async emptyAssetTrash(): Promise<number> {
       return 3;
     },
-    ...mockJournalFiles(graph.text),
+    ...mockJournalFiles(),
+    async readJournalFile(name: string): Promise<string> {
+      return JSON.parse(await graph.read(["read_journal_file_json", name])) as string;
+    },
     ...mockConflictApi,
     ...mockQuickShareCommands,
     ...mockGitCommands,
@@ -496,7 +503,7 @@ export function mockBackend(options: MockOptions = {}): Backend {
       if (property in target) return target[property];
       if (property === "then" || MOCK_ABSENT_METHODS.has(property)) return undefined;
       return async () => {
-        throw new Error(MOCK_REFUSAL_MESSAGE);
+        throw new Error(mockRefusalMessage());
       };
     },
     has(target, property) {

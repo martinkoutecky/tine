@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mockBackend, MOCK_REFUSAL_MESSAGE } from "./mock";
+import { mockBackend, mockRefusalMessage } from "./mock";
 import { mockFileTimes, mockGraphFiles } from "./mockGraph";
 import type { PageMail } from "./document";
 import type { PageDto } from "./types";
@@ -83,15 +83,58 @@ describe("mock backend", () => {
       () => api.mergePages("a", "b", {} as never),
       () => api.resolveSyncConflict("a", "b", {}, "", "", {} as never),
       () => api.applyJournalFilenameMigrations({} as never),
+      // Proposals too, until the core exposes them (no mock-made rows).
+      () => api.listJournalFilenameMigrations(),
       () => api.copyGuideIntoGraph("Tine Guide", "replace-page"),
       () => api.pagePrintHtml("Tine", {} as never, []),
-    ]) await expect(refused()).rejects.toThrow(MOCK_REFUSAL_MESSAGE);
+    ]) await expect(refused()).rejects.toThrow(mockRefusalMessage());
     expect(api.pdfAssetSource).toBeUndefined();
     expect("rescanGraphNow" in api).toBe(false);
   });
 
-  it("reads the conflict demo's journal files from the graph", async () => {
+  it("reads the conflict demo's journal files from the core", async () => {
     const api = mockBackend({ search: "?conflicts" });
     expect(await api.readJournalFile("Friday, 26-06-2026.org")).toBe("* something something\n*\n");
+    await expect(api.readJournalFile("absent.org")).rejects.toThrow();
+    await expect(api.readJournalFile("../pages/Tine.md")).rejects.toThrow();
+  });
+
+  // Blocker 2's core-backed twin: the core's page reads carry a null
+  // revision; the host's revision from Open deletes exactly that file.
+  it("deletes the exact file the preview opened", async () => {
+    const api = mockBackend({ search: "", files: { "pages/gone.md": "- bye\n" } });
+    const mail: PageMail[] = [];
+    await api.onPageMail((m) => mail.push(m));
+    await api.pageOpen(1, 1, { name: "gone", kind: "page", path: "pages/gone.md" });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const text = mail.find((m) => m.answer?.id === 1)?.page?.text;
+    const rev = text?.kind === "page" ? text.dto.rev : null;
+    expect(rev).toBeTruthy();
+    expect(await api.pageDeleteFile(1, "pages/gone.md", rev!)).toBe("applied");
+    expect(await api.getPage("gone", "page")).toBeNull();
+  });
+
+  it("refuses deleting by a name two files claim, and keeps both", async () => {
+    const api = mockBackend({ search: "", files: { "pages/same.md": "- md\n", "pages/same.org": "* org\n",
+      "journals/2026_06_20.md": "- md day\n", "journals/2026_06_20.org": "* org day\n" } });
+    expect(await api.pageDelete(1, "same", "page")).toBe("refused");
+    expect(await api.pageDelete(1, "same", "page", "pages/same.md")).toBe("refused");
+    expect(await api.pageDelete(1, "Jun 20th, 2026", "journal")).toBe("refused");
+    expect((await api.getPageByPath("pages/same.md"))?.id).toBe("pages/same.md");
+    expect((await api.getPageByPath("pages/same.org"))?.id).toBe("pages/same.org");
+    expect((await api.getPageByPath("journals/2026_06_20.md"))?.id).toBe("journals/2026_06_20.md");
+  });
+
+  // Blocker 1's core-backed twin: a move is refused before the source is
+  // written, so reopening the source answers its unchanged text.
+  it("refuses a cross-page move and leaves the source's text", async () => {
+    const api = mockBackend({ search: "", files: { "pages/src.md": "- keep\n- move\n", "pages/dst.md": "- there\n" } });
+    const source = (await api.getPage("src", "page"))!;
+    const receiver = (await api.getPage("dst", "page"))!;
+    const refusal = await api.pageMove(1, 1, ["pages/src.md", { ...source, blocks: [source.blocks[0]] }, 1],
+      ["pages/dst.md", { ...receiver, blocks: [...receiver.blocks, source.blocks[1]] }, 1], {} as never);
+    expect(refusal).toEqual({ reason: "failed", message: mockRefusalMessage() });
+    expect((await api.getPage("src", "page"))?.blocks.map((block) => block.raw)).toEqual(["keep", "move"]);
+    expect((await api.getPage("dst", "page"))?.blocks.map((block) => block.raw)).toEqual(["there"]);
   });
 });

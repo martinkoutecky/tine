@@ -350,6 +350,15 @@ impl BrowserGraph {
         }))
     }
 
+    /// The desktop `read_journal_file` answer (a JSON string): one top-level
+    /// journal file's text, from an editable graph's files. Throws what the
+    /// desktop refuses (a bad name, no such file, too large, not UTF-8), and
+    /// in a read-only graph, which keeps no files.
+    pub fn read_journal_file_json(&self, name: &str) -> Result<String, JsValue> {
+        let text = tine_graph_features::journals::read_view_journal_file(&self.view, name);
+        wire(text.map_err(js_error)?)
+    }
+
     /// The desktop `list_template_names` answer.
     pub fn list_template_names_json(&self) -> Result<String, JsValue> {
         wire(self.view.template_names())
