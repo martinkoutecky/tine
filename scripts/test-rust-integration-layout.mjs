@@ -24,12 +24,16 @@ function libIncludedTests(dir) {
 // `mod x;` declarations at the start of a line (a commented-out one does not compile), with an optional `#[path]`.
 const MODULE = /^[ \t]*(?:#\[path = "([^"]+)"\][ \t]*\n[ \t]*)?(?:pub(?:\([^)]*\))? )?mod (\w+);/gm;
 
+// Raw string literals hold Rust source fixtures (clock_guard.rs's `mod chosen;`), not declarations: blank them, keeping
+// line breaks so `^` anchors stay on real lines.
+const withoutRawStrings = (source) => source.replace(/\br(#*)"[\s\S]*?"\1/g, (literal) => literal.replace(/[^\n]/g, ' '));
+
 // How many copies of each file the integration target compiles: a file gets one copy per copy of each parent
 // that declares it, following `mod` from `tests/integration.rs`.
 function integrationModules(crate) {
   const reached = new Map();
   const expand = (file, copies, path) => {
-    for (const [, attr, name] of readFileSync(file, 'utf8').matchAll(MODULE)) {
+    for (const [, attr, name] of withoutRawStrings(readFileSync(file, 'utf8')).matchAll(MODULE)) {
       const stem = path.length === 1 ? '' : `${basename(file, '.rs')}/`;
       const target = normalize(join(dirname(file), attr ?? `${stem}${name}.rs`));
       assert.ok(!path.includes(target), `module cycle through ${target}`);

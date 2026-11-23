@@ -368,6 +368,7 @@ fn the_browser_crates_read_time_only_through_the_clock() {
 /// code stays out.
 #[test]
 fn the_clock_guard_names_each_planted_read() {
+    let _guard = crate::integration_lock();
     let temp = tempfile::tempdir().unwrap();
     let write = |name: &str, text: &str| std::fs::write(temp.path().join(name), text).unwrap();
     write(
