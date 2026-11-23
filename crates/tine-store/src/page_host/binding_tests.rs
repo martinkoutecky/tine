@@ -458,6 +458,45 @@ impl Live {
         }
     }
 
+    /// [`Self::rewrite_externally`] the way an editor's atomic save does:
+    /// the bytes are staged outside the graph and renamed over the page, so
+    /// the watcher can only ever read the old bytes or `body`. A truncating
+    /// `fs::write` exposes an empty page between its truncate and its write;
+    /// a watcher that reads it there indexes an empty page, which rightly
+    /// drops the page's runtime ids (another outline), and `body` is then
+    /// keyed positionally (seen under IO load, 2026-11-23).
+    fn replace_externally(&self, key: &str, body: &str) {
+        let path = self.root.join(key);
+        let staged = self.root.parent().unwrap().join("replace-staged");
+        let modified = || fs::metadata(&path).unwrap().modified().unwrap();
+        let before = modified();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            fs::write(&staged, body).unwrap();
+            fs::rename(&staged, &path).unwrap();
+            if modified() != before {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{key} kept its timestamp");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// [`Self::external`] through [`Self::replace_externally`]: held `key`
+    /// is replaced atomically, then its owner's observation of `body` is
+    /// awaited.
+    fn adopt_externally(&self, key: &str, body: &str) -> MailPage {
+        self.replace_externally(key, body);
+        let token = token(body);
+        self.wait(key, "observation", |mail| {
+            mail.page
+                .as_ref()
+                .is_some_and(|p| p.disk == Some(token.clone()))
+        })
+        .page
+        .unwrap()
+    }
+
     fn until_disk(&self, key: &str, body: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while fs::read_to_string(self.root.join(key)).ok().as_deref() != Some(body) {
@@ -703,7 +742,7 @@ fn an_owner_adoption_of_the_same_outline_keeps_runtime_ids() {
                 }
                 last.clone_from(&bytes);
                 let case = format!("{case}, then {variant}");
-                live.external(rel, &bytes);
+                live.adopt_externally(rel, &bytes);
                 let now = indexed_row(&live, rel, &bytes, &case);
                 let pairs = |blocks: &[tine_core::model::BlockDto]| {
                     let mut out = Vec::new();
@@ -787,7 +826,7 @@ fn a_reopened_page_rewritten_with_the_same_outline_keeps_runtime_ids() {
                 assert!(Instant::now() < deadline, "{case}: never released");
                 std::thread::sleep(Duration::from_millis(20));
             }
-            live.rewrite_externally(rel, &bytes);
+            live.replace_externally(rel, &bytes);
             live.until_indexed(rel, &bytes);
             let _ = live.open(rel);
             let deadline = Instant::now() + Duration::from_secs(20);
