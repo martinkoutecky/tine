@@ -46,10 +46,21 @@ const literals = [
 ];
 
 const discardedTags = ['#inst "2020"', '#uuid "ABC"', '#queue []', '#js []', '#js {:a 1}'];
+const discardedForms = [
+  "nil", "true", "false", "symbol", ":hidden", "1", "##Inf", units`\newline`, '":hidden"',
+  '[:hidden]', '(:hidden)', '#{:hidden}', '{:hidden []}', '#:demo{:_/hidden []}',
+  '^:meta {:hidden []}', '#^:meta {:hidden []}', '#_ :dropped :hidden',
+  ...discardedTags,
+];
+const onlyTrivia = [
+  " ,", "; {:hidden []}", "#! {:hidden []}",
+  ...discardedForms.map((form) => `#_ ${form}`),
+].flatMap((source) => ["", "\n", "\r", "\r\n"].map((end) => source + end));
 const witnesses = [
   "", " , \n", "#_ :dropped", "; just a comment", "1 #unknown []", "{:pages-directory \"notes\"} #unknown []",
   "{:pages-directory \"notes\" :bad #unknown []}",
   ...literals,
+  ...onlyTrivia,
   ...discardedTags.flatMap((tag) => [`[#_ ${tag} 1]`, `[#_ [${tag}] 1]`, `#_ ${tag} 1`]),
   ...[";", "#!"].flatMap((comment) =>
     ["\n", "\r", "\r\n"].flatMap((end) => [

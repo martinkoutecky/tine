@@ -355,53 +355,28 @@ thread_local! {
     pub(crate) static STREAM_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-pub(crate) fn config_entries(input: &str) -> Option<Vec<(Form, Option<Form>)>> {
-    let mut reader = Reader::new(input, MAX_INPUT_BYTES, Mode::Config)?;
-    let mut entries = Vec::new();
-    reader.trivia(0)?;
-    if reader.byte()? != b'{' {
-        reader.mode = Mode::Edn;
-        let form = reader.form(0)?;
-        return reader.safe_config_suffix().then(|| map_entries(form))?;
+pub(crate) type ConfigEntry = (Form, Option<Form>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct UnreadableExclusion;
+
+/// Recover local config entries within the reader bounds. A failed read can
+/// report an unreadable exclusion from a direct key already read.
+pub(crate) fn config_entries(input: &str) -> Result<Vec<ConfigEntry>, UnreadableExclusion> {
+    let Some(mut reader) = Reader::new(input, MAX_INPUT_BYTES, Mode::Config) else {
+        return Ok(Vec::new());
+    };
+    match reader.config_root() {
+        Some(entries) => {
+            reader.safe_config_suffix()?;
+            Ok(entries)
+        }
+        None if reader.saw_config_exclusion => Err(UnreadableExclusion),
+        None => Ok(Vec::new()),
     }
-    reader.i += 1;
-    loop {
-        reader.trivia(1)?;
-        if reader.invalid {
-            return None;
-        }
-        match reader.byte() {
-            Some(b'}') => {
-                reader.i += 1;
-                reader.safe_config_suffix().then_some(())?;
-                break;
-            }
-            None => break,
-            _ => (),
-        }
-        let key = reader.form(1)?;
-        if reader.invalid {
-            return None;
-        }
-        let value = match reader.form(1) {
-            Some(value) => (!std::mem::take(&mut reader.invalid)).then_some(value),
-            None if reader.i == input.len() => {
-                entries.push((key, None));
-                break;
-            }
-            None => return None,
-        };
-        entries.push((key, value));
-    }
-    let mut keys = HashSet::new();
-    entries
-        .iter()
-        .all(|(key, _)| keys.insert(FormKey::new(key, &reader.hash)))
-        .then_some(())?;
-    Some(entries)
 }
 
-pub(crate) fn map_entries(form: Form) -> Option<Vec<(Form, Option<Form>)>> {
+pub(crate) fn map_entries(form: Form) -> Option<Vec<ConfigEntry>> {
     if form.kind != Kind::Map {
         return None;
     }
@@ -409,9 +384,35 @@ pub(crate) fn map_entries(form: Form) -> Option<Vec<(Form, Option<Form>)>> {
     Some(std::iter::from_fn(|| Some((children.next()?, children.next()))).collect())
 }
 
-// A failed read cannot distinguish an exclusion from text that resembles one.
-pub(crate) fn may_contain_hidden_setting(source: &str) -> bool {
-    source.contains(":hidden") || source.contains(":_/hidden")
+fn is_config_exclusion(key: &Form) -> bool {
+    key.keyword() == Some("hidden")
+}
+
+/// Decode the effective exclusion, preserving the existing vector bounds.
+pub(crate) fn config_exclusions(
+    entries: &[ConfigEntry],
+) -> Result<Vec<String>, UnreadableExclusion> {
+    let Some((_, value)) = entries.iter().find(|(key, _)| is_config_exclusion(key)) else {
+        return Ok(Vec::new());
+    };
+    let value = value.as_ref().ok_or(UnreadableExclusion)?;
+    if value.kind == Kind::Vector && (value.span.len() > 64 * 1024 || value.children.len() > 256) {
+        return Err(UnreadableExclusion);
+    }
+    Ok(strings_in_vector(Some(value)))
+}
+
+pub(crate) fn strings_in_vector(form: Option<&Form>) -> Vec<String> {
+    form.filter(|form| form.kind == Kind::Vector)
+        .map_or_else(Vec::new, |form| {
+            form.children
+                .iter()
+                .filter_map(|item| match &item.leaf {
+                    Some(Edn::Str(value)) => Some(value.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
 }
 
 struct Reader<'a> {
@@ -423,6 +424,7 @@ struct Reader<'a> {
     mode: Mode,
     discarding: bool,
     invalid: bool,
+    saw_config_exclusion: bool,
     duplicate_root_key: Option<&'a str>,
     hash: std::collections::hash_map::RandomState,
 }
@@ -438,6 +440,7 @@ impl<'a> Reader<'a> {
             mode,
             discarding: false,
             invalid: false,
+            saw_config_exclusion: false,
             duplicate_root_key: None,
             hash: Default::default(),
         })
@@ -447,11 +450,66 @@ impl<'a> Reader<'a> {
         self.s.get(self.i).copied()
     }
 
-    fn safe_config_suffix(&mut self) -> bool {
-        // Local config fails closed when an unreadable suffix could hide an
-        // authored exclusion. The publication framing reads the first form.
-        !may_contain_hidden_setting(&self.src[self.i..])
-            || (self.trivia(0).is_some() && !self.invalid && self.i == self.src.len())
+    fn config_root(&mut self) -> Option<Vec<ConfigEntry>> {
+        self.trivia(0)?;
+        match self.byte() {
+            None => return Some(Vec::new()),
+            Some(b'{') => self.i += 1,
+            _ => {
+                self.mode = Mode::Edn;
+                return Some(map_entries(self.form_with_config_root(0, true)?).unwrap_or_default());
+            }
+        }
+        let mut entries = Vec::new();
+        loop {
+            self.trivia(1)?;
+            if self.invalid {
+                return None;
+            }
+            match self.byte() {
+                Some(b'}') => {
+                    self.i += 1;
+                    break;
+                }
+                None => break,
+                _ => (),
+            }
+            let key = self.form(1)?;
+            self.saw_config_exclusion |= is_config_exclusion(&key);
+            if self.invalid {
+                return None;
+            }
+            let value = match self.form(1) {
+                Some(value) => (!std::mem::take(&mut self.invalid)).then_some(value),
+                None if self.i == self.src.len() => {
+                    entries.push((key, None));
+                    break;
+                }
+                None => return None,
+            };
+            entries.push((key, value));
+        }
+        let mut keys = HashSet::new();
+        entries
+            .iter()
+            .all(|(key, _)| keys.insert(FormKey::new(key, &self.hash)))
+            .then_some(entries)
+    }
+
+    fn safe_config_suffix(&mut self) -> Result<(), UnreadableExclusion> {
+        // A suffix can supply evidence of an exclusion, but no settings.
+        self.saw_config_exclusion = false;
+        self.mode = Mode::Edn;
+        while self.i < self.src.len() {
+            let form = self.form_with_config_root(0, true);
+            if self.saw_config_exclusion {
+                return Err(UnreadableExclusion);
+            }
+            if form.is_none() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn one(&mut self) -> Option<Form> {
@@ -487,6 +545,10 @@ impl<'a> Reader<'a> {
     }
 
     fn form(&mut self, depth: usize) -> Option<Form> {
+        self.form_with_config_root(depth, false)
+    }
+
+    fn form_with_config_root(&mut self, depth: usize, config_root: bool) -> Option<Form> {
         // Four enclosing forms are outside the advanced query's expression limit.
         let depth_limit = if matches!(self.mode, Mode::Query | Mode::QuerySyntax) {
             MAX_DEPTH + 4
@@ -510,7 +572,7 @@ impl<'a> Reader<'a> {
                 self.trivia_seen += 1;
                 self.i += if self.s[start] == b'^' { 1 } else { 2 };
                 let metadata = self.form(depth + 1)?;
-                let mut target = self.form(depth + 1)?;
+                let mut target = self.form_with_config_root(depth + 1, config_root)?;
                 if !(metadata.kind == Kind::Map
                     || matches!(
                         metadata.leaf,
@@ -542,7 +604,7 @@ impl<'a> Reader<'a> {
                     _ => (Kind::List, b')'),
                 };
                 self.i += 1;
-                children = self.collection(depth, close, kind, None)?;
+                children = self.collection(depth, close, kind, None, config_root)?;
                 kind
             }
             b'"' => {
@@ -578,7 +640,7 @@ impl<'a> Reader<'a> {
             }
             b'#' if self.s[start..].starts_with(b"#{") => {
                 self.i += 2;
-                children = self.collection(depth, b'}', Kind::Set, None)?;
+                children = self.collection(depth, b'}', Kind::Set, None, false)?;
                 Kind::Set
             }
             b'#' if self.s[start..].starts_with(b"#:") => {
@@ -599,7 +661,7 @@ impl<'a> Reader<'a> {
                     return None;
                 }
                 self.i += 1;
-                children = self.collection(depth, b'}', Kind::Map, Some(namespace))?;
+                children = self.collection(depth, b'}', Kind::Map, Some(namespace), config_root)?;
                 Kind::Map
             }
             b'#' if matches!(self.mode, Mode::QuerySyntax | Mode::Macro)
@@ -755,6 +817,7 @@ impl<'a> Reader<'a> {
         close: u8,
         kind: Kind,
         namespace: Option<&str>,
+        config_root: bool,
     ) -> Option<Vec<Form>> {
         let mut children = Vec::new();
         loop {
@@ -766,25 +829,30 @@ impl<'a> Reader<'a> {
             if children.len() >= MAX_COLLECTION_ITEMS {
                 return None;
             }
-            children.push(self.form(depth + 1)?);
+            let mut form = self.form(depth + 1)?;
+            if kind == Kind::Map && children.len() % 2 == 0 {
+                if let Some(namespace) = namespace {
+                    let symbol = form.is_symbol();
+                    if let Some(Edn::Keyword(name)) = &mut form.leaf {
+                        qualify(name, namespace);
+                    } else if symbol {
+                        if let Some(Edn::Symbol(name)) = &mut form.leaf {
+                            qualify(name, namespace);
+                        }
+                    }
+                }
+                if config_root {
+                    self.saw_config_exclusion |= is_config_exclusion(&form);
+                }
+            }
+            children.push(form);
         }
         let stride = match kind {
             Kind::Map => {
                 if children.len() % 2 != 0 && self.mode != Mode::ConfigEdit {
                     self.invalid()?;
                 }
-                if let Some(namespace) = namespace {
-                    for key in children.iter_mut().step_by(2) {
-                        let symbol = key.is_symbol();
-                        if let Some(Edn::Keyword(name)) = &mut key.leaf {
-                            qualify(name, namespace);
-                        } else if symbol {
-                            if let Some(Edn::Symbol(name)) = &mut key.leaf {
-                                qualify(name, namespace);
-                            }
-                        }
-                    }
-                } else if self.mode == Mode::ImageMetadata && depth == 0 {
+                if namespace.is_none() && self.mode == Mode::ImageMetadata && depth == 0 {
                     return Some(children);
                 }
                 2

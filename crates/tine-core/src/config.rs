@@ -3,7 +3,7 @@
 //! Direct settings consume effective values from the shared EDN reader.
 //! Surgical setters locate authored spans to preserve unrelated bytes.
 
-use crate::edn::{Edn, Form, Kind};
+use crate::edn::{self, strings_in_vector, ConfigEntry, Edn, Form, Kind, UnreadableExclusion};
 use std::collections::HashMap;
 
 /// OG shortcut values retain a single string or all vector alternatives over IPC.
@@ -441,14 +441,7 @@ impl Config {
     /// values. A journal date pattern with parts Tine does not support keeps its
     /// value and adds a `journal_config_diagnostics` entry (card g4czVA).
     pub fn parse(edn: &str) -> Config {
-        let entries = crate::edn::config_entries(edn);
-        let settings = Settings(entries.as_deref().unwrap_or_default());
-        let mut cfg = Self::parse_settings(&settings);
-        // An unreadable root must not silently discard an authored exclusion.
-        if entries.is_none() && crate::edn::may_contain_hidden_setting(edn) {
-            cfg.hidden_parse_failed_closed = true;
-        }
-        cfg
+        Self::parse_settings(crate::edn::config_entries(edn))
     }
 
     /// The typed config from Logseq's first-form framing for publication.
@@ -459,10 +452,12 @@ impl Config {
             return Some(Self::default());
         };
         let entries = crate::edn::map_entries(form)?;
-        Some(Self::parse_settings(&Settings(&entries)))
+        Some(Self::parse_settings(Ok(entries)))
     }
 
-    fn parse_settings(settings: &Settings<'_>) -> Self {
+    fn parse_settings(entries: Result<Vec<ConfigEntry>, UnreadableExclusion>) -> Self {
+        let entries = entries.as_deref().map_err(|&error| error);
+        let settings = &Settings(entries.unwrap_or_default());
         let mut cfg = Self::default();
         let journal = parse_journal_settings(settings);
         cfg.default_journal_queries = journal.queries;
@@ -475,9 +470,9 @@ impl Config {
         if let Some(v) = settings.string(":pages-directory") {
             cfg.pages_dir = v;
         }
-        match settings.hidden() {
+        match entries.and_then(edn::config_exclusions) {
             Ok(hidden) => cfg.hidden = hidden,
-            Err(()) => cfg.hidden_parse_failed_closed = true,
+            Err(UnreadableExclusion) => cfg.hidden_parse_failed_closed = true,
         }
         if let Some(v) = settings.keyword(":preferred-workflow") {
             cfg.preferred_workflow = if v == "todo" {
@@ -757,7 +752,7 @@ fn parse_journal_settings(settings: &Settings<'_>) -> JournalSettings {
     cfg
 }
 
-struct Settings<'a>(&'a [(Form, Option<Form>)]);
+struct Settings<'a>(&'a [ConfigEntry]);
 
 impl Settings<'_> {
     fn entry(&self, key: &str) -> Option<&Option<Form>> {
@@ -823,19 +818,6 @@ impl Settings<'_> {
             })
     }
 
-    fn hidden(&self) -> Result<Vec<String>, ()> {
-        let Some(value) = self.entry("hidden") else {
-            return Ok(Vec::new());
-        };
-        let value = value.as_ref().ok_or(())?;
-        if value.kind == Kind::Vector
-            && (value.span.len() > 64 * 1024 || value.children.len() > 256)
-        {
-            return Err(());
-        }
-        Ok(strings_in_vector(Some(value)))
-    }
-
     fn string_vector(&self, key: &str) -> Vec<String> {
         strings_in_vector(self.get(key))
     }
@@ -867,19 +849,6 @@ fn nested<'a>(form: &'a Form, key: &str) -> Option<&'a Form> {
     form.children.chunks_exact(2).find_map(|pair| {
         matches!(&pair[0].leaf, Some(Edn::Keyword(name)) if name == key).then_some(&pair[1])
     })
-}
-
-fn strings_in_vector(form: Option<&Form>) -> Vec<String> {
-    form.filter(|form| form.kind == Kind::Vector)
-        .map_or_else(Vec::new, |form| {
-            form.children
-                .iter()
-                .filter_map(|item| match &item.leaf {
-                    Some(Edn::Str(value)) => Some(value.clone()),
-                    _ => None,
-                })
-                .collect()
-        })
 }
 
 /// Byte index of `key` among the DIRECT entries of the root map, never inside
@@ -1219,6 +1188,116 @@ mod tests {
                 assert!(!cfg.hidden_parse_failed_closed, "{root}; {suffix}");
             }
         }
+    }
+
+    #[test]
+    fn config_trivia_uses_defaults_and_keeps_pages_visible() {
+        let mut failures = Vec::new();
+        for (prefix, key) in [("", ":hidden"), ("#:demo", ":_/hidden")] {
+            let map = format!(r#"{prefix}{{{key} ["pages/Secret.md"]}}"#);
+            for form in [
+                format!("; {map}"),
+                format!("#! {map}"),
+                format!("#_ {map}"),
+                format!("#_ ^:meta {map}"),
+                format!("#_ #^:meta {map}"),
+                format!("#_ {key}"),
+                format!(r#"#_ "{key}""#),
+            ] {
+                for end in ["", "\n", "\r", "\r\n"] {
+                    let source = format!(" , {form}{end}");
+                    let cfg = Config::parse(&source);
+                    if cfg.hidden_parse_failed_closed || !cfg.hidden.is_empty() {
+                        failures.push(format!("{source:?}"));
+                    }
+                    assert_eq!(cfg.pages_dir, Config::default().pages_dir, "{source:?}");
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "Exclusions from trivia:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn unreadable_config_counts_only_effective_keys_lexed_before_failure() {
+        let mut failures = Vec::new();
+        for (read, suffix, closed, pages_dir) in [
+            (
+                "",
+                r#"#:demo{:bad #unknown [] :_/hidden ["pages/Secret.md"]}"#,
+                false,
+                "pages",
+            ),
+            ("", r#"^ {:hidden []} {:bad ["torn""#, false, "pages"),
+            ("", r#"#:demo{:hidden ["torn""#, false, "pages"),
+            ("", r#"{:_/hidden ["torn""#, false, "pages"),
+            ("", r#"{:hidden-other ["torn""#, false, "pages"),
+            ("", r#"{:nested {:hidden ["torn""#, false, "pages"),
+            ("", r#"{:other :hidden :bad ["torn""#, false, "pages"),
+            ("", r#"{:note ":hidden" :bad ["torn""#, false, "pages"),
+            ("", r#"#_ {:hidden ["torn""#, false, "pages"),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" ] {:hidden []}"#,
+                false,
+                "notes",
+            ),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" ":hidden" #unknown []"#,
+                false,
+                "notes",
+            ),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" #_ {:hidden ["torn""#,
+                false,
+                "notes",
+            ),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" #_ {:hidden []} #unknown []"#,
+                false,
+                "notes",
+            ),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" ; :hidden
+                 #unknown []"#,
+                false,
+                "notes",
+            ),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" nil {:hidden []}"#,
+                true,
+                "pages",
+            ),
+            (
+                r#"{:pages-directory "notes"}"#,
+                r#" {:hidden"#,
+                true,
+                "pages",
+            ),
+            ("", r#"^:meta {:hidden"#, true, "pages"),
+        ] {
+            let source = format!("{read}{suffix}");
+            let cfg = Config::parse(&source);
+            if cfg.hidden_parse_failed_closed != closed || cfg.pages_dir != pages_dir {
+                failures.push(format!(
+                    "{source:?}: expected ({closed}, {pages_dir}), got ({}, {})",
+                    cfg.hidden_parse_failed_closed, cfg.pages_dir
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "Wrong config recovery:\n{}",
+            failures.join("\n")
+        );
     }
 
     #[test]

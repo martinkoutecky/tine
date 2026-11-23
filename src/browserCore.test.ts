@@ -260,6 +260,26 @@ const open = (files: [string, string][]) =>
 const names = (graph: InstanceType<typeof core.BrowserGraph>) =>
   JSON.parse(graph.page_inventory_json()).entries.map((row: { name: string }) => row.name);
 
+it.each([
+  ['; #:demo{:_/hidden ["pages/secret.md"]}', ["public", "secret"]],
+  ['#! {:hidden ["pages/secret.md"]}\r', ["public", "secret"]],
+  ['#_ #^:meta {:hidden ["pages/secret.md"]}\r\n', ["public", "secret"]],
+  ['{:_/hidden ["pages/secret.md"', ["public", "secret"]],
+  ['#:demo{:_/hidden ["pages/secret.md"]}', ["public"]],
+  ['^:meta #:demo{:_/hidden ["pages/secret.md"', []],
+] as const)("opens with the exclusions authored in config %j", (source, expected) => {
+  const graph = open([
+    ["logseq/config.edn", source],
+    ["pages/public.md", "- Public\n"],
+    ["pages/secret.md", "- Secret\n"],
+  ]);
+  try {
+    expect(names(graph)).toEqual(expected);
+  } finally {
+    graph.free();
+  }
+});
+
 // A handle points into the instance that made it: after a fresh instance (a
 // trap's recovery) it is refused, and freeing it leaves the new instance alone.
 it("a handle from a replaced instance is refused", () => {

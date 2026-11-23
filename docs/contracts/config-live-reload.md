@@ -139,11 +139,14 @@ Session state remains outside the graph, with no additional persisted fields.
 
 The shared EDN reader supplies complete direct settings, including those before
 a torn suffix. A malformed setting uses its default when the reader can locate
-the next entry. A malformed `:hidden` exclusion hides graph text until it is
-repaired. If the root or its suffix cannot be read, the same restriction
-applies when the unreadable text may contain `:hidden` or its namespaced-map
-spelling `:_/hidden`, including in a metadata-wrapped root. Quick share and
-folder export use that graph scope for page selection.
+the next entry. An unreadable `:hidden` value hides graph text until it is
+repaired. If the root or suffix cannot be read, the restriction applies only
+when the reader reached a direct key with the effective name `:hidden`
+before or at the failure, including `:_/hidden` in a namespaced root and
+keys in metadata-wrapped roots. Comments, discarded forms and strings do
+not supply exclusion keys. A config containing only whitespace, commas,
+comments or complete discards uses default settings. Quick share and folder
+export use the same graph scope for page selection.
 
 The reader's config input limit is 64 MiB, with a 128-level nesting limit,
 one million nodes and 250,000 forms per complete collection. The same node
