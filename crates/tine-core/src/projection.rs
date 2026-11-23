@@ -165,12 +165,10 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
 /// (deterministic, still a runtime locator). A page whose keys repeat would
 /// collapse two blocks into one store node, and the next save would write one
 /// block's text twice. A fresh parse keeps no key, and its keys are the
-/// positional ones ([`visit_doc_runtime_ids`]). O(blocks) expected; a
-/// document that keeps no key, or keeps every one, allocates nothing.
+/// positional ones ([`visit_doc_runtime_ids`]). O(blocks) expected; a fully
+/// keyed document is only scanned, and one that keeps no key allocates no
+/// per-block set.
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
-    fn keyed(blocks: &[DocBlock]) -> bool {
-        (blocks.iter()).all(|block| !block.uuid.is_empty() && keyed(&block.children))
-    }
     fn kept(blocks: &[DocBlock], into: &mut HashSet<BlockId>) {
         for block in blocks {
             if !block.uuid.is_empty() {
@@ -193,16 +191,32 @@ pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
             fill(&mut block.children, structural, taken);
         }
     }
-    if keyed(roots) {
-        return;
+    /// Whether the tree holds an unkeyed block and a kept one; stops once both are seen.
+    fn keys(blocks: &[DocBlock], seen: &mut (bool, bool)) {
+        for block in blocks {
+            if block.uuid.is_empty() {
+                seen.0 = true;
+            } else {
+                seen.1 = true;
+            }
+            if seen.0 && seen.1 {
+                return;
+            }
+            keys(&block.children, seen);
+        }
     }
-    let owner = file_runtime_namespace(owner_rel_path);
-    let mut taken = HashSet::new();
-    kept(roots, &mut taken);
-    if taken.is_empty() {
-        assign_runtime_ids_rec(roots, owner);
-    } else {
-        fill(roots, owner, &mut taken);
+    let mut seen = (false, false);
+    keys(roots, &mut seen);
+    match seen {
+        // Every block is keyed (an ordinary own save): nothing to assign.
+        (false, _) => {}
+        // A fresh parse keeps no key: the positional keys, nothing allocated.
+        (true, false) => assign_runtime_ids_rec(roots, file_runtime_namespace(owner_rel_path)),
+        (true, true) => {
+            let mut taken = HashSet::new();
+            kept(roots, &mut taken);
+            fill(roots, file_runtime_namespace(owner_rel_path), &mut taken);
+        }
     }
 }
 

@@ -250,8 +250,10 @@ pub(crate) enum Mode {
     // Existing PDF files and edits preserve CR-only comment lines and opaque
     // sidecar data. This dialect never supplies query or publication values.
     PdfSidecar,
-    // Config settings recover only at a known next direct entry. Values whose
-    // syntax was invalid are absent. A physically torn suffix keeps prior entries.
+    // Local config reading (EDN model R4b), for the whole input: a form upstream reads
+    // to its end and refuses has that extent, so a completed discard of it stays trivia
+    // and a root entry with it is skipped; reading stops where a form has none. Strict
+    // framings refuse the whole input instead.
     Config,
     // Settings can repair a missing final value in a closed map.
     ConfigEdit,
@@ -357,23 +359,149 @@ thread_local! {
 
 pub(crate) type ConfigEntry = (Form, Option<Form>);
 
+enum ConfigRoot<'a> {
+    Ignore,
+    Recover(&'a mut Vec<ConfigEntry>),
+}
+
+/// The role of an operand in its enclosing form, for [`Reader::operand`].
+#[derive(Clone, Copy)]
+enum Operand {
+    /// A key or value of a local config root entry.
+    Entry,
+    /// A collection element, metadata or a tag, which more input follows.
+    Inner,
+    /// The form a `#_` drops.
+    Discarded,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct UnreadableExclusion;
 
-/// Recover local config entries within the reader bounds. A failed read can
-/// report an unreadable exclusion from a direct key already read.
+/// Recover local config entries within the reader bounds (EDN model R4b). After any
+/// refusal or stop, the config excludes pages as read only when no `hidden` keyword
+/// is unaccounted for; otherwise it is an unreadable exclusion.
 pub(crate) fn config_entries(input: &str) -> Result<Vec<ConfigEntry>, UnreadableExclusion> {
-    let Some(mut reader) = Reader::new(input, MAX_INPUT_BYTES, Mode::Config) else {
-        return Ok(Vec::new());
-    };
-    match reader.config_root() {
-        Some(entries) => {
-            reader.safe_config_suffix()?;
-            Ok(entries)
+    let mut reader =
+        Reader::new(input, MAX_INPUT_BYTES, Mode::Config).ok_or(UnreadableExclusion)?;
+    let mut entries = Vec::new();
+    let read = reader.trivia(0).and_then(|()| {
+        // Input that is only trivia reads as upstream's nil (R4a).
+        if reader.byte().is_some() {
+            reader.form_with_config_root(0, ConfigRoot::Recover(&mut entries))?;
+            reader.trivia(0)?;
         }
-        None if reader.saw_config_exclusion => Err(UnreadableExclusion),
-        None => Ok(Vec::new()),
+        // A suffix is input that upstream's first-form read never reaches.
+        reader.byte().is_none().then_some(())
+    });
+    if (read.is_none() || reader.refused) && unaccounted_exclusion(input, &entries) {
+        return Err(UnreadableExclusion);
     }
+    Ok(entries)
+}
+
+/// The exposure rule of EDN model R4b, the only answer to whether a damaged config
+/// excludes pages as read: every `hidden` keyword occurrence must be the key of exactly
+/// one admitted root entry with an admitted value. Entries and occurrences are both in
+/// source order, so one merge pass checks them.
+fn unaccounted_exclusion(input: &str, entries: &[ConfigEntry]) -> bool {
+    let mut keys = entries
+        .iter()
+        .filter(|(_, value)| value.is_some())
+        .map(|(key, _)| &key.span)
+        .peekable();
+    exclusion_occurrences(input).any(|occurrence| {
+        while keys.next_if(|key| key.start < occurrence.start).is_some() {}
+        keys.next_if(|key| **key == occurrence).is_none()
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static EXCLUSION_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The positions the occurrence scan has examined.
+    pub(crate) static EXCLUSION_SCAN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The byte spans of every keyword spelling named `hidden` (`:hidden`, `:_/hidden`,
+/// `:ns/hidden`, also inside a longer token) in plain text. This is R4b's occurrence
+/// scan: it lexes the whole input from byte 0 with its own total rules and never
+/// resumes from a reader's cursor. One lazy forward pass that allocates nothing: the
+/// caller stops it at the first occurrence it cannot account for.
+pub(crate) fn exclusion_occurrences(
+    input: &str,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    #[cfg(test)]
+    EXCLUSION_SCANS.with(|count| count.set(count.get() + 1));
+    let s = input.as_bytes();
+    let line_end = move |at: usize| memchr::memchr(b'\n', &s[at..]).map_or(s.len(), |end| at + end);
+    // An unterminated string makes the rest of the input plain text.
+    let mut lexical = true;
+    let mut i = 0;
+    // The unchecked positions of the current colon run, and where its spellings end.
+    let (mut run, mut run_end) = (0..0, 0);
+    std::iter::from_fn(move || loop {
+        // Each colon in the run begins a keyword spelling that ends where the run does.
+        if let Some(at) = run.find(|&at| {
+            let name = &s[at + 1..run_end];
+            s[at] == b':' && (name == b"hidden" || name.ends_with(b"/hidden"))
+        }) {
+            return Some(at..run_end);
+        }
+        // Plain text up to the next colon run, in a loop of its own so ordinary bytes
+        // cost what they cost before the scan was lazy.
+        loop {
+            if i >= s.len() {
+                return None;
+            }
+            #[cfg(test)]
+            EXCLUSION_SCAN_STEPS.with(|count| count.set(count.get() + 1));
+            match s[i] {
+                b'"' if lexical => {
+                    let mut j = i + 1;
+                    while j < s.len() && s[j] != b'"' {
+                        j += if s[j] == b'\\' { 2 } else { 1 };
+                    }
+                    lexical = j < s.len();
+                    i = if lexical { j + 1 } else { i + 1 };
+                }
+                b';' if lexical => i = line_end(i),
+                // `#!` inside a symbol such as `x#!` is not a comment. Treating any other
+                // spelling as plain text only finds more occurrences.
+                b'#' if lexical
+                    && s.get(i + 1) == Some(&b'!')
+                    && (i == 0
+                        || s[i - 1].is_ascii_whitespace()
+                        || b",()[]{}\"^".contains(&s[i - 1])) =>
+                {
+                    i = line_end(i)
+                }
+                b'\\' if lexical => {
+                    i += 1;
+                    if let Some(c) = input[i..].chars().next() {
+                        i += c.len_utf8();
+                        if !(macro_terminator(c, false) || invalid_constituent(c)) {
+                            i = token_end(input, i);
+                        }
+                    }
+                }
+                b':' => {
+                    run_end = token_end(input, i + 1);
+                    run = i..run_end;
+                    i = run_end;
+                    break;
+                }
+                _ => i += 1,
+            }
+        }
+    })
+}
+
+/// The end of upstream's token scan: a token terminator or a non-constituent.
+fn token_end(input: &str, from: usize) -> usize {
+    input[from..]
+        .find(|c| macro_terminator(c, false) || invalid_constituent(c))
+        .map_or(input.len(), |end| from + end)
 }
 
 pub(crate) fn map_entries(form: Form) -> Option<Vec<ConfigEntry>> {
@@ -384,15 +512,14 @@ pub(crate) fn map_entries(form: Form) -> Option<Vec<ConfigEntry>> {
     Some(std::iter::from_fn(|| Some((children.next()?, children.next()))).collect())
 }
 
-fn is_config_exclusion(key: &Form) -> bool {
-    key.keyword() == Some("hidden")
-}
-
 /// Decode the effective exclusion, preserving the existing vector bounds.
 pub(crate) fn config_exclusions(
     entries: &[ConfigEntry],
 ) -> Result<Vec<String>, UnreadableExclusion> {
-    let Some((_, value)) = entries.iter().find(|(key, _)| is_config_exclusion(key)) else {
+    let Some((_, value)) = entries
+        .iter()
+        .find(|(key, _)| key.keyword() == Some("hidden"))
+    else {
         return Ok(Vec::new());
     };
     let value = value.as_ref().ok_or(UnreadableExclusion)?;
@@ -423,8 +550,10 @@ struct Reader<'a> {
     trivia_seen: usize,
     mode: Mode,
     discarding: bool,
+    // The form being read was refused at a known extent (local config reading only).
     invalid: bool,
-    saw_config_exclusion: bool,
+    // Local config reading refused something, so the exposure rule applies.
+    refused: bool,
     duplicate_root_key: Option<&'a str>,
     hash: std::collections::hash_map::RandomState,
 }
@@ -440,7 +569,7 @@ impl<'a> Reader<'a> {
             mode,
             discarding: false,
             invalid: false,
-            saw_config_exclusion: false,
+            refused: false,
             duplicate_root_key: None,
             hash: Default::default(),
         })
@@ -450,66 +579,50 @@ impl<'a> Reader<'a> {
         self.s.get(self.i).copied()
     }
 
-    fn config_root(&mut self) -> Option<Vec<ConfigEntry>> {
-        self.trivia(0)?;
-        match self.byte() {
-            None => return Some(Vec::new()),
-            Some(b'{') => self.i += 1,
-            _ => {
-                self.mode = Mode::Edn;
-                return Some(map_entries(self.form_with_config_root(0, true)?).unwrap_or_default());
-            }
-        }
-        let mut entries = Vec::new();
-        loop {
-            self.trivia(1)?;
-            if self.invalid {
-                return None;
-            }
-            match self.byte() {
-                Some(b'}') => {
-                    self.i += 1;
-                    break;
-                }
-                None => break,
-                _ => (),
-            }
-            let key = self.form(1)?;
-            self.saw_config_exclusion |= is_config_exclusion(&key);
-            if self.invalid {
-                return None;
-            }
-            let value = match self.form(1) {
-                Some(value) => (!std::mem::take(&mut self.invalid)).then_some(value),
-                None if self.i == self.src.len() => {
-                    entries.push((key, None));
-                    break;
-                }
-                None => return None,
-            };
-            entries.push((key, value));
-        }
+    /// The root map's entries in local reading. Admitted entries come before the point
+    /// where reading stops; a refused key drops its entry, a refused value is `None`.
+    fn recover_config_map(
+        &mut self,
+        depth: usize,
+        namespace: Option<&str>,
+        entries: &mut Vec<ConfigEntry>,
+    ) -> Option<()> {
+        let closed = self.recover_entries(depth, namespace, entries);
         let mut keys = HashSet::new();
-        entries
+        if !entries
             .iter()
             .all(|(key, _)| keys.insert(FormKey::new(key, &self.hash)))
-            .then_some(entries)
+        {
+            // Upstream refuses a map with a duplicate key: no entry of it is admitted.
+            entries.clear();
+            self.refused = true;
+        }
+        closed
     }
 
-    fn safe_config_suffix(&mut self) -> Result<(), UnreadableExclusion> {
-        // A suffix can supply evidence of an exclusion, but no settings.
-        self.saw_config_exclusion = false;
-        self.mode = Mode::Edn;
-        while self.i < self.src.len() {
-            let form = self.form_with_config_root(0, true);
-            if self.saw_config_exclusion {
-                return Err(UnreadableExclusion);
+    fn recover_entries(
+        &mut self,
+        depth: usize,
+        namespace: Option<&str>,
+        entries: &mut Vec<ConfigEntry>,
+    ) -> Option<()> {
+        loop {
+            self.trivia(depth + 1)?;
+            if self.byte()? == b'}' {
+                self.i += 1;
+                return Some(());
             }
-            if form.is_none() {
-                break;
-            }
+            let key = self.operand(depth + 1, Operand::Entry)?;
+            self.trivia(depth + 1)?;
+            let value = if self.byte()? == b'}' {
+                // An odd map: upstream reads it to its end, then refuses it.
+                self.refused = true;
+                None
+            } else {
+                self.operand(depth + 1, Operand::Entry)?
+            };
+            entries.extend(key.map(|key| (qualify_key(key, namespace), value)));
         }
-        Ok(())
     }
 
     fn one(&mut self) -> Option<Form> {
@@ -518,9 +631,31 @@ impl<'a> Reader<'a> {
         (self.i == self.src.len()).then_some(form)
     }
 
-    fn invalid(&mut self) -> Option<()> {
-        self.invalid = true;
-        (self.mode == Mode::Config).then_some(())
+    /// Upstream reads the current form to its end and then refuses it, so the form
+    /// has an extent (EDN model R4b). Strict framings refuse the whole input here;
+    /// local config reading marks the form refused and goes on after it.
+    fn refuse(&mut self) -> Option<()> {
+        (self.mode == Mode::Config).then(|| {
+            self.invalid = true;
+            self.refused = true;
+        })
+    }
+
+    /// Where reading resumes after an operand upstream refused: the one answer for
+    /// every dispatch (EDN model R4b). A final operand (a tag's object, a metadata
+    /// target, the operand of `##`) is read with `form`, so its refusal completes the
+    /// enclosing form, which is refused at its own end. An inner operand is followed
+    /// by input upstream's throw never reached: the enclosing form has no extent. A
+    /// completed discard stays trivia, and a root entry is skipped at its extent.
+    fn operand(&mut self, depth: usize, role: Operand) -> Option<Option<Form>> {
+        let pending = std::mem::take(&mut self.invalid);
+        let form = self.form(depth)?;
+        let refused = std::mem::replace(&mut self.invalid, pending);
+        match role {
+            Operand::Inner if refused => None,
+            Operand::Entry if refused => Some(None),
+            _ => Some(Some(form)),
+        }
     }
 
     fn trivia(&mut self, depth: usize) -> Option<()> {
@@ -532,7 +667,7 @@ impl<'a> Reader<'a> {
                 self.trivia_seen += 1;
                 self.i += 2;
                 let outer = std::mem::replace(&mut self.discarding, true);
-                let discarded = self.form(depth + 1);
+                let discarded = self.operand(depth + 1, Operand::Discarded);
                 self.discarding = outer;
                 discarded?;
             } else {
@@ -545,10 +680,10 @@ impl<'a> Reader<'a> {
     }
 
     fn form(&mut self, depth: usize) -> Option<Form> {
-        self.form_with_config_root(depth, false)
+        self.form_with_config_root(depth, ConfigRoot::Ignore)
     }
 
-    fn form_with_config_root(&mut self, depth: usize, config_root: bool) -> Option<Form> {
+    fn form_with_config_root(&mut self, depth: usize, config_root: ConfigRoot<'_>) -> Option<Form> {
         // Four enclosing forms are outside the advanced query's expression limit.
         let depth_limit = if matches!(self.mode, Mode::Query | Mode::QuerySyntax) {
             MAX_DEPTH + 4
@@ -571,21 +706,25 @@ impl<'a> Reader<'a> {
                 }
                 self.trivia_seen += 1;
                 self.i += if self.s[start] == b'^' { 1 } else { 2 };
-                let metadata = self.form(depth + 1)?;
-                let mut target = self.form_with_config_root(depth + 1, config_root)?;
+                let metadata = self.operand(depth + 1, Operand::Inner)??;
+                // Upstream refuses other metadata before it reads a target.
                 if !(metadata.kind == Kind::Map
                     || matches!(
                         metadata.leaf,
                         Some(Edn::Keyword(_) | Edn::Str(_) | Edn::Utf16(_))
                     )
                     || metadata.is_symbol())
-                    || !(matches!(
-                        target.kind,
-                        Kind::List | Kind::Vector | Kind::Map | Kind::Set
-                    ) || target.is_symbol()
-                        || target.tag() == Some("queue"))
                 {
-                    self.invalid()?;
+                    return None;
+                }
+                let mut target = self.form_with_config_root(depth + 1, config_root)?;
+                if !(matches!(
+                    target.kind,
+                    Kind::List | Kind::Vector | Kind::Map | Kind::Set
+                ) || target.is_symbol()
+                    || target.tag() == Some("queue"))
+                {
+                    self.refuse()?;
                 }
                 target.authored_start = start;
                 target.protected_trivia = true;
@@ -597,33 +736,34 @@ impl<'a> Reader<'a> {
                 leaf = Some(Edn::Symbol(self.src[start..self.i].into()));
                 Kind::Atom
             }
-            b'{' | b'[' | b'(' => {
+            b'{' => {
+                self.i += 1;
+                children = self.collection(depth, b'}', Kind::Map, None, config_root)?;
+                Kind::Map
+            }
+            b'[' | b'(' => {
                 let (kind, close) = match self.byte()? {
-                    b'{' => (Kind::Map, b'}'),
                     b'[' => (Kind::Vector, b']'),
                     _ => (Kind::List, b')'),
                 };
                 self.i += 1;
-                children = self.collection(depth, close, kind, None, config_root)?;
+                children = self.collection(depth, close, kind, None, ConfigRoot::Ignore)?;
                 kind
             }
             b'"' => {
-                leaf = self.string();
-                if leaf.is_none() {
-                    let end = string_end(self.src, start);
-                    self.i = end.unwrap_or(self.s.len());
-                    end?;
-                    self.invalid()?;
-                }
+                // Upstream throws inside a string it cannot read (`escape-char`).
+                leaf = Some(self.string()?);
                 Kind::String
             }
             b'\\' => {
                 self.i += 1;
                 let ch = self.src[self.i..].chars().next()?;
-                if macro_terminator(ch, false) || invalid_constituent(ch) {
-                    self.i += ch.len_utf8();
-                } else {
-                    self.token(false);
+                self.i += ch.len_utf8();
+                if !(macro_terminator(ch, false) || invalid_constituent(ch)) {
+                    // Upstream's token scanner throws at a non-constituent.
+                    if self.token(false, true) {
+                        return None;
+                    }
                 }
                 let raw = &self.src[start..self.i];
                 leaf = match character(&raw[1..]) {
@@ -632,7 +772,7 @@ impl<'a> Reader<'a> {
                         Some(Edn::Symbol(raw.into()))
                     }
                     _ => {
-                        self.invalid()?;
+                        self.refuse()?;
                         None
                     }
                 };
@@ -640,15 +780,18 @@ impl<'a> Reader<'a> {
             }
             b'#' if self.s[start..].starts_with(b"#{") => {
                 self.i += 2;
-                children = self.collection(depth, b'}', Kind::Set, None, false)?;
+                children = self.collection(depth, b'}', Kind::Set, None, ConfigRoot::Ignore)?;
                 Kind::Set
             }
             b'#' if self.s[start..].starts_with(b"#:") => {
                 self.i += 2;
                 let namespace_start = self.i;
-                self.token(false);
+                let invalid = self.token(false, true);
                 let namespace = &self.src[namespace_start..self.i];
-                if !valid_name(namespace) || (namespace.contains('/') && namespace != "/") {
+                if invalid
+                    || !valid_name(namespace)
+                    || (namespace.contains('/') && namespace != "/")
+                {
                     return None;
                 }
                 while let Some(c) = self.src[self.i..].chars().next() {
@@ -687,32 +830,34 @@ impl<'a> Reader<'a> {
                 self.i += 2;
                 let symbol = self.form(depth + 1)?;
                 let raw = match symbol.leaf.as_ref().and_then(Edn::as_str) {
-                    Some("NaN") if symbol.is_symbol() => "##NaN",
-                    Some("Inf") if symbol.is_symbol() => "##Inf",
-                    Some("-Inf") if symbol.is_symbol() => "##-Inf",
-                    _ => return None,
+                    Some("NaN") if symbol.is_symbol() => Some("##NaN"),
+                    Some("Inf") if symbol.is_symbol() => Some("##Inf"),
+                    Some("-Inf") if symbol.is_symbol() => Some("##-Inf"),
+                    _ => None,
                 };
-                leaf = Some(if self.legacy_values() {
-                    Edn::Symbol(raw.into())
-                } else {
-                    Edn::Float(match raw {
+                leaf = match raw {
+                    None => {
+                        self.refuse()?;
+                        None
+                    }
+                    Some(raw) if self.legacy_values() => Some(Edn::Symbol(raw.into())),
+                    Some(raw) => Some(Edn::Float(match raw {
                         "##Inf" => f64::INFINITY,
                         "##-Inf" => f64::NEG_INFINITY,
                         _ => f64::NAN,
-                    })
-                });
+                    })),
+                };
                 Kind::Atom
             }
             b'#' if self.s[start..].starts_with(b"#<") => return None,
             b'#' => {
+                // Upstream reads a tag and an object, then refuses a tag that is not
+                // a symbol or that has no reader.
                 self.i += 1;
-                let tag = self.form(depth + 1)?;
-                if !tag.is_symbol() {
-                    return None;
-                }
-                let name = tag.leaf?.as_str()?.to_owned();
+                let tag = self.operand(depth + 1, Operand::Inner)??;
                 let value = self.form(depth + 1)?;
-                let supported = (!self.discarding || self.legacy_values()) && match name.as_str() {
+                let name = tag.symbol().unwrap_or_default().to_owned();
+                let supported = tag.is_symbol() && (!self.discarding || self.legacy_values()) && match name.as_str() {
                         "uuid" => value.kind == Kind::String
                             || !self.legacy_values() && matches!(value.leaf, Some(Edn::Str(_))),
                     "inst" => matches!(&value.leaf, Some(Edn::Str(text)) if instant(text).is_some()),
@@ -729,7 +874,7 @@ impl<'a> Reader<'a> {
                     _ => false,
                 };
                 if !supported {
-                    self.invalid()?;
+                    self.refuse()?;
                 }
                 children.push(value);
                 leaf = Some(Edn::Symbol(name));
@@ -740,8 +885,22 @@ impl<'a> Reader<'a> {
                 let keyword = self.byte() == Some(b':');
                 self.i += usize::from(keyword);
                 let token_start = self.i;
+                // `read-keyword` throws on a colon before whitespace or the end of input.
+                if keyword
+                    && self.src[self.i..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| c == ',' || js_whitespace(c))
+                {
+                    return None;
+                }
                 let numeric = !keyword && starts_numeric(&self.src[start..]);
-                self.token(numeric);
+                // The token scanner throws at a non-constituent; the number scanner reads past
+                // it, and query macro splitting keeps an opaque symbol whatever it holds.
+                let refusing = !numeric && (keyword || self.mode != Mode::Macro);
+                if self.token(numeric, refusing) {
+                    return None;
+                }
                 if self.i == start {
                     return None;
                 }
@@ -780,7 +939,7 @@ impl<'a> Reader<'a> {
                     _ => None,
                 };
                 if leaf.is_none() {
-                    self.invalid()?;
+                    self.refuse()?;
                 }
                 Kind::Atom
             }
@@ -795,13 +954,21 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn token(&mut self, numeric: bool) {
+    /// Advances over one token. `refusing` is the caller's answer to whether a
+    /// non-constituent ends the read (upstream's token scanner throws there): then the
+    /// scanner stops at the first one and returns true. Otherwise (numbers, opaque macro
+    /// symbols) it does not look for them.
+    fn token(&mut self, numeric: bool, refusing: bool) -> bool {
         while let Some(c) = self.src[self.i..].chars().next() {
             if macro_terminator(c, numeric) {
                 break;
             }
+            if refusing && invalid_constituent(c) {
+                return true;
+            }
             self.i += c.len_utf8();
         }
+        false
     }
 
     fn legacy_values(&self) -> bool {
@@ -817,8 +984,13 @@ impl<'a> Reader<'a> {
         close: u8,
         kind: Kind,
         namespace: Option<&str>,
-        config_root: bool,
+        config_root: ConfigRoot<'_>,
     ) -> Option<Vec<Form>> {
+        if let ConfigRoot::Recover(entries) = config_root {
+            let recovered = self.recover_config_map(depth, namespace, entries);
+            // The root caller gets its entries directly, including missing values.
+            return recovered.map(|()| Vec::new());
+        }
         let mut children = Vec::new();
         loop {
             self.trivia(depth + 1)?;
@@ -829,28 +1001,17 @@ impl<'a> Reader<'a> {
             if children.len() >= MAX_COLLECTION_ITEMS {
                 return None;
             }
-            let mut form = self.form(depth + 1)?;
-            if kind == Kind::Map && children.len() % 2 == 0 {
-                if let Some(namespace) = namespace {
-                    let symbol = form.is_symbol();
-                    if let Some(Edn::Keyword(name)) = &mut form.leaf {
-                        qualify(name, namespace);
-                    } else if symbol {
-                        if let Some(Edn::Symbol(name)) = &mut form.leaf {
-                            qualify(name, namespace);
-                        }
-                    }
-                }
-                if config_root {
-                    self.saw_config_exclusion |= is_config_exclusion(&form);
-                }
-            }
-            children.push(form);
+            let form = self.operand(depth + 1, Operand::Inner)??;
+            children.push(if kind == Kind::Map && children.len() % 2 == 0 {
+                qualify_key(form, namespace)
+            } else {
+                form
+            });
         }
         let stride = match kind {
             Kind::Map => {
                 if children.len() % 2 != 0 && self.mode != Mode::ConfigEdit {
-                    self.invalid()?;
+                    self.refuse()?;
                 }
                 if namespace.is_none() && self.mode == Mode::ImageMetadata && depth == 0 {
                     return Some(children);
@@ -869,7 +1030,7 @@ impl<'a> Reader<'a> {
             if kind == Kind::Map && depth == 0 {
                 self.duplicate_root_key = self.src.get(duplicate.span.clone());
             }
-            self.invalid()?;
+            self.refuse()?;
         }
         Some(children)
     }
@@ -948,11 +1109,7 @@ impl<'a> Reader<'a> {
 }
 
 fn valid_name(token: &str) -> bool {
-    if token.is_empty()
-        || token.ends_with(':')
-        || token.starts_with("::")
-        || token.chars().any(invalid_constituent)
-    {
+    if token.is_empty() || token.ends_with(':') || token.starts_with("::") {
         return false;
     }
     if token == "/" {
@@ -969,6 +1126,19 @@ fn valid_name(token: &str) -> bool {
 
 fn invalid_constituent(c: char) -> bool {
     matches!(c, '@' | '~' | '\x60')
+}
+
+/// A key as a namespaced map admits it (tools.reader `namespace-keys`).
+fn qualify_key(mut key: Form, namespace: Option<&str>) -> Form {
+    if let Some(namespace) = namespace {
+        let symbol = key.is_symbol();
+        match &mut key.leaf {
+            Some(Edn::Keyword(name)) => qualify(name, namespace),
+            Some(Edn::Symbol(name)) if symbol => qualify(name, namespace),
+            _ => (),
+        }
+    }
+    key
 }
 
 fn qualify(name: &mut String, namespace: &str) {

@@ -264,8 +264,12 @@ it.each([
   ['; #:demo{:_/hidden ["pages/secret.md"]}', ["public", "secret"]],
   ['#! {:hidden ["pages/secret.md"]}\r', ["public", "secret"]],
   ['#_ #^:meta {:hidden ["pages/secret.md"]}\r\n', ["public", "secret"]],
-  ['{:_/hidden ["pages/secret.md"', ["public", "secret"]],
+  // EDN model R4b: a damaged config closes unless every exclusion keyword is
+  // an admitted root key, and `:_/hidden` with a torn value is not one.
+  ['{:_/hidden ["pages/secret.md"', []],
   ['#:demo{:_/hidden ["pages/secret.md"]}', ["public"]],
+  ['^:meta #:demo{:bad #unknown [] :_/hidden ["pages/secret.md"]}', ["public"]],
+  ['#^:meta {:hidden ["pages/secret.md"] :bad "bad\\q"}', ["public"]],
   ['^:meta #:demo{:_/hidden ["pages/secret.md"', []],
 ] as const)("opens with the exclusions authored in config %j", (source, expected) => {
   const graph = open([
