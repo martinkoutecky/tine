@@ -15,7 +15,7 @@ fn name_claimants<'a>(
 }
 
 impl Store {
-    /// Use the latest published identity index for a move's same-name check.
+    /// Use the latest published identity index for a move or a creating host save.
     /// Before the first publication, live discovery still supplies the index;
     /// never wait for the load worker while holding the transaction writer lock.
     pub(crate) fn move_claimant(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
@@ -195,7 +195,7 @@ impl Snapshot {
     /// The active pages changed by this publication, including opening
     /// siblings that no physical write touched. Physical evidence stays in
     /// Change::files for conflict refresh and mutation bookkeeping.
-    fn page_changes(
+    pub(super) fn page_changes(
         &self,
         old: Option<&Self>,
         origin: Origin,

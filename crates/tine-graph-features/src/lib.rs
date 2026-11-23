@@ -17,6 +17,7 @@ pub mod config;
 pub mod config_problem;
 pub mod conflicts;
 pub mod custom_css;
+pub mod graph_change_wire;
 pub mod graph_read_wire;
 pub mod graph_verification;
 pub mod guide;

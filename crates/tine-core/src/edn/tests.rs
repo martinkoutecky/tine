@@ -294,3 +294,70 @@ fn decoded_values_keep_their_meaning_on_write_back() {
     assert_eq!(to_string(&reopened), written);
     assert!(reopened.get("nan").unwrap().as_f64().unwrap().is_nan());
 }
+
+#[test]
+fn the_occurrence_scan_runs_once_after_damage_and_reports_keyword_spans() {
+    let scans = || EXCLUSION_SCANS.with(|count| count.get());
+    let before = scans();
+    for clean in [
+        r#"{:hidden ["S"] :a 1}"#,
+        "; {:hidden []}",
+        "#_ {:hidden []}",
+        "",
+    ] {
+        assert!(config_entries(clean).is_ok(), "{clean}");
+    }
+    assert_eq!(scans(), before, "a read that succeeds never scans");
+    assert!(config_entries(r#"{:hidden ["S"] :bad #unknown []}"#).is_ok());
+    assert!(config_entries(r#"{:bad #unknown [] :x :hidden}"#).is_err());
+    assert_eq!(scans(), before + 2, "one scan per damaged read");
+
+    let text = "{:hidden 1 \"x :hidden\" ; :hidden\n :_/hidden x#:hidden ::hidden \\c:hidden \
+                \\;:hidden :a/hidden :hidden? :hidden-x x#! :hidden 1#! :hidden\n}";
+    let spans: Vec<&str> = exclusion_occurrences(text)
+        .map(|span| &text[span])
+        .collect();
+    // `x#!` is a symbol, not a comment; `1#!` is counted too (plain text only adds).
+    assert_eq!(
+        spans,
+        [
+            ":hidden",
+            ":_/hidden",
+            ":hidden",
+            ":hidden",
+            ":hidden",
+            ":a/hidden",
+            ":hidden",
+            ":hidden"
+        ]
+    );
+    assert_eq!(
+        text.find(":hidden 1"),
+        exclusion_occurrences(text).next().map(|s| s.start)
+    );
+    // A CR alone does not end a comment; an unterminated string leaves plain text.
+    assert!(exclusion_occurrences("; x\r:hidden").next().is_none());
+    assert_eq!(exclusion_occurrences("; x\n:hidden").count(), 1);
+    assert_eq!(exclusion_occurrences("\"x :hidden").count(), 1);
+    // Every colon of a long run is checked in one pass over the run.
+    let run = format!("{}hidden", ":".repeat(200_000));
+    assert!(exclusion_occurrences(&run).eq([199_999..run.len()]));
+}
+
+#[test]
+fn the_exclusion_check_stops_at_the_first_unaccounted_occurrence() {
+    // The value `:hidden` is unaccounted; 100,000 later occurrences are never reached.
+    let text = format!(
+        "{{:bad #unknown [] :x :hidden{}}}",
+        " :hidden []".repeat(100_000)
+    );
+    let steps = || EXCLUSION_SCAN_STEPS.with(|count| count.get());
+    let before = steps();
+    assert!(config_entries(&text).is_err());
+    let examined = steps() - before;
+    let first = text.find(":x :hidden").unwrap() + ":x :hidden".len();
+    assert!(
+        examined <= first,
+        "examined {examined} positions, first verdict at {first}"
+    );
+}

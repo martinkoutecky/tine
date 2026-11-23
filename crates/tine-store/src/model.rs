@@ -65,8 +65,8 @@ pub(crate) use page_identity::{
     graph_text_watch_relevant,
 };
 use page_parse::{
-    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, page_dto, parse_page_content,
-    prime_projections,
+    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, kept_outline, key_page,
+    page_dto, parse_page_content, parse_page_unkeyed, prime_projections,
 };
 
 use crate::path_identity::canonical_existing_path;
@@ -158,6 +158,27 @@ impl std::fmt::Display for ParserPanicked {
 
 impl std::error::Error for ParserPanicked {}
 
+/// A config read: the effective config, its read problem and its text.
+pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
+
+/// The config an open reads at `path` through `source`: the parsed text; a
+/// missing file is the defaults with [`missing_config_problem`]; another
+/// read error is the defaults with that error.
+pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
+    match read_parse_input_in(source, path) {
+        Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+            Config::default(),
+            missing_config_problem(source, path),
+            None,
+        ),
+        Err(error) => {
+            let (config, problem) = config_of_read_error(error);
+            (config, problem, None)
+        }
+    }
+}
+
 /// Why a graph with no `logseq/config.edn` must not take the defaults, if it
 /// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
 /// file exists but is not downloaded: its settings are unknown, so the graph
@@ -168,14 +189,41 @@ pub(crate) fn missing_config_problem(
     source: &FileSource,
     config_path: &Path,
 ) -> Option<crate::IoError> {
-    let placeholder = config_path.with_file_name(".config.edn.icloud");
-    source.lstat(&placeholder).is_ok().then(|| {
-        io::Error::other(
-            "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
-        )
-        .into()
-    })
+    source
+        .lstat(&config_placeholder(config_path))
+        .is_ok()
+        .then(|| {
+            io::Error::other(
+                "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
+            )
+            .into()
+        })
 }
+
+/// Where iCloud keeps a not-yet-downloaded `config_path`
+/// (`logseq/.config.edn.icloud`): the second path a config read looks up.
+pub(crate) fn config_placeholder(config_path: &Path) -> PathBuf {
+    config_path.with_file_name(".config.edn.icloud")
+}
+
+/// The config a graph uses when its `config.edn` exists but could not be
+/// read, and the problem it reports: the one mapping graph open (desktop and
+/// browser) and live reload share. Bytes over the store's parse limit are over
+/// the EDN reader's limit too (both 64 MiB), so they take the reader's verdict
+/// for oversized input, which fails closed; any other read error keeps the
+/// defaults. Cost: one type check.
+pub(crate) fn config_of_read_error(error: io::Error) -> (Config, Option<crate::IoError>) {
+    let too_large = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ParseInputTooLarge>());
+    let config = if too_large {
+        Config::over_read_limit()
+    } else {
+        Config::default()
+    };
+    (config, Some(error.into()))
+}
+
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     read_parse_input_in(&FileSource::Disk, path).map(std::borrow::Cow::into_owned)
 }
@@ -2730,6 +2778,13 @@ impl Graph {
 
     pub(crate) fn reload_config(&self, config: Config) -> io::Result<()> {
         self.validate_config_layout(&config)?;
+        self.install_config(config);
+        Ok(())
+    }
+
+    /// Install `config` as the live config; a change to what the page build
+    /// and indexes read invalidates the page cache.
+    pub(crate) fn install_config(&self, config: Config) {
         // The checkpoint key covers exactly the settings the page build and
         // indexes read. Other settings still install and publish live state,
         // but cannot make the cached pages or their disk observations stale.
@@ -2741,7 +2796,6 @@ impl Graph {
         if rebuild {
             self.invalidate_cache();
         }
-        Ok(())
     }
 
     pub(crate) fn install_live_config(&self) {
@@ -2861,21 +2915,26 @@ impl Graph {
     /// A graph over `source` under the config it holds at
     /// `logseq/config.edn`: the one config read of a graph open.
     fn open_from(root: PathBuf, source: FileSource) -> Graph {
-        let path = root.join("logseq/config.edn");
-        let (config, problem, config_source) = match read_parse_input_in(&source, &path) {
-            Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (
-                Config::default(),
-                missing_config_problem(&source, &path),
-                None,
-            ),
-            Err(error) => (Config::default(), Some(error.into()), None),
-        };
+        let path = root.join(file_source::CONFIG_FILE);
+        let (config, problem, config_source) = read_config_in(&source, &path);
         let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;
         graph.config_source = config_source;
         graph
+    }
+
+    /// Install a config read ([`read_config_in`]) as the one this graph
+    /// opened with: the config, its journal formats, its problem and its
+    /// text. Returns the read it replaces.
+    pub(crate) fn set_config_read(&mut self, read: ConfigRead) -> ConfigRead {
+        let (config, problem, source) = read;
+        self.journal_format = Arc::new(config.journal_format());
+        (
+            std::mem::replace(&mut self.config, config),
+            std::mem::replace(&mut self.config_read_problem, problem),
+            std::mem::replace(&mut self.config_source, source),
+        )
     }
 
     fn empty_with_config(
@@ -4060,29 +4119,8 @@ impl Graph {
         {
             panic!("injected external sync parser panic");
         }
-        let (mut newdoc, opts) = parse_doc_with_opts(path, content);
-        // Compare CONTENT, not the in-memory uuids: cached blocks carry
-        // generated uuids (assigned at cache build / upsert), while a fresh
-        // `parse` leaves them empty for non-ref-target blocks, so a direct
-        // `cached == newdoc` would never match and would flag every one of
-        // Tine's own writes as an external change. Normalize the cached doc
-        // through the same serialize→parse round-trip the file went through
-        // (both sides then have empty uuids) and compare.
-        let compared = self.with_cached(path, |row| {
-            row.map(|(_, cached)| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    match Format::from_path(path) {
-                        Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
-                        Format::Org => parse_doc(
-                            path,
-                            &tine_core::org::serialize_org_detect(cached, Some(content)),
-                        ),
-                    }
-                }))
-                .map(|cached_norm| cached_norm == newdoc)
-            })
-        });
-        match compared {
+        let mut newdoc = parse_doc(path, content);
+        match self.kept_row(path, &newdoc) {
             None => {
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
@@ -4094,15 +4132,12 @@ impl Graph {
                     return None;
                 }
             }
-            Some(Some(Err(_))) => panic!("page parser panicked during cached comparison"),
-            Some(Some(Ok(true))) => {
-                // Unchanged document, but not necessarily unchanged bytes:
-                // parsing normalizes some lines (a column-0 continuation line
-                // parses like an indented one), so these bytes may carry an
-                // anchor line the cached bytes did not.
-                self.raise_vcs_anchor(path, content);
-                return None; // unchanged / our own write
-            }
+            // The same outline in other bytes (line endings, a final line
+            // break, a column-0 continuation line): the row keeps its ids
+            // and takes these bytes' revision and anchor, so a later hold
+            // of the page reuses it (its claim matches) instead of
+            // reparsing positionally.
+            Some(Some(kept)) => newdoc = Document::clone(&kept),
             Some(_) => {}
         }
         newdoc.roots.shrink_to_fit();

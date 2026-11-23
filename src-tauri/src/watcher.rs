@@ -8,8 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Instant, SystemTime};
 use tauri::{Emitter, Manager, State};
-use tine_core::model::PageKind;
-use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBatch, WatchMode};
+use tine_store::{Change, GraphRev, Origin, SubscriptionEnd, WatchBatch, WatchMode};
 
 /// Above this many changed pages one publication is announced as ONE
 /// `graph-changed-bulk` event (master 1229f32fb, GH #337): a checkout or big
@@ -17,14 +16,7 @@ use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBat
 /// per page. The store escalates its reconcile at the same boundary.
 const BULK_CHANGE_THRESHOLD: usize = 32;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct GraphChange {
-    pub(crate) path: String,
-    pub(crate) name: String,
-    pub(crate) kind: PageKind,
-    pub(crate) created: bool,
-    pub(crate) removed: bool,
-}
+pub(crate) use tine_graph_features::graph_change_wire::GraphChange;
 
 pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
     watch_mode_from(settings_path(app))
@@ -130,13 +122,7 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
         }
     }
     for (id, kind, page_kind, name) in change.pages() {
-        events.push(GraphChange {
-            path: id.as_str().to_owned(),
-            name: name.to_owned(),
-            kind: page_kind,
-            created: matches!(kind, ChangeKind::Created),
-            removed: matches!(kind, ChangeKind::Removed),
-        });
+        events.push(GraphChange::of(id, kind, page_kind, name));
     }
     (events, conflicts_dirty)
 }
@@ -614,6 +600,7 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tine_core::model::PageKind;
 
     #[test]
     fn live_config_publications_carry_the_read_problem_and_its_recovery() {

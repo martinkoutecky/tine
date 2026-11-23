@@ -13,7 +13,8 @@ use tine_core::{query::registry::Registry, query::wire_parse::parse_query_pair};
 #[cfg(test)]
 use tine_graph_features::query_wire::run;
 use tine_graph_features::query_wire::{
-    parse, registry, run_wire, validate_query_source, QueryRunAnswer, QUERY_CANCELLED,
+    explain_empty, parse, registry, run_wire, tagged_pages as tagged_pages_answer,
+    validate_query_source, QueryRunAnswer, QUERY_CANCELLED,
 };
 use tine_store::{Cancel, IrAnswer, IrRequest, WholeGraph};
 
@@ -53,20 +54,6 @@ fn print_query_text(
             )
         },
     )
-}
-
-fn explain_empty(
-    graph: &WholeGraph,
-    query: &Query,
-    context: &ExecutionContext,
-    cancel: &Cancel,
-) -> Result<ExplainEmptyResult, String> {
-    match graph.query_ir(IrRequest::ExplainEmpty { query, context }, cancel) {
-        Ok(Some(IrAnswer::ExplainEmpty(explained))) => Ok(explained),
-        Ok(None) => Err(QUERY_CANCELLED.into()),
-        Ok(_) => Err("query-explain-empty: unexpected answer".into()),
-        Err(error) => Err(error.to_string()),
-    }
 }
 
 /// Run a graph read on the blocking pool. The closure gets this request's own
@@ -190,11 +177,7 @@ pub(crate) async fn tagged_pages(
     state: GraphContext<'_>,
 ) -> Result<QueryResult, String> {
     on_graph(&state, move |graph, cancel| {
-        match graph.query_ir(IrRequest::TaggedPages { name: &name }, cancel) {
-            Ok(Some(answer)) => QueryResult::try_from(answer),
-            Ok(None) => Err(QUERY_CANCELLED.into()),
-            Err(error) => Err(error.to_string()),
-        }
+        tagged_pages_answer(graph, &name, cancel)
     })
     .await
 }

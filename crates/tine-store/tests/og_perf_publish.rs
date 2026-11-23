@@ -96,8 +96,7 @@ fn create_journal(writer: &HostWriter, stem: &str, title: &str) -> PageId {
 }
 
 /// Work since the last reset: page files opened for a title, and
-/// directories listed (a name walk lists every page directory). A created
-/// page's own file is read once for its title; any other is graph-wide work.
+/// directories listed (a name walk lists every page directory).
 fn names_read(label: &str) -> (u64, u64) {
     let counts = cost_counters::snapshot();
     eprintln!(
@@ -122,8 +121,8 @@ fn creates_and_a_favourite_toggle_list_and_open_no_other_page() {
     create_page(&store, &writer, "Fresh");
     assert_eq!(
         names_read("page create"),
-        (1, 0),
-        "a page create lists and names only the page it creates"
+        (0, 0),
+        "a page create reuses its proposed name without a preamble read or a directory listing"
     );
 
     cost_counters::reset();

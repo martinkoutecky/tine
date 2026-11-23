@@ -156,22 +156,19 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
     }
 }
 
-/// Seed missing runtime keys for a graph-backed document from its normalized,
-/// graph-relative physical owner. Existing live keys survive ordinary saves.
+/// Give each block of a graph-backed document that has no runtime key one,
+/// from its normalized, graph-relative physical owner: the one answer for a
+/// fresh load and for a saved page (the desktop's own save, a memory graph's
+/// submit, Concord's merged review, GH #800). Kept keys stay. A block without
+/// one gets its positional key, unless a kept block already holds it (a
+/// block moved there); then it gets the next free key derived from it
+/// (deterministic, still a runtime locator). A page whose keys repeat would
+/// collapse two blocks into one store node, and the next save would write one
+/// block's text twice. A fresh parse keeps no key, and its keys are the
+/// positional ones ([`visit_doc_runtime_ids`]). O(blocks) expected; a fully
+/// keyed document is only scanned, and one that keeps no key allocates no
+/// per-block set.
 pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
-    let owner = file_runtime_namespace(owner_rel_path);
-    assign_runtime_ids_rec(roots, owner);
-}
-
-/// [`assign_doc_runtime_ids`] for a document that mixes blocks which keep a
-/// live key (an editor draft's blocks) with freshly parsed ones (the file on
-/// disk), as a reviewed merge does (GH #800). A fresh block's positional key
-/// can equal a kept block's key from another position; a page whose keys
-/// repeat collapses two blocks into one store node, so the next save would
-/// write one block's text twice and lose the other's. Kept keys stay; a fresh
-/// block whose positional key is taken gets the next free key derived from it
-/// (deterministic, still a runtime locator). O(blocks) expected.
-pub fn assign_doc_runtime_ids_unique(roots: &mut [DocBlock], owner_rel_path: &str) {
     fn kept(blocks: &[DocBlock], into: &mut HashSet<BlockId>) {
         for block in blocks {
             if !block.uuid.is_empty() {
@@ -194,9 +191,33 @@ pub fn assign_doc_runtime_ids_unique(roots: &mut [DocBlock], owner_rel_path: &st
             fill(&mut block.children, structural, taken);
         }
     }
-    let mut taken = HashSet::new();
-    kept(roots, &mut taken);
-    fill(roots, file_runtime_namespace(owner_rel_path), &mut taken);
+    /// Whether the tree holds an unkeyed block and a kept one; stops once both are seen.
+    fn keys(blocks: &[DocBlock], seen: &mut (bool, bool)) {
+        for block in blocks {
+            if block.uuid.is_empty() {
+                seen.0 = true;
+            } else {
+                seen.1 = true;
+            }
+            if seen.0 && seen.1 {
+                return;
+            }
+            keys(&block.children, seen);
+        }
+    }
+    let mut seen = (false, false);
+    keys(roots, &mut seen);
+    match seen {
+        // Every block is keyed (an ordinary own save): nothing to assign.
+        (false, _) => {}
+        // A fresh parse keeps no key: the positional keys, nothing allocated.
+        (true, false) => assign_runtime_ids_rec(roots, file_runtime_namespace(owner_rel_path)),
+        (true, true) => {
+            let mut taken = HashSet::new();
+            kept(roots, &mut taken);
+            fill(roots, file_runtime_namespace(owner_rel_path), &mut taken);
+        }
+    }
 }
 
 /// Visit the structural ids a fresh load will assign, borrowing the original

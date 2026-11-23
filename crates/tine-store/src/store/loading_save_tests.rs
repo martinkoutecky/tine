@@ -516,10 +516,10 @@ fn a_date_titled_pages_file_held_through_the_launch_install_reads_its_title_day(
 
 /// R-CREATE-TWIN while a held page has no owner publication yet (the
 /// launch install): the held file is in no name index, but its file still
-/// claims its name, so a new file of that name or day is a twin. Before:
-/// both creations planned and wrote a second file beside the user's.
+/// claims its name, so a new file of that name or day is a twin.
 #[test]
 fn a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin() {
+    let mut unexpected = Vec::new();
     for (rel, text, id, name, kind) in [
         (
             "pages/2026-11-02.md",
@@ -545,6 +545,25 @@ fn a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin() {
             "{:preferred-format :markdown}\n",
         )
         .unwrap();
+        let store = held_open(root.path());
+        let writer = HostWriter::start(&store);
+        let (send, mail) = std::sync::mpsc::channel::<crate::PageMail>();
+        writer.retarget(move |message| {
+            let _ = send.send(message);
+        });
+        let session = writer.session();
+        let id = PageId::from(id);
+        let key = writer.open(session, 1, &id, name).unwrap().key;
+        let wait = |matches: &dyn Fn(&crate::PageMail) -> bool| loop {
+            let message = mail.recv_timeout(Duration::from_secs(10)).unwrap();
+            if message.key == key && matches(&message) {
+                break message;
+            }
+        };
+        let opened = wait(&|mail| mail.answer.as_ref().is_some_and(|answer| answer.id == 1));
+        let opened = opened.page.unwrap();
+        assert_eq!(opened.disk, Some(crate::DiskToken::NoFile));
+
         let file = root.path().join(rel);
         fs::write(&file, text).unwrap();
         File::options()
@@ -553,8 +572,6 @@ fn a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin() {
             .unwrap()
             .set_modified(old())
             .unwrap();
-        let store = held_open(root.path());
-        let writer = HostWriter::start(&store);
         let listed = pause();
         let installing = pause();
         *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
@@ -575,17 +592,54 @@ fn a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin() {
         let refused = writer
             .save(
                 crate::EditKind::ReplacePage,
-                &PageId::from(id),
+                &id,
                 SaveBase::CreateNew,
                 &page,
             )
             .expect_err("a twin of a held page was created");
         let why = format!("{refused:?}");
         assert!(why.contains("Twin") && why.contains(rel), "{rel}: {why}");
-        assert!(!root.path().join(id).exists(), "{rel}: no second file");
+        let destination = root.path().join(id.as_str());
+        assert!(
+            !destination.exists(),
+            "{rel}: no second file after CreateNew"
+        );
+
+        writer
+            .submit(
+                session,
+                2,
+                &key,
+                &page,
+                opened.version,
+                None,
+                &[crate::EditKind::SaveBlock],
+            )
+            .unwrap();
+        let answer = wait(&|mail| mail.answer.as_ref().is_some_and(|answer| answer.id == 2));
+        let answer = answer.answer.unwrap();
+        assert!(answer.took, "{rel}: typing accepted by host");
+        writer.save_now(session, std::slice::from_ref(&key));
+        let (outcome, _) = writer.wait_published(
+            session,
+            &[(key.clone(), answer.version, None)],
+            Duration::from_secs(10),
+        );
+        let twin = if outcome == crate::PageOperation::Refused {
+            wait(&|mail| mail.notice.save_error).notice.twin
+        } else {
+            None
+        };
+        let created = destination.exists();
+        if (outcome, twin.as_deref(), created) != (crate::PageOperation::Refused, Some(rel), false)
+        {
+            unexpected.push((rel, outcome, twin, created));
+        }
         assert_eq!(fs::read_to_string(&file).unwrap(), text, "{rel}: untouched");
+        drop(writer);
         store.close();
     }
+    assert!(unexpected.is_empty(), "typing saves: {unexpected:?}");
 }
 
 #[test]

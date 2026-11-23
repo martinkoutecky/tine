@@ -155,8 +155,7 @@ impl<'a> PagePlan<'a> {
 
     pub(super) fn raw_create_slot(&self, file: &FileId) -> Result<(), Why> {
         self.absent(file)?;
-        self.twin(file, None)?;
-        self.unreadable_owner(file, &[])
+        self.twin(file, None, true)
     }
 
     /// `certified` is a rewrite or move step's prepared rewrite and the
@@ -306,8 +305,7 @@ impl<'a> PagePlan<'a> {
                     if allocated.contains(&candidate) || self.occupied(&candidate)? {
                         continue;
                     }
-                    self.twin(&candidate, None)?;
-                    self.unreadable_owner(&candidate, &[])?;
+                    self.twin(&candidate, None, true)?;
                     if self.fixed_step_names().contains(&candidate) {
                         return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
                     }
@@ -443,7 +441,7 @@ impl<'a> PagePlan<'a> {
                     Some(self.stage(file, expected)?)
                 };
                 let absent = self.available_move_destination(file, to)?;
-                self.twin_with_absence(to, Some(file), absent)?;
+                self.twin(to, Some(file), absent)?;
                 let config = self.store.config();
                 let days = config.config.journal_format();
                 let new = match (&old, renames) {
@@ -560,63 +558,31 @@ impl PagePlan<'_> {
     /// Every page save, whatever its base: Guide-ephemeral, page target and
     /// nesting depth.
     pub(crate) fn page_save_target(&self, file: &FileId, doc: &PageDto) -> Result<(), Why> {
-        if doc.guide {
-            return Err(Why::Refused(Refusal::InvalidTarget(
-                "Guide pages are ephemeral".into(),
-            )));
-        }
-        if !self.page(file) {
-            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-        }
-        if !crate::model::dto_depth_within_limit(doc) {
-            return Err(Why::Refused(Refusal::InvalidTarget(
-                "page content nesting exceeds 128 levels".into(),
-            )));
-        }
-        Ok(())
+        page_save_target(doc, || self.page(file), file)
     }
 
     /// Create-only: a `CreateNew` save, and the page host's open of a path
     /// with no file. `name` is the name the new page claims.
     pub(crate) fn page_create_checks(&self, file: &FileId, name: &str) -> Result<(), Why> {
-        if let Some(existing) = self.disk_twin(file)? {
-            return Err(Why::Refused(Refusal::Twin {
-                existing: PageId::from(existing.as_str()),
-            }));
-        }
+        self.disk_twin(file, None)?;
         self.absent(file)?;
-        self.twin(file, None)?;
-        self.unreadable_owner(file, &[name])
+        self.check_page_claim(
+            file,
+            Some(name),
+            None,
+            ClaimStage::Transaction { absent: true },
+        )
     }
 
-    /// The creating host save's logical slot, after its physical absence/twin
-    /// guard. Only creation pays: published lookup and bounded unreadable probes.
-    /// A running move's source may still claim the receiver's name.
+    /// A creating host save has already checked the physical slot. Consult
+    /// the name claim before renaming and again for the post-rename notice.
     pub(crate) fn creating_save_owner(
         &self,
         file: &FileId,
         name: Option<&str>,
         source: Option<&FileId>,
     ) -> Result<(), Why> {
-        let path = self.path(file)?;
-        let graph = &self.store.graph;
-        let filename = graph.entry_for_path_in(&path, Some(""));
-        for entry in filename.iter() {
-            if let Some(existing) = self.store.move_claimant(&entry.name, entry.kind) {
-                if existing.path != path
-                    && source.is_none_or(|source| graph.root.join(source.as_str()) != existing.path)
-                {
-                    return Err(Why::Refused(Refusal::Twin {
-                        existing: PageId::from(graph.rel_path(&existing.path)),
-                    }));
-                }
-            }
-        }
-        if source.is_none() {
-            let names: Vec<_> = name.into_iter().collect();
-            self.unreadable_owner(file, &names)?;
-        }
-        Ok(())
+        self.check_page_claim(file, name, source, ClaimStage::HostSave)
     }
 
     /// The page host's open of `file` (STEP3 §2): an eligible page target;
@@ -677,22 +643,60 @@ impl PagePlan<'_> {
         old: Option<&[u8]>,
         resolving: bool,
     ) -> Result<(Vec<u8>, Document), Why> {
-        use crate::model::unchanged_save::{guarded_save, Guard};
-        let prepare = |text: Option<&str>| self.store.graph.prepare_page_bytes(doc, path, text);
-        guarded_save(old, path, resolving, prepare).map_err(|guard| match guard {
-            Guard::Content(error) => content_refusal(error),
-            Guard::Markers(why) => Why::Refused(Refusal::ReadOnly(why)),
-            Guard::Prepare(error) => {
-                if error.kind() == io::ErrorKind::PermissionDenied
-                    || error
-                        .get_ref()
-                        .is_some_and(|inner| inner.is::<crate::model::ParserPanicked>())
-                {
-                    Why::Refused(Refusal::ReadOnly(error.to_string()))
-                } else {
-                    Why::Failed(error.into())
-                }
-            }
-        })
+        serialize_page_at(&self.store.graph, path, doc, old, resolving)
     }
+}
+
+/// Whether a page save of `doc` is admitted at `file` (`is_page`: the file
+/// is a page path): a Guide page is ephemeral, and content nested beyond 128
+/// levels is refused. The one answer for the desktop's page saves and a
+/// memory graph's ([`crate::WholeGraph::submit_page`]).
+pub(crate) fn page_save_target(
+    doc: &PageDto,
+    is_page: impl FnOnce() -> bool,
+    file: &FileId,
+) -> Result<(), Why> {
+    if doc.guide {
+        return Err(Why::Refused(Refusal::InvalidTarget(
+            "Guide pages are ephemeral".into(),
+        )));
+    }
+    if !is_page() {
+        return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+    }
+    if !crate::model::dto_depth_within_limit(doc) {
+        return Err(Why::Refused(Refusal::InvalidTarget(
+            "page content nesting exceeds 128 levels".into(),
+        )));
+    }
+    Ok(())
+}
+
+/// The bytes `doc` becomes at `path` of `graph` over `old`
+/// ([`PagePlan::serialize_page_at`]): the one page serializer, for the
+/// desktop's saves and a memory graph's.
+pub(crate) fn serialize_page_at(
+    graph: &crate::model::Graph,
+    path: &Path,
+    doc: &PageDto,
+    old: Option<&[u8]>,
+    resolving: bool,
+) -> Result<(Vec<u8>, Document), Why> {
+    use crate::model::unchanged_save::{guarded_save, Guard};
+    let prepare = |text: Option<&str>| graph.prepare_page_bytes(doc, path, text);
+    guarded_save(old, path, resolving, prepare).map_err(|guard| match guard {
+        Guard::Content(error) => content_refusal(error),
+        Guard::Markers(why) => Why::Refused(Refusal::ReadOnly(why)),
+        Guard::Prepare(error) => {
+            if error.kind() == io::ErrorKind::PermissionDenied
+                || error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<crate::model::ParserPanicked>())
+            {
+                Why::Refused(Refusal::ReadOnly(error.to_string()))
+            } else {
+                Why::Failed(error.into())
+            }
+        }
+    })
 }

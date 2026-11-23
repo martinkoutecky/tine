@@ -46,6 +46,14 @@ impl Graph {
 }
 
 pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, DiskObs) {
+    let (mut doc, rev) = parse_page_unkeyed(e, content);
+    key_page(&mut doc, e);
+    (doc, rev)
+}
+
+/// The parse of a page's `content`, its blocks still without runtime ids:
+/// the caller decides which ids they keep, then [`key_page`]s it.
+pub(super) fn parse_page_unkeyed(e: &PageEntry, content: &str) -> (Document, DiskObs) {
     let rev = DiskObs::of(content);
     let mut doc = parse_doc(&e.path, content);
     #[cfg(test)]
@@ -54,11 +62,46 @@ pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, Dis
     {
         panic!("deterministic test sentinel for a page projection panic");
     }
-    assign_doc_runtime_ids(&mut doc.roots, e.rel_path_str());
     // A 408-byte DocBlock makes unused doubling capacity costly at 10k pages.
     shrink_blocks(&mut doc.roots);
-    prime_projections(&doc);
     (doc, rev)
+}
+
+/// Give each block of `doc`, the page file `e`'s, that has no runtime id
+/// one ([`assign_doc_runtime_ids`], which leaves a fully keyed page alone),
+/// and validate its projections.
+pub(super) fn key_page(doc: &mut Document, e: &PageEntry) {
+    assign_doc_runtime_ids(&mut doc.roots, e.rel_path_str());
+    prime_projections(doc);
+}
+
+/// The one answer to whether a raw or external write of a page keeps the
+/// page's runtime ids, which the desktop's reconciliation of a disk write,
+/// an owner's adoption of bytes it did not save, and a memory graph's raw
+/// write all ask: it does when `parsed`, the written bytes' parse, holds the
+/// outline of `row`, the page's row document. That is the document equality
+/// (ids aside) a publication's page delta compares, so the write publishes
+/// no change of the page, and none of its block ids may move to another
+/// block: the row's document stays the page's (`Some`). Otherwise the
+/// written blocks take their positional ids and the page is published as
+/// changed. Bytes that differ only in line terminators, a final terminator
+/// or anything else the parse normalizes keep the ids. O(page blocks), with
+/// no parse.
+pub(super) fn kept_outline(
+    row: Option<&Arc<Document>>,
+    parsed: &Document,
+) -> Option<Arc<Document>> {
+    row.filter(|row| ***row == *parsed).cloned()
+}
+
+impl Graph {
+    /// [`kept_outline`] against the cached row of the page file at `path`
+    /// (taking the cache's read lock): `None` when no cache is built.
+    pub(crate) fn kept_row(&self, path: &Path, parsed: &Document) -> Option<Option<Arc<Document>>> {
+        self.with_cached(path, |row| {
+            kept_outline(row.map(|(_, document)| document), parsed)
+        })
+    }
 }
 
 /// Validate every projection a page's readers need: block bodies and the
@@ -111,17 +154,18 @@ pub(super) fn isolate_page_parse(
 }
 
 /// A committed DTO save publishes parsed content with the live identities of
-/// blocks that survived serialization. Header promotion has already changed
-/// the saved tree, so corresponding nodes have the same structural position.
-/// When a parser changes the tree shape, leave that subtree's parsed ids alone.
+/// blocks that survived serialization: each parsed block takes its saved
+/// counterpart's id, or none where the saved block has none. Header promotion
+/// has already changed the saved tree, so corresponding nodes have the same
+/// structural position. When a parser changes the tree shape, leave that
+/// subtree's parsed ids alone. The publication then gives every block without
+/// an id one ([`assign_doc_runtime_ids`]).
 pub(super) fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock]) {
     if parsed.len() != saved.len() {
         return;
     }
     for (parsed, saved) in parsed.iter_mut().zip(saved) {
-        if !saved.uuid.is_empty() {
-            parsed.uuid.clone_from(&saved.uuid);
-        }
+        parsed.uuid.clone_from(&saved.uuid);
         carry_saved_runtime_ids(&mut parsed.children, &saved.children);
     }
 }

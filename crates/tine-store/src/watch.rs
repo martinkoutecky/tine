@@ -793,11 +793,10 @@ impl Core {
                     None,
                 )
             }
-            Err(error) => (
-                tine_core::config::Config::default(),
-                Some(error.into()),
-                None,
-            ),
+            Err(error) => {
+                let (config, problem) = crate::model::config_of_read_error(error);
+                (config, problem, None)
+            }
         };
         self.graph
             .reload_config(config.clone())

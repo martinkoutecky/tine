@@ -159,7 +159,7 @@ impl<F: HostIo> Host<F> {
                     // a twin fails the save, as any failure before the rename.
                     // Scenario: Syncthing/Dropbox delivers `c.org` while the
                     // user creates `c.md`; two files would claim one page
-                    // (contract row `page_create_checks::Twin`).
+                    // (contract rows `disk_twin::Twin` and `check_page_claim::Twin`).
                     match self.creation_twin(&job) {
                         Ok(None) => {
                             job.phase = if job.bytes.is_none() {

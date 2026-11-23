@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use tine_core::query::ir::{ExecutionContext, Query, QueryResult, ViewSettings};
+use tine_core::query::ir::{
+    ExecutionContext, ExplainEmptyResult, Query, QueryResult, ViewSettings,
+};
 use tine_core::query::registry::Registry;
 use tine_core::query::wire_parse::{parse_query_pair, ParsedQuery, QueryTextDialect};
 use tine_store::{Cancel, IrAnswer, IrRequest, WholeGraph};
@@ -100,5 +102,37 @@ fn run_answer(result: QueryResult) -> QueryRunAnswer {
     QueryRunAnswer {
         as_of_day: result.as_of_day,
         result,
+    }
+}
+
+/// GH #715: the "Pages tagged with" rows of a page or alias name
+/// (`IrRequest::TaggedPages`), under `query_run`'s bounds. The desktop's
+/// `tagged_pages` command and the browser core's answer.
+pub fn tagged_pages(
+    graph: &WholeGraph,
+    name: &str,
+    cancel: &Cancel,
+) -> Result<QueryResult, String> {
+    match graph.query_ir(IrRequest::TaggedPages { name }, cancel) {
+        Ok(Some(answer)) => QueryResult::try_from(answer),
+        Ok(None) => Err(QUERY_CANCELLED.into()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// SPEC §7.1 `query_explain_empty` (N19): one row per root conjunct with its
+/// count alone and without it. The desktop's command and the browser core's
+/// answer. Cost O(conjuncts × (P + B)); not memoized.
+pub fn explain_empty(
+    graph: &WholeGraph,
+    query: &Query,
+    context: &ExecutionContext,
+    cancel: &Cancel,
+) -> Result<ExplainEmptyResult, String> {
+    match graph.query_ir(IrRequest::ExplainEmpty { query, context }, cancel) {
+        Ok(Some(IrAnswer::ExplainEmpty(explained))) => Ok(explained),
+        Ok(None) => Err(QUERY_CANCELLED.into()),
+        Ok(_) => Err("query-explain-empty: unexpected answer".into()),
+        Err(error) => Err(error.to_string()),
     }
 }

@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[path = "runtime_id_own_save_tests.rs"]
+mod runtime_id_own_save_tests;
 #[path = "s36_creation_tests.rs"]
 mod s36_creation_tests;
 
@@ -573,6 +575,231 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     live.until_recoverable(&needs);
     assert!(live.host.pages_recoverable(&needs));
     live.host.stop();
+}
+
+/// Browser core 5a round 3 (review finding 1): the desktop editor's save
+/// publishes its own document through the one runtime-id owner, so an
+/// unkeyed block never takes the id a kept block holds (prepend a root,
+/// insert a child, append after reparenting; Markdown and Org, LF and CRLF;
+/// the authored-id block among the kept ones).
+#[test]
+fn an_editor_save_holds_each_runtime_id_once() {
+    use crate::store::memory_owner_tests::{assert_distinct, edits, pages};
+    for (rel, crlf, text) in pages() {
+        for (edit, apply) in edits() {
+            let case = format!("{rel} crlf={crlf} {edit}");
+            let live = Live::new(&[(rel, &text)]);
+            let (key, page) = live.open(rel);
+            let MailText::Page { dto } = &page.text else {
+                panic!("{case}: an open answer carries the page");
+            };
+            let mut edited = dto.clone();
+            apply(&mut edited);
+            let (id, session) = (live.id(), live.host.session());
+            let kinds = [EditKind::SaveBlock];
+            (live
+                .host
+                .submit(session, id, &key, &edited, page.version, None, &kinds))
+            .unwrap();
+            assert!(live.answer(&key, id).answer.unwrap().took, "{case}");
+            // The index's row once it holds the save (what queries and
+            // references read; a read of a held page parses its bytes afresh).
+            let path = live.root.join(rel);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let roots: Vec<tine_core::model::BlockDto> = loop {
+                let roots = live.store.graph.with_pages(|pages| {
+                    let (_, doc) = pages.iter().find(|(entry, _)| entry.path == path).unwrap();
+                    doc.roots
+                        .iter()
+                        .map(tine_core::projection::block_to_dto)
+                        .collect()
+                });
+                if format!("{roots:?}").contains("omega") {
+                    break roots;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{case}: the save was never indexed"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let after = PageDto {
+                blocks: roots,
+                ..PageDto::clone(dto)
+            };
+            assert_distinct(&case, dto, &after);
+            live.host.stop();
+        }
+    }
+}
+
+/// The index row of held `rel` once its bytes are `text` (what queries and
+/// references read), as block DTOs.
+fn indexed_row(live: &Live, rel: &str, text: &str, case: &str) -> Vec<tine_core::model::BlockDto> {
+    let path = live.root.join(rel);
+    let rev = Some(crate::model::content_rev(text));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let row: Vec<tine_core::model::BlockDto> = live.store.graph.with_pages(|pages| {
+            let row = pages.iter().find(|(entry, _)| entry.path == path);
+            (row.into_iter())
+                .flat_map(|(_, doc)| doc.roots.iter().map(tine_core::projection::block_to_dto))
+                .collect()
+        });
+        let saved = format!("{row:?}").contains("omega");
+        if saved && live.store.graph.cached_rev(&path) == rev {
+            return row;
+        }
+        assert!(Instant::now() < deadline, "{case}: never indexed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Round 4 (review 909240cc finding 1), the desktop's owner adoption: after
+/// an editor's structural save, bytes it did not save that hold the same
+/// outline (any line terminator, a final terminator added or removed) keep
+/// the index row's runtime ids, as the desktop's reconciliation of an
+/// unheld page and a memory graph's raw write do (`Graph::kept_outline`).
+#[test]
+fn an_owner_adoption_of_the_same_outline_keeps_runtime_ids() {
+    use crate::store::memory_owner_tests::{assert_distinct, edits, equivalents, pages};
+    for (rel, _, text) in pages().into_iter().filter(|(_, crlf, _)| !crlf) {
+        for (edit, apply) in edits() {
+            let case = format!("{rel} {edit}");
+            let live = Live::new(&[(rel, &text)]);
+            let (key, page) = live.open(rel);
+            let MailText::Page { dto } = &page.text else {
+                panic!("{case}: an open answer carries the page");
+            };
+            let mut edited = dto.clone();
+            apply(&mut edited);
+            let (id, session) = (live.id(), live.host.session());
+            let kinds = [EditKind::SaveBlock];
+            (live
+                .host
+                .submit(session, id, &key, &edited, page.version, None, &kinds))
+            .unwrap();
+            assert!(live.answer(&key, id).answer.unwrap().took, "{case}");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let saved = loop {
+                let text = fs::read_to_string(live.root.join(rel)).unwrap();
+                if text.contains("omega") {
+                    break text;
+                }
+                assert!(Instant::now() < deadline, "{case}: never saved");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let kept = indexed_row(&live, rel, &saved, &case);
+            let held = PageDto {
+                blocks: kept.clone(),
+                ..PageDto::clone(dto)
+            };
+            assert_distinct(&case, dto, &held);
+            // Bytes the file already holds are no observation.
+            let mut last = saved.clone();
+            for (variant, bytes) in equivalents(&saved) {
+                if bytes == last {
+                    continue;
+                }
+                last.clone_from(&bytes);
+                let case = format!("{case}, then {variant}");
+                live.external(rel, &bytes);
+                let now = indexed_row(&live, rel, &bytes, &case);
+                let pairs = |blocks: &[tine_core::model::BlockDto]| {
+                    let mut out = Vec::new();
+                    fn walk(
+                        blocks: &[tine_core::model::BlockDto],
+                        out: &mut Vec<(String, String)>,
+                    ) {
+                        for block in blocks {
+                            out.push((block.raw.clone(), block.id.clone()));
+                            walk(&block.children, out);
+                        }
+                    }
+                    walk(blocks, &mut out);
+                    out
+                };
+                assert_eq!(
+                    pairs(&now),
+                    pairs(&kept),
+                    "{case}: every block keeps its id"
+                );
+            }
+            live.host.stop();
+        }
+    }
+}
+
+/// The same adoption through a closed page (path R): the page is closed
+/// after the structural save, rewritten with the same outline while closed,
+/// and opened again. The reopening hold retires the disk row into a claim and
+/// publishes the bytes it did not save; the claim's document is the page's
+/// current row, so [`kept_outline`](crate::model::page_parse) keeps its ids.
+#[test]
+fn a_reopened_page_rewritten_with_the_same_outline_keeps_runtime_ids() {
+    use crate::store::memory_owner_tests::{edits, equivalents, pages};
+    let pairs = |blocks: &[tine_core::model::BlockDto]| {
+        fn walk(blocks: &[tine_core::model::BlockDto], out: &mut Vec<(String, String)>) {
+            for block in blocks {
+                out.push((block.raw.clone(), block.id.clone()));
+                walk(&block.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(blocks, &mut out);
+        out
+    };
+    for (rel, _, text) in pages().into_iter().filter(|(_, crlf, _)| !crlf) {
+        for (edit, apply) in edits() {
+            let case = format!("{rel} {edit}");
+            let live = Live::new(&[(rel, &text)]);
+            let (key, page) = live.open(rel);
+            let MailText::Page { dto } = &page.text else {
+                panic!("{case}: an open answer carries the page");
+            };
+            let mut edited = dto.clone();
+            apply(&mut edited);
+            let (id, session) = (live.id(), live.host.session());
+            let kinds = [EditKind::SaveBlock];
+            (live
+                .host
+                .submit(session, id, &key, &edited, page.version, None, &kinds))
+            .unwrap();
+            assert!(live.answer(&key, id).answer.unwrap().took, "{case}");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let saved = loop {
+                let text = fs::read_to_string(live.root.join(rel)).unwrap();
+                if text.contains("omega") {
+                    break text;
+                }
+                assert!(Instant::now() < deadline, "{case}: never saved");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let kept = pairs(&indexed_row(&live, rel, &saved, &case));
+            let Some((variant, bytes)) = equivalents(&saved).into_iter().find(|(_, b)| *b != saved)
+            else {
+                continue;
+            };
+            let case = format!("{case}, closed, then {variant}, reopened");
+            live.close(&key);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while live.held(rel) {
+                assert!(Instant::now() < deadline, "{case}: never released");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            live.rewrite_externally(rel, &bytes);
+            live.until_indexed(rel, &bytes);
+            let _ = live.open(rel);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !live.held(rel) {
+                assert!(Instant::now() < deadline, "{case}: never held");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let now = pairs(&indexed_row(&live, rel, &bytes, &case));
+            assert_eq!(now, kept, "{case}: every block keeps its id");
+            live.host.stop();
+        }
+    }
 }
 
 /// Q-P2b-3 (GH #538): the save-failure notice names the failed platform

@@ -31,6 +31,8 @@ pub use model_check::{CheckPlan, Guarantee, RenameCheck};
 mod move_file;
 mod plan;
 mod preflight;
+pub(crate) use preflight::{page_save_target, serialize_page_at};
+pub(crate) use read_checks::config_write_failure;
 mod prepared;
 #[cfg(test)]
 mod prepared_move_tests;
@@ -625,6 +627,11 @@ pub(crate) fn alternate_extension_twin(path: &Path) -> io::Result<Option<PathBuf
     }
 }
 
+enum ClaimStage {
+    Transaction { absent: bool },
+    HostSave,
+}
+
 impl Store {
     /// Begin a read-only page plan using the transaction preflight. This Store
     /// does not lock other Store instances or external processes. Two stores
@@ -979,62 +986,53 @@ impl<'a> PagePlan<'a> {
         self.store.as_page(file).is_some()
     }
 
-    /// `moving_from`: a move's source. It claims the same name or day as the
-    /// destination only because it is the file being moved, so it is no twin.
-    fn twin(&self, file: &FileId, moving_from: Option<&FileId>) -> Result<(), Why> {
-        self.twin_with_absence(file, moving_from, false)
+    fn twin(&self, file: &FileId, source: Option<&FileId>, absent: bool) -> Result<(), Why> {
+        self.disk_twin(file, source)?;
+        self.check_page_claim(file, None, source, ClaimStage::Transaction { absent })
     }
 
-    /// Only a destination proved absent by this check can use its filename
-    /// identity without opening a nonexistent title preamble. The final
-    /// publication absence guard still runs independently.
-    fn twin_with_absence(
+    /// The one name/day claim guard. An absent destination claims its filename; a move
+    /// exempts its source; a create also checks unreadable owners. Only a non-move
+    /// transaction create uses live discovery when its name memo is cold. At most one
+    /// preamble read per unindexed held key.
+    fn check_page_claim(
         &self,
         file: &FileId,
-        moving_from: Option<&FileId>,
-        absent: bool,
+        name: Option<&str>,
+        source: Option<&FileId>,
+        stage: ClaimStage,
     ) -> Result<(), Why> {
-        let Some(id) = self.store.as_page(file) else {
+        if matches!(stage, ClaimStage::Transaction { .. }) && !self.page(file) {
             return Ok(());
-        };
+        }
         let path = self.path(file)?;
-        if let Some(existing) = self.disk_twin(file)? {
-            if moving_from != Some(&existing) {
-                return Err(Why::Refused(Refusal::Twin {
-                    existing: PageId::from(existing.as_str()),
-                }));
-            }
-        }
-        let Some(entry) = self
-            .store
-            .graph
-            .entry_for_path_in(&path, absent.then_some(""))
-        else {
+        let graph = &self.store.graph;
+        let text = match stage {
+            ClaimStage::Transaction { absent: false } => None,
+            _ => Some(""),
+        };
+        let Some(entry) = graph.entry_for_path_in(&path, text) else {
             return Ok(());
         };
-        let claimant = if moving_from.is_some() {
-            self.store.move_claimant(&entry.name, entry.kind)
-        } else {
-            self.store.graph.find_entry(&entry.name, entry.kind)
-        };
-        if let Some(existing) = claimant {
-            let is_source = match moving_from {
-                Some(source) => existing.path == self.path(source)?,
-                None => false,
-            };
-            if existing.path != path && !is_source {
-                return Err(Why::Refused(Refusal::Twin {
-                    existing: PageId::from(self.store.graph.rel_path(&existing.path)),
-                }));
+        let source = source.map(|source| graph.root.join(source.as_str()));
+        let claimant = match stage {
+            ClaimStage::Transaction { .. } if source.is_none() => {
+                graph.find_entry(&entry.name, entry.kind)
             }
-        }
-        let source = moving_from.map(|source| self.path(source)).transpose()?;
-        if let Some(held) = (self.store.graph).unindexed_held_claimant(&entry, source.as_deref()) {
+            _ => self.store.move_claimant(&entry.name, entry.kind),
+        };
+        let twin = claimant
+            .map(|existing| existing.path)
+            .filter(|existing| *existing != path && source.as_ref() != Some(existing))
+            .or_else(|| graph.unindexed_held_claimant(&entry, source.as_deref()));
+        if let Some(twin) = twin {
             return Err(Why::Refused(Refusal::Twin {
-                existing: PageId::from(self.store.graph.rel_path(&held)),
+                existing: PageId::from(graph.rel_path(&twin)),
             }));
         }
-        let _ = id;
+        if source.is_none() && entry.kind == tine_core::model::PageKind::Page {
+            self.unreadable_owner(file, &entry.name, name)?;
+        }
         Ok(())
     }
 
@@ -1045,26 +1043,21 @@ impl<'a> PagePlan<'a> {
     /// a name it could carry gives that name two files once the bad file is
     /// repaired. Only the names that file could be are refused
     /// (`Graph::unreadable_page_could_own`), and the refusal names the file;
-    /// every other creation proceeds. `names` are the names the new file
-    /// would claim: its file-name name and, for a page save, the DTO's name.
+    /// every other creation proceeds. Check the filename and, for a page
+    /// save, the proposed name.
     /// Cost: O(unreadable rows) metadata checks, each at most one bounded read.
-    fn unreadable_owner(&self, file: &FileId, names: &[&str]) -> Result<(), Why> {
-        if !self.page(file) {
-            return Ok(());
-        }
-        let path = self.path(file)?;
-        let Some(entry) = self.store.graph.entry_for_path(&path) else {
-            return Ok(());
-        };
-        if entry.kind != tine_core::model::PageKind::Page {
-            return Ok(());
-        }
+    fn unreadable_owner(
+        &self,
+        file: &FileId,
+        filename: &str,
+        name: Option<&str>,
+    ) -> Result<(), Why> {
         let unreadable = self.store.graph.unreadable_pages();
         if unreadable.is_empty() {
             return Ok(());
         }
-        let mut keys: Vec<String> = std::iter::once(entry.name.as_str())
-            .chain(names.iter().copied())
+        let mut keys: Vec<String> = std::iter::once(filename)
+            .chain(name)
             .map(tine_core::refs::page_key)
             .filter(|key| !key.is_empty())
             .collect();
@@ -1085,18 +1078,27 @@ impl<'a> PagePlan<'a> {
         Ok(())
     }
 
-    fn disk_twin(&self, file: &FileId) -> Result<Option<FileId>, Why> {
+    fn disk_twin(&self, file: &FileId, source: Option<&FileId>) -> Result<(), Why> {
         if !self.page(file) {
-            return Ok(None);
+            return Ok(());
         }
         let path = self.path(file)?;
-        match alternate_extension_twin(&path) {
-            Ok(alt) => Ok(alt.map(|alt| FileId::from(self.store.graph.rel_path(&alt)))),
-            Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
-                Err(content_refusal(error))
+        let alt = alternate_extension_twin(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::InvalidData {
+                content_refusal(error)
+            } else {
+                Why::Failed(error.into())
             }
-            Err(error) => Err(Why::Failed(error.into())),
+        })?;
+        if let Some(alt) = alt {
+            let existing = self.store.graph.rel_path(&alt);
+            if source.is_none_or(|source| source.as_str() != existing) {
+                return Err(Why::Refused(Refusal::Twin {
+                    existing: PageId::from(existing),
+                }));
+            }
         }
+        Ok(())
     }
 
     fn stage(&self, file: &FileId, expected: &FileRev) -> Result<Vec<u8>, Why> {
@@ -1419,7 +1421,7 @@ impl<'a> PagePlan<'a> {
                         return Err(Why::Refused(Refusal::RepeatedFile(file)));
                     }
                     if unique {
-                        self.twin(&file, None)?;
+                        self.twin(&file, None, false)?;
                     }
                     let path = self.path(&file)?;
                     if let Some(parent) = path.parent() {

@@ -130,6 +130,7 @@ thread_local! {
     static WATCHER_READ_CYCLE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     static UNREADABLE_PATH_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static THREAD_PARSE_INPUT_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -699,6 +700,13 @@ pub(crate) fn rename_title_probes(entries: usize) {
 }
 pub(crate) fn parse_input_check() {
     PARSE_INPUT_CHECKS.fetch_add(1, Ordering::Relaxed);
+    THREAD_PARSE_INPUT_CHECKS.with(|checks| checks.set(checks.get() + 1));
+}
+
+/// Calling thread's page-byte input checks (`parse_input_checks`, free of
+/// other threads' work).
+pub fn thread_parse_input_checks() -> usize {
+    THREAD_PARSE_INPUT_CHECKS.with(std::cell::Cell::get)
 }
 
 pub(crate) fn asset_ref_document() {
