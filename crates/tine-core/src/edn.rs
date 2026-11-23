@@ -448,46 +448,51 @@ pub(crate) fn exclusion_occurrences(
         }) {
             return Some(at..run_end);
         }
-        if i >= s.len() {
-            return None;
-        }
-        #[cfg(test)]
-        EXCLUSION_SCAN_STEPS.with(|count| count.set(count.get() + 1));
-        match s[i] {
-            b'"' if lexical => {
-                let mut j = i + 1;
-                while j < s.len() && s[j] != b'"' {
-                    j += if s[j] == b'\\' { 2 } else { 1 };
+        // Plain text up to the next colon run, in a loop of its own so ordinary bytes
+        // cost what they cost before the scan was lazy.
+        loop {
+            if i >= s.len() {
+                return None;
+            }
+            #[cfg(test)]
+            EXCLUSION_SCAN_STEPS.with(|count| count.set(count.get() + 1));
+            match s[i] {
+                b'"' if lexical => {
+                    let mut j = i + 1;
+                    while j < s.len() && s[j] != b'"' {
+                        j += if s[j] == b'\\' { 2 } else { 1 };
+                    }
+                    lexical = j < s.len();
+                    i = if lexical { j + 1 } else { i + 1 };
                 }
-                lexical = j < s.len();
-                i = if lexical { j + 1 } else { i + 1 };
-            }
-            b';' if lexical => i = line_end(i),
-            // `#!` inside a symbol such as `x#!` is not a comment. Treating any other
-            // spelling as plain text only finds more occurrences.
-            b'#' if lexical
-                && s.get(i + 1) == Some(&b'!')
-                && (i == 0
-                    || s[i - 1].is_ascii_whitespace()
-                    || b",()[]{}\"^".contains(&s[i - 1])) =>
-            {
-                i = line_end(i)
-            }
-            b'\\' if lexical => {
-                i += 1;
-                if let Some(c) = input[i..].chars().next() {
-                    i += c.len_utf8();
-                    if !(macro_terminator(c, false) || invalid_constituent(c)) {
-                        i = token_end(input, i);
+                b';' if lexical => i = line_end(i),
+                // `#!` inside a symbol such as `x#!` is not a comment. Treating any other
+                // spelling as plain text only finds more occurrences.
+                b'#' if lexical
+                    && s.get(i + 1) == Some(&b'!')
+                    && (i == 0
+                        || s[i - 1].is_ascii_whitespace()
+                        || b",()[]{}\"^".contains(&s[i - 1])) =>
+                {
+                    i = line_end(i)
+                }
+                b'\\' if lexical => {
+                    i += 1;
+                    if let Some(c) = input[i..].chars().next() {
+                        i += c.len_utf8();
+                        if !(macro_terminator(c, false) || invalid_constituent(c)) {
+                            i = token_end(input, i);
+                        }
                     }
                 }
+                b':' => {
+                    run_end = token_end(input, i + 1);
+                    run = i..run_end;
+                    i = run_end;
+                    break;
+                }
+                _ => i += 1,
             }
-            b':' => {
-                run_end = token_end(input, i + 1);
-                run = i..run_end;
-                i = run_end;
-            }
-            _ => i += 1,
         }
     })
 }
