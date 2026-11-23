@@ -29,5 +29,6 @@ it("the Guide teaches selection-seeded Find and the page-embed host fold", () =>
   expect(embed).toContain("Folds inside a page or block embed belong to the source block");
   expect(embed).toContain("indent guide's **Collapse/Expand all children** save `collapsed::` on the source");
   expect(embed).toContain("Enter after a folded branch creates a visible sibling");
+  expect(embed).toContain("When an embedded block shows its children, pressing Enter at the end of its text adds a first child there");
   expect(embed).toContain("If the source is read-only, its folds stay local to the session");
 });

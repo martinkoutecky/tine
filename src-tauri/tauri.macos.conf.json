@@ -13,8 +13,6 @@
         "title": "Tine",
         "width": 1200,
         "height": 820,
-        "minWidth": 640,
-        "minHeight": 480,
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true

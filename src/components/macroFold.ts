@@ -3,9 +3,8 @@ import { blockPageReadOnly, node as docNode, reportQueryFoldOption, setCollapsed
 import { CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { readOnlyFold } from "./block/readOnlyFold";
 
-/** Whether a macro host's own bullet is folded in this surface (the surface's
- *  fold state, else the stored `collapsed::`). Its body (a page embed's page,
- *  a query's results) folds with it. */
+/** This row's fold in the current surface, with its stored fold as the fallback.
+ *  Macro bodies fold with their host row. */
 export function hostFolded(surface: CollapseSurfaceApi | null, id: string): boolean {
   const stored = storedFold(id);
   return (blockPageReadOnly(id) ? readOnlyFold : surface)?.collapsed(id, stored) ?? stored;
