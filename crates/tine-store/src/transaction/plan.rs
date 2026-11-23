@@ -180,7 +180,7 @@ impl PagePlan<'_> {
     ) -> Result<bool, Why> {
         if let Some(source) = source {
             let absent = self.available_move_destination(source, file)?;
-            self.twin_with_absence(file, Some(source), absent)?;
+            self.twin(file, Some(source), absent)?;
             Ok(absent)
         } else if let Some(name) = name {
             self.page_create_checks(file, name).map(|()| false)

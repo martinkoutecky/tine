@@ -155,8 +155,7 @@ impl<'a> PagePlan<'a> {
 
     pub(super) fn raw_create_slot(&self, file: &FileId) -> Result<(), Why> {
         self.absent(file)?;
-        self.twin(file, None)?;
-        self.unreadable_owner(file, &[])
+        self.twin(file, None, true)
     }
 
     /// `certified` is a rewrite or move step's prepared rewrite and the
@@ -306,8 +305,7 @@ impl<'a> PagePlan<'a> {
                     if allocated.contains(&candidate) || self.occupied(&candidate)? {
                         continue;
                     }
-                    self.twin(&candidate, None)?;
-                    self.unreadable_owner(&candidate, &[])?;
+                    self.twin(&candidate, None, true)?;
                     if self.fixed_step_names().contains(&candidate) {
                         return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
                     }
@@ -443,7 +441,7 @@ impl<'a> PagePlan<'a> {
                     Some(self.stage(file, expected)?)
                 };
                 let absent = self.available_move_destination(file, to)?;
-                self.twin_with_absence(to, Some(file), absent)?;
+                self.twin(to, Some(file), absent)?;
                 let config = self.store.config();
                 let days = config.config.journal_format();
                 let new = match (&old, renames) {
@@ -579,44 +577,25 @@ impl PagePlan<'_> {
     /// Create-only: a `CreateNew` save, and the page host's open of a path
     /// with no file. `name` is the name the new page claims.
     pub(crate) fn page_create_checks(&self, file: &FileId, name: &str) -> Result<(), Why> {
-        if let Some(existing) = self.disk_twin(file)? {
-            return Err(Why::Refused(Refusal::Twin {
-                existing: PageId::from(existing.as_str()),
-            }));
-        }
+        self.disk_twin(file, None)?;
         self.absent(file)?;
-        self.twin(file, None)?;
-        self.unreadable_owner(file, &[name])
+        self.check_page_claim(
+            file,
+            Some(name),
+            None,
+            ClaimStage::Transaction { absent: true },
+        )
     }
 
-    /// The creating host save's logical slot, after its physical absence/twin
-    /// guard. Only creation pays: published lookup and bounded unreadable probes.
-    /// A running move's source may still claim the receiver's name.
+    /// A creating host save has already checked the physical slot. Consult
+    /// the name claim before renaming and again for the post-rename notice.
     pub(crate) fn creating_save_owner(
         &self,
         file: &FileId,
         name: Option<&str>,
         source: Option<&FileId>,
     ) -> Result<(), Why> {
-        let path = self.path(file)?;
-        let graph = &self.store.graph;
-        let filename = graph.entry_for_path_in(&path, Some(""));
-        for entry in filename.iter() {
-            if let Some(existing) = self.store.move_claimant(&entry.name, entry.kind) {
-                if existing.path != path
-                    && source.is_none_or(|source| graph.root.join(source.as_str()) != existing.path)
-                {
-                    return Err(Why::Refused(Refusal::Twin {
-                        existing: PageId::from(graph.rel_path(&existing.path)),
-                    }));
-                }
-            }
-        }
-        if source.is_none() {
-            let names: Vec<_> = name.into_iter().collect();
-            self.unreadable_owner(file, &names)?;
-        }
-        Ok(())
+        self.check_page_claim(file, name, source, ClaimStage::HostSave)
     }
 
     /// The page host's open of `file` (STEP3 §2): an eligible page target;
