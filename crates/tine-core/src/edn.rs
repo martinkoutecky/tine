@@ -761,7 +761,7 @@ impl<'a> Reader<'a> {
                 self.i += ch.len_utf8();
                 if !(macro_terminator(ch, false) || invalid_constituent(ch)) {
                     // Upstream's token scanner throws at a non-constituent.
-                    if self.token(false) {
+                    if self.token(false, true) {
                         return None;
                     }
                 }
@@ -786,7 +786,7 @@ impl<'a> Reader<'a> {
             b'#' if self.s[start..].starts_with(b"#:") => {
                 self.i += 2;
                 let namespace_start = self.i;
-                let invalid = self.token(false);
+                let invalid = self.token(false, true);
                 let namespace = &self.src[namespace_start..self.i];
                 if invalid
                     || !valid_name(namespace)
@@ -895,7 +895,7 @@ impl<'a> Reader<'a> {
                     return None;
                 }
                 let numeric = !keyword && starts_numeric(&self.src[start..]);
-                let invalid = self.token(numeric);
+                let invalid = self.token(numeric, !numeric && self.mode != Mode::Macro);
                 if self.i == start {
                     return None;
                 }
@@ -955,14 +955,20 @@ impl<'a> Reader<'a> {
     }
 
     /// Advances over one token and says whether it held a non-constituent, so no caller
-    /// walks the token a second time.
-    fn token(&mut self, numeric: bool) -> bool {
+    /// walks the token a second time. Where the caller refuses such a token (upstream's
+    /// token scanner throws there), it stops at the first one: `refusing` is that answer.
+    fn token(&mut self, numeric: bool, refusing: bool) -> bool {
         let mut invalid = false;
         while let Some(c) = self.src[self.i..].chars().next() {
             if macro_terminator(c, numeric) {
                 break;
             }
-            invalid |= invalid_constituent(c);
+            if invalid_constituent(c) {
+                if refusing {
+                    return true;
+                }
+                invalid = true;
+            }
             self.i += c.len_utf8();
         }
         invalid
