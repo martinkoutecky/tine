@@ -294,3 +294,53 @@ fn decoded_values_keep_their_meaning_on_write_back() {
     assert_eq!(to_string(&reopened), written);
     assert!(reopened.get("nan").unwrap().as_f64().unwrap().is_nan());
 }
+
+#[test]
+fn the_occurrence_scan_runs_once_after_damage_and_reports_keyword_spans() {
+    let scans = || EXCLUSION_SCANS.with(|count| count.get());
+    let before = scans();
+    for clean in [
+        r#"{:hidden ["S"] :a 1}"#,
+        "; {:hidden []}",
+        "#_ {:hidden []}",
+        "",
+    ] {
+        assert!(config_entries(clean).is_ok(), "{clean}");
+    }
+    assert_eq!(scans(), before, "a read that succeeds never scans");
+    assert!(config_entries(r#"{:hidden ["S"] :bad #unknown []}"#).is_ok());
+    assert!(config_entries(r#"{:bad #unknown [] :x :hidden}"#).is_err());
+    assert_eq!(scans(), before + 2, "one scan per damaged read");
+
+    let text = "{:hidden 1 \"x :hidden\" ; :hidden\n :_/hidden x#:hidden ::hidden \\c:hidden \
+                \\;:hidden :a/hidden :hidden? :hidden-x x#! :hidden 1#! :hidden\n}";
+    let spans: Vec<&str> = exclusion_occurrences(text)
+        .into_iter()
+        .map(|span| &text[span])
+        .collect();
+    // `x#!` is a symbol, not a comment; `1#!` is counted too (plain text only adds).
+    assert_eq!(
+        spans,
+        [
+            ":hidden",
+            ":_/hidden",
+            ":hidden",
+            ":hidden",
+            ":hidden",
+            ":a/hidden",
+            ":hidden",
+            ":hidden"
+        ]
+    );
+    assert_eq!(
+        text.find(":hidden 1"),
+        exclusion_occurrences(text).first().map(|s| s.start)
+    );
+    // A CR alone does not end a comment; an unterminated string leaves plain text.
+    assert!(exclusion_occurrences("; x\r:hidden").is_empty());
+    assert_eq!(exclusion_occurrences("; x\n:hidden").len(), 1);
+    assert_eq!(exclusion_occurrences("\"x :hidden").len(), 1);
+    // Every colon of a long run is checked in one pass over the run.
+    let run = format!("{}hidden", ":".repeat(200_000));
+    assert_eq!(exclusion_occurrences(&run), [199_999..run.len()]);
+}

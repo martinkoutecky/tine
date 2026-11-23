@@ -1261,7 +1261,9 @@ mod tests {
                 "##{}",
                 "###{}",
             ];
-            for broken in [r#"#unknown []"#, r#""bad\q""#, r#"\malformed"#]
+            // An invalid string escape has no extent (EDN model R4b): its witness is in
+            // `recovery_tests`, which stops at it.
+            for broken in [r#"#unknown []"#, r#"\malformed"#]
                 .into_iter()
                 .chain(symbolic)
             {
@@ -1288,10 +1290,20 @@ mod tests {
                     }
                 }
             }
-            for end in [r#"["pages/Secret.md""#, r#"["pages/Secret.md"]"#] {
+            // A torn exclusion fails closed. A root torn after an admitted exclusion
+            // keeps it (R4b occurrence rule: its only `hidden` keyword is admitted).
+            for (end, closed) in [
+                (r#"["pages/Secret.md""#, true),
+                (r#"["pages/Secret.md"]"#, false),
+            ] {
                 let source = format!("{prefix}{{:{key_ns}hidden {end}");
-                if !Config::parse(&source).hidden_parse_failed_closed {
-                    failures.push(format!("{source:?} => torn config did not fail closed"));
+                let cfg = Config::parse(&source);
+                if cfg.hidden_parse_failed_closed != closed
+                    || (!closed && cfg.hidden != ["pages/Secret.md"])
+                {
+                    failures.push(format!(
+                        "{source:?} => torn config: closed={closed} expected"
+                    ));
                 }
             }
         }
@@ -1314,22 +1326,25 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_config_counts_only_effective_keys_lexed_before_failure() {
+    fn damaged_config_closes_unless_every_exclusion_keyword_is_an_admitted_root_key() {
+        // EDN model R4b replaces R4a's "keys lexed before the failure": after any
+        // refusal, a `hidden` keyword that is a value, nested, discarded or never
+        // reached closes the graph. Text in a string or comment never counts.
         let mut failures = Vec::new();
         for (read, suffix, closed, pages_dir) in [
-            ("", r#"^ {:hidden []} {:bad ["torn""#, false, "pages"),
-            ("", r#"#:demo{:hidden ["torn""#, false, "pages"),
-            ("", r#"{:_/hidden ["torn""#, false, "pages"),
+            ("", r#"^ {:hidden []} {:bad ["torn""#, true, "pages"),
+            ("", r#"#:demo{:hidden ["torn""#, true, "pages"),
+            ("", r#"{:_/hidden ["torn""#, true, "pages"),
             ("", r#"{:hidden-other ["torn""#, false, "pages"),
-            ("", r#"{:nested {:hidden ["torn""#, false, "pages"),
-            ("", r#"{:other :hidden :bad ["torn""#, false, "pages"),
+            ("", r#"{:nested {:hidden ["torn""#, true, "pages"),
+            ("", r#"{:other :hidden :bad ["torn""#, true, "pages"),
             ("", r#"{:note ":hidden" :bad ["torn""#, false, "pages"),
-            ("", r#"#_ {:hidden ["torn""#, false, "pages"),
+            ("", r#"#_ {:hidden ["torn""#, true, "pages"),
             (
                 r#"{:pages-directory "notes"}"#,
                 r#" ] {:hidden []}"#,
-                false,
-                "notes",
+                true,
+                "pages",
             ),
             (
                 r#"{:pages-directory "notes"}"#,
@@ -1340,14 +1355,14 @@ mod tests {
             (
                 r#"{:pages-directory "notes"}"#,
                 r#" #_ {:hidden ["torn""#,
-                false,
-                "notes",
+                true,
+                "pages",
             ),
             (
                 r#"{:pages-directory "notes"}"#,
                 r#" #_ {:hidden []} #unknown []"#,
-                false,
-                "notes",
+                true,
+                "pages",
             ),
             (
                 r#"{:pages-directory "notes"}"#,
@@ -2172,3 +2187,7 @@ mod quick_capture_options_tests {
         assert!(config.quick_capture_redirect_page);
     }
 }
+
+#[cfg(test)]
+#[path = "config_recovery_tests.rs"]
+mod recovery_tests;

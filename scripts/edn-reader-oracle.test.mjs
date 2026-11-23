@@ -71,6 +71,32 @@ const witnesses = [
     ])),
 ];
 
+// EDN model R4b. Forms upstream reads to their end: the stream observation checks where
+// each one ends, so local config recovery resumes where upstream would.
+const extentControls = [
+  "#_ #^:m [] :after", "#_ #_ 1 2 :after", '#uuid #_ 1 "x" :after', '# inst "2020-01-01" :after',
+  '#; comment\ninst "2020-01-01" :after', '# ^:m inst "2020-01-01" :after',
+  '# #_ 0 inst "2020-01-01" :after', "#_ #:demo ,{:_/hidden []} :after", "#_ (1#{} 2) :after",
+  units`#_ (a^:m [] \; 1:kw) :after`, "##Inf :after", "## Inf :after", "#{1} [] :after",
+  "x#! :hidden", "1#! :hidden\n:after", units`\;:hidden`,
+  "#_ #_ 1", units`\c:hidden`, "#:demo{:_/hidden [] :x 1} :after",
+];
+// Values local config reading refuses (R4b, both model reviews): the strict reader
+// refuses each one where upstream does, directly and as a map value.
+const refusedValues = [
+  "##unknown", "##false", "#1 []", "#nil []", "#false []", '#"s" []', units`#\x []`, "#[1] []",
+  "#(x) []", "#=x []", "#'x []", "#? (:cljs [])", "## #1 []", "## #(x) []", "## #? (:cljs [])",
+  units`\malformed`, '#_ #inst "2020-01-01" 1', "## #{1} []", "#()", '#"r"', "#'x", "## #()",
+  "#() [] 1", "#<x>", "#<", "#?@ (:cljs [])", "## #<x>", "#:kw []", "#:demo []",
+  "#:demo #_ [] {:x 1}", "#:demo ;comment\n{:x 1}", "#:demo", "#:bad/ns{}", "#:/bad {}",
+  "#:bad: {}", "#:{}", "## #:demo []", "[) ]", units`"\u"`, units`"bad\q"`, units`"\u12"`,
+  "[#()]", "[#() []]", "{:x #()}", "^:m #()", "^:m #() []", "#^:m #() []", "#x #() []",
+  "#_ #()", "#_ #() []", "## ## #() []", "#?@:hidden", "a@b", ":a@b", ": x", units`\a@`, "^1 []",
+  "{:a 1 :a 2}", "#:demo{:_/hidden [] :_/hidden []}",
+];
+witnesses.push(...extentControls, ...refusedValues,
+  ...refusedValues.map((value) => `{:bad ${value} :hidden []}`));
+
 // A fixed seed exercises dispatch, metadata, and discards at varying depths.
 let seed = 0x56d2ed;
 function choose(items) {
@@ -123,6 +149,7 @@ const streams = [
   ...discardedTags.flatMap((tag) => [`${query} :note ${tag}`, `${query} #_ ${tag} :note 1`]),
   ...literals.map((literal) => `${query} :note ${literal}`),
   ...radixDuplicates.map((literal) => `${query} :note [{:nested ${literal}}]`),
+  ...extentControls,
 ];
 const cases = [
   ...[...new Set(witnesses)].flatMap((source) => [[first, source], [strict, source]]),

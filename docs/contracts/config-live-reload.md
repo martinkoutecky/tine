@@ -139,17 +139,19 @@ Session state remains outside the graph, with no additional persisted fields.
 
 The shared EDN reader recovers local settings entry by entry in plain,
 namespaced and metadata-wrapped root maps. It qualifies namespaced keys
-before using them, so `:_/hidden` has the effective name `:hidden`. When
-the reader can locate the next entry after a malformed value, that value
-uses its default and the later entries still apply. An unreadable
-`:hidden` value hides graph text until it is repaired. The reader also
-hides graph text if root recovery stops after reaching a direct `:hidden`
-key, or if it reaches a direct `:hidden` key in a trailing map. If the
-input ends between entries or during a value and the root has no exclusion
-key, previously read settings still apply. Comments, discarded forms and
-strings do not supply exclusion keys. A config containing only whitespace,
-commas, comments or complete discards uses default settings. Quick share
-and folder export use the same graph scope for page selection.
+before using them, so `:_/hidden` has the effective name `:hidden`. A
+value that Logseq's reader reads to its end and then refuses (an unknown
+tag, a `##` operand other than `NaN`/`Inf`/`-Inf`, a malformed character)
+uses its default, and the later entries still apply. Where Logseq's reader
+fails partway through a form (`#<`, an invalid string escape, a malformed
+namespaced map, a mismatched closer, the end of the input), recovery stops
+and only the earlier entries apply. After any such damage the config
+excludes pages as read only if every `:hidden`-named keyword outside
+strings and comments is the key of an entry recovery read in full;
+otherwise it hides graph text until it is repaired. A config containing
+only whitespace, commas, comments or complete discards uses default
+settings. Quick share and folder export use the same graph scope for page
+selection (EDN reader model R4b).
 
 Input over the reader's 64 MiB config limit is an unreadable exclusion and
 hides graph text. A `config.edn` the store's equal 64 MiB read limit
