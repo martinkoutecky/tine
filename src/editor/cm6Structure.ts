@@ -22,6 +22,7 @@ import { commentKey } from "./commentKeys";
 import { bodyScopeOf } from "../document";
 import { detectMacro } from "../components/Rendered";
 import { listLineAt } from "../components/blockParts";
+import { hostFolded } from "../components/macroFold";
 import { type CollapseSurfaceApi } from "../components/Block";
 import { isBlockEmbedMacro } from "../components/blockParts";
 import { isAnnotationBlock } from "./annotation";
@@ -175,9 +176,10 @@ export function cm6Structure(ctx: StructureContext) {
   const enter = (v: EditorView) => {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     const n = node(ctx.id);
+    const embedCollapsed = editSurface() ? hostFolded(ctx.collapse, ctx.id) : undefined;
     const macro = ctx.embedExit ? detectMacro(node(ctx.embedExit.hostBlockId)?.raw ?? "", ctx.format) : null;
     if (ctx.embedExit && ctx.id === ctx.embedExit.firstRoot() && isBlockEmbedMacro(macro)
-      && ctx.collapse?.collapsed(ctx.id, n.collapsed)
+      && embedCollapsed
       && s.empty && s.to === raw.length) {
       const id = insertOutlineAfter(ctx.embedExit.hostBlockId, [{ raw: "", children: [] }]);
       if (id) startEditing(id, 0);
@@ -227,7 +229,7 @@ export function cm6Structure(ctx: StructureContext) {
     // a line break and Ctrl/Cmd+Enter sends (GH #891), so no reply branch here.
     const replacement = s.empty ? undefined : ctx.deleteSelection(v, s.from, s.to);
     if (!replacement) ctx.commit(raw);
-    splitBlockInView(ctx.id, s.from, ctx.scope, navSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement, ctx.collapse);
+    splitBlockInView(ctx.id, s.from, ctx.scope, navSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement, ctx.collapse, embedCollapsed);
     return true;
   };
   const vertical = (v: EditorView, forward: boolean) => {

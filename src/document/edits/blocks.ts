@@ -205,7 +205,8 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
  *  (the selection Enter deletes, in both editors: OG 6e7afa8eb editor.cljs
  *  `compute-fst-snd-block-text`). The kernel splits the text `pending` leaves;
  *  `pending.write` runs once the kernel has answered, in the same undo unit as
- *  the patch. A refusal or a parser failure writes nothing. */
+ *  the patch. A refusal or a parser failure writes nothing.
+ *  `occurrenceCollapsed` carries the active embed's fold. */
 export function splitBlock(
   id: string,
   offset: number,
@@ -214,6 +215,7 @@ export function splitBlock(
   editingSurface: string | null = null,
   hiddenProperties: HidePolicy = BUILTIN_HIDE,
   pending?: PendingEdit,
+  occurrenceCollapsed?: boolean,
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
@@ -222,7 +224,7 @@ export function splitBlock(
     key: id,
     raw_offset: visibleOffsetToRawByte(pending?.raw ?? node.raw, offset, hiddenProperties, formatForBlock(id)),
     force_child: forceChild,
-    children_visible: node.children.length > 0 && !node.collapsed,
+    children_visible: node.children.length > 0 && !(occurrenceCollapsed ?? node.collapsed),
     keep_start_in_scope: keepStartInScope,
   }, [node.page], pending && { id, raw: pending.raw });
   if ("refused" in change) {
