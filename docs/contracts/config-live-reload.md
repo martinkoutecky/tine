@@ -142,7 +142,9 @@ namespaced and metadata-wrapped root maps. It qualifies namespaced keys
 before using them, so `:_/hidden` has the effective name `:hidden`. A
 value that Logseq's reader reads to its end and then refuses (an unknown
 tag, a `##` operand other than `NaN`/`Inf`/`-Inf`, a malformed character)
-uses its default, and the later entries still apply. Where Logseq's reader
+uses its default, and the later entries still apply. A `#_` discard of such
+a value is skipped like any other discard, before the root map, its
+metadata or its target as well as inside it. Where Logseq's reader
 fails partway through a form (`#<`, an invalid string escape, a malformed
 namespaced map, a mismatched closer, the end of the input), recovery stops
 and only the earlier entries apply. After any such damage the config

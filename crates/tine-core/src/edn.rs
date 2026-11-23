@@ -250,9 +250,10 @@ pub(crate) enum Mode {
     // Existing PDF files and edits preserve CR-only comment lines and opaque
     // sidecar data. This dialect never supplies query or publication values.
     PdfSidecar,
-    // Local config reading (EDN model R4b): a root entry whose key or value upstream
-    // reads to its end and refuses is skipped at that extent; reading stops where a
-    // form has none. Strict framings refuse the whole input instead.
+    // Local config reading (EDN model R4b), for the whole input: a form upstream reads
+    // to its end and refuses has that extent, so a completed discard of it stays trivia
+    // and a root entry with it is skipped; reading stops where a form has none. Strict
+    // framings refuse the whole input instead.
     Config,
     // Settings can repair a missing final value in a closed map.
     ConfigEdit,
@@ -381,7 +382,8 @@ pub(crate) struct UnreadableExclusion;
 /// refusal or stop, the config excludes pages as read only when no `hidden` keyword
 /// is unaccounted for; otherwise it is an unreadable exclusion.
 pub(crate) fn config_entries(input: &str) -> Result<Vec<ConfigEntry>, UnreadableExclusion> {
-    let mut reader = Reader::new(input, MAX_INPUT_BYTES, Mode::Edn).ok_or(UnreadableExclusion)?;
+    let mut reader =
+        Reader::new(input, MAX_INPUT_BYTES, Mode::Config).ok_or(UnreadableExclusion)?;
     let mut entries = Vec::new();
     let read = reader.trivia(0).and_then(|()| {
         // Input that is only trivia reads as upstream's nil (R4a).
@@ -408,31 +410,49 @@ fn unaccounted_exclusion(input: &str, entries: &[ConfigEntry]) -> bool {
         .filter(|(_, value)| value.is_some())
         .map(|(key, _)| &key.span)
         .peekable();
-    exclusion_occurrences(input).iter().any(|occurrence| {
+    exclusion_occurrences(input).any(|occurrence| {
         while keys.next_if(|key| key.start < occurrence.start).is_some() {}
-        keys.next_if(|key| *key == occurrence).is_none()
+        keys.next_if(|key| **key == occurrence).is_none()
     })
 }
 
 #[cfg(test)]
 thread_local! {
     pub(crate) static EXCLUSION_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The positions the occurrence scan has examined.
+    pub(crate) static EXCLUSION_SCAN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The byte spans of every keyword spelling named `hidden` (`:hidden`, `:_/hidden`,
 /// `:ns/hidden`, also inside a longer token) in plain text. This is R4b's occurrence
 /// scan: it lexes the whole input from byte 0 with its own total rules and never
-/// resumes from a reader's cursor. One forward pass; it allocates only the spans.
-pub(crate) fn exclusion_occurrences(input: &str) -> Vec<std::ops::Range<usize>> {
+/// resumes from a reader's cursor. One lazy forward pass that allocates nothing: the
+/// caller stops it at the first occurrence it cannot account for.
+pub(crate) fn exclusion_occurrences(
+    input: &str,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
     #[cfg(test)]
     EXCLUSION_SCANS.with(|count| count.set(count.get() + 1));
     let s = input.as_bytes();
-    let line_end = |at: usize| memchr::memchr(b'\n', &s[at..]).map_or(s.len(), |end| at + end);
-    let mut spans = Vec::new();
+    let line_end = move |at: usize| memchr::memchr(b'\n', &s[at..]).map_or(s.len(), |end| at + end);
     // An unterminated string makes the rest of the input plain text.
     let mut lexical = true;
     let mut i = 0;
-    while i < s.len() {
+    // The unchecked positions of the current colon run, and where its spellings end.
+    let (mut run, mut run_end) = (0..0, 0);
+    std::iter::from_fn(move || loop {
+        // Each colon in the run begins a keyword spelling that ends where the run does.
+        if let Some(at) = run.find(|&at| {
+            let name = &s[at + 1..run_end];
+            s[at] == b':' && (name == b"hidden" || name.ends_with(b"/hidden"))
+        }) {
+            return Some(at..run_end);
+        }
+        if i >= s.len() {
+            return None;
+        }
+        #[cfg(test)]
+        EXCLUSION_SCAN_STEPS.with(|count| count.set(count.get() + 1));
         match s[i] {
             b'"' if lexical => {
                 let mut j = i + 1;
@@ -463,20 +483,13 @@ pub(crate) fn exclusion_occurrences(input: &str) -> Vec<std::ops::Range<usize>> 
                 }
             }
             b':' => {
-                // Each colon in the run begins a keyword spelling that ends where the run does.
-                let end = token_end(input, i + 1);
-                for at in (i..end).filter(|&at| s[at] == b':') {
-                    let name = &s[at + 1..end];
-                    if name == b"hidden" || name.ends_with(b"/hidden") {
-                        spans.push(at..end);
-                    }
-                }
-                i = end;
+                run_end = token_end(input, i + 1);
+                run = i..run_end;
+                i = run_end;
             }
             _ => i += 1,
         }
-    }
-    spans
+    })
 }
 
 /// The end of upstream's token scan: a token terminator or a non-constituent.
@@ -959,9 +972,7 @@ impl<'a> Reader<'a> {
         config_root: ConfigRoot<'_>,
     ) -> Option<Vec<Form>> {
         if let ConfigRoot::Recover(entries) = config_root {
-            self.mode = Mode::Config;
             let recovered = self.recover_config_map(depth, namespace, entries);
-            self.mode = Mode::Edn;
             // The root caller gets its entries directly, including missing values.
             return recovered.map(|()| Vec::new());
         }

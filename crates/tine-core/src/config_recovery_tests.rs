@@ -184,6 +184,69 @@ const ROOTED: &[(&str, Outcome)] = &[
     ("{{H}} #_ #_ 1", Keep),
 ];
 
+/// Forms upstream reads to their end and refuses, dropped by a `#_`: the completed
+/// discard stays trivia wherever local reading meets it (R4b, review of f4bd420c3 #2).
+const REFUSED_DISCARDS: &[&str] = &[
+    "#_ #unknown []",
+    "#_ ##nil",
+    r"#_ \malformed",
+    "#_ #_ #unknown [] 1",
+    "#_ [#_ ##nil 1]",
+    "#_ ^ #_ ##nil :m []",
+    r"#_ ^:m #_ \malformed []",
+    "#_ #^ #_ #unknown [] :m []",
+    "#_ #^:m #_ ##nil []",
+];
+
+/// [`ROOTS`] with `{D}` at each place before the root map where trivia may stand:
+/// before the root, before a metadata operand and before a metadata target.
+const ROOT_SLOTS: [(&str, &str); 7] = [
+    ("{D}", ""),
+    ("{D}#:demo", "_/"),
+    ("{D}^{D}:meta {D}", ""),
+    ("{D}#^{D}:meta {D}", ""),
+    ("{D}^{D}:meta {D}#:demo", "_/"),
+    ("{D}#^{D}:meta {D}#:demo", "_/"),
+    ("{D}^{D}:meta {D}#^{D}{:note true} {D}#:demo", "_/"),
+];
+
+#[test]
+fn a_completed_discard_of_a_refused_form_stays_trivia_before_and_inside_the_root() {
+    let mut failures = Vec::new();
+    for (template, ns) in ROOT_SLOTS {
+        let parts: Vec<&str> = template.split("{D}").collect();
+        let hidden = format!(r#":{ns}hidden ["{SECRET}"]"#);
+        let pages = format!(r#":{ns}pages-directory "notes""#);
+        for discard in REFUSED_DISCARDS {
+            for nl in NEWLINES {
+                let trivia = format!("{discard}{nl}");
+                // Every slot before the root, then inside the map before and after H.
+                for slot in 0..parts.len() + 1 {
+                    let mut prefix = parts[0].to_owned();
+                    for (at, part) in parts[1..].iter().enumerate() {
+                        prefix += if at == slot { &trivia } else { "" };
+                        prefix += part;
+                    }
+                    let (before, after) = match slot.checked_sub(parts.len() - 1) {
+                        Some(0) => (trivia.as_str(), ""),
+                        Some(_) => ("", trivia.as_str()),
+                        None => ("", ""),
+                    };
+                    let source = format!("{prefix}{{{nl}{before}{hidden}{nl}{after}{pages}{nl}}}");
+                    check(&source, Keep, &mut failures);
+                    if Config::parse(&source).pages_dir != "notes" {
+                        failures.push(format!("{source:?}: entries after the discard unread"));
+                    }
+                    if Config::parse_for_publication(&source).is_some() {
+                        failures.push(format!("{source:?}: strict admission"));
+                    }
+                }
+            }
+        }
+    }
+    report(&failures);
+}
+
 fn outcome(source: &str) -> Result<Outcome, String> {
     let cfg = Config::parse(source);
     if cfg.hidden_parse_failed_closed {
