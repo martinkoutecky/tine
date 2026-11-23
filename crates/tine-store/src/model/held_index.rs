@@ -73,7 +73,9 @@ impl Graph {
     /// The row for the owner's `bytes` of `key`: the disk row its hold
     /// retired when `claim` holds exactly these bytes under the same entry
     /// (R1, GH #623), else parsed ([`Self::owned_row`], against `row`, the
-    /// page's current row document). A saved Document always reparses, to
+    /// page's current row document, or else the claim's document for the
+    /// same physical path: a page opened before the reconcile saw bytes of
+    /// the same outline keeps its ids). A saved Document always reparses, to
     /// keep its runtime ids.
     pub(super) fn claimed_row(
         &self,
@@ -84,18 +86,23 @@ impl Graph {
         row: Option<&Arc<Document>>,
     ) -> Option<Row> {
         let rev = std::str::from_utf8(bytes).ok().map(content_rev);
-        let reuse = claim.filter(|(_, _, disk)| doc.is_none() && rev.as_ref() == Some(&disk.rev));
-        if let Some((old, document, disk)) = reuse {
-            let entry = self.owned_entry(key, bytes)?;
-            if entry.path == old.path
-                && entry.kind == old.kind
-                && entry.name == old.name
-                && entry.date_key == old.date_key
-            {
-                return Some((entry, document, disk));
+        let path = self.root.join(self.held.spellings().spelling(key));
+        let mut retired = None;
+        if let Some((old, document, disk)) = claim {
+            if doc.is_none() && rev.as_ref() == Some(&disk.rev) {
+                let entry = self.owned_entry(key, bytes)?;
+                if entry.path == old.path
+                    && entry.kind == old.kind
+                    && entry.name == old.name
+                    && entry.date_key == old.date_key
+                {
+                    return Some((entry, document, disk));
+                }
             }
+            retired = (old.path == path).then_some(document);
         }
         // No row: the publication settles the page, which lists why.
+        let row = row.or(retired.as_ref());
         self.owned_row(key, bytes, doc, row).ok().flatten()
     }
 

@@ -4246,17 +4246,16 @@ impl Graph {
             Some(Some(Err(_))) => panic!("page parser panicked during cached comparison"),
             // The same outline in other bytes (line endings, a final line
             // break, a column-0 continuation line): unchanged, so nothing is
-            // reported, but the row keeps its document and ids under these
-            // bytes' revision and anchor, so a later hold of the page reuses
-            // it (its claim matches the file) instead of reparsing
-            // positionally, which would move a block's id to another block.
+            // reported, but the row records these bytes' revision and anchor,
+            // so a later hold of the page reuses it (its claim matches the
+            // file) instead of reparsing positionally. O(1): no install.
             Some(Some(Ok(Some(kept)))) => {
                 let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
                 let disk = DiskObs {
                     rev: disk_rev,
                     anchored,
                 };
-                self.cache_upsert(entry, Document::clone(&kept), disk);
+                self.keep_row_bytes(path, &kept, disk);
                 return None; // unchanged / our own write
             }
             Some(_) => {}

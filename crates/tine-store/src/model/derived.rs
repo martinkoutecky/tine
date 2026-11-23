@@ -1192,6 +1192,8 @@ impl Graph {
         // instead of escaping later from the capture under the writer lock,
         // which would poison it (one bad file must never stop the graph).
         prime_projections(&doc);
+        #[cfg(test)]
+        UPSERTED_BLOCKS.with(|n| n.set(n.get() + block_count(&doc.roots)));
         // Fill runtime ids for any block that lacks one (e.g. PDF-highlight
         // writes) from this physical owner. Blocks saved from the frontend
         // already carry live ids, which the in-memory save path keeps.
@@ -1214,6 +1216,46 @@ impl Graph {
         // unconditional, even on a cold cache, so a racing lock-free build
         // detects the mutation (and the launch pass re-derives the path).
         self.move_generation(guard.is_none(), &[&path]);
+        drop(guard);
+    }
+
+    /// Blocks [`Self::cache_upsert`] primed, keyed and installed on this
+    /// thread (cost pins).
+    #[cfg(test)]
+    pub(crate) fn upserted_blocks() -> usize {
+        UPSERTED_BLOCKS.with(std::cell::Cell::get)
+    }
+
+    /// The reconcile found the same outline in other bytes (line endings, a
+    /// final line break, a column-0 continuation line): `kept`, the disk row
+    /// it compared, stays the page's, and only its byte witness moves to
+    /// these bytes' revision and anchor, under the cache lock. The document,
+    /// its ids and projections, and the generation stay: nothing a reader
+    /// derives changed. The one writer of these two fields for a kept row.
+    /// O(1) in the page's blocks. A no-op when `kept` is no longer the disk
+    /// row at `path` (a writer replaced it since the comparison).
+    pub(super) fn keep_row_bytes(&self, path: &Path, kept: &Arc<Document>, disk: DiskObs) {
+        let guard = self.derived.cache.write().unwrap();
+        let Some(pages) = guard.as_ref() else {
+            return;
+        };
+        let slot = self.cached_page_index_for_path(pages, path);
+        let current = slot.and_then(|slot| pages.get(slot));
+        if !current.is_some_and(|(_, doc)| Arc::ptr_eq(doc, kept))
+            || !matches!(self.authority(path), Authority::Disk)
+        {
+            return;
+        }
+        // Lock order cache → disk_revs → vcs_anchored, as `put_row`.
+        {
+            let mut anchored = self.derived.vcs_anchored.write().unwrap();
+            if disk.anchored {
+                anchored.insert(path.to_path_buf());
+            } else {
+                anchored.remove(path);
+            }
+        }
+        (self.derived.disk_revs.write().unwrap()).insert(path.to_path_buf(), disk.rev);
         drop(guard);
     }
 
@@ -1264,6 +1306,18 @@ impl Graph {
 /// What [`Graph::checkpoint_rows`] returns: failures, sorted revisions and
 /// sorted anchored paths.
 pub(super) type CheckpointRows = (Vec<String>, Vec<(PathBuf, String)>, Vec<PathBuf>);
+
+#[cfg(test)]
+thread_local! {
+    static UPSERTED_BLOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn block_count(blocks: &[tine_core::doc::DocBlock]) -> usize {
+    (blocks.iter())
+        .map(|block| 1 + block_count(&block.children))
+        .sum()
+}
 
 #[path = "derived_owners.rs"]
 mod owners;

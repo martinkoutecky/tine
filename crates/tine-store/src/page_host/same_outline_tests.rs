@@ -8,6 +8,7 @@
 //! again (R). Driven through the real page host and Store, with fully keyed
 //! DTOs as the window sends them.
 use super::*;
+use crate::model::Graph;
 use tine_core::model::BlockDto;
 
 const AUTHORED: &str = "6566c5a4-0000-4000-8000-000000000003";
@@ -72,6 +73,37 @@ fn equivalents(text: &str) -> Vec<(String, String)> {
     }
     out.retain(|(_, bytes)| bytes != text);
     out
+}
+
+/// Replace `rel` with `body` as an editor's atomic save does (staged outside
+/// the graph, then renamed over the page), with a timestamp other than the
+/// file's. A truncating write would let the watcher read the page empty
+/// in between: another outline, whose observation rightly gives the page
+/// positional ids before these bytes arrive.
+fn rewrite(live: &Live, rel: &str, body: &str) {
+    let path = live.root.join(rel);
+    let staged = live.root.parent().unwrap().join("same-outline-staged");
+    let modified = || fs::metadata(&path).unwrap().modified().unwrap();
+    let before = modified();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        fs::write(&staged, body).unwrap();
+        fs::rename(&staged, &path).unwrap();
+        if modified() != before {
+            return;
+        }
+        assert!(Instant::now() < deadline, "{rel} kept its timestamp");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// [`rewrite`] a held page and wait for its owner's observation of `body`.
+fn adopt(live: &Live, rel: &str, body: &str) {
+    rewrite(live, rel, body);
+    let token = token(body);
+    live.wait(rel, "observation", |mail| {
+        (mail.page.as_ref()).is_some_and(|page| page.disk == Some(token.clone()))
+    });
 }
 
 /// Every block's (text, runtime id), in page order.
@@ -159,7 +191,7 @@ fn an_owner_adoption_of_the_same_outline_keeps_runtime_ids() {
             let (_, saved, kept) = structural_save(&live, rel, &text, apply, &case);
             for (variant, bytes) in equivalents(&saved) {
                 let case = format!("{case}, then {variant}");
-                live.external(rel, &bytes);
+                adopt(&live, rel, &bytes);
                 let now = indexed_row(&live, rel, &bytes, &case);
                 assert_eq!(now, kept, "{case}: every block keeps its id");
             }
@@ -189,7 +221,7 @@ fn a_reopened_page_rewritten_with_the_same_outline_keeps_runtime_ids() {
                 assert!(Instant::now() < deadline, "{case}: never released");
                 std::thread::sleep(Duration::from_millis(20));
             }
-            live.rewrite_externally(rel, &bytes);
+            rewrite(&live, rel, &bytes);
             // A read of the unheld page reconciles it with the file, as the
             // watcher does.
             live.store.page(&PageId::from(rel)).unwrap();
@@ -204,4 +236,97 @@ fn a_reopened_page_rewritten_with_the_same_outline_keeps_runtime_ids() {
             live.host.stop();
         }
     }
+}
+
+/// Close `rel` and wait until the watcher no longer holds it.
+fn close_and_release(live: &Live, key: &PageKey, rel: &str, case: &str) {
+    live.close(key);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while live.held(rel) {
+        assert!(Instant::now() < deadline, "{case}: never released");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Path R before the reconcile: the page is closed, rewritten with the same
+/// outline, and opened again before any reconcile saw the rewrite (the
+/// hold's claim then misses the file's revision); the index row keeps every
+/// block's id, in every variant H covers.
+#[test]
+fn a_page_reopened_before_the_reconcile_saw_the_same_outline_keeps_runtime_ids() {
+    for (rel, text) in pages() {
+        for (edit, apply) in edits() {
+            let case = format!("{rel} {edit}");
+            // Polling every three seconds: the reopen below comes first.
+            let live = Live::watching(&[(rel, &text)], crate::WatchMode::Poll);
+            let (mut key, saved, kept) = structural_save(&live, rel, &text, apply, &case);
+            let path = live.root.join(rel);
+            for (variant, bytes) in equivalents(&saved) {
+                let case = format!("{case}, closed, then {variant}, reopened");
+                close_and_release(&live, &key, rel, &case);
+                let before = live.store.graph.cached_rev(&path);
+                rewrite(&live, rel, &bytes);
+                // The precondition: no reconcile has seen these bytes.
+                let rev = Some(content_rev(&bytes));
+                assert_eq!(live.store.graph.cached_rev(&path), before, "{case}");
+                assert_ne!(before, rev, "{case}");
+                key = live.open(rel).0;
+                let now = indexed_row(&live, rel, &bytes, &case);
+                assert_eq!(now, kept, "{case}: every block keeps its id");
+            }
+            live.host.stop();
+        }
+    }
+}
+
+/// The reconcile of an unheld page rewritten with the same outline costs
+/// O(1) in its blocks: the row keeps its document (no clone, no projection
+/// or id work, no install) and the generation, and only its byte witness
+/// (revision and anchor flag) moves to the new bytes, the anchor flag both
+/// set and cleared.
+#[test]
+fn a_same_outline_reconcile_keeps_the_row_in_place() {
+    const BLOCKS: usize = 60;
+    let rel = "pages/Long.md";
+    let mut text: String = (1..BLOCKS).map(|i| format!("- block {i}\n")).collect();
+    text.push_str("- note\n  <<<<<<< not an anchor while indented\n");
+    let anchored = text.replace("\n  <<<<<<< ", "\n<<<<<<< ");
+    let crlf = text.replace('\n', "\r\n");
+    // Polling every three seconds: the page read below reconciles first.
+    let live = Live::watching(&[(rel, &text)], crate::WatchMode::Poll);
+    let (graph, path, id) = (&live.store.graph, live.root.join(rel), PageId::from(rel));
+    let row = || {
+        let pages = graph.peek_pages().expect("a built page cache");
+        let (_, doc) = pages.iter().find(|(entry, _)| entry.path == path).unwrap();
+        Arc::clone(doc)
+    };
+    let row_before = row();
+    assert_eq!(block_count(&row_before.roots), BLOCKS);
+    assert_eq!(graph.vcs_anchor_state(&path), Some(false));
+    for (variant, bytes, anchor) in [
+        ("CRLF", &crlf, false),
+        ("a column-0 anchor line", &anchored, true),
+        ("the indented line again", &text, false),
+    ] {
+        let (generation, upserted) = (graph.cache_generation(), Graph::upserted_blocks());
+        rewrite(&live, rel, bytes);
+        live.store.page(&id).unwrap();
+        let rev = Some(content_rev(bytes));
+        assert_eq!(graph.cached_rev(&path), rev, "{variant}");
+        assert_eq!(graph.vcs_anchor_state(&path), Some(anchor), "{variant}");
+        // (the same document, blocks installed, generation moves)
+        let cost = (
+            Arc::ptr_eq(&row(), &row_before),
+            Graph::upserted_blocks() - upserted,
+            graph.cache_generation() - generation,
+        );
+        assert_eq!(cost, (true, 0, 0), "{variant}: the row stays in place");
+    }
+    live.host.stop();
+}
+
+fn block_count(blocks: &[tine_core::doc::DocBlock]) -> usize {
+    (blocks.iter())
+        .map(|block| 1 + block_count(&block.children))
+        .sum()
 }
