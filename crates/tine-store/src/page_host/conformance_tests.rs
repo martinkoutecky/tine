@@ -475,6 +475,7 @@ fn all_s3_scenarios_in_four_profiles() {
     let mut occupied = 0;
     let mut queued = 0;
     let mut effective = 0;
+    let mut mismatches = Vec::new();
     for oracle in fixture["oracles"]
         .as_array()
         .unwrap()
@@ -484,19 +485,26 @@ fn all_s3_scenarios_in_four_profiles() {
         let profile = oracle["profile"].as_str().unwrap();
         for (name, program) in fixture["scenarios"].as_object().unwrap() {
             let mut driver = Driver::new(profile, 3);
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 driver.program(program.as_array().unwrap())
-            }))
-            .unwrap_or_else(|failure| {
-                eprintln!("failure capsule: {profile}/{name}; program={program}");
-                std::panic::resume_unwind(failure)
-            });
+            })) {
+                Ok(outcome) => outcome,
+                Err(failure) => {
+                    let message = failure
+                        .downcast_ref::<String>()
+                        .map_or("host replay panicked", String::as_str);
+                    mismatches.push(format!("{profile}/{name}: {message}"));
+                    continue;
+                }
+            };
             if outcome != Err("twin-saveFail-refinement") {
-                assert_eq!(
-                    outcome.map_or_else(|e| e, |_| "pass"),
-                    oracle["outcomes"][name],
-                    "{profile}/{name}"
-                );
+                let observed = outcome.map_or_else(|e| e, |_| "pass");
+                let expected = &oracle["outcomes"][name];
+                if expected != observed {
+                    mismatches.push(format!(
+                        "{profile}/{name}: expected {expected}, observed {observed}"
+                    ));
+                }
             }
             twins += driver.twin_failures;
             occupied += driver.occupied_refusals;
@@ -507,12 +515,31 @@ fn all_s3_scenarios_in_four_profiles() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 776);
+    assert!(
+        mismatches.is_empty(),
+        "{} host divergences\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+    assert_eq!(comparisons, 824);
     assert_eq!(
         (actions, barriers, twins, occupied, queued, effective),
         (8154, 12362, 4, 0, 0, 8)
     );
     eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers / {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames");
+}
+
+#[test]
+fn paired_rename_reopens_after_the_source_move() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/scenarios.json")).unwrap();
+    let program = fixture["scenarios"]["ownRenameInterrupted"]
+        .as_array()
+        .unwrap();
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut driver = Driver::new(profile, 3);
+        assert_eq!(driver.program(program), Ok(()), "{profile}");
+    }
 }
 
 #[test]
@@ -923,7 +950,7 @@ fn generated_itf_traces_through_host() {
 fn committed_witnesses_through_host() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
-    ratchet(&replay(&fixture, None), "Replayed { traces: 44, scripted: 8507, actions: 8507, barriers: 10771, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
+    ratchet(&replay(&fixture, None), "Replayed { traces: 44, scripted: 8513, actions: 8513, barriers: 10733, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
 }
 
 #[test]
@@ -936,5 +963,5 @@ fn short_witnesses_through_host() {
         .as_array_mut()
         .unwrap()
         .retain(|trace| trace["states"].as_array().unwrap().len() <= 100);
-    ratchet(&replay(&fixture, None), "Replayed { traces: 41, scripted: 498, actions: 498, barriers: 760, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
+    ratchet(&replay(&fixture, None), "Replayed { traces: 41, scripted: 504, actions: 504, barriers: 722, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
 }

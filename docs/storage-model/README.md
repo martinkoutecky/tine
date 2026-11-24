@@ -137,6 +137,25 @@ answers Applied after staging and checking recovery, without `delete_checked`
 | s3.4 | 2026-10-13 | `storage-s34.qnt` (`ddcc4332`) | `scenarios-s34.inc` (`b322d41b`), 191 | Name-slot admission: a new page cannot take a name another file already claims. |
 | s3.5 | 2026-10-14 | `storage-s35.qnt` (`7ebed877`) | `scenarios-s35.inc` (`9200a284`), 194 | A cancelling Discard of a rename's destination restores the source's text only when the source is still held (s3.4 also rewrote a retired, unheld source's buffer; no disk, draft or trash effect, all targets held). Three lines changed, one mutant (`MRH`) and three scenarios added. |
 
+The current s3.5, s3.6 and s3.7-gitpull Quint models include durable paired
+recovery. The models keep the source preimage and the certified receiver image
+in the operation vehicle. Launch reinstalls unresolved pairs, while a durable
+Use Disk decision suppresses the original deletion. An exact receiver gates
+source removal and settles it after the directory barrier. The settled pair
+leaves the vehicle at the private rewrite barrier. A crash or a failed rewrite
+before that barrier leaves the original pair for launch to re-witness. With
+strong durability and no intervening outside write, replay sees the exact
+bytes, so the recovery itself creates no conflict. The existing owner lock is
+the sole draft namespace claim. An unowned host can save pages and refuses
+draft changes and paired removals.
+
+`quint/scenarios-paired-recovery.inc` checks recovery, settlement and owner
+claims directly in all three revisions. The page-host trace driver covers one
+move per operation and one local owner. The Lean
+`PairedRecovery` and `CompositionPairedRecovery` packages state the batch and
+composition properties. The historical s3.5 replay against `Storage35` uses
+the model and scenarios from revision `8f50fd330`.
+
 Every s3.x model behaves exactly like s2.1 on runs that use none of the page operations (checked by
 `cons.py` for each version, and proved in Lean for s3, s3.1, s3.3, s3.4 and s3.5). s3.3 adds to s3.2 and
 s3.4 adds to s3.3 without changing existing actions; s3.5 changes only the one guard above (checked: all 191
@@ -458,7 +477,6 @@ cd docs/storage-model/quint
 npm ci                                                     # installs Quint 0.33.0 into ./node_modules
 QNT=storage-s35.qnt SCEN=scenarios-s35.inc python3 sweep.py # all scenarios x 4 profiles, every mutant (s3.5)
 python3 cons.py storage-s2x.qnt storage-s35.qnt scenarios-s2.inc --two-pages   # s3.5 vs s2.1 on old runs
-python3 cons.py storage-s34.qnt storage-s35.qnt scenarios-s34.inc --full       # s3.5 vs s3.4, every mutant/profile
 QNT=storage-s35.qnt SCEN=scenarios-s35.inc INV='guarantee and orderHolds and renameResolves' \
   python3 run.py base none 4000 60                         # random simulation (s3.2+: three invariants)
 ```

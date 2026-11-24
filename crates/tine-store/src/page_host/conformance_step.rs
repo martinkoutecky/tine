@@ -902,6 +902,23 @@ impl<F: ConformanceIo> Driver<F> {
                 g["guard"] = json!(false);
             }
             "saveFail" => g["guard"] = json!(false),
+            "launch" => {
+                for gate in actual["gates"].as_array().unwrap() {
+                    let src = gate["src"].as_u64().unwrap() as usize;
+                    let dst = gate["dst"].as_u64().unwrap() as usize;
+                    let open: BTreeSet<usize> =
+                        serde_json::from_value(gate["open"].clone()).unwrap();
+                    let version = |p| gate["vers"][p].as_i64().unwrap();
+                    for &p in &open {
+                        if p != dst && open.contains(&dst) {
+                            obl.insert((p, dst, version(dst), dst));
+                        }
+                        if p != dst && p != src && open.contains(&src) {
+                            obl.insert((src, p, version(p), dst));
+                        }
+                    }
+                }
+            }
             "extWrite" | "extWriteD" => {
                 renamed.retain(|r| r.0 != p && r.1 != p);
                 g["ext"][p] = json!(self.host.fs.physical().epochs[&key(p)]);

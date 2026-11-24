@@ -8,15 +8,19 @@ use order::{
     discarded, discharge, gated, obl_discarded, obl_published, order_holds, partner,
     rename_resolves, revert_partner, started, unrename, Obligations,
 };
+use pairing::*;
+use saving::{check, dir_sync, draft_sync, flush, observe, rename, save_fail};
 use std::collections::BTreeSet;
 
 mod operations;
 mod order;
+mod pairing;
+mod saving;
 
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c";
+const MODEL_SHA: &str = "52a474a903c21a0a1bb8f0c8c53536de3a5a053a58c9de7b06fa20204837955b";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -87,7 +91,8 @@ record!(Gate {
     vers: Vec<i64>,
     open: BTreeSet<usize>
 });
-record!(Sys { alive: bool, claimed: BTreeSet<usize>, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate> });
+record!(Pair { dst: usize, src: usize, records: Vec<Draft>, phase: Phase, decision: Decision });
+record!(Sys { alive: bool, claimed: BTreeSet<usize>, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate>, pairs: Vec<Pair>, owners: BTreeSet<usize>, #[cfg_attr(test, serde(rename = "draftOK"))] draft_ok: bool });
 record!(Promise {
     on: bool,
     bytes: Text,
@@ -224,6 +229,9 @@ fn init(config: Config) -> State {
             trash_stable: vec![BTreeSet::new(); count],
             up: vec![],
             gates: vec![],
+            pairs: vec![],
+            owners: BTreeSet::from([0]),
+            draft_ok: true,
         },
         g: Ghost {
             vc: 0,
@@ -341,7 +349,14 @@ fn end_promise(pr: &Promise, watermark: i64) -> Promise {
     }
 }
 /// Quint: down
-fn down(sys: &Sys) -> Sys {
+fn down(x: &State) -> Sys {
+    let sys = &x.s;
+    let mut pairs = sys.pairs.clone();
+    for pair in &mut pairs {
+        pair.reset(&x.config);
+    }
+    let mut owners = sys.owners.clone();
+    owners.remove(&0);
     Sys {
         alive: false,
         pages: vec![nopage(); sys.pages.len()],
@@ -350,6 +365,8 @@ fn down(sys: &Sys) -> Sys {
         mb: vec![nomail(); sys.pages.len()],
         up: vec![],
         gates: vec![],
+        pairs,
+        owners,
         ..sys.clone()
     }
 }
@@ -711,9 +728,12 @@ fn up_discard(x: &State, mut s: Sys, m: &Up, ok: bool, rok: bool) -> Option<Stat
     } else {
         end_promise(pr, v1)
     };
+    let source = partner(x, p);
+    let chooses_pair = source.is_some() || s.pairs.iter().any(|pair| pair.source(p));
+    let refused = !rok || (chooses_pair && !can_draft(&s) && !x.config.mutant("MSkipDecision"));
     if !pg.held {
         g.bad.insert("request-to-unheld".into());
-    } else if !rok {
+    } else if refused {
         ack_mail(&mut s, p, ok, pg.ver, false);
     } else {
         s.pages[p] = Page {
@@ -729,16 +749,28 @@ fn up_discard(x: &State, mut s: Sys, m: &Up, ok: bool, rok: bool) -> Option<Stat
         g.vc = v1;
         g.promise[p] = npr;
         g.mine = BTreeSet::from([p]);
-        revert_partner(x, &mut s, &mut g, p, v1);
+        revert_partner(x, &mut s, &mut g, source, v1);
+        if chooses_pair {
+            if can_draft(&s) {
+                decide_disk(x, &mut s, p, source);
+            } else {
+                g.bad.insert("choice-without-durable-decision".into());
+            }
+        }
         discarded(&mut s, p);
-        obl_discarded(&mut g.obl, p);
+        if source.is_some() {
+            s.gates.retain(|gt| gt.dst != p);
+            g.obl.retain(|o| o.3 != p);
+        } else {
+            obl_discarded(&mut g.obl, p);
+        }
         ack_mail(&mut s, p, ok, v1, false);
     }
     commit(
         x,
         s,
         g,
-        if pg.held && !rok {
+        if pg.held && refused {
             "uDiscardFail"
         } else {
             "uDiscard"
@@ -834,7 +866,10 @@ fn up_op(x: &State, mut s: Sys, m: &Up, ok: bool, dok: bool) -> Option<State> {
     } else {
         g.owed.remove(&(src, m.t));
         g.owed.remove(&(dst, m.t2));
-        if (!dok && !x.config.mutant("MOD")) || (!stale.is_empty() && !x.config.mutant("MSM")) {
+        if !can_draft(&s)
+            || (!dok && !x.config.mutant("MOD"))
+            || (!stale.is_empty() && !x.config.mutant("MSM"))
+        {
             ack_mail(&mut s, dst, ok, b.ver, false);
             ack_mail(&mut s, src, ok, a.ver, false);
             name = "uOpRefused";
@@ -871,7 +906,7 @@ fn deliver_up(x: &State, rok: bool) -> Option<State> {
     let m = x.s.up[0].clone();
     if locked(x, m.p)
         || (m.kind == "op" && locked(x, m.q))
-        || (m.kind == "discard" && partner(&x.s, m.p).is_some_and(|q| locked(x, q)))
+        || (m.kind == "discard" && partner(x, m.p).is_some_and(|q| locked(x, q)))
     {
         return None;
     }
@@ -886,195 +921,6 @@ fn deliver_up(x: &State, rok: bool) -> Option<State> {
     }
 }
 
-/// Quint: observe
-fn observe(x: &State, p: usize) -> Option<State> {
-    let pg = &x.s.pages[p];
-    let d = x.s.disk[p];
-    let v1 = next(x.g.vc);
-    let nw = table(x, pg, d, v1);
-    if !x.s.alive || !pg.held || locked(x, p) || nw == *pg {
-        return None;
-    }
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    if nw.ver == v1 {
-        g.vc = v1;
-    }
-    s.pages[p] = nw;
-    commit(x, s, g, "observe")
-}
-/// Quint: flush
-fn flush(x: &State, p: usize) -> Option<State> {
-    let pg = &x.s.pages[p];
-    if !x.s.alive
-        || x.s.job.on
-        || !pg.held
-        || pg.conflict
-        || pg.buf == ABSENT
-        || !dirty(pg)
-        || gated(x, p)
-    {
-        return None;
-    }
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    s.job = Job {
-        on: true,
-        p,
-        bytes: pg.buf,
-        base: pg.base,
-        ver: pg.ver,
-        phase: 1,
-        ep: 0,
-    };
-    started(&mut g, p);
-    commit(x, s, g, "flush")
-}
-/// Quint: check
-fn check(x: &State) -> Option<State> {
-    let j = &x.s.job;
-    if !x.s.alive || !j.on || j.phase != 1 {
-        return None;
-    }
-    let p = j.p;
-    let d = x.s.disk[p];
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    let name = if d != j.base && !x.config.mutant("MC") && !x.config.mutant("MC1") {
-        let v1 = next(g.vc);
-        let nw = table(x, &s.pages[p], d, v1);
-        if nw.ver == v1 {
-            g.vc = v1;
-        }
-        s.pages[p] = nw;
-        s.job = nojob();
-        if x.config.mutant("MCV") {
-            discharge(&mut s, p, j.ver);
-        }
-        "mismatch"
-    } else {
-        s.job.phase = 2;
-        g.guard = d == j.base;
-        "check"
-    };
-    commit(x, s, g, name)
-}
-/// Quint: rename
-fn rename(x: &State) -> Option<State> {
-    let j = &x.s.job;
-    if !x.s.alive || !j.on || j.phase != 2 {
-        return None;
-    }
-    let p = j.p;
-    let violates = !x.g.guard || (x.s.disk[p] != j.base && !x.config.r1);
-    let unseen = x.g.guard
-        && j.bytes != j.base
-        && !(x.g.seen[p].contains(&j.base)
-            || x.g.wrote[p].iter().any(|w| w.0 == j.base)
-            || x.g.op_read[p].contains(&j.base));
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    let del = j.bytes == ABSENT && x.s.disk[p] != ABSENT;
-    if del {
-        if !x.config.mutant("MDT") {
-            s.trash[p].insert(x.s.disk[p]);
-        }
-        g.removed[p].insert(x.s.disk[p]);
-    }
-    s.disk[p] = j.bytes;
-    s.job.phase = 3;
-    s.job.ep = g.ext[p];
-    if x.config.mutant("MPR") {
-        discharge(&mut s, p, j.ver);
-    }
-    g.guard = false;
-    g.wrote[p].insert((j.bytes, j.ver));
-    if violates {
-        g.bad.insert("C-overwrote-external".into());
-    }
-    if unseen {
-        g.bad.insert("G-overwrote-unseen".into());
-    }
-    commit(x, s, g, "rename")
-}
-/// Quint: dirSync
-fn dir_sync(x: &State, ok: bool) -> Option<State> {
-    let j = &x.s.job;
-    if !x.s.alive || !j.on || j.phase != 3 {
-        return None;
-    }
-    let p = j.p;
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    if ok && !x.config.weak && s.disk[p] == j.bytes {
-        s.stable[p] = s.disk[p];
-        if !x.config.mutant("MTS") {
-            s.trash_stable[p] = s.trash[p].clone();
-        }
-        if j.bytes == ABSENT {
-            g.del_durable[p] = g.removed[p].clone();
-        }
-    }
-    s.pages[p] = if !ok && x.config.mutant("MRE") {
-        Page {
-            base: j.bytes,
-            typed: false,
-            risk: false,
-            ..s.pages[p].clone()
-        }
-    } else {
-        on_reply(
-            x,
-            &s.pages[p],
-            if ok { "Published" } else { "Uncertain" },
-            j.bytes,
-        )
-    };
-    s.job = nojob();
-    if ok {
-        g.promise[p] = ack(&g.promise[p], j.bytes, j.ver, true, j.ep);
-        obl_published(&mut g.obl, p, j.ver);
-    }
-    // s3.2: Published is the witness (MPR took it at the file step; MCV at any end).
-    if (ok && !x.config.mutant("MPR")) || x.config.mutant("MCV") {
-        discharge(&mut s, p, j.ver);
-    }
-    commit(x, s, g, "dirSync")
-}
-/// Quint: saveFail
-fn save_fail(x: &State) -> Option<State> {
-    let j = &x.s.job;
-    if !x.s.alive || !j.on || j.phase > 2 {
-        return None;
-    }
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    s.pages[j.p] = on_reply(x, &s.pages[j.p], "Failed", j.bytes);
-    s.job = nojob();
-    g.guard = false;
-    if x.config.mutant("MCV") {
-        discharge(&mut s, j.p, j.ver);
-    }
-    commit(x, s, g, "saveFail")
-}
-/// Quint: draftSync
-fn draft_sync(x: &State, p: usize) -> Option<State> {
-    let mut e = draft_entry(&x.s.pages[p]);
-    if x.config.mutant("MBD") && e.base == UNKNOWN {
-        e.base = x.s.disk[p];
-    }
-    if !x.s.alive || x.s.drafts[p] == e {
-        return None;
-    }
-    let mut s = x.s.clone();
-    let mut g = x.g.clone();
-    if e.bytes != NONE {
-        g.wrote[p].insert((e.bytes, e.ver));
-        g.promise[p] = ack(&g.promise[p], e.bytes, e.ver, false, 0);
-    }
-    s.drafts[p] = e;
-    commit(x, s, g, "draftWrite")
-}
 /// Quint: switchReq
 fn switch_req(x: &State) -> Option<State> {
     if !x.s.alive || !x.s.pages.iter().any(|pg| pg.held && dirty(pg) && !pg.risk) {
@@ -1099,7 +945,12 @@ fn can_switch(x: &State) -> bool {
             !a.pend
                 && !a.sent
                 && (!pg.held || clean(pg) || pg.risk)
-                && (x.s.drafts[p] == draft_entry(pg)
+                && (x.s.drafts[p]
+                    == if x.config.mutant("MRejectRetainedSwitch") {
+                        draft_entry(pg)
+                    } else {
+                        wanted_draft(x, p)
+                    }
                     || (x.config.mutant("MX") && pg.held && pg.risk))
         })
 }
@@ -1108,7 +959,7 @@ fn switch_fin(x: &State) -> Option<State> {
     if !can_switch(x) {
         None
     } else {
-        commit(x, down(&x.s), g_down(&x.g), "switchFin")
+        commit(x, down(x), g_down(&x.g), "switchFin")
     }
 }
 /// Quint: window
@@ -1139,7 +990,7 @@ fn crash(x: &State) -> Option<State> {
     if !x.s.alive {
         None
     } else {
-        commit(x, down(&x.s), g_down(&x.g), "crash")
+        commit(x, down(x), g_down(&x.g), "crash")
     }
 }
 /// Quint: windowCrash
@@ -1177,7 +1028,7 @@ fn power_k(x: &State, keep: &BTreeSet<usize>) -> Option<State> {
             }
         })
         .collect();
-    let mut s = down(&x.s);
+    let mut s = down(x);
     let mut g = g_down(&x.g);
     for p in 0..x.s.pages.len() {
         let pr = &g.promise[p];
@@ -1209,7 +1060,7 @@ fn power_k(x: &State, keep: &BTreeSet<usize>) -> Option<State> {
 fn restored(x: &State) -> Vec<Page> {
     (0..x.s.pages.len())
         .map(|p| {
-            let d = &x.s.drafts[p];
+            let d = recovery_draft(&x.s, p);
             if d.bytes == NONE {
                 nopage()
             } else {
@@ -1223,7 +1074,7 @@ fn restored(x: &State) -> Vec<Page> {
                     },
                     obs: NONE,
                     ver: (0..p)
-                        .filter(|&q| x.s.drafts[q].bytes != NONE)
+                        .filter(|&q| recovery_draft(&x.s, q).bytes != NONE)
                         .fold(next(x.g.vc), |v, _| next(v)),
                     risk: true,
                     typed: true,
@@ -1234,20 +1085,28 @@ fn restored(x: &State) -> Vec<Page> {
         .collect()
 }
 /// Quint: launch
-fn launch(x: &State) -> Option<State> {
+fn launch_with_claim(x: &State, claim: bool) -> Option<State> {
     if x.s.alive {
         return None;
     }
     let mut s = x.s.clone();
     let mut g = x.g.clone();
     s.alive = true;
+    if claim && (s.owners.is_empty() || x.config.mutant("MDoubleOwner")) {
+        s.owners.insert(0);
+    }
     s.pages = restored(x);
-    for d in &s.drafts {
-        if d.bytes != NONE {
+    for page in &s.pages {
+        if page.held {
             g.vc = next(g.vc);
         }
     }
+    recover_pairs(x, &mut s, &mut g);
     commit(x, s, g, "launch")
+}
+
+fn launch(x: &State) -> Option<State> {
+    launch_with_claim(x, true)
 }
 /// Quint: copies
 fn copies(x: &State, p: usize) -> BTreeSet<Text> {
@@ -1361,6 +1220,13 @@ enum Action {
     WindowCrash,
     Power(bool, bool),
     Launch,
+    LaunchWithClaim(bool),
+    PairRewrite(usize, bool),
+    RestoreSource(usize),
+    OtherOwner(bool),
+    DraftStore(bool),
+    UnreadableDecision(usize),
+    PairedDraftFailure(usize),
 }
 /// Quint: step (explicit nondeterministic choice, with the original finite domains).
 fn step(x: &State, a: Action) -> Option<State> {
@@ -1398,6 +1264,10 @@ fn step(x: &State, a: Action) -> Option<State> {
         | Action::WRecv(p)
         | Action::Observe(p)
         | Action::Flush(p)
+        | Action::PairRewrite(p, _)
+        | Action::RestoreSource(p)
+        | Action::UnreadableDecision(p)
+        | Action::PairedDraftFailure(p)
         | Action::DraftSync(p) => *p < n,
         _ => true,
     };
@@ -1426,6 +1296,17 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::Check => check(x),
         Action::Rename => rename(x),
         Action::DirSync(ok) => dir_sync(x, ok),
+        Action::LaunchWithClaim(claim) => launch_with_claim(x, claim),
+        Action::PairRewrite(src, ok) => pair_rewrite(x, src, ok),
+        Action::RestoreSource(src) => restore_source(x, src),
+        Action::OtherOwner(claim) => other_owner(x, claim),
+        Action::DraftStore(ok) => draft_store(x, ok),
+        Action::UnreadableDecision(dst) => unreadable_decision(x, dst),
+        Action::PairedDraftFailure(p) => {
+            (x.s.alive && !can_draft(&x.s) && x.s.pairs.iter().any(|pair| pair.source(p)))
+                .then(|| commit(x, x.s.clone(), x.g.clone(), "DraftFailed"))
+                .flatten()
+        }
         Action::SaveFail => save_fail(x),
         Action::DraftSync(p) => draft_sync(x, p),
         Action::SwitchReq => switch_req(x),

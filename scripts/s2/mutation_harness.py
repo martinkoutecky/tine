@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCES = ["src/page_state/mod.rs", "src/page_state/operations.rs", "src/page_state/order.rs"]
+SOURCES = [f"src/page_state/{name}.rs" for name in ("mod", "operations", "order", "pairing", "saving")]
 
 
 def source_sha256():
@@ -22,11 +22,8 @@ def source_sha256():
 
 def prepare(work=None):
     work = work or ROOT / "scratch/s3/mutation-harness"
-    files = SOURCES + ["src/page_state/tests.rs",
-             "tests/fixtures/s2/scenarios.json", "tests/fixtures/s2/traces.json"]
-    extra = ROOT / "crates/tine-store/tests/fixtures/s2/witnesses.json"
-    if extra.exists():
-        files.append("tests/fixtures/s2/witnesses.json")
+    fixtures = ["scenarios", "traces", "witnesses", "audit-1019-twin-then-delete", "lane-1020-continuation-prefixes"]
+    files = SOURCES + ["src/page_state/tests.rs"] + [f"tests/fixtures/s2/{name}.json" for name in fixtures]
     for name in files:
         source = ROOT / "crates/tine-store" / name
         dest = work / name
