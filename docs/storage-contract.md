@@ -1556,11 +1556,15 @@ directories, every file readable. A key is names joined by single `/`; a name is
 `.` or `..`, and holds no NUL or platform separator. Any other spelling, a key given twice, and a key that is also
 another key's directory are refused (`InvalidInput`), never normalized. The layout check is the disk's
 (`Graph::check_layout`): a configured directory whose spelling resolves under a file, or as a file when it ends in
-`/` or `/.`, or with a name over 255 bytes, is refused; so is an `assets` file. Construction and each lookup are one
+`/` or `/.`, or with a name over 255 bytes, is refused; so is an `assets` file. Both sources read a path by its names
+as Tine splits them, never as the platform normalizes it (`by_tine_names`): a file spelled as a directory, or a
+not-found path whose nearest existing ancestor is a file, is not a directory, so Windows (which reports a path under
+a file as not found and drops a trailing `/` or `.`) refuses what Linux refuses and reads a config under a file as a
+config problem. The extra stats run only after a not-found answer, one per ancestor up to the first that exists. Construction and each lookup are one
 walk of the path's names (O(path bytes)); a parse read of a held file is a view of its bytes after the parse-input
 checks, never a copy. Proof: `layouts_open_or_refuse_alike`, `from_files_refuses_paths_no_directory_holds`,
 `a_deep_first_key_builds_in_linear_time`, `a_memory_parse_read_does_not_copy`, `backslash_names_open_alike`,
-`config_problems_answer_alike_from_files`.
+`config_problems_answer_alike_from_files`, `windows_answers_read_as_tine_reads_them`.
 
 An export's `WholeGraph::subgraph` can retain its serialized page sources.
 The private graph and the snapshot share those bytes. The captured

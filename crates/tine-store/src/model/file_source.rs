@@ -125,6 +125,67 @@ fn names_a_directory(path: &Path) -> bool {
     (path.as_os_str().to_str()).is_some_and(|raw| raw.ends_with('/') || raw.ends_with("/."))
 }
 
+/// The ancestors of the graph-relative spelling `rel` by its names as Tine
+/// splits them (on `/`, empty and `.` names dropped), nearest first:
+/// `x//./pages` has the one ancestor `x`.
+pub(crate) fn ancestor_spellings(rel: &str) -> Vec<String> {
+    let names: Vec<&str> = (rel.split('/'))
+        .filter(|name| !name.is_empty() && *name != ".")
+        .collect();
+    (1..names.len())
+        .rev()
+        .map(|depth| names[..depth].join("/"))
+        .collect()
+}
+
+/// What is at a graph path by Tine's reading of its names, from what the
+/// filesystem `reported` for it: the one answer to "missing, a directory, a
+/// file, or blocked by a file on the way" both sources give, whatever the
+/// platform's own path handling.
+///
+/// - Found but not a directory (`is_dir` false), while spelled as one (`x/`,
+///   `x/.`): not a directory. Unix says so itself (ENOTDIR); Windows, and
+///   std's join onto a verbatim (`\\?\`) root, drop the trailing `/` and `.`
+///   and find the file.
+/// - Not found, and the nearest ancestor that exists is not a directory:
+///   under a file, so not a directory. Unix says so itself (ENOTDIR);
+///   Windows says the path is not found (ERROR_PATH_NOT_FOUND).
+/// - Otherwise the filesystem's answer.
+///
+/// `ancestors` gives each ancestor's kind (links followed, as a lookup
+/// follows them), nearest first; it is called and read only after a
+/// `NotFound`, up to the first ancestor that exists.
+pub(crate) fn by_tine_names<T, I>(
+    spelled_as_directory: bool,
+    reported: io::Result<T>,
+    is_dir: impl FnOnce(&T) -> bool,
+    ancestors: impl FnOnce() -> I,
+) -> io::Result<T>
+where
+    I: IntoIterator<Item = io::Result<EntryKind>>,
+{
+    let not_a_directory = |why: &str| io::Error::new(io::ErrorKind::NotADirectory, why.to_owned());
+    match reported {
+        Ok(found) if spelled_as_directory && !is_dir(&found) => {
+            Err(not_a_directory("a file spelled as a directory"))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            for ancestor in ancestors() {
+                match ancestor {
+                    Ok(EntryKind::Dir) => break,
+                    Ok(EntryKind::File | EntryKind::Other) => {
+                        return Err(not_a_directory("the path is under a file"))
+                    }
+                    Err(probe) if probe.kind() == io::ErrorKind::NotFound => continue,
+                    Err(_) => break,
+                }
+            }
+            Err(error)
+        }
+        reported => reported,
+    }
+}
+
 impl Files {
     /// `files` are graph-relative keys, contents and times, under `root`.
     /// A key is canonical names joined by single `/` ([`canonical_name`]);
@@ -518,6 +579,49 @@ impl FileSource {
         }
     }
 
+    /// What the graph-relative spelling `rel` (a configured directory) names
+    /// under `root`, read by its names as Tine splits them
+    /// ([`by_tine_names`]), never as the platform normalizes the joined path.
+    /// One `lstat`; after a `NotFound` only, one stat per ancestor up to the
+    /// first that exists.
+    pub(crate) fn lstat_spelled(&self, root: &Path, rel: &str) -> io::Result<EntryKind> {
+        let reported = self.lstat(&root.join(rel));
+        let ancestors = || {
+            (ancestor_spellings(rel).into_iter())
+                .map(|ancestor| self.ancestor_kind(&root.join(ancestor)))
+        };
+        let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
+        let spelled = names_a_directory(Path::new(rel));
+        by_tine_names(spelled, reported, is_dir, ancestors)
+    }
+
+    /// A failed read of `path` (a fixed spelling, such as the config file)
+    /// as Tine reads it ([`by_tine_names`]): a `NotFound` under a file is not
+    /// a directory. Free unless `error` is `NotFound`; then one stat per
+    /// ancestor up to the first that exists.
+    pub(crate) fn read_error(&self, path: &Path, error: io::Error) -> io::Error {
+        let ancestors = || (path.ancestors().skip(1)).map(|ancestor| self.ancestor_kind(ancestor));
+        by_tine_names(false, Err::<(), _>(error), |_| false, ancestors)
+            .expect_err("an error stays an error")
+    }
+
+    /// What an ancestor of a looked-up path is, links followed as the
+    /// lookup follows them.
+    fn ancestor_kind(&self, path: &Path) -> io::Result<EntryKind> {
+        match self {
+            FileSource::Disk => fs::metadata(path).map(|metadata| {
+                if metadata.is_dir() {
+                    EntryKind::Dir
+                } else if metadata.is_file() {
+                    EntryKind::File
+                } else {
+                    EntryKind::Other
+                }
+            }),
+            FileSource::Memory(_) => self.lstat(path),
+        }
+    }
+
     /// Whether `path` is a regular file of the graph at `root`: not a
     /// symlink, and on disk inside the root once its ancestors resolve.
     pub(crate) fn graph_file(&self, root: &Path, path: &Path) -> io::Result<bool> {
@@ -693,3 +797,7 @@ impl Graph {
         super::read_parse_input_in(&self.source, path)
     }
 }
+
+#[cfg(test)]
+#[path = "file_source_names_tests.rs"]
+mod names_tests;

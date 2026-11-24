@@ -767,7 +767,10 @@ impl Core {
     }
 
     fn read_config(&self, path: &Path) -> Result<(), LoadError> {
-        let (config, problem, source) = match crate::model::read_parse_input(path) {
+        let disk = crate::model::FileSource::Disk;
+        let read =
+            crate::model::read_parse_input(path).map_err(|error| disk.read_error(path, error));
+        let (config, problem, source) = match read {
             Ok(value) => {
                 self.config_from_file.store(true, Ordering::SeqCst);
                 (
@@ -789,7 +792,7 @@ impl Core {
                 }
                 (
                     tine_core::config::Config::default(),
-                    crate::model::missing_config_problem(&crate::model::FileSource::Disk, path),
+                    crate::model::missing_config_problem(&disk, path),
                     None,
                 )
             }

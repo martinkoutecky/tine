@@ -165,7 +165,7 @@ pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
 /// missing file is the defaults with [`missing_config_problem`]; another
 /// read error is the defaults with that error.
 pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
-    match read_parse_input_in(source, path) {
+    match read_parse_input_in(source, path).map_err(|error| source.read_error(path, error)) {
         Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => (
             Config::default(),
@@ -2708,7 +2708,9 @@ impl Graph {
     /// spelled as a plain relative path, or that the source resolves as under
     /// a file or as a name too long, and an `assets` that is a file. The disk
     /// open then checks where links lead ([`validate_managed_dir`]); a memory
-    /// graph has none. One `lstat` per directory.
+    /// graph has none. One `lstat` per directory, read by Tine's names on
+    /// every platform ([`FileSource::lstat_spelled`]); a directory not found
+    /// adds one stat per ancestor up to the first that exists.
     pub(crate) fn check_layout(&self) -> io::Result<()> {
         let dirs = [
             (self.config.journals_dir.as_str(), "journals"),
@@ -2720,8 +2722,9 @@ impl Graph {
             |path: &Path| matches!(self.source.lstat(path), Ok(file_source::EntryKind::File));
         for (raw, label) in dirs {
             managed_dir_spelling(raw, label)?;
-            // One resolution of the spelling as given (MEMORY-SOURCE-MODEL Q2).
-            let why = match self.source.lstat(&self.root.join(raw)) {
+            // One resolution of the spelling as given (MEMORY-SOURCE-MODEL Q2),
+            // by its names as Tine splits them, on every platform.
+            let why = match self.source.lstat_spelled(&self.root, raw) {
                 Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
                     "is not a directory or is under a file"
                 }
