@@ -22,6 +22,7 @@
     { "name": "strip-style-attr",    "input": "<span style=\"position:fixed\">t</span>",            "mustContain": ["<span", "t"],               "mustNotContain": ["position:fixed", "style="] },
     { "name": "strip-iframe",        "input": "<iframe src=\"https://evil.example\"></iframe>after", "mustContain": ["after"],                    "mustNotContain": ["<iframe"] },
     { "name": "style-keeps-colour-only", "input": "<span style=\"color:#c00;position:fixed;background-color:url(https://t.example/x)\">t</span>", "mustContain": ["<span style=\"color: #c00\">t</span>"], "mustNotContain": ["position", "url("] },
+    { "name": "style-one-colour-rule", "input": "<span style=\"color:\uFEFFred;background-color:#0c0\">t</span>", "mustContain": ["<span style=\"background-color: #0c0\">t</span>"], "mustNotContain": ["color: red", "\uFEFF"] },
     {
       "name": "hiccup-export-equals-sanitize",
       "hiccup": "[:div {:style \"position:fixed;inset:0;background:#fff\" :onclick \"steal()\"} [:span {:style \"color:#c00\"} \"red\"] [:form [:input {:name \"pw\"}] [:button \"Log in\"]]]",

@@ -6,9 +6,10 @@
 //! Media tags (`audio`/`video`/`source`) follow OG 6e7afa8eb's raw-HTML DOMPurify path
 //! (src/main/frontend/security.cljs:5-11, components/block.cljs:3258-3261); keep the set
 //! bounded to media, never iframe/object/embed. `autoplay` stays absent.
-//! `style` keeps only colour declarations, with the same rule as the app
-//! (`colorOnlyStyle` in `src/render/htmlSanitize.ts`), so an export shows the
-//! colours the app shows and nothing that positions, hides or fetches.
+//! `style` keeps only colour declarations (`color_only_style`, which the app
+//! calls through wasm), so an export shows the colours the app shows and
+//! nothing that positions, hides or fetches. Every kept `href` obeys
+//! `safe_export_url`, the rule export applies to Markdown links.
 
 use ammonia::Builder;
 use regex::Regex;
@@ -27,29 +28,80 @@ struct NativePolicy {
     deny_data_tag_attributes: HashMap<String, Vec<String>>,
 }
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BrowserPolicy {
-    style_properties: Vec<String>,
-}
-#[derive(Deserialize)]
 struct Policy {
     tags: Vec<String>,
-    browser: BrowserPolicy,
     native: NativePolicy,
 }
+const POLICY_JSON: &str = include_str!("../../../fixtures/html-sanitize-policy.json");
 fn policy() -> &'static Policy {
     static POLICY: OnceLock<Policy> = OnceLock::new();
     POLICY.get_or_init(|| {
-        serde_json::from_str(include_str!("../../../fixtures/html-sanitize-policy.json"))
+        serde_json::from_str(POLICY_JSON).expect("checked-in HTML sanitizer policy")
+    })
+}
+/// The policy's `browser.styleProperties`, read on its own so the app's wasm
+/// build (which calls only `color_only_style`) carries no native-policy code.
+fn style_properties() -> &'static [String] {
+    #[derive(Deserialize)]
+    struct Browser {
+        #[serde(rename = "styleProperties")]
+        style_properties: Vec<String>,
+    }
+    #[derive(Deserialize)]
+    struct StyleOnly {
+        browser: Browser,
+    }
+    static PROPERTIES: OnceLock<Vec<String>> = OnceLock::new();
+    PROPERTIES.get_or_init(|| {
+        serde_json::from_str::<StyleOnly>(POLICY_JSON)
             .expect("checked-in HTML sanitizer policy")
+            .browser
+            .style_properties
     })
 }
 
+/// The export's one rule for where a note-authored link may navigate (Markdown
+/// links in `decorate`, raw-HTML and Hiccup anchors in `sanitize`). External
+/// links are limited to ordinary web/contact schemes; graph assets and local
+/// export links may use a relative path or fragment. Scheme-like and
+/// network-path references do not fall through to the relative case.
+pub fn safe_export_url(url: &str) -> Option<&str> {
+    let url = url.trim();
+    if url.is_empty()
+        || url.bytes().any(|b| b == 0 || b.is_ascii_control())
+        || url.starts_with("//")
+        || url.starts_with('\\')
+        || url.contains('\\')
+    {
+        return None;
+    }
+    let first_delimiter = url.find(['/', '?', '#']).unwrap_or(url.len());
+    if let Some(colon) = url.find(':').filter(|colon| *colon < first_delimiter) {
+        let scheme = &url[..colon];
+        if !scheme.bytes().enumerate().all(|(i, b)| {
+            if i == 0 {
+                b.is_ascii_alphabetic()
+            } else {
+                b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+            }
+        }) {
+            return None;
+        }
+        return matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto" | "tel"
+        )
+        .then_some(url);
+    }
+    Some(url)
+}
+
 /// The colour declarations of a `style` value, serialized `prop: value; …`;
-/// "" if none. Mirrors the app's `colorOnlyStyle`: the property must be one of
-/// the policy's `browser.styleProperties`, and the value one closed colour
-/// literal (no url(), var(), calc(), image-set() or `!important`).
-fn color_only_style(value: &str) -> String {
+/// "" if none, the one rule for both the app (through the wasm export
+/// `color_only_style`) and export: the property must be one of the policy's
+/// `browser.styleProperties`, and the value one closed colour literal (no
+/// url(), var(), calc(), image-set() or `!important`).
+pub fn color_only_style(value: &str) -> String {
     static COLOR_VALUE: OnceLock<Regex> = OnceLock::new();
     static FUNCTION_BANNED: OnceLock<Regex> = OnceLock::new();
     let color = COLOR_VALUE.get_or_init(|| {
@@ -59,7 +111,7 @@ fn color_only_style(value: &str) -> String {
     let banned = FUNCTION_BANNED.get_or_init(|| {
         Regex::new(r"(?i)var|calc|url|env|attr|image|min|max|clamp").expect("banned functions")
     });
-    let properties = &policy().browser.style_properties;
+    let properties = style_properties();
     let mut kept = Vec::new();
     for declaration in value.split(';') {
         let Some((property, v)) = declaration.split_once(':') else {
@@ -115,12 +167,12 @@ pub fn sanitize(html: &str) -> String {
                 let kept = color_only_style(value);
                 return (!kept.is_empty()).then(|| kept.into());
             }
-            let start = value.trim_start_matches(|c: char| c.is_ascii_control() || c == ' ');
-            // The export's link rule (`safe_export_url`): a network-path or
-            // backslash link never falls through to the relative case.
-            if attribute == "href" && (start.starts_with("//") || start.contains('\\')) {
-                return None;
+            // A link keeps its destination only under the export's link rule; an
+            // anchor that fails keeps its text, as a Markdown link does.
+            if attribute == "href" {
+                return safe_export_url(value).map(|_| value.into());
             }
+            let start = value.trim_start_matches(|c: char| c.is_ascii_control() || c == ' ');
             let is_data = start.to_ascii_lowercase().starts_with("data:");
             // DOMPurify permits data: only in media-tag data-URI attributes
             // (src); it strips data: from link hrefs and from `poster`. Mirror

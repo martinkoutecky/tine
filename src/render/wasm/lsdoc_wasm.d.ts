@@ -35,6 +35,12 @@ export function builtin_macro(name: string): string;
 export function canonical_group_field(value: string): string | undefined;
 
 /**
+ * The colour declarations a note's `style` keeps in rendered output ("" if
+ * none): the export sanitizer's rule, so app and export agree. O(value bytes).
+ */
+export function color_only_style(value: string): string;
+
+/**
  * The same own-property discriminator that editor_text uses to hide comment metadata.
  */
 export function comment_quote(properties: string): string | undefined;
@@ -392,6 +398,7 @@ export interface InitOutput {
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
+    readonly color_only_style: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];

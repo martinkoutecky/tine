@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
+use tine_core::html_sanitize::safe_export_url;
 use tine_core::lsdoc::ast::{Block, Inline, Url};
 use tine_core::model::{BlockPreview, Format, PageKind, RefGroup};
 use tine_core::projection::{block_to_bounded_dto, subtree_node_count};
@@ -421,41 +422,6 @@ fn fragment(s: &str) -> String {
         }
     }
     out
-}
-
-/// Closed URL policy for navigable content in a static export. External links
-/// are limited to ordinary web/contact schemes; graph assets and local export
-/// links may use a relative path or fragment. Scheme-like and network-path
-/// references do not fall through to the relative case.
-fn safe_export_url(url: &str) -> Option<&str> {
-    let url = url.trim();
-    if url.is_empty()
-        || url.bytes().any(|b| b == 0 || b.is_ascii_control())
-        || url.starts_with("//")
-        || url.starts_with('\\')
-        || url.contains('\\')
-    {
-        return None;
-    }
-    let first_delimiter = url.find(['/', '?', '#']).unwrap_or(url.len());
-    if let Some(colon) = url.find(':').filter(|colon| *colon < first_delimiter) {
-        let scheme = &url[..colon];
-        if !scheme.bytes().enumerate().all(|(i, b)| {
-            if i == 0 {
-                b.is_ascii_alphabetic()
-            } else {
-                b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
-            }
-        }) {
-            return None;
-        }
-        return matches!(
-            scheme.to_ascii_lowercase().as_str(),
-            "http" | "https" | "mailto" | "tel"
-        )
-        .then_some(url);
-    }
-    Some(url)
 }
 
 fn safe_media_url(url: &str) -> Option<&str> {
@@ -2714,6 +2680,73 @@ mod tests {
         }
         let ok = render_body("[:a {:href \"https://ok.example\"} \"x\"]", &no_refs());
         assert!(ok.contains("href=\"https://ok.example\""), "{ok}");
+    }
+
+    /// One link rule in export: a destination is navigable through a Markdown
+    /// link, a raw-HTML anchor and a Hiccup anchor exactly when
+    /// `safe_export_url` accepts it, and an inert link keeps its text.
+    #[test]
+    fn every_note_link_obeys_the_export_link_rule() {
+        let destinations = [
+            "",
+            "\t",
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/\r/evil.example",
+            "//evil.example/x",
+            " //evil.example",
+            "\\\\evil.example",
+            "/\\evil.example",
+            "docs\\a.pdf",
+            "javascript:steal()",
+            "JaVaScRiPt:steal()",
+            "file:///etc/passwd",
+            "data:text/html,x",
+            "https://ok.example/a?b=1",
+            "mailto:someone@example.com",
+            "../assets/a.pdf",
+            "#b1",
+        ];
+        let mut wrong = Vec::new();
+        for dest in destinations {
+            let html_attr: String = dest
+                .chars()
+                .map(|c| match c {
+                    '\t' | '\n' | '\r' => format!("&#{};", c as u32),
+                    '"' => "&quot;".into(),
+                    c => c.to_string(),
+                })
+                .collect();
+            let edn: String = dest
+                .chars()
+                .map(|c| match c {
+                    '\t' => "\\t".into(),
+                    '\n' => "\\n".into(),
+                    '\r' => "\\r".into(),
+                    '\\' => "\\\\".into(),
+                    c => c.to_string(),
+                })
+                .collect();
+            let surfaces = [
+                ("markdown", format!("see [linktext]({dest}) end")),
+                (
+                    "raw-html",
+                    format!("see <a href=\"{html_attr}\">linktext</a> end"),
+                ),
+                (
+                    "hiccup",
+                    format!("see [:a {{:href \"{edn}\"}} \"linktext\"] end"),
+                ),
+            ];
+            let want = tine_core::html_sanitize::safe_export_url(dest).is_some();
+            for (surface, raw) in surfaces {
+                let out = render_body(&raw, &no_refs());
+                if out.contains("href=") != want || !out.contains("linktext") {
+                    wrong.push(format!("{dest:?} via {surface} (want {want}): {out}"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]

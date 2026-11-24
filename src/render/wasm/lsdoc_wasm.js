@@ -103,6 +103,27 @@ function __tine_raw_canonical_group_field(value) {
 }
 
 /**
+ * The colour declarations a note's `style` keeps in rendered output ("" if
+ * none): the export sanitizer's rule, so app and export agree. O(value bytes).
+ * @param {string} value
+ * @returns {string}
+ */
+function __tine_raw_color_only_style(value) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.color_only_style(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * The same own-property discriminator that editor_text uses to hide comment metadata.
  * @param {string} properties
  * @returns {string | undefined}
@@ -1820,6 +1841,7 @@ export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __ti
 export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
 export const builtin_macro = __tineGuard("builtin_macro", __tine_raw_builtin_macro);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
+export const color_only_style = __tineGuard("color_only_style", __tine_raw_color_only_style);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);

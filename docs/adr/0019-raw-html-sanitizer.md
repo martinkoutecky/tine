@@ -91,11 +91,21 @@ lsdoc is untouched.
   through `html_sanitize::sanitize` like typed HTML. lsdoc's own Hiccup checks
   still decide which vectors transcribe at all, but they are no longer the
   export's safety boundary. A vector lsdoc refuses stays escaped text.
-- **`style` keeps colour declarations, in both surfaces.** The app already kept
-  colour declarations of `style` (`colorOnlyStyle` in `src/render/htmlSanitize.ts`);
-  ammonia now applies the same rule (`color_only_style`), reading the same
-  `browser.styleProperties` list from the policy file. Everything else in `style`
-  (positioning, sizing, `url()`, `var()`, `!important`) is still dropped, so a note
+- **`style` keeps colour declarations, in both surfaces, by one rule.**
+  `color_only_style` in `crates/tine-core/src/html_sanitize.rs` decides which
+  declarations survive: the property must be in the policy file's
+  `browser.styleProperties`, the value one closed colour literal. ammonia applies
+  it in export; the app calls the same function through the wasm parser module
+  (`src/render/htmlSanitize.ts` has no rule of its own). Everything else in `style`
+  (positioning, sizing, `url()`, `var()`, `!important`) is dropped, so a note
   cannot overlay or hide a published page.
+- **One link rule in export.** `safe_export_url` (in `html_sanitize`) decides
+  which destinations a note-authored link may navigate to: Markdown links in
+  `decorate`, and every `href` that `sanitize` keeps on a raw-HTML or Hiccup
+  anchor. A link that fails it keeps its text and loses its destination, so a
+  `//host`, backslash, blank or control-character destination is inert however it
+  was written (raw-HTML `//host` links kept their destination before this
+  amendment). lsdoc's Hiccup attribute checks only decide whether a vector
+  transcribes at all. `img` and media `src` keep the sanitizer's scheme policy.
 - So an export shows what the app shows: a Hiccup or raw-HTML colour survives,
   and positioning, forms, `id`s and event handlers do not.
