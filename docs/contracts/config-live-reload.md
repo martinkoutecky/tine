@@ -38,9 +38,13 @@ the oracle for behaviour; the mechanism here is develop's.
 The store watcher (`crates/tine-store/src/watch.rs`) marks a batch that names
 `logseq/config.edn` (case-insensitively) and reconciles it with configuration
 included; poll mode (every 3 s) always includes it. The file is re-read only
-when its bytes differ from the ones served (a `FileRev` byte-identity gate), so
-Logseq rewriting identical bytes, or Syncthing redelivering them, costs one
-read and publishes nothing. A config seen
+when the read's outcome differs from the one served: its bytes (a `FileRev`
+byte-identity gate), or why there is no file to read (absent, under a `logseq`
+file, a directory), observed as the open's config read classifies it
+(`ConfigStamp`, `find_config`). So Logseq rewriting identical bytes, or
+Syncthing redelivering them, costs one read and publishes nothing, and removing
+a `logseq` file that blocked the read is noticed although neither side has a
+revision. A config seen
 mid-removal (metadata read, bytes already gone) is looked at again, so the
 removal is published as a removal, not a modification that hides it. A removal
 keeps the configuration read from the file, as Logseq's watcher does (it
@@ -58,7 +62,9 @@ graph root. One catalog notice and the page banners name config.edn, and editing
 affordances use that graph restriction in addition to each page's intrinsic Org
 round-trip restriction. Repeated unreadable publications do not add notices.
 Repairing the config clears the notice and the graph restriction without
-reopening; an unsafe Org page remains read-only. A problem-only transition
+reopening (proof: `config_repair_tests.rs`, a `logseq` file removed or replaced
+by a directory with or without a config, on the next reload or a refresh, and
+in a memory graph); an unsafe Org page remains read-only. A problem-only transition
 fetches no loaded pages; build-key changes retain the reconciliation below.
 
 Own and outside config writes retain parsed pages, their observations, the

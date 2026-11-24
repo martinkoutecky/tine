@@ -244,8 +244,8 @@ pub struct Change {
     /// Affected graph files, including `logseq/config.edn` when observed, with
     /// resulting revisions when present. An external config edit enters this
     /// feed on the watcher cycle that observes it (an event naming the file, a
-    /// rescan, or every poll cycle) or on `refresh()`, only when its bytes
-    /// changed. An own config create or replace lists its config file tuple in
+    /// rescan, or every poll cycle) or on `refresh()`, only when its bytes,
+    /// or why there is none to read (absent, under a file), changed. An own config create or replace lists its config file tuple in
     /// the same transaction publication.
     /// Trash destinations are not listed. A committed transaction or restore
     /// lists an asset path here when its final bytes differ from the
@@ -396,6 +396,8 @@ mod answer_changes;
 mod asset_inventory;
 pub(crate) mod change_summary;
 pub(crate) mod checkpoint;
+#[cfg(test)]
+mod config_repair_tests;
 mod diagnostics;
 mod first_view;
 mod page_metrics;

@@ -161,22 +161,49 @@ impl std::error::Error for ParserPanicked {}
 /// A config read: the effective config, its read problem and its text.
 pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
 
-/// The config an open reads at `path` through `source`: the parsed text; a
-/// missing file is the defaults with [`missing_config_problem`]; another
-/// read error is the defaults with that error.
-pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
-    match read_parse_input_in(source, path).map_err(|error| source.read_error(path, error)) {
-        Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+/// What a config read of `root`'s [`file_source::CONFIG_FILE`] through
+/// `source` found: the one classifier a graph open ([`read_config_in`]) and a
+/// live reload (`watch::Core::read_config`) share. A read error is read by
+/// Tine's names ([`FileSource::read_error`]): under a file is not absent.
+pub(crate) enum ConfigFound<'a> {
+    Text(std::borrow::Cow<'a, str>),
+    Absent,
+    Unreadable(io::Error),
+}
+
+pub(crate) fn find_config<'a>(source: &'a FileSource, root: &Path) -> ConfigFound<'a> {
+    let rel = file_source::CONFIG_FILE;
+    match read_parse_input_in(source, &root.join(rel)) {
+        Ok(text) => ConfigFound::Text(text),
+        Err(error) => match source.read_error(root, rel, error) {
+            error if error.kind() == io::ErrorKind::NotFound => ConfigFound::Absent,
+            error => ConfigFound::Unreadable(error),
+        },
+    }
+}
+
+/// The config read of what [`find_config`] found: the parsed text; an
+/// absent file is the defaults with [`missing_config_problem`]; another read
+/// error is the defaults with that error ([`config_of_read_error`]).
+pub(crate) fn config_read_of(source: &FileSource, root: &Path, found: ConfigFound) -> ConfigRead {
+    match found {
+        ConfigFound::Text(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
+        ConfigFound::Absent => (
             Config::default(),
-            missing_config_problem(source, path),
+            missing_config_problem(source, &root.join(file_source::CONFIG_FILE)),
             None,
         ),
-        Err(error) => {
+        ConfigFound::Unreadable(error) => {
             let (config, problem) = config_of_read_error(error);
             (config, problem, None)
         }
     }
+}
+
+/// The config an open of the graph at `root` reads through `source`
+/// ([`find_config`], [`config_read_of`]).
+pub(crate) fn read_config_in(source: &FileSource, root: &Path) -> ConfigRead {
+    config_read_of(source, root, find_config(source, root))
 }
 
 /// Why a graph with no `logseq/config.edn` must not take the defaults, if it
@@ -224,11 +251,7 @@ pub(crate) fn config_of_read_error(error: io::Error) -> (Config, Option<crate::I
     (config, Some(error.into()))
 }
 
-pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
-    read_parse_input_in(&FileSource::Disk, path).map(std::borrow::Cow::into_owned)
-}
-
-/// [`read_parse_input`] from `source`: a disk read's buffer, or a memory
+/// A parse-input read of `path` from `source`: a disk read's buffer, or a memory
 /// file's text without a copy.
 pub(crate) fn read_parse_input_in<'a>(
     source: &'a FileSource,
@@ -2918,8 +2941,7 @@ impl Graph {
     /// A graph over `source` under the config it holds at
     /// `logseq/config.edn`: the one config read of a graph open.
     fn open_from(root: PathBuf, source: FileSource) -> Graph {
-        let path = root.join(file_source::CONFIG_FILE);
-        let (config, problem, config_source) = read_config_in(&source, &path);
+        let (config, problem, config_source) = read_config_in(&source, &root);
         let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;

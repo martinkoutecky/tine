@@ -120,70 +120,116 @@ fn canonical_name(name: &str) -> bool {
         && !name.chars().any(std::path::is_separator)
 }
 
-/// Whether `path` is spelled as a directory: ending in `/` or `/.`.
-fn names_a_directory(path: &Path) -> bool {
-    (path.as_os_str().to_str()).is_some_and(|raw| raw.ends_with('/') || raw.ends_with("/."))
+/// Tine's names in a graph path's spelling: split on the platform's
+/// separators (`/`, and on Windows `\` too, as `Path` splits), empty and `.`
+/// names dropped. `x//./pages` names `x` and `pages`.
+pub(crate) fn tine_names(spelling: &str) -> impl Iterator<Item = &str> {
+    (spelling.split(std::path::is_separator)).filter(|name| !name.is_empty() && *name != ".")
 }
 
-/// The ancestors of the graph-relative spelling `rel` by its names as Tine
-/// splits them (on `/`, empty and `.` names dropped), nearest first:
-/// `x//./pages` has the one ancestor `x`.
-pub(crate) fn ancestor_spellings(rel: &str) -> Vec<String> {
-    let names: Vec<&str> = (rel.split('/'))
-        .filter(|name| !name.is_empty() && *name != ".")
-        .collect();
-    (1..names.len())
-        .rev()
-        .map(|depth| names[..depth].join("/"))
-        .collect()
-}
-
-/// What is at a graph path by Tine's reading of its names, from what the
-/// filesystem `reported` for it: the one answer to "missing, a directory, a
-/// file, or blocked by a file on the way" both sources give, whatever the
-/// platform's own path handling.
-///
-/// - Found but not a directory (`is_dir` false), while spelled as one (`x/`,
-///   `x/.`): not a directory. Unix says so itself (ENOTDIR); Windows, and
-///   std's join onto a verbatim (`\\?\`) root, drop the trailing `/` and `.`
-///   and find the file.
-/// - Not found, and the nearest ancestor that exists is not a directory:
-///   under a file, so not a directory. Unix says so itself (ENOTDIR);
-///   Windows says the path is not found (ERROR_PATH_NOT_FOUND).
-/// - Otherwise the filesystem's answer.
-///
-/// `ancestors` gives each ancestor's kind (links followed, as a lookup
-/// follows them), nearest first; it is called and read only after a
-/// `NotFound`, up to the first ancestor that exists.
-pub(crate) fn by_tine_names<T, I>(
-    spelled_as_directory: bool,
-    reported: io::Result<T>,
-    is_dir: impl FnOnce(&T) -> bool,
-    ancestors: impl FnOnce() -> I,
-) -> io::Result<T>
-where
-    I: IntoIterator<Item = io::Result<EntryKind>>,
-{
-    let not_a_directory = |why: &str| io::Error::new(io::ErrorKind::NotADirectory, why.to_owned());
-    match reported {
-        Ok(found) if spelled_as_directory && !is_dir(&found) => {
-            Err(not_a_directory("a file spelled as a directory"))
+/// `spelling` without its tail of separators and `.` names: `x//./` is `x`.
+fn without_tail(mut spelling: &str) -> &str {
+    loop {
+        let trimmed = spelling.trim_end_matches(std::path::is_separator);
+        match trimmed.strip_suffix('.') {
+            Some(rest) if rest.is_empty() || rest.ends_with(std::path::is_separator) => {
+                spelling = rest
+            }
+            _ => return trimmed,
         }
+    }
+}
+
+/// Whether `spelling` is spelled as a directory: ending in a separator or a
+/// `.` name (`x/`, `x/.`).
+fn spelled_as_directory(spelling: &str) -> bool {
+    without_tail(spelling).len() != spelling.len()
+}
+
+/// The spelling of `spelling`'s parent, borrowed: it without its last name
+/// and that name's tail; `None` for a single name (its parent is the root).
+fn parent_spelling(spelling: &str) -> Option<&str> {
+    let named = without_tail(spelling);
+    let parent = without_tail(&named[..named.rfind(std::path::is_separator)?]);
+    (!parent.is_empty()).then_some(parent)
+}
+
+/// What kind of entry the graph-relative spelling `rel` names: the one rule
+/// both sources read a path by (Tine's names, [`tine_names`], never the
+/// platform's normalization of a joined path; MEMORY-SOURCE-MODEL Q2).
+///
+/// `probe(prefix, whole)` answers only what is at exactly `prefix`, a
+/// borrowed spelling of `rel` up to the end of one of its names (`whole` for
+/// `rel` itself); nothing there, a file on the way included, is `NotFound`.
+/// `as_directory` says `rel` ends as a directory's spelling (`x/`, `x/.`).
+///
+/// - `rel` is found but is not a directory (`is_dir`) while spelled as one:
+///   not a directory. Unix says so itself (ENOTDIR); Windows, and std's join
+///   onto a verbatim (`\\?\`) root, drop the trailing `/` and `.`.
+/// - `rel` is not found: its ancestors are probed nearest first, up to the
+///   first that exists. If that one is not a directory, `rel` is under a
+///   file: not a directory (Unix says ENOTDIR itself; Windows says
+///   ERROR_PATH_NOT_FOUND). Otherwise, or when an ancestor cannot be
+///   probed, the answer stays `NotFound`.
+/// - Otherwise the probe's answer.
+///
+/// Cost: one probe; after a `NotFound` only, one per ancestor up to the
+/// first that exists (the root is never probed). No allocation.
+pub(crate) fn spelled_kind<T>(
+    rel: &str,
+    as_directory: bool,
+    mut probe: impl FnMut(&str, bool) -> io::Result<T>,
+    is_dir: impl Fn(&T) -> bool,
+    shown: &Path,
+) -> io::Result<T> {
+    let not_a_directory = |why: &str| {
+        io::Error::new(
+            io::ErrorKind::NotADirectory,
+            format!("{} {why}", shown.display()),
+        )
+    };
+    match probe(rel, true) {
+        Ok(found) if as_directory && !is_dir(&found) => Err(not_a_directory("is not a directory")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            for ancestor in ancestors() {
-                match ancestor {
-                    Ok(EntryKind::Dir) => break,
-                    Ok(EntryKind::File | EntryKind::Other) => {
-                        return Err(not_a_directory("the path is under a file"))
+            let mut ancestor = parent_spelling(rel);
+            while let Some(prefix) = ancestor {
+                match probe(prefix, false) {
+                    Ok(found) if is_dir(&found) => break,
+                    Ok(_) => return Err(not_a_directory("is under a file")),
+                    Err(missing) if missing.kind() == io::ErrorKind::NotFound => {
+                        ancestor = parent_spelling(prefix)
                     }
-                    Err(probe) if probe.kind() == io::ErrorKind::NotFound => continue,
                     Err(_) => break,
                 }
             }
             Err(error)
         }
-        reported => reported,
+        answer => answer,
     }
+}
+
+/// The disk's answer to [`spelled_kind`]'s probe: one metadata call on
+/// `root` joined with `prefix`'s clean names (no trailing separator or dot
+/// for the OS to normalize). An ancestor, and a spelling ending as a
+/// directory's, follow a link as a lookup through them does; `rel` itself
+/// does not (`lstat`).
+fn disk_probe(root: &Path, prefix: &str, follow: bool) -> io::Result<EntryKind> {
+    #[cfg(test)]
+    names_tests::DISK_PROBES.with(|count| count.set(count.get() + 1));
+    let mut path = root.to_path_buf();
+    path.extend(tine_names(prefix));
+    let metadata = if follow {
+        fs::metadata(&path)?
+    } else {
+        fs::symlink_metadata(&path)?
+    };
+    Ok(if metadata.is_file() {
+        EntryKind::File
+    } else if metadata.is_dir() {
+        EntryKind::Dir
+    } else {
+        EntryKind::Other
+    })
 }
 
 impl Files {
@@ -356,25 +402,36 @@ impl Files {
         Some((content, modified))
     }
 
-    /// The node `path` names, by one walk from the root, with the errors the
-    /// reference gives: a path through a file, or a file spelled as a
-    /// directory (ending in `/` or `/.`), is not a directory; a name longer
-    /// than [`NAME_MAX`] is an invalid file name; else not found.
-    /// O(path bytes).
+    /// The node `path` names, by [`spelled_kind`] over the tree ([`Self::at`]),
+    /// with the errors the reference gives: a path through a file, or a file
+    /// spelled as a directory (ending in `/` or `/.`), is not a directory; a
+    /// name longer than [`NAME_MAX`] is an invalid file name; else not found.
+    /// O(path bytes); after a `NotFound`, one walk per ancestor up to the
+    /// first that exists.
     fn node(&self, path: &Path) -> io::Result<usize> {
         let rel = path.strip_prefix(&self.root).map_err(|_| not_found(path))?;
+        let rel = rel.to_str().ok_or_else(|| not_found(path))?;
+        let raw = path.as_os_str().to_str().unwrap_or_default();
+        let probe = |prefix: &str, _whole: bool| self.at(prefix, path);
+        spelled_kind(
+            rel,
+            spelled_as_directory(raw),
+            probe,
+            |&at| self.is_dir(at),
+            path,
+        )
+    }
+
+    /// The memory probe of [`spelled_kind`]: the node at exactly `prefix`,
+    /// by one walk from the root. A missing name, or a file on the way, is
+    /// not found (reported as `path`); a name longer than [`NAME_MAX`] is an
+    /// invalid file name. O(prefix bytes).
+    fn at(&self, prefix: &str, path: &Path) -> io::Result<usize> {
         let mut at = 0;
-        for part in rel.components() {
+        for name in tine_names(prefix) {
             let Node::Dir(children) = &self.nodes[at] else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotADirectory,
-                    format!("{} is under a file", path.display()),
-                ));
-            };
-            let std::path::Component::Normal(name) = part else {
                 return Err(not_found(path));
             };
-            let name = name.to_str().ok_or_else(|| not_found(path))?;
             if name.len() > NAME_MAX {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidFilename,
@@ -382,12 +439,6 @@ impl Files {
                 ));
             }
             at = *children.get(name).ok_or_else(|| not_found(path))?;
-        }
-        if !self.is_dir(at) && names_a_directory(path) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotADirectory,
-                format!("{} is not a directory", path.display()),
-            ));
         }
         Ok(at)
     }
@@ -580,46 +631,41 @@ impl FileSource {
     }
 
     /// What the graph-relative spelling `rel` (a configured directory) names
-    /// under `root`, read by its names as Tine splits them
-    /// ([`by_tine_names`]), never as the platform normalizes the joined path.
-    /// One `lstat`; after a `NotFound` only, one stat per ancestor up to the
-    /// first that exists.
+    /// under `root`, by [`spelled_kind`]: the memory tree's walk
+    /// ([`Files::node`]), or on disk one `lstat` of the clean names
+    /// ([`disk_probe`]). After a `NotFound` only, one probe per ancestor up
+    /// to the first that exists.
     pub(crate) fn lstat_spelled(&self, root: &Path, rel: &str) -> io::Result<EntryKind> {
-        let reported = self.lstat(&root.join(rel));
-        let ancestors = || {
-            (ancestor_spellings(rel).into_iter())
-                .map(|ancestor| self.ancestor_kind(&root.join(ancestor)))
+        match self {
+            FileSource::Memory(_) => self.lstat(&root.join(rel)),
+            FileSource::Disk => {
+                let as_directory = spelled_as_directory(rel);
+                let probe =
+                    |prefix: &str, whole: bool| disk_probe(root, prefix, !whole || as_directory);
+                let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
+                spelled_kind(rel, as_directory, probe, is_dir, &root.join(rel))
+            }
+        }
+    }
+
+    /// A failed read of the graph-relative file `rel` under `root` (a fixed
+    /// spelling, such as [`CONFIG_FILE`]) as [`spelled_kind`] reads it, with
+    /// `error` as the probe of `rel` itself: a `NotFound` under a file is not
+    /// a directory. A memory read's error already is ([`Files::node`]). Free
+    /// unless `error` is `NotFound`; then one stat per ancestor up to the
+    /// first that exists.
+    pub(crate) fn read_error(&self, root: &Path, rel: &str, error: io::Error) -> io::Error {
+        if let FileSource::Memory(_) = self {
+            return error;
+        }
+        let mut error = Some(error);
+        let probe = |prefix: &str, whole: bool| match error.take() {
+            Some(error) if whole => Err(error),
+            _ => disk_probe(root, prefix, true),
         };
         let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
-        let spelled = names_a_directory(Path::new(rel));
-        by_tine_names(spelled, reported, is_dir, ancestors)
-    }
-
-    /// A failed read of `path` (a fixed spelling, such as the config file)
-    /// as Tine reads it ([`by_tine_names`]): a `NotFound` under a file is not
-    /// a directory. Free unless `error` is `NotFound`; then one stat per
-    /// ancestor up to the first that exists.
-    pub(crate) fn read_error(&self, path: &Path, error: io::Error) -> io::Error {
-        let ancestors = || (path.ancestors().skip(1)).map(|ancestor| self.ancestor_kind(ancestor));
-        by_tine_names(false, Err::<(), _>(error), |_| false, ancestors)
-            .expect_err("an error stays an error")
-    }
-
-    /// What an ancestor of a looked-up path is, links followed as the
-    /// lookup follows them.
-    fn ancestor_kind(&self, path: &Path) -> io::Result<EntryKind> {
-        match self {
-            FileSource::Disk => fs::metadata(path).map(|metadata| {
-                if metadata.is_dir() {
-                    EntryKind::Dir
-                } else if metadata.is_file() {
-                    EntryKind::File
-                } else {
-                    EntryKind::Other
-                }
-            }),
-            FileSource::Memory(_) => self.lstat(path),
-        }
+        let decided = spelled_kind(rel, false, probe, is_dir, &root.join(rel));
+        decided.err().expect("an error stays an error")
     }
 
     /// Whether `path` is a regular file of the graph at `root`: not a
@@ -703,8 +749,7 @@ impl Graph {
             .collect();
         let undo = self.memory_files()?.replace(changes)?;
         let before = reread.then(|| {
-            let path = self.root.join(CONFIG_FILE);
-            let read = super::read_config_in(&self.source, &path);
+            let read = super::read_config_in(&self.source, &self.root);
             self.set_config_read(read)
         });
         let replaced: Vec<Replaced> = (undo.iter())

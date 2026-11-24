@@ -117,6 +117,11 @@ thread_local! {
 }
 
 pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
+    stamp_from_metadata(&path_metadata(path).ok()?)
+}
+
+/// The metadata a stamp by path reads (`symlink_metadata`), counted.
+pub(super) fn path_metadata(path: &Path) -> std::io::Result<fs::Metadata> {
     #[cfg(test)]
     STAMPS_BY_PATH.with(|count| count.set(count.get() + 1));
     #[cfg(feature = "test-faults")]
@@ -125,7 +130,54 @@ pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
     } else {
         crate::cost_counters::asset_stamp_by_path();
     }
-    stamp_from_metadata(&fs::symlink_metadata(path).ok()?)
+    fs::symlink_metadata(path)
+}
+
+/// What the config read finds, as the watcher observed it
+/// (`watch::config_stamp`): the whole outcome a reload compares, so a change
+/// between two reads with no revision (a `logseq` file blocking the read,
+/// then gone) is seen as one.
+#[derive(Clone, Debug)]
+pub(crate) enum ConfigStamp {
+    /// A regular file there: its stamp, with the revision of the bytes read
+    /// (`None` when they could not be).
+    File(Stamp),
+    /// No regular file there: why, as the config read reports it
+    /// (`NotFound` when absent, `NotADirectory` under a file), or the kind of
+    /// entry there instead (`IsADirectory`, `Other` for a link or special
+    /// file).
+    NoFile(std::io::ErrorKind),
+}
+
+impl ConfigStamp {
+    /// What a stamp observed by a file's own write (`Core::note_own`)
+    /// says: a file, or none there.
+    pub(crate) fn of_file(stamp: Option<Stamp>) -> Self {
+        stamp.map_or(Self::NoFile(std::io::ErrorKind::NotFound), Self::File)
+    }
+
+    pub(crate) fn file(&self) -> Option<&Stamp> {
+        match self {
+            Self::File(stamp) => Some(stamp),
+            Self::NoFile(_) => None,
+        }
+    }
+
+    pub(crate) fn rev(&self) -> Option<&FileRev> {
+        self.file().and_then(|stamp| stamp.rev.as_ref())
+    }
+
+    /// Whether a config read would answer as it did at `other`: the same
+    /// revision, or the same reason there is no file to read. A file whose
+    /// bytes could not be hashed (it vanished mid-observation) compares as
+    /// an absent one, as a revision comparison alone did.
+    pub(crate) fn same_read(&self, other: &Self) -> bool {
+        let blocked = |stamp: &Self| match stamp {
+            Self::NoFile(kind) if *kind != std::io::ErrorKind::NotFound => Some(*kind),
+            _ => None,
+        };
+        self.rev() == other.rev() && blocked(self) == blocked(other)
+    }
 }
 
 /// The one stamp producer per platform. `metadata` must not follow symlinks:

@@ -32,7 +32,7 @@ mod stamp;
 pub(crate) use stamp::STAMPS_BY_PATH;
 #[cfg(test)]
 use stamp::STAMP_HASHES;
-pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
+pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, ConfigStamp, RACY_WINDOW};
 
 pub(crate) use launch::{Baseline, Deferred};
 
@@ -115,11 +115,35 @@ struct ReadRefusal {
 }
 
 fn stamp(path: &Path) -> Option<Stamp> {
-    let mut value = stamp_metadata(path)?;
+    stamp_metadata(path).map(|value| hashed(value, path))
+}
+
+/// `value` with the revision of `path`'s bytes, if they can be read.
+fn hashed(mut value: Stamp, path: &Path) -> Stamp {
     #[cfg(test)]
     STAMP_HASHES.with(|count| count.set(count.get() + 1));
     value.rev = FileRev::from_file(path).ok();
-    Some(value)
+    value
+}
+
+/// What the config read of the graph at `root` finds, observed: one `lstat`
+/// and, for a file, its hash ([`stamp`]). No file there is the reason the
+/// config read gives ([`crate::model::FileSource::read_error`]: under a file
+/// is not absent), which after a `NotFound` costs one stat of `logseq`.
+fn config_stamp(root: &Path) -> ConfigStamp {
+    let rel = crate::model::file_source::CONFIG_FILE;
+    let path = root.join(rel);
+    match stamp::path_metadata(&path) {
+        Ok(metadata) => match stamp_from_metadata(&metadata) {
+            Some(value) => ConfigStamp::File(hashed(value, &path)),
+            None if metadata.is_dir() => ConfigStamp::NoFile(std::io::ErrorKind::IsADirectory),
+            None => ConfigStamp::NoFile(std::io::ErrorKind::Other),
+        },
+        Err(error) => {
+            let disk = crate::model::FileSource::Disk;
+            ConfigStamp::NoFile(disk.read_error(root, rel, error).kind())
+        }
+    }
 }
 
 /// Where a reconcile sends the keys of held paths that changed on disk, and
@@ -569,7 +593,8 @@ pub(crate) struct Core {
     /// When a launch diff left racy paths, the one follow-up full diff due
     /// about 2 s later (§5.4; `Core::launch_diff`).
     pub(crate) follow_up: Mutex<Option<Instant>>,
-    config_stamp: Mutex<Option<Stamp>>,
+    /// The config read's outcome when last observed ([`ConfigStamp`]).
+    config_stamp: Mutex<ConfigStamp>,
     /// Whether the effective config was read from a `logseq/config.edn` file.
     /// While it was, a config.edn that disappears keeps that config (see
     /// `read_config`).
@@ -766,41 +791,23 @@ impl Core {
         }
     }
 
-    fn read_config(&self, path: &Path) -> Result<(), LoadError> {
-        let disk = crate::model::FileSource::Disk;
-        let read =
-            crate::model::read_parse_input(path).map_err(|error| disk.read_error(path, error));
-        let (config, problem, source) = match read {
-            Ok(value) => {
-                self.config_from_file.store(true, Ordering::SeqCst);
-                (
-                    tine_core::config::Config::parse(&value),
-                    None,
-                    Some(Arc::from(value)),
-                )
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                // A config.edn that disappears while the graph is open keeps
-                // the config read from it, as Logseq does (its watcher ignores
-                // the unlink: watcher_handler.cljs `handle-changed!`). iCloud
-                // offloading it to a placeholder, or a sync tool replacing it,
-                // must not switch the graph to the defaults: the default
-                // :file/name-format is :legacy, so namespace pages would show
-                // and be written under another file name (reddit 2026-10-11).
-                if self.config_from_file.load(Ordering::SeqCst) {
-                    return Ok(());
-                }
-                (
-                    tine_core::config::Config::default(),
-                    crate::model::missing_config_problem(&disk, path),
-                    None,
-                )
-            }
-            Err(error) => {
-                let (config, problem) = crate::model::config_of_read_error(error);
-                (config, problem, None)
-            }
-        };
+    fn read_config(&self) -> Result<(), LoadError> {
+        use crate::model::ConfigFound;
+        let (disk, root) = (crate::model::FileSource::Disk, &self.graph.root);
+        let found = crate::model::find_config(&disk, root);
+        match found {
+            ConfigFound::Text(_) => self.config_from_file.store(true, Ordering::SeqCst),
+            // A config.edn that disappears while the graph is open keeps
+            // the config read from it, as Logseq does (its watcher ignores
+            // the unlink: watcher_handler.cljs `handle-changed!`). iCloud
+            // offloading it to a placeholder, or a sync tool replacing it,
+            // must not switch the graph to the defaults: the default
+            // :file/name-format is :legacy, so namespace pages would show
+            // and be written under another file name (reddit 2026-10-11).
+            ConfigFound::Absent if self.config_from_file.load(Ordering::SeqCst) => return Ok(()),
+            _ => {}
+        }
+        let (config, problem, source) = crate::model::config_read_of(&disk, root, found);
         self.graph
             .reload_config(config.clone())
             .map_err(|error| LoadError::Failed {
@@ -896,8 +903,8 @@ impl Core {
                 snapshot.remove(&path);
             }
             if id.as_str() == "logseq/config.edn" {
-                let _ = self.read_config(&path);
-                *self.config_stamp.lock().unwrap() = current;
+                let _ = self.read_config();
+                *self.config_stamp.lock().unwrap() = ConfigStamp::of_file(current);
             } else if id.as_str() == "logseq/custom.css" {
                 *self.custom_css_stamp.lock().unwrap() = current;
             }
@@ -950,7 +957,8 @@ impl WatchHandle {
             }
             Baseline::FromLoad => HashMap::new(),
         };
-        let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
+        let config_stamp = config_stamp(&graph.root);
+        let graph_config_read = config.read().unwrap().source.is_some();
         let graph_root = graph.root.clone();
         let core = Arc::new(Core {
             graph,
@@ -964,7 +972,8 @@ impl WatchHandle {
             forward: Mutex::new(None),
             racy: Mutex::new(HashSet::new()),
             follow_up: Mutex::new(None),
-            config_from_file: AtomicBool::new(config_stamp.is_some()),
+            // A file there, or a config the open read through a link there.
+            config_from_file: AtomicBool::new(config_stamp.file().is_some() || graph_config_read),
             config_stamp: Mutex::new(config_stamp),
             custom_css_stamp: Mutex::new(stamp(&graph_root.join("logseq/custom.css"))),
             #[cfg(test)]

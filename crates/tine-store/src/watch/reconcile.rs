@@ -289,31 +289,31 @@ impl Core {
         let mut build_changed = false;
         let mut config_file = None;
         if include_config {
-            let path = self.graph.root.join("logseq/config.edn");
-            let mut current = stamp(&path);
+            let mut current = config_stamp(&self.graph.root);
             let mut previous = self.config_stamp.lock().unwrap();
             // A stamp without a hash means the file vanished (or failed to
             // read) between its metadata and its bytes: a sync delivery or
             // external editor removing it mid-cycle. Look again so a removal
             // reads as one; otherwise it passed as a hashless "modification"
             // and the later real removal compared hashless to absent, unseen.
-            if (current.is_none() && previous.is_some())
-                || current.as_ref().is_some_and(|value| value.rev.is_none())
+            if (current.file().is_none() && previous.file().is_some())
+                || current.file().is_some_and(|value| value.rev.is_none())
             {
-                current = stamp(&path);
+                current = config_stamp(&self.graph.root);
             }
-            // Byte-identity gate: only a changed revision needs a reload
-            // and publication (build-key changes also discard parsed pages).
-            let moved = previous.as_ref().and_then(|value| value.rev.as_ref())
-                != current.as_ref().and_then(|value| value.rev.as_ref());
+            // Read-outcome gate: only a changed revision, or a changed reason
+            // there is no file to read (a `logseq` file blocking the read,
+            // then gone: both without a revision), needs a reload and
+            // publication (build-key changes also discard parsed pages).
+            let moved = !previous.same_read(&current);
             let key = || crate::store::checkpoint::config_key(&self.graph.current_config());
             let before = moved.then(key);
-            match moved.then(|| self.read_config(&path)) {
+            match moved.then(|| self.read_config()) {
                 None => *previous = current,
                 Some(Ok(())) => {
                     config_changed = true;
                     build_changed = before != Some(key());
-                    let kind = match (previous.as_ref(), current.as_ref()) {
+                    let kind = match (previous.file(), current.file()) {
                         (None, Some(_)) => ChangeKind::Created,
                         (Some(_), None) => ChangeKind::Removed,
                         _ => ChangeKind::Modified,
@@ -321,7 +321,7 @@ impl Core {
                     config_file = Some((
                         FileId::from("logseq/config.edn".to_owned()),
                         kind,
-                        current.as_ref().and_then(|value| value.rev.clone()),
+                        current.rev().cloned(),
                     ));
                     *previous = current;
                 }
