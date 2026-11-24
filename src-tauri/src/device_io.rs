@@ -424,7 +424,7 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// each other's temp; the rename is still atomic. The temp is removed if the
 /// write fails, so a unique name never leaks an orphan behind.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    atomic_file::atomic_write_with_check(path, bytes, || Ok(()), || {}, || {}, || {})
+    atomic_file::atomic_write_with_check(path, bytes, || Ok(()))
 }
 
 /// [`atomic_write`] for an app-data file that holds secrets: the temporary is

@@ -1057,7 +1057,7 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
                 .open_with(recovery_name, &options)?
                 .into_std();
             io::copy(&mut source, &mut copy)?;
-            copy.sync_all()?;
+            crate::atomic_file::sync_file_handle(&copy)?;
             crate::directory_durability::sync_directory_entry(&recovery_parent_path)?;
             Err(io::Error::new(rename_error.kind(), format!(
                 "live file copied to recovery but could not be atomically detached: {rename_error}")))
@@ -1077,10 +1077,19 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
         live.parent().unwrap_or(Path::new("")),
         Some(&recovery.root_path),
     )?;
-    let temp = format!(
-        ".tine-restore-{}-{}.tmp",
-        std::process::id(),
-        COPY_SEQ.fetch_add(1, Ordering::Relaxed)
+    // Its own copy of the recipe, on the capability handles (`real_parent`
+    // rejected every symlinked or non-directory component; the create, the
+    // rename and the cleanup are all relative to `parent`, never a path
+    // reopened from the root). The shared `PreparedWrite` is path-based, so
+    // folding this in would reopen by path. The fsync and the directory sync
+    // are the shared, counted ones.
+    let temp = crate::atomic_file::fixed_temp_name(
+        "restore",
+        &format!(
+            "{}-{}",
+            std::process::id(),
+            COPY_SEQ.fetch_add(1, Ordering::Relaxed)
+        ),
     );
     let result = (|| {
         let mut options = OpenOptions::new();
@@ -1094,7 +1103,7 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
         );
         let mut output = parent.open_with(&temp, &options)?.into_std();
         io::Write::write_all(&mut output, bytes)?;
-        output.sync_all()?;
+        crate::atomic_file::sync_file_handle(&output)?;
         drop(output);
         publish_temp(
             &parent,
@@ -1105,7 +1114,7 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
         )?;
         #[cfg(feature = "test-faults")]
         restore_abort_boundary();
-        crate::directory_durability::sync_directory_entry(
+        crate::atomic_file::sync_target_directory(
             &recovery
                 .root_path
                 .join(live.parent().unwrap_or(Path::new(""))),

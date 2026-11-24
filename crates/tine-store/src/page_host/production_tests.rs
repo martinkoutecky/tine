@@ -2173,7 +2173,13 @@ fn r2_marker_temp_crash_cuts_do_not_accumulate() {
         fs::create_dir_all(&dir).unwrap();
         let marker = dir.join(format!("{i}.tcm"));
         std::mem::forget(
-            crate::atomic_file::PreparedWrite::with_hooks(&marker, b"M", || {}, || {}).unwrap(),
+            crate::atomic_file::PreparedWrite::prepare(
+                &marker,
+                crate::atomic_file::Source::Bytes(b"M"),
+                crate::atomic_file::Mode::Default,
+                "",
+            )
+            .unwrap(),
         );
         assert_eq!(markers(&mut f), 1);
         let synced = relaunch(&mut f);

@@ -1225,14 +1225,10 @@ impl Publisher {
                 return CheckpointWrite::Failed(error.to_string());
             }
         }
-        match crate::atomic_file::atomic_write_with_check(
-            &self.path,
-            &bytes,
-            || Ok(()),
-            || {},
-            || {},
-            || {},
-        ) {
+        // App data on its own thread: off the process-wide cost counters.
+        match crate::atomic_file::uncounted(|| {
+            crate::atomic_file::atomic_write_with_check(&self.path, &bytes, || Ok(()))
+        }) {
             Ok(()) => CheckpointWrite::Written {
                 raw_bytes,
                 file_bytes: bytes.len() as u64,

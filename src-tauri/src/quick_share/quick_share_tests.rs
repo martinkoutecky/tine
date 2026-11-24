@@ -1566,12 +1566,15 @@ const FIVE: [&str; 5] = ["linux", "windows", "macos", "ios", "android"];
 #[test]
 fn quick_share_platform_cfgs_name_all_five_targets() {
     let atomic = include_str!("../../../crates/tine-store/src/atomic_file.rs");
-    let private = &atomic[atomic.find("pub(crate) fn atomic_write_private").unwrap()..];
+    // The owner-only arm and its refusal stub live in the shared recipe's
+    // temp options, which `atomic_write_private` takes with `Mode::Private`.
+    let private = &atomic[atomic.find("fn temp_options(mode: Mode)").unwrap()..];
     let private = &private[..private.find("\n}\n").unwrap()];
+    assert!(private.contains("options.mode(0o600)"));
     for (name, source) in QUICK_SHARE_SOURCES
         .iter()
         .copied()
-        .chain([("atomic_write_private", private)])
+        .chain([("temp_options", private)])
     {
         let named: std::collections::BTreeSet<&str> = FIVE
             .iter()
