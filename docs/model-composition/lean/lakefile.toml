@@ -18,5 +18,6 @@ name = "ModelComposition"
 srcDir = "src"
 roots = ["CompositionCodec", "CompositionAdmission", "CompositionWitnesses",
   "CompositionBatchCodec", "CompositionBatchAdmission", "CompositionBatchWitnesses",
-  "CompositionSpellingCodec", "CompositionSpellingAdmission", "CompositionSpellingWitnesses"]
+  "CompositionSpellingCodec", "CompositionSpellingAdmission", "CompositionSpellingWitnesses",
+  "CompositionPairedRecovery"]
 moreLeanArgs = ["-j2", "-s8192"]
