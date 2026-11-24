@@ -212,10 +212,25 @@ fn codes_name_the_routes_in_order() {
 
 #[test]
 fn every_refused_name_is_told_apart() {
-    let table: serde_json::Value = serde_json::from_str(REFUSED_SCHEMES).unwrap();
-    for name in table["refused"].as_array().unwrap() {
-        let name = name.as_str().unwrap();
+    for name in REFUSED_SCHEMES {
         assert!(name.len() <= LONGEST_KNOWN, "{name}");
         assert_eq!(scheme_route(&format!("{name}:x")), SchemeRoute::Drop);
     }
+}
+
+#[test]
+fn membership_reads_the_list_not_its_text() {
+    // The list's own key name, and other JSON text, is no scheme name.
+    for name in ["refused", "", "\"", "[", "javascript\""] {
+        assert!(!refused_scheme(name), "{name:?} is not refused");
+    }
+    let table: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src-tauri/external-link-schemes.json"
+    ))
+    .unwrap();
+    for name in table["refused"].as_array().unwrap() {
+        assert!(refused_scheme(name.as_str().unwrap()));
+    }
+    // A link to a custom scheme named like the key still asks for consent.
+    assert!(matches!(scheme_route("refused://item"), SchemeRoute::Defer(s) if s == "refused"));
 }

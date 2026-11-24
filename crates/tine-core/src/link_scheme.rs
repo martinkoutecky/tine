@@ -46,23 +46,21 @@ pub enum PreviewResource {
     Drop,
 }
 
-const REFUSED_SCHEMES: &str = include_str!("../../../src-tauri/external-link-schemes.json");
+include!(concat!(env!("OUT_DIR"), "/refused_schemes.rs"));
 
 /// The longest scheme name the rule tells apart (`javascript`); a longer
 /// one is a custom scheme. A test checks every refused name fits.
 const LONGEST_KNOWN: usize = 10;
 
-/// A refused name is one of the shared list's quoted strings. O(list bytes).
+/// Is `scheme` (lowercase) a member of the shared list's `refused` array?
+/// The one answer: the native handoff gate and this rule both ask it.
+/// O(list length); the list is compiled in from the shared file.
 pub fn refused_scheme(scheme: &str) -> bool {
     refused(scheme.as_bytes())
 }
 
 fn refused(s: &[u8]) -> bool {
-    !s.is_empty()
-        && REFUSED_SCHEMES
-            .as_bytes()
-            .windows(s.len() + 2)
-            .any(|w| w[0] == b'"' && w[s.len() + 1] == b'"' && &w[1..=s.len()] == s)
+    REFUSED_SCHEMES.iter().any(|name| name.as_bytes() == s)
 }
 
 /// What the leading bytes spell, read the way a browser does: leading C0
