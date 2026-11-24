@@ -1,0 +1,20 @@
+name = "tine_model_composition"
+defaultTargets = ["ModelComposition"]
+
+[[require]]
+name = "tine_model_base"
+path = "../../model-base/lean"
+
+[[require]]
+name = "tine_conceptual_model"
+path = "../../conceptual-model/lean"
+
+[[require]]
+name = "tine_storage_model"
+path = "../../storage-model/lean"
+
+[[lean_lib]]
+name = "ModelComposition"
+srcDir = "src"
+roots = ["CompositionCodec", "CompositionAdmission", "CompositionWitnesses"]
+moreLeanArgs = ["-j2", "-s8192"]
