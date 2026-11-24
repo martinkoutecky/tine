@@ -216,6 +216,8 @@ impl<'ast> Visit<'ast> for Mutations {
                     | "atomic_copy_new"
                     | "atomic_copy_file_new"
                     | "sync_existing"
+                    | "sync_file_handle"
+                    | "sync_target_directory"
                     | "sync_directory_entry"
                     | "sync_directory_witness"
                     | "sync_private_directory"
@@ -231,7 +233,7 @@ impl<'ast> Visit<'ast> for Mutations {
                     | "remove_restore_temp"
                     | "rename_spelling_replace"
             ) || (parent == "PreparedWrite"
-                && matches!(method, "with_hooks" | "publish"))
+                && matches!(method, "prepare" | "publish" | "publish_and_sync"))
                 || (parent == "DirectoryCreation" && method == "new");
             if raw || own {
                 self.hit(if parent.is_empty() {
@@ -786,7 +788,7 @@ fn census_detects_raw_handle_and_crate_primitives_and_respects_cfg() {
         #[cfg(not(test))] fn rogue() { std::fs::write("page.md", b"lost"); }
         fn wrappers(dir: &cap_std::fs::Dir) {
             dir.create("page.md"); dir.rename("a", dir, "b"); dir.remove_file("a");
-            PreparedWrite::with_hooks(); DirectoryCreation::new(); move_file_noreplace();
+            PreparedWrite::prepare(); DirectoryCreation::new(); move_file_noreplace();
             rename_noreplace_dir(); rename_replace(); create_dir_all_durable();
             create_dir_all_with_sync(); atomic_copy_new(); atomic_copy_file_new();
             graph.withdraw_file_to_conflict_if(); prepared.publish();
