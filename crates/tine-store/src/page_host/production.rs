@@ -485,19 +485,14 @@ fn read_published(path: &Path) -> io::Result<Option<(crate::watch::Stamp, crate:
 }
 
 /// A synced temporary file for `path`. The host's writes and syncs are
-/// counted where the transaction's are (`cost_counters`, I-25, Q-P2b-2).
+/// counted where the transaction's are (`cost_counters`, I-25, Q-P2b-2), by
+/// the shared recipe itself.
 fn temp(path: &Path, bytes: &[u8]) -> io::Result<PreparedWrite> {
-    PreparedWrite::with_hooks(
+    PreparedWrite::prepare(
         path,
-        bytes,
-        || {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::wrote(bytes.len());
-        },
-        || {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::fsync();
-        },
+        crate::atomic_file::Source::Bytes(bytes),
+        crate::atomic_file::Mode::Default,
+        "",
     )
 }
 

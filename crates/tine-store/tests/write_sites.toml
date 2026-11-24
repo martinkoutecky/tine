@@ -365,13 +365,23 @@ mutations = "no_replace::move_file_noreplace=1, rename_replace=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
-fn = "PreparedWrite::with_hooks"
+fn = "PreparedWrite::prepare"
 domain = "primitive"
 guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".create_new=1, .write=1, .write_all=1, OpenOptions::new=1"
+mutations = ".write_all=1, sync_file_handle=1"
+
+[[site]]
+file = "crates/tine-store/src/atomic_file.rs"
+fn = "PreparedWrite::publish_and_sync"
+domain = "primitive"
+guard = ""
+test = ""
+oracle = false
+note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
+mutations = ".publish=1, sync_target_directory=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
@@ -381,7 +391,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".create_new=1, .sync_all=1, .write=1, .write_all=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1, fs::remove_file=1, no_replace::move_file_noreplace=1"
+mutations = "PreparedWrite::prepare=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
@@ -391,7 +401,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".create_new=1, .write=1, .write_all=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1, fs::remove_file=1, rename_replace=1"
+mutations = "PreparedWrite::prepare=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
@@ -401,7 +411,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".publish=1, PreparedWrite::with_hooks=1, directory_durability::sync_directory_entry=1"
+mutations = "PreparedWrite::prepare=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
@@ -421,7 +431,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = "directory_durability::sync_directory_entry=1"
+mutations = "sync_target_directory=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
@@ -431,7 +441,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".write=1, OpenOptions::new=1"
+mutations = ".write=1, OpenOptions::new=1, sync_file_handle=1"
 
 [[site]]
 file = "crates/tine-store/src/atomic_file.rs"
@@ -442,6 +452,26 @@ test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
 mutations = ".sync_all=1"
+
+[[site]]
+file = "crates/tine-store/src/atomic_file.rs"
+fn = "sync_target_directory"
+domain = "primitive"
+guard = ""
+test = ""
+oracle = false
+note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
+mutations = "directory_durability::sync_directory_entry=1"
+
+[[site]]
+file = "crates/tine-store/src/atomic_file.rs"
+fn = "temp_options"
+domain = "primitive"
+guard = ""
+test = ""
+oracle = false
+note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
+mutations = ".create_new=1, .write=1, OpenOptions::new=1"
 
 [[site]]
 file = "crates/tine-store/src/bench_events.rs"
@@ -561,7 +591,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".create_new=1, .sync_all=1, .write=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1, fs::remove_file=1, move_file_noreplace=1"
+mutations = "PreparedWrite::prepare=1"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
@@ -571,7 +601,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared I/O primitive; target policy belongs to the caller. Own body is censused separately; no independent oracle claim."
-mutations = ".create_new=1, .sync_all=1, .write=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1, fs::remove_file=1, move_file_noreplace=1"
+mutations = "PreparedWrite::prepare=1"
 
 [[site]]
 file = "crates/tine-store/src/model.rs"
@@ -821,7 +851,7 @@ guard = ""
 test = ""
 oracle = false
 note = "Shared graph/app-data host helper; containment comes from graph caller check_path. App callers target draft/custody vehicles."
-mutations = "PreparedWrite::with_hooks=1"
+mutations = "PreparedWrite::prepare=1"
 
 [[site]]
 file = "crates/tine-store/src/publish.rs"
@@ -901,7 +931,7 @@ guard = "crates/tine-store/src/restore.rs#real_parent"
 test = "crates/tine-store/tests/i02_crash_gaps.rs#restore_kill_reopen_keeps_live_or_recovery_bytes"
 oracle = false
 note = "cap-std live/recovery directory handles; real_parent rejects symlink/non-directory components. Outside HostIo oracle; native crash journey covers live-or-recovery preservation."
-mutations = ".create_new=1, .sync_all=1, .write=1, OpenOptions::new=1, directory_durability::sync_directory_entry=1, remove_restore_temp=1"
+mutations = ".create_new=1, .write=1, OpenOptions::new=1, atomic_file::sync_file_handle=1, atomic_file::sync_target_directory=1, remove_restore_temp=1"
 
 [[site]]
 file = "crates/tine-store/src/restore.rs"
@@ -911,7 +941,7 @@ guard = "crates/tine-store/src/restore.rs#real_parent"
 test = "crates/tine-store/tests/i02_crash_gaps.rs#restore_kill_reopen_keeps_live_or_recovery_bytes"
 oracle = false
 note = "cap-std live/recovery directory handles; real_parent rejects symlink/non-directory components. Outside HostIo oracle; native crash journey covers live-or-recovery preservation."
-mutations = ".create_new=1, .sync_all=1, .write=1, OpenOptions::new=1, directory_durability::sync_directory_entry=2, no_replace::rename_noreplace_dir=1"
+mutations = ".create_new=1, .write=1, OpenOptions::new=1, atomic_file::sync_file_handle=1, directory_durability::sync_directory_entry=2, no_replace::rename_noreplace_dir=1"
 
 [[site]]
 file = "crates/tine-store/src/restore.rs"
