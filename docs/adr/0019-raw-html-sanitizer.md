@@ -96,7 +96,12 @@ lsdoc is untouched.
   declarations survive: the property must be in the policy file's
   `browser.styleProperties`, the value one closed colour literal. ammonia applies
   it in export; the app calls the same function through the wasm parser module
-  (`src/render/htmlSanitize.ts` has no rule of its own). Everything else in `style`
+  (`src/render/htmlSanitize.ts` has no rule of its own). It gives the answers
+  the app's former JavaScript rule gave: the same splitting, ECMAScript trimming
+  (U+FEFF is whitespace, U+0085 is not), `toLowerCase` on the property, and
+  ASCII-only case folding in the colour patterns. A differential test in
+  `src/render/htmlSanitize.test.tsx` runs a copy of the old rule against the wasm
+  rule over generated declarations. Everything else in `style`
   (positioning, sizing, `url()`, `var()`, `!important`) is dropped, so a note
   cannot overlay or hide a published page.
 - **One link rule in export.** `safe_export_url` (in `html_sanitize`) decides

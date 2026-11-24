@@ -2615,8 +2615,9 @@ mod tests {
         assert!(!render_body("<script>steal()</script>", &no_refs()).contains("steal()"));
     }
 
-    /// The shared fixture cases that carry a Hiccup vector, with the equivalent HTML.
-    pub(crate) fn hiccup_sanitize_cases() -> Vec<(String, String, String)> {
+    /// The shared fixture cases that carry a Hiccup vector, with the equivalent
+    /// HTML and the case's `mustContain` needles.
+    pub(crate) fn hiccup_sanitize_cases() -> Vec<(String, String, String, Vec<String>)> {
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("../../../fixtures/html-sanitize-cases.json"))
                 .expect("fixtures parse");
@@ -2629,6 +2630,11 @@ mod tests {
                     c["name"].as_str()?.to_owned(),
                     c["hiccup"].as_str()?.to_owned(),
                     c["input"].as_str()?.to_owned(),
+                    c["mustContain"]
+                        .as_array()?
+                        .iter()
+                        .filter_map(|n| Some(n.as_str()?.to_owned()))
+                        .collect(),
                 ))
             })
             .collect();
@@ -2640,9 +2646,14 @@ mod tests {
     /// positioning, handlers and forms go, colour declarations stay (as in the app).
     #[test]
     fn hiccup_export_equals_the_shared_sanitizer() {
-        for (name, hiccup, html) in hiccup_sanitize_cases() {
+        for (name, hiccup, html, must_contain) in hiccup_sanitize_cases() {
             let want = tine_core::html_sanitize::sanitize(&html);
-            assert!(want.contains("color: #c00"), "[{name}] {want}");
+            for needle in &must_contain {
+                assert!(
+                    want.contains(needle.as_str()),
+                    "[{name}] {needle:?}: {want}"
+                );
+            }
             assert_eq!(render_body(&hiccup, &no_refs()), want, "[{name}]");
             let inline = render_body(&format!("before {hiccup} after"), &no_refs());
             assert!(inline.contains(&want), "[{name}] inline: {inline}");

@@ -290,7 +290,7 @@ mod tests {
     /// sanitizer: no page overlay, handler or form, and the colour stays.
     #[test]
     fn published_and_printed_hiccup_match_the_shared_sanitizer() {
-        for (name, hiccup, html) in super::super::tests::hiccup_sanitize_cases() {
+        for (name, hiccup, html, _) in super::super::tests::hiccup_sanitize_cases() {
             let want = tine_core::html_sanitize::sanitize(&html);
             let dir = tempfile::tempdir().unwrap();
             fs::create_dir_all(dir.path().join("pages")).unwrap();

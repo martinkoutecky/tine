@@ -96,20 +96,60 @@ pub fn safe_export_url(url: &str) -> Option<&str> {
     Some(url)
 }
 
+/// ECMAScript's WhiteSpace and LineTerminator code points (ECMA-262
+/// §12.2, §12.3): what JavaScript's `String.prototype.trim` strips and what
+/// `\s` matches in a JavaScript regex. The app's colour rule was written in
+/// JavaScript, so this set (U+FEFF in, U+0085 out) is the one it trims; Rust's
+/// `str::trim` and regex `\s` use Unicode White_Space, which differs on both.
+const ECMASCRIPT_WHITESPACE: &[char] = &[
+    // WhiteSpace: TAB, VT, FF, ZWNBSP, and every Zs (space separator).
+    '\u{0009}', '\u{000B}', '\u{000C}', '\u{FEFF}', '\u{0020}', '\u{00A0}', '\u{1680}', '\u{2000}',
+    '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}',
+    '\u{2009}', '\u{200A}', '\u{202F}', '\u{205F}', '\u{3000}',
+    // LineTerminator: LF, CR, LINE SEPARATOR, PARAGRAPH SEPARATOR.
+    '\u{000A}', '\u{000D}', '\u{2028}', '\u{2029}',
+];
+
+/// `s` without leading and trailing [`ECMASCRIPT_WHITESPACE`]; matches
+/// ECMAScript `String.prototype.trim`.
+fn ecmascript_trim(s: &str) -> &str {
+    s.trim_matches(ECMASCRIPT_WHITESPACE)
+}
+
+/// [`ECMASCRIPT_WHITESPACE`] as a regex class body, JavaScript's `\s`.
+fn ecmascript_whitespace_class() -> String {
+    ECMASCRIPT_WHITESPACE
+        .iter()
+        .map(|c| format!("\\x{{{:X}}}", u32::from(*c)))
+        .collect()
+}
+
 /// The colour declarations of a `style` value, serialized `prop: value; …`;
 /// "" if none, the one rule for both the app (through the wasm export
 /// `color_only_style`) and export: the property must be one of the policy's
 /// `browser.styleProperties`, and the value one closed colour literal (no
 /// url(), var(), calc(), image-set() or `!important`).
+///
+/// Every step reproduces the app's former JavaScript rule (`colorOnlyStyle`,
+/// kept as the oracle in `src/render/htmlSanitize.test.tsx`): split on `;`,
+/// split at the first `:`, ECMAScript trim, Unicode lowercase of the property
+/// (`toLowerCase`), and patterns that match like a JavaScript regex without
+/// the `u` flag: `\s` is the ECMAScript set and `i` folds ASCII letters only
+/// (`[a-zA-Z]`, `(?i-u)`; Rust's Unicode folding would let `ſ` and the Kelvin
+/// sign match `s` and `k`).
 pub fn color_only_style(value: &str) -> String {
     static COLOR_VALUE: OnceLock<Regex> = OnceLock::new();
     static FUNCTION_BANNED: OnceLock<Regex> = OnceLock::new();
     let color = COLOR_VALUE.get_or_init(|| {
-        Regex::new(r"(?i)^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$")
-            .expect("colour literal pattern")
+        // JavaScript's `/i` without `u`: ASCII letters in either case, spelled out.
+        let ws = ecmascript_whitespace_class();
+        Regex::new(&format!(
+            r"^(?:#(?:[0-9a-fA-F]{{3,4}}|[0-9a-fA-F]{{6}}|[0-9a-fA-F]{{8}})|[a-zA-Z]{{3,30}}|(?i-u:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\([{ws}]*[-+0-9a-zA-Z.%/,{ws}]{{1,80}}\))$"
+        ))
+        .expect("colour literal pattern")
     });
     let banned = FUNCTION_BANNED.get_or_init(|| {
-        Regex::new(r"(?i)var|calc|url|env|attr|image|min|max|clamp").expect("banned functions")
+        Regex::new(r"(?i-u)var|calc|url|env|attr|image|min|max|clamp").expect("banned functions")
     });
     let properties = style_properties();
     let mut kept = Vec::new();
@@ -117,8 +157,8 @@ pub fn color_only_style(value: &str) -> String {
         let Some((property, v)) = declaration.split_once(':') else {
             continue;
         };
-        let property = property.trim().to_lowercase();
-        let v = v.trim();
+        let property = ecmascript_trim(property).to_lowercase();
+        let v = ecmascript_trim(v);
         if !properties.contains(&property) || !color.is_match(v) {
             continue;
         }
