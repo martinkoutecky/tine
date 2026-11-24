@@ -121,3 +121,23 @@ it("BIGLOAD-090b: a producer raw write reaches the window through the raw funnel
     dispose();
   });
 });
+
+it("bigLoad: an unmeasured list makes no geometry pass; its first pass uses the measured width and font", () => {
+  const ids = Array.from({ length: 50 }, (_, i) => `u${i}`);
+  setDoc("byId", Object.fromEntries(ids.map(id => [id, row(id)])));
+  createRoot(dispose => {
+    const [width, setWidth] = createSignal<number>();
+    const [font, setFont] = createSignal<string>();
+    const model = createOutlineWindowModel(() => ids, () => (_id, _page, stored) => stored);
+    model();
+    const probe = vi.spyOn(documentDoor, "node");
+    try {
+      const geometry = createOutlineWindowGeometry(model, width, font);
+      expect(geometry().estimate()).toBe(0);
+      expect(probe).not.toHaveBeenCalled();
+      setWidth(900); setFont("16px sans-serif");
+      expect(geometry().estimate()).toBe(50 * 28);
+      expect(probe).toHaveBeenCalledTimes(50);
+    } finally { probe.mockRestore(); dispose(); }
+  });
+});
