@@ -529,3 +529,141 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
     };
     assert!(!observe(&[(OLD, "- old\n")], &deleted), "a deletion");
 }
+
+/// The window's stale text of the referrer in the runs below: the old link
+/// plus a typed word, authored on a version before the rename's rewrite.
+const STALE: &str = "- see [[Old]] typed\n";
+
+/// Run 1's held state, as `an_operation_over_a_running_order_is_busy_until_the_order_ends`
+/// holds it: a rename Old to New over the referrer is admitted while the
+/// destination's save fails; the window submits the referrer on version 0
+/// (stale), so the referrer conflicts and overwrites the rewrite in the host
+/// buffer; then the destination publishes. Returns the referrer's key and the
+/// conflicted page as last mailed.
+fn a_rename_with_a_stale_referrer_edit(live: &Live) -> (PageKey, MailPage) {
+    live.faults(Phase::PageTemp, 10_000);
+    assert!(rename(&live.host, &live.store).is_err());
+    let (key, _) = live.open(REF);
+    let id = live.submit(&key, STALE, 0, None).unwrap();
+    live.answer(&key, id);
+    let conflicted = live
+        .wait(&key, "the referrer's conflict is mailed", |mail| {
+            mail.page.as_ref().is_some_and(|p| p.conflict)
+        })
+        .page
+        .unwrap();
+    clear_faults(live);
+    until("the destination publishes", || live.root.join(NEW).exists());
+    // Held: the source waits for the conflicted referrer.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(live.disk(OLD), "- old\n");
+    assert_eq!(live.disk(NEW), "- old\n");
+    assert_eq!(live.disk(REF), "- see [[Old]]\n");
+    assert_eq!(census(&live.host), (1, 0), "the order still runs");
+    (key, conflicted)
+}
+
+/// The host's in-memory referrer, as (buffer text, conflict, risk).
+fn held(live: &Live, key: &str) -> Option<(Option<String>, bool, bool)> {
+    live.host.driver.shared.with_state_for_tests(|state| {
+        state.progress.host.pages.get(key).map(|p| {
+            (
+                p.buf
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned()),
+                p.conflict,
+                p.risk,
+            )
+        })
+    })
+}
+
+fn trash_files(live: &Live) -> Vec<String> {
+    let dir = live.root.join("logseq/.tine-trash/pages");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut texts: Vec<String> = entries
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap_or_default())
+        .collect();
+    texts.sort();
+    texts
+}
+
+/// Run 1, take disk: the user resolves the referrer's conflict with Use disk
+/// (`resolveConflict(name, "disk")` sends a Discard). The referrer leaves the
+/// order, so the source's deletion runs: Old is trashed, New holds its text,
+/// and the referrer keeps the OLD link text `[[Old]]` on disk (the rewrite
+/// and the typed word are both gone). Nothing is left pending.
+// CHARACTERIZATION: current behaviour, not a ruling
+// HARM: the link rewrite is lost: the referrer still links [[Old]], a page
+// that no longer exists on disk; nothing tells the user.
+#[test]
+fn a_stale_referrer_resolved_by_take_disk_keeps_the_old_link_and_the_source_is_trashed() {
+    let live = graph();
+    let (key, conflicted) = a_rename_with_a_stale_referrer_edit(&live);
+    assert_eq!(conflicted.disk, Some(token("- see [[Old]]\n")));
+    let id = live.id();
+    live.host.discard(live.host.session(), id, &key).unwrap();
+    live.answer(&key, id);
+    until("the source's deletion runs", || {
+        !live.root.join(OLD).exists()
+    });
+    until("the order ends", || census(&live.host) == (0, 0));
+    super::settle();
+    assert!(!live.root.join(OLD).exists(), "A is gone");
+    assert_eq!(live.disk(NEW), "- old\n", "B holds A's text");
+    assert_eq!(
+        live.disk(REF),
+        "- see [[Old]]\n",
+        "R keeps the old link: the rewrite is lost"
+    );
+    assert_eq!(trash_files(&live), vec!["- old\n".to_string()]);
+    assert_eq!(
+        held(&live, &key),
+        Some((Some("- see [[Old]]\n".into()), false, false)),
+        "R is clean on its disk bytes"
+    );
+    assert!(live.drafts().is_empty(), "no draft is left");
+    live.host.stop();
+}
+
+/// Run 1, keep mine: the user resolves the referrer's conflict with Keep
+/// mine (a resolving Submit on the disk state the conflict showed). The
+/// window's stale text publishes, its version closes the referrer's gate,
+/// and the source's deletion runs: Old is trashed, New holds its text, and
+/// the referrer holds the window's text with the OLD link `[[Old]]`.
+// CHARACTERIZATION: current behaviour, not a ruling
+// HARM: the link rewrite is lost: the referrer still links [[Old]], a page
+// that no longer exists on disk; nothing tells the user.
+#[test]
+fn a_stale_referrer_resolved_by_keep_mine_keeps_the_old_link_and_the_source_is_trashed() {
+    let live = graph();
+    let (key, conflicted) = a_rename_with_a_stale_referrer_edit(&live);
+    let disk = conflicted
+        .disk
+        .clone()
+        .expect("the conflict shows a disk state");
+    let id = live
+        .submit(&key, STALE, conflicted.version, Some(&disk))
+        .unwrap();
+    live.answer(&key, id);
+    until("the window's text publishes", || live.disk(REF) == STALE);
+    until("the source's deletion runs", || {
+        !live.root.join(OLD).exists()
+    });
+    until("the order ends", || census(&live.host) == (0, 0));
+    super::settle();
+    assert!(!live.root.join(OLD).exists(), "A is gone");
+    assert_eq!(live.disk(NEW), "- old\n", "B holds A's text");
+    assert_eq!(
+        live.disk(REF),
+        STALE,
+        "R holds the window's text with the old link: the rewrite is lost"
+    );
+    assert_eq!(trash_files(&live), vec!["- old\n".to_string()]);
+    let (buf, conflict, _) = held(&live, &key).expect("R is held");
+    assert_eq!((buf.as_deref(), conflict), (Some(STALE), false));
+    assert!(live.drafts().is_empty(), "no draft is left");
+    live.host.stop();
+}
