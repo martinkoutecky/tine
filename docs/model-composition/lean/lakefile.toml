@@ -17,5 +17,6 @@ path = "../../storage-model/lean"
 name = "ModelComposition"
 srcDir = "src"
 roots = ["CompositionCodec", "CompositionAdmission", "CompositionWitnesses",
-  "CompositionBatchCodec", "CompositionBatchAdmission", "CompositionBatchWitnesses"]
+  "CompositionBatchCodec", "CompositionBatchAdmission", "CompositionBatchWitnesses",
+  "CompositionSpellingCodec", "CompositionSpellingAdmission", "CompositionSpellingWitnesses"]
 moreLeanArgs = ["-j2", "-s8192"]
