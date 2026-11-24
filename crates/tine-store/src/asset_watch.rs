@@ -82,18 +82,8 @@ fn is_tine_bookkeeping(path: &Path, root: &Path) -> bool {
     let atomic_temp = path
         .file_name()
         .and_then(|name| name.to_str())
-        .and_then(|name| name.strip_suffix(".tmp"))
-        .is_some_and(|stem| {
-            let mut parts = stem.rsplit('.');
-            let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-            let first = parts.next().unwrap_or_default();
-            let seq = if numeric(first) {
-                first
-            } else {
-                parts.next().unwrap_or_default()
-            };
-            stem.starts_with('.') && numeric(seq) && parts.next().is_some_and(numeric)
-        });
+        .and_then(crate::atomic_file::parse_temp_name)
+        .is_some();
     hidden_tine || atomic_temp
 }
 

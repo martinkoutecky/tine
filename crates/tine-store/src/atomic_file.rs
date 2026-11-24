@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::platform_step::at;
 
-static NEW_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-static WRITE_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+/// The sequence part of every [`temp_path`] this file makes.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// The longest file name every Tine platform accepts: 255 bytes on Linux,
 /// Android and macOS; Windows counts 255 UTF-16 units, never more than the
@@ -22,10 +22,11 @@ const TEMP_NAME_FLOOR: usize = 100;
 /// whenever the target does (C3W W1 / L04: the name + ~20 bytes made every save
 /// of a 231–255-byte page name, e.g. an 80-CJK-char title OG writes in place,
 /// fail with ENAMETOOLONG). When shortening, the stem is cut at a char boundary
-/// and a short extension is kept, so `watch.rs::atomic_temp` still recognizes a
-/// page temp; uniqueness comes from pid + seq alone. The only temp-name format
-/// in tine-store for a user-named target (C3Y Y1; guarded by
-/// `tests/c3y_derived_names_guard.rs`).
+/// and a short extension is kept, so [`parse_temp_name`] still finds a page
+/// temp's extension; uniqueness comes from pid + seq alone. The only temp-name
+/// format in tine-store for a user-named target (C3Y Y1; guarded by
+/// `tests/c3y_derived_names_guard.rs`). The tags in use: `""` (a replacing
+/// save), `.new`, `.private`, `.restore`, `.capture`.
 pub(crate) fn temp_path(path: &Path, seq: u64, tag: &str) -> PathBuf {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
@@ -33,6 +34,38 @@ pub(crate) fn temp_path(path: &Path, seq: u64, tag: &str) -> PathBuf {
     let limit = fname.len().max(TEMP_NAME_FLOOR).min(NAME_MAX_BYTES);
     let (stem, ext) = split_short_ext(fname);
     dir.join(fit_name(".", stem, &format!("{ext}{suffix}"), limit))
+}
+
+/// The one reader of [`temp_path`]'s names: `(target name, tag)` for
+/// `.{name}.{pid}.{seq}{tag}.tmp`, with numeric pid and seq and a tag of at
+/// most one dot-free component (`""` or `.new`). For a shortened temp the
+/// target name is the one the temp carries (the cut stem and its kept
+/// extension), not the full name: the cut is not reversible. Each watcher keeps
+/// its own folder scope. O(name length), no I/O.
+pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, &str)> {
+    let stem = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    let (before, last) = stem.rsplit_once('.')?;
+    let (before, seq, tag) = if numeric(last) {
+        (before, last, "")
+    } else {
+        let (rest, seq) = before.rsplit_once('.')?;
+        (rest, seq, &stem[before.len()..])
+    };
+    let (target, pid) = before.rsplit_once('.')?;
+    (numeric(seq) && numeric(pid) && !target.is_empty()).then_some((target, tag))
+}
+
+/// The fixed-form temp `.tine-{kind}-{unique}.tmp`, for scratch that has no
+/// user-named target of its own (restore's directory-handle copy, a streamed
+/// transaction's stage). Never shortened: `kind` and `unique` are Tine's.
+pub(crate) fn fixed_temp_name(kind: &str, unique: &str) -> String {
+    format!(".tine-{kind}-{unique}.tmp")
+}
+
+/// Whether `name` has [`fixed_temp_name`]'s form. O(name length), no I/O.
+pub(crate) fn is_fixed_temp_name(name: &str) -> bool {
+    name.starts_with(".tine-") && name.ends_with(".tmp")
 }
 
 /// A trash or conflict-copy name `{prefix}{name}` (prefix = stamp + reason)
@@ -241,57 +274,147 @@ pub(crate) fn native_path(path: &Path) -> Vec<u16> {
         .collect()
 }
 
-/// The existing atomic-write protocol split at its synced-temp barrier. The
-/// caller retains its base guard and page lock through publication and sync.
+/// What a prepared temporary holds.
+pub(crate) enum Source<'a> {
+    /// The whole payload.
+    Bytes(&'a [u8]),
+    /// A stream copied in, refused once it passes the byte cap (a capture
+    /// source is read through its open handle, never reopened by path).
+    Capped(&'a mut dyn io::Read, u64),
+}
+
+/// The temporary's file mode at creation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// The platform default (umask, inherited ACL).
+    Default,
+    /// Owner-only for a file that holds secrets (quick share's account token
+    /// and share keys): mode 0600 at creation, not a later chmod, on the
+    /// Unix-family targets, kept through fsync and rename; on Windows the
+    /// per-user app-data ACL is inherited. An unknown target refuses rather
+    /// than write a secret with default permissions.
+    Private,
+}
+
+/// The one write-temp, fsync, rename recipe (`docs/storage-contract.md`), split at
+/// its synced-temp barrier: [`PreparedWrite::prepare`] leaves a written and
+/// fsynced same-directory temp, and the caller's base-revision check runs
+/// between it and [`PreparedWrite::publish`]. The caller retains its base guard
+/// and page lock through publication and sync. Cost per write: 1 temp file, 1
+/// file fsync, 1 rename, plus 1 directory fsync in
+/// [`PreparedWrite::publish_and_sync`] (the page host syncs the directory
+/// itself, for its witness).
 pub(crate) struct PreparedWrite {
     temporary: PathBuf,
     target: PathBuf,
+    published: bool,
 }
 
 impl PreparedWrite {
-    pub(crate) fn with_hooks(
-        path: &Path,
-        bytes: &[u8],
-        on_write: impl FnOnce(),
-        on_file_sync: impl FnOnce(),
+    /// Create `temp_path(target, seq, tag)` with `mode`, write `source` into
+    /// it and fsync it. On any failure the temp is gone and the target is
+    /// untouched.
+    pub(crate) fn prepare(
+        target: &Path,
+        source: Source<'_>,
+        mode: Mode,
+        tag: &str,
     ) -> io::Result<Self> {
-        let temporary = temp_path(path, WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed), "");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
+        let options = temp_options(mode)?;
+        let temporary = temp_path(target, TMP_SEQ.fetch_add(1, Ordering::Relaxed), tag);
+        let mut file = options
             .open(&temporary)
             .map_err(at("create temporary file"))?;
         let prepared = Self {
             temporary,
-            target: path.to_path_buf(),
+            target: target.to_path_buf(),
+            published: false,
         };
-        file.write_all(bytes).map_err(at("write temporary file"))?;
-        #[cfg(test)]
-        TEMP_WRITES.with(|count| {
-            let (files, written) = count.get();
-            count.set((files + 1, written + bytes.len() as u64));
-        });
-        on_write();
+        let written = match source {
+            Source::Bytes(bytes) => {
+                file.write_all(bytes).map_err(at("write temporary file"))?;
+                bytes.len() as u64
+            }
+            Source::Capped(input, max_bytes) => {
+                let mut limited = io::Read::take(input, max_bytes.saturating_add(1));
+                let copied =
+                    io::copy(&mut limited, &mut file).map_err(at("write temporary file"))?;
+                if copied > max_bytes {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("capture exceeds {max_bytes} byte limit"),
+                    ));
+                }
+                copied
+            }
+        };
+        count_write(written);
         sync_file_handle(&file).map_err(at("fsync temporary file"))?;
-        on_file_sync();
         Ok(prepared)
     }
 
-    pub(crate) fn publish(&self, create: bool) -> io::Result<()> {
+    /// Rename the temp onto the target: no-replace for a `create`, else
+    /// replace. The caller owns the directory sync.
+    pub(crate) fn publish(mut self, create: bool) -> io::Result<()> {
         if create {
-            super::no_replace::move_file_noreplace(&self.temporary, &self.target)
+            super::no_replace::move_file_noreplace(&self.temporary, &self.target)?;
         } else {
             rename_replace(&self.temporary, &self.target)
-                .map_err(at("rename temporary file over target"))
+                .map_err(at("rename temporary file over target"))?;
         }
+        self.published = true;
+        Ok(())
+    }
+
+    /// [`Self::publish`], then fsync the target's directory.
+    pub(crate) fn publish_and_sync(self, create: bool) -> io::Result<()> {
+        let dir = self
+            .target
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        self.publish(create)?;
+        sync_target_directory(&dir)
     }
 }
 
 impl Drop for PreparedWrite {
     fn drop(&mut self) {
         // Only this protocol's unpublished scratch file; never the target.
-        let _ = fs::remove_file(&self.temporary);
+        if !self.published {
+            let _ = fs::remove_file(&self.temporary);
+        }
     }
+}
+
+/// The temp's open options: always a new file, owner-only for [`Mode::Private`].
+fn temp_options(mode: Mode) -> io::Result<fs::OpenOptions> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    if mode == Mode::Private {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        ))]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows"
+        )))]
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "private files are unavailable on this target",
+        ));
+    }
+    Ok(options)
 }
 
 #[cfg(test)]
@@ -301,84 +424,92 @@ thread_local! {
     pub(crate) static TEMP_WRITES: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
-pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = temp_path(path, NEW_TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".new");
-    let res = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(at("create temporary file"))?;
-        file.write_all(bytes).map_err(at("write temporary file"))?;
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::wrote(bytes.len());
-        file.sync_all().map_err(at("fsync temporary file"))?;
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::fsync();
-        drop(file);
-        super::no_replace::move_file_noreplace(&tmp, path)?;
-        super::directory_durability::sync_directory_entry(dir)?;
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::fsync();
-        Ok(())
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
+/// The process-wide `test-faults` cost counters (the app crate, which also
+/// compiles this file, has none: [`counting`] is a no-op there).
+#[cfg(feature = "test-faults")]
+mod counting {
+    use std::cell::Cell;
+
+    thread_local! {
+        static UNCOUNTED: Cell<bool> = const { Cell::new(false) };
     }
-    res
+
+    pub(super) fn uncounted<R>(write: impl FnOnce() -> R) -> R {
+        struct Reset(bool);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                UNCOUNTED.with(|uncounted| uncounted.set(self.0));
+            }
+        }
+        let _reset = Reset(UNCOUNTED.with(|uncounted| uncounted.replace(true)));
+        write()
+    }
+
+    pub(super) fn fsync() {
+        if !UNCOUNTED.with(Cell::get) {
+            crate::cost_counters::fsync();
+        }
+    }
+
+    pub(super) fn wrote(bytes: u64) {
+        if !UNCOUNTED.with(Cell::get) {
+            crate::cost_counters::wrote(bytes as usize);
+        }
+    }
 }
 
-/// [`atomic_write_with_check`] without a check, for a file that holds secrets
-/// (quick share's account token and share keys): the temporary is created
-/// owner-only (mode 0600 at creation, not a later chmod) on the Unix-family
-/// targets and keeps that mode through fsync and rename; on Windows it
-/// inherits the per-user app-data ACL. An unknown target refuses rather than
-/// write a secret with default permissions. Only the app's `device_io` calls it.
+#[cfg(not(feature = "test-faults"))]
+mod counting {
+    pub(super) fn uncounted<R>(write: impl FnOnce() -> R) -> R {
+        write()
+    }
+    pub(super) fn fsync() {}
+    pub(super) fn wrote(_: u64) {}
+}
+
+/// Run `write` off the process-wide `cost_counters`: for app-data writes
+/// that are no part of a measured graph operation and may run on their own
+/// thread during one (the launch checkpoint), which would race every
+/// measured window. The thread-local unit-test counters still see them.
+pub(crate) fn uncounted<R>(write: impl FnOnce() -> R) -> R {
+    counting::uncounted(write)
+}
+
+/// Count one fsync (file or directory) for the cost tests.
+fn count_fsync() {
+    counting::fsync();
+}
+
+/// Count one temp payload of `bytes` for the cost tests.
+fn count_write(bytes: u64) {
+    #[cfg(test)]
+    TEMP_WRITES.with(|count| {
+        let (files, written) = count.get();
+        count.set((files + 1, written + bytes));
+    });
+    counting::wrote(bytes);
+}
+
+/// Fsync `dir`'s entries ([`super::directory_durability::sync_directory_entry`]),
+/// counted like a file fsync.
+pub(crate) fn sync_target_directory(dir: &Path) -> io::Result<()> {
+    count_fsync();
+    super::directory_durability::sync_directory_entry(dir)
+}
+
+/// Create-new publication of `bytes` at `path` (temp tag `.new`): fails with
+/// `AlreadyExists` if a file appeared there after the caller's check.
+pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, ".new")?
+        .publish_and_sync(true)
+}
+
+/// [`atomic_write_with_check`] without a check, owner-only ([`Mode::Private`];
+/// temp tag `.private`). Only the app's `device_io` calls it.
 #[allow(dead_code)]
 pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = temp_path(
-        path,
-        WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed),
-        ".private",
-    );
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "windows"
-    )))]
-    return Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "private files are unavailable on this target",
-    ));
-    #[allow(unreachable_code)]
-    let res = (|| {
-        let mut file = options.open(&tmp).map_err(at("create temporary file"))?;
-        file.write_all(bytes).map_err(at("write temporary file"))?;
-        sync_file_handle(&file).map_err(at("fsync temporary file"))?;
-        drop(file);
-        rename_replace(&tmp, path).map_err(at("rename temporary file over target"))?;
-        super::directory_durability::sync_directory_entry(dir)
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
+    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Private, ".private")?
+        .publish_and_sync(false)
 }
 
 /// Make the bytes already at `path` durable: fsync the file, then its
@@ -391,7 +522,7 @@ pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> 
 pub(crate) fn sync_existing(path: &Path) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     sync_file_bytes(path)?;
-    super::directory_durability::sync_directory_entry(dir)
+    sync_target_directory(dir)
 }
 
 /// File part of the existing durability recipe.
@@ -404,9 +535,12 @@ fn sync_file_bytes(path: &Path) -> io::Result<()> {
         .map_err(at("fsync unchanged file"))
 }
 
-fn sync_file_handle(file: &fs::File) -> io::Result<()> {
+/// The one file fsync: every count of it (`FILE_SYNCS` for unit tests, the
+/// `test-faults` cost counters) and its injected failure live here.
+pub(crate) fn sync_file_handle(file: &fs::File) -> io::Result<()> {
     #[cfg(test)]
     FILE_SYNCS.with(|count| count.set(count.get() + 1));
+    count_fsync();
     #[cfg(test)]
     if FAIL_FILE_SYNC.with(|fail| fail.replace(false)) {
         return Err(io::Error::other("injected file sync failure"));
@@ -414,21 +548,16 @@ fn sync_file_handle(file: &fs::File) -> io::Result<()> {
     file.sync_all()
 }
 
+/// A replacing write of `bytes` whose `check` (the caller's base-revision
+/// guard) runs after the temp is synced and before the rename.
 pub(crate) fn atomic_write_with_check(
     path: &Path,
     bytes: &[u8],
     check: impl FnOnce() -> io::Result<()>,
-    on_write: impl FnOnce(),
-    on_file_sync: impl FnOnce(),
-    on_dir_sync: impl FnOnce(),
 ) -> io::Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let prepared = PreparedWrite::with_hooks(path, bytes, on_write, on_file_sync)?;
+    let prepared = PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, "")?;
     check()?;
-    prepared.publish(false)?;
-    super::directory_durability::sync_directory_entry(dir)?;
-    on_dir_sync();
-    Ok(())
+    prepared.publish_and_sync(false)
 }
 
 #[cfg(test)]
@@ -569,6 +698,82 @@ mod tests {
         );
     }
 
+    /// A quick-share secret is owner-only from creation: the temp is created
+    /// 0600 even under umask 0, and no chmod follows (the mode is set only in
+    /// `temp_options`, and nothing in this file calls `set_permissions`).
+    #[cfg(unix)]
+    #[test]
+    fn a_private_write_is_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("secret.json");
+        let options = temp_options(Mode::Private).unwrap();
+        let old = unsafe { libc::umask(0) };
+        let probe = options.open(root.path().join("probe"));
+        let result = atomic_write_private(&path, b"{}");
+        unsafe { libc::umask(old) };
+        probe.unwrap();
+        result.unwrap();
+        for file in [root.path().join("probe"), path] {
+            assert_eq!(
+                fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "{file:?}"
+            );
+        }
+        let source = include_str!("atomic_file.rs");
+        let code = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        assert!(!code.contains("set_permissions"));
+        assert_eq!(code.matches(".mode(0o600)").count(), 1);
+    }
+
+    /// Every tag in use and a long, shortened name: `parse_temp_name` gives
+    /// the tag back exactly, and the target name the temp carries: the full
+    /// name when it fits, else the cut stem with the extension kept.
+    #[test]
+    fn parse_temp_name_reads_back_every_temp_path() {
+        let tags = ["", ".new", ".private", ".restore", ".capture"];
+        let long = format!("{}.md", "漢".repeat(84));
+        for name in ["A.md", "assets/x.png", "config.edn", long.as_str()] {
+            let target = Path::new("/g/pages").join(name);
+            let fname = target.file_name().unwrap().to_str().unwrap();
+            for tag in tags {
+                for seq in [0, 7, u64::MAX] {
+                    let temp = temp_path(&target, seq, tag);
+                    let temp = temp.file_name().unwrap().to_str().unwrap();
+                    let (carried, parsed_tag) = parse_temp_name(temp).expect(temp);
+                    assert_eq!(parsed_tag, tag, "{temp}");
+                    if name != long {
+                        assert_eq!(carried, fname, "{temp}");
+                    } else {
+                        let (stem, ext) = split_short_ext(fname);
+                        let (cut, carried_ext) = split_short_ext(carried);
+                        assert_eq!(carried_ext, ext, "{temp}");
+                        assert!(stem.starts_with(cut) && !cut.is_empty(), "{temp}");
+                    }
+                }
+            }
+        }
+        let tx = fixed_temp_name("tx", "1759000000000-1");
+        assert_eq!(tx, ".tine-tx-1759000000000-1.tmp");
+        assert!(is_fixed_temp_name(&tx));
+        let stage = temp_path(&Path::new("/g/pages").join(&tx), 3, ".capture");
+        let (carried, tag) = parse_temp_name(stage.file_name().unwrap().to_str().unwrap()).unwrap();
+        assert_eq!((carried, tag), (tx.as_str(), ".capture"));
+        for foreign in [
+            "A.md",
+            ".A.md.tmp",
+            ".A.md.12.tmp",
+            ".A.md.x.7.tmp",
+            ".A.md.1.x.tmp",
+            "A.md.1.2.tmp",
+            ".1.2.tmp",
+            ".A.md.1.2.new.part",
+        ] {
+            assert_eq!(parse_temp_name(foreign), None, "{foreign}");
+        }
+    }
+
     #[test]
     fn trash_and_collision_names_fit_and_keep_their_stamp_and_extension() {
         for name in [
@@ -585,5 +790,199 @@ mod tests {
         }
         assert_eq!(prefixed_name("s__", "A.md"), "s__A.md");
         assert_eq!(marked_name("A", "_1", ".pdf"), "A_1.pdf");
+    }
+
+    /// Cases that need the rest of tine-store (`model`'s copy helpers, the
+    /// cost counters, the crate's own sources): the app crate compiles this
+    /// file too, without them.
+    #[cfg(feature = "test-faults")]
+    mod store {
+        use super::*;
+
+        type Helper<'a> = (&'static str, Box<dyn Fn(&Path) -> io::Result<()> + 'a>);
+
+        /// Every write helper, in one place: the four copies this file and
+        /// `model.rs` used to carry, and the replacing write.
+        fn helpers(source: &Path) -> Vec<Helper<'_>> {
+            vec![
+                (
+                    "atomic_write_new",
+                    Box::new(|p| atomic_write_new(p, b"payload")),
+                ),
+                (
+                    "atomic_write_private",
+                    Box::new(|p| atomic_write_private(p, b"payload")),
+                ),
+                (
+                    "atomic_write_with_check",
+                    Box::new(|p| atomic_write_with_check(p, b"payload", || Ok(()))),
+                ),
+                (
+                    "atomic_copy_new",
+                    Box::new(move |p| crate::model::atomic_copy_new(source, p)),
+                ),
+                (
+                    "atomic_copy_file_new",
+                    Box::new(move |p| {
+                        crate::model::atomic_copy_file_new(&mut fs::File::open(source)?, p, 64)
+                    }),
+                ),
+            ]
+        }
+
+        fn entries(dir: &Path) -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect();
+            names.sort();
+            names
+        }
+
+        /// One call of each helper: one temp payload, one file fsync and one
+        /// directory fsync on the thread's counters, and at least those two on
+        /// the process-wide cost counters (other tests' writes only add to them;
+        /// the exact count is `tests/cb1_temp_recipe.rs`'s, under the lock). The
+        /// copy helpers used to report 0 file fsyncs here.
+        #[test]
+        fn every_write_helper_syncs_its_file_and_directory_once() {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source.bin");
+            fs::write(&source, b"payload").unwrap();
+            crate::model::checked_write_target(root.path(), root.path(), "fixture", None).unwrap();
+            for (name, write) in helpers(&source) {
+                let target = root.path().join(format!("{name}.bin"));
+                FILE_SYNCS.with(|count| count.set(0));
+                TEMP_WRITES.with(|count| count.set((0, 0)));
+                let _ = crate::directory_durability::take_synced_directories();
+                let before = crate::cost_counters::snapshot();
+                write(&target).unwrap();
+                let after = crate::cost_counters::snapshot();
+                assert_eq!(FILE_SYNCS.with(std::cell::Cell::get), 1, "{name}");
+                assert_eq!(TEMP_WRITES.with(std::cell::Cell::get), (1, 7), "{name}");
+                assert_eq!(
+                    crate::directory_durability::take_synced_directories(),
+                    [root.path()],
+                    "{name}"
+                );
+                assert!(after.fsyncs - before.fsyncs >= 2, "{name}");
+                assert!(after.files_written > before.files_written, "{name}");
+                assert_eq!(fs::read(&target).unwrap(), b"payload", "{name}");
+            }
+            let mut expected: Vec<String> = helpers(&source)
+                .iter()
+                .map(|(name, _)| format!("{name}.bin"))
+                .chain(["source.bin".into()])
+                .collect();
+            expected.sort();
+            assert_eq!(entries(root.path()), expected, "no temp is left");
+        }
+
+        /// A failed file fsync under each helper fails the write, leaves no temp
+        /// and leaves the target as it was (absent, or its old bytes).
+        #[test]
+        fn a_failed_file_sync_leaves_no_temp_and_an_unchanged_target() {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source.bin");
+            fs::write(&source, b"payload").unwrap();
+            crate::model::checked_write_target(root.path(), root.path(), "fixture", None).unwrap();
+            for (name, write) in helpers(&source) {
+                let target = root.path().join(format!("{name}.bin"));
+                let replaces = matches!(name, "atomic_write_private" | "atomic_write_with_check");
+                if replaces {
+                    fs::write(&target, b"old").unwrap();
+                }
+                FAIL_FILE_SYNC.with(|fail| fail.set(true));
+                let error = write(&target).unwrap_err();
+                assert_eq!(error.to_string(), "injected file sync failure", "{name}");
+                assert_eq!(
+                    fs::read(&target).ok(),
+                    replaces.then(|| b"old".to_vec()),
+                    "{name}"
+                );
+                let mut expected = vec!["source.bin".to_string()];
+                if replaces {
+                    expected.push(format!("{name}.bin"));
+                }
+                expected.sort();
+                assert_eq!(entries(root.path()), expected, "{name}: a temp was left");
+                let _ = fs::remove_file(&target);
+            }
+        }
+
+        /// A capture past its cap fails, leaves no temp and creates no target.
+        #[test]
+        fn an_over_cap_capture_leaves_nothing() {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source.bin");
+            fs::write(&source, b"payload").unwrap();
+            crate::model::checked_write_target(root.path(), root.path(), "fixture", None).unwrap();
+            let target = root.path().join("capture.bin");
+            let error = crate::model::atomic_copy_file_new(
+                &mut fs::File::open(&source).unwrap(),
+                &target,
+                3,
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(entries(root.path()), ["source.bin"]);
+        }
+
+        /// The recipe stays single: outside restore's capability-handle
+        /// copy and the publisher's staging protocol, `create_new(true)` appears
+        /// once in tine-store's shipped code (`temp_options`), and a file's
+        /// `sync_all()` only inside `sync_file_handle` (`directory_durability`
+        /// syncs directory handles). Not caught: a recipe in `src-tauri` written
+        /// with plain `std::fs`, or a new fixed temp name.
+        #[test]
+        fn the_write_recipe_has_one_create_and_one_file_sync() {
+            fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+                for entry in fs::read_dir(dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        walk(&path, out);
+                    } else if path.extension().is_some_and(|ext| ext == "rs") {
+                        out.push(path);
+                    }
+                }
+            }
+            let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+            let mut files = vec![];
+            walk(&src, &mut files);
+            let (mut creates, mut syncs) = (vec![], vec![]);
+            for file in files {
+                let relative = file
+                    .strip_prefix(&src)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                let stem = file.file_stem().unwrap().to_string_lossy();
+                if stem.contains("test") || matches!(relative.as_str(), "restore.rs" | "publish.rs")
+                {
+                    continue;
+                }
+                let source = fs::read_to_string(&file).unwrap();
+                let shipped = source
+                    .find("#[cfg(test)]\nmod tests")
+                    .map_or(source.as_str(), |end| &source[..end]);
+                for line in shipped
+                    .lines()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                {
+                    if line.contains("create_new(true)") {
+                        creates.push(relative.clone());
+                    }
+                    if line.contains("sync_all()") {
+                        syncs.push(relative.clone());
+                    }
+                }
+            }
+            assert_eq!(creates, ["atomic_file.rs"]);
+            syncs.sort();
+            assert_eq!(syncs, ["atomic_file.rs", "directory_durability.rs"]);
+            let atomic = include_str!("atomic_file.rs");
+            let body = &atomic[atomic.find("pub(crate) fn sync_file_handle").unwrap()..];
+            assert!(body[..body.find("\n}\n").unwrap()].contains("file.sync_all()"));
+        }
     }
 }

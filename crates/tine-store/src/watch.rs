@@ -356,24 +356,19 @@ fn collect_with_revs(root: &Path, config: &tine_core::Config) -> HashMap<PathBuf
     files
 }
 
+/// Tine's own temp beside graph text: a [`crate::atomic_file::temp_path`] temp
+/// of a graph-text name (any tag) or of a fixed-form temp, or a fixed-form
+/// temp itself (a streamed transaction's stage, restore's copy). Its content
+/// reaches the graph only through a rename that is reported itself.
 fn atomic_temp(path: &Path) -> bool {
+    use crate::atomic_file::{is_fixed_temp_name, parse_temp_name};
     let Some(name) = path.file_name().and_then(|part| part.to_str()) else {
         return false;
     };
-    let Some(stem) = name.strip_suffix(".tmp") else {
-        return false;
-    };
-    let stem = stem.strip_suffix(".new").unwrap_or(stem);
-    let Some((before_seq, seq)) = stem.rsplit_once('.') else {
-        return false;
-    };
-    let Some((page, pid)) = before_seq.rsplit_once('.') else {
-        return false;
-    };
-    page.starts_with('.')
-        && crate::file_kind::is_graph_text_path(Path::new(page))
-        && pid.bytes().all(|byte| byte.is_ascii_digit())
-        && seq.bytes().all(|byte| byte.is_ascii_digit())
+    is_fixed_temp_name(name)
+        || parse_temp_name(name).is_some_and(|(target, _)| {
+            is_fixed_temp_name(target) || crate::file_kind::is_graph_text_path(Path::new(target))
+        })
 }
 
 /// The exact graph-text paths an event names, or `None` when it needs the
@@ -2313,6 +2308,89 @@ mod tests {
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// No page takes the copy path (`atomic_copy_new` / `atomic_copy_file_new`),
+    /// so its temps never cost the page lane a full stat diff: a streamed
+    /// page create is refused before any write, and the watcher sees nothing.
+    /// Pages are written only by the page host, through `PreparedWrite`.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn a_streamed_page_create_is_refused_before_any_write() {
+        let root = temp_root("streamed-create-refused");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- a\n").unwrap();
+        let source = root.join("source.bin");
+        fs::write(&source, "- streamed\n").unwrap();
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Notify,
+                launch_checkpoint: None,
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        let core = store.watch.core_for_load();
+        let before = core.event_full_diffs.load(Ordering::Relaxed);
+        let id = store.file_id(crate::Area::Pages, "S.md").unwrap();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        tx.create(
+            &id,
+            crate::Content::Stream {
+                source: fs::File::open(&source).unwrap(),
+                max_bytes: 1024,
+            },
+        );
+        let outcome = tx.commit();
+        assert!(
+            matches!(
+                &outcome,
+                crate::TxOutcome::NotCommitted {
+                    why: crate::Why::Refused(crate::Refusal::InvalidTarget(_)),
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
+        let names: Vec<_> = fs::read_dir(root.join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["A.md"]);
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(core.event_full_diffs.load(Ordering::Relaxed) - before, 0);
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The temp names the graph-text watcher skips: every tag of a graph-text
+    /// target, a fixed-form temp and a temp of one; not another program's
+    /// `.tmp`, and not a temp of a non-graph-text name.
+    #[test]
+    fn atomic_temp_recognises_every_tine_temp_beside_graph_text() {
+        let page = Path::new("/g/pages/A.md");
+        for tag in ["", ".new", ".private", ".restore", ".capture"] {
+            assert!(
+                atomic_temp(&crate::atomic_file::temp_path(page, 4, tag)),
+                "{tag}"
+            );
+        }
+        let stage = Path::new("/g/pages").join(crate::atomic_file::fixed_temp_name("tx", "1-2"));
+        assert!(atomic_temp(&stage));
+        assert!(atomic_temp(&crate::atomic_file::temp_path(
+            &stage, 4, ".capture"
+        )));
+        assert!(atomic_temp(Path::new("/g/pages/.tine-restore-12-3.tmp")));
+        for foreign in ["/g/pages/A.md.tmp", "/g/pages/.A.md.tmp", "/g/pages/A.md"] {
+            assert!(!atomic_temp(Path::new(foreign)), "{foreign}");
+        }
+        let asset = crate::atomic_file::temp_path(Path::new("/g/pages/x.png"), 4, "");
+        assert!(!atomic_temp(&asset));
     }
 
     #[test]
