@@ -225,12 +225,22 @@ fn block_dates_bound_the_walk_and_preserve_recent_dates() {
 
 #[test]
 fn block_dates_org_nested_blocks_and_folds_share_seen_semantics() {
+    org_nested_blocks_and_folds("p.org");
+}
+
+/// An upper-case `.ORG` page is Org, as the store reads it.
+#[test]
+fn block_dates_read_an_upper_case_org_extension_as_org() {
+    org_nested_blocks_and_folds("Notes.ORG");
+}
+
+fn org_nested_blocks_and_folds(file: &str) {
     let mut g = Graph::new();
-    g.commit("p.org", "* Parent\n** Child\n* Other\n", 100);
-    g.commit("p.org", "* Parent\n** Changed child\n* Other\n", 200);
+    g.commit(file, "* Parent\n** Child\n* Other\n", 100);
+    g.commit(file, "* Parent\n** Changed child\n* Other\n", 200);
     assert_eq!(
         facts(&g.read(
-            "pages/p.org",
+            &format!("pages/{file}"),
             "* Parent\n:PROPERTIES:\n:collapsed: true\n:END:\n** Changed child\n* Other\n"
         )),
         [

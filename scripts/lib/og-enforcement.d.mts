@@ -10,3 +10,6 @@ export function checkFormatCount(formats?: readonly string[]): void;
 export function writerSiteCounts(source: string): number;
 export function checkWriterSites(current: Record<string, number>, baseline: Record<string, number>): void;
 export function readWriterSiteCounts(root: string): { current: Record<string, number>; baseline: Record<string, number> };
+export function orgExtensionSites(source: string): number;
+export function checkOrgExtensionSites(current: Record<string, number>): void;
+export function readOrgExtensionSites(root: string): Record<string, number>;
