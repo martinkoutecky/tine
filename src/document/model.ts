@@ -241,9 +241,11 @@ export const structureRevision = (): number => identityStructureRevision();
  * unscoped structural edits, with no per-block subscriptions (BIGLOAD-090b). */
 export function someBlockInTrees(roots: readonly string[], test: (n: ReadonlyNode) => boolean): boolean {
   structureRevision();
-  // Untracked reads go to the plain nodes: a page of 2000 roots costs no proxy reads.
+  // The roots and nodes are read plain and untracked: a page of 2000 roots costs no
+  // proxy reads and no subscriptions; only the pages' structure revisions are tracked.
   const byId = unwrap(doc.byId);
-  const pages = new Set(roots.map(id => byId[id]?.page).filter((page): page is string => page !== undefined));
+  const plainRoots = unwrap(roots);
+  const pages = untrack(() => new Set(plainRoots.map(id => byId[id]?.page).filter((page): page is string => page !== undefined)));
   for (const page of pages) void pageStructureRevisions[page];
   return untrack(() => {
     const visit = (ids: readonly string[]): boolean => {
@@ -253,7 +255,7 @@ export function someBlockInTrees(roots: readonly string[], test: (n: ReadonlyNod
       }
       return false;
     };
-    return visit(roots);
+    return visit(plainRoots);
   });
 }
 
