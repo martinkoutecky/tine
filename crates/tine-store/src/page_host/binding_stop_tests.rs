@@ -256,9 +256,16 @@ fn launched_over_an_unsynced_copy() -> Live {
     let (sender, mail) = mpsc::channel();
     let app = _dir.path().join("app");
     let kinds = Kinds::default();
-    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
-        let _ = sender.send(mail);
-    })
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        recording(&kinds),
+        move |mail| {
+            let _ = sender.send(mail);
+        },
+    )
     .unwrap();
     assert!(
         host.draft_status().unavailable.is_some(),

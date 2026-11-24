@@ -282,6 +282,25 @@ impl Live {
     }
 
     fn build(files: &[(&str, &str)], checkpoint: bool, watch: crate::WatchMode) -> Self {
+        Self::build_with(files, checkpoint, watch, DraftOwnership::Owned)
+    }
+
+    /// A host whose caller's owner claim holds no lock (call 21).
+    fn unowned(files: &[(&str, &str)]) -> Self {
+        Self::build_with(
+            files,
+            false,
+            crate::WatchMode::Notify,
+            DraftOwnership::Unowned,
+        )
+    }
+
+    fn build_with(
+        files: &[(&str, &str)],
+        checkpoint: bool,
+        watch: crate::WatchMode,
+        drafts: DraftOwnership,
+    ) -> Self {
         let dir = match std::env::var_os("TINE_HOST_FS_ROOT") {
             Some(base) => tempfile::tempdir_in(base).unwrap(),
             None => tempfile::tempdir().unwrap(),
@@ -311,9 +330,16 @@ impl Live {
         let root = store.graph.root.clone();
         let (sender, mail) = mpsc::channel();
         let kinds = Kinds::default();
-        let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
-            let _ = sender.send(mail);
-        })
+        let host = PageHost::start(
+            &store,
+            &app,
+            "test-graph",
+            drafts,
+            recording(&kinds),
+            move |mail| {
+                let _ = sender.send(mail);
+            },
+        )
         .unwrap();
         Self {
             _dir: dir,
@@ -1379,9 +1405,16 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
     }
     let (sender, mail) = mpsc::channel();
     let kinds = Kinds::default();
-    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
-        let _ = sender.send(mail);
-    })
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        recording(&kinds),
+        move |mail| {
+            let _ = sender.send(mail);
+        },
+    )
     .unwrap();
     let live = Live {
         _dir,
@@ -2181,7 +2214,15 @@ fn e101_every_host_instance_and_reload_draws_a_fresh_session() {
     let app = live.app();
     let Live { store, host, .. } = live;
     host.stop();
-    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        |_, _| {},
+        |_| {},
+    )
+    .unwrap();
     assert!(
         ![first, reloaded.session].contains(&host.session()),
         "E101: a relaunched host draws a new session"
@@ -2239,7 +2280,15 @@ fn f1_publication_queries_never_answer_for_another_session() {
     let app = live.app();
     let Live { store, host, .. } = live;
     host.stop();
-    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        |_, _| {},
+        |_| {},
+    )
+    .unwrap();
     assert_eq!(
         host.owed(now, None),
         None,
@@ -2673,9 +2722,16 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
     crate::page_host::faults::fail(Phase::PageTemp, std::io::ErrorKind::Other, 100);
     let (sender, mail) = mpsc::channel();
     let kinds = Kinds::default();
-    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
-        let _ = sender.send(mail);
-    })
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        recording(&kinds),
+        move |mail| {
+            let _ = sender.send(mail);
+        },
+    )
     .unwrap();
     let live = Live {
         _dir,
@@ -3104,9 +3160,16 @@ fn the_kinds_sink_runs_outside_the_store_writer() {
         seen.lock().unwrap().push(taken);
     };
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", kinds, move |mail| {
-        let _ = sender.send(mail);
-    })
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        kinds,
+        move |mail| {
+            let _ = sender.send(mail);
+        },
+    )
     .unwrap();
     let live = Live {
         root: store.graph.root.clone(),
@@ -3156,9 +3219,16 @@ fn a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable() {
         }
     };
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", kinds, move |mail| {
-        let _ = sender.send(mail);
-    })
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        kinds,
+        move |mail| {
+            let _ = sender.send(mail);
+        },
+    )
     .unwrap();
     let shared = Arc::clone(&host.driver.shared);
     let poisoner = Arc::clone(&shared);
@@ -3283,4 +3353,87 @@ fn the_host_read_returns_the_held_buffer_not_the_file() {
     assert_eq!((absent.bytes, absent.revision), (None, None));
     live.until_disk(&key, "- two\n");
     live.host.stop();
+}
+
+/// Call 21: a host whose owner claim yields no lease starts with drafts
+/// unowned. Its page saves are unchanged; it creates, writes and retires
+/// nothing in the draft namespace, says why crash recovery is off, Retry
+/// cannot bring it up, and a paired move (its destructive step needs a
+/// durable vehicle) fails typed with nothing changed.
+#[test]
+fn call21_an_unowned_host_saves_pages_and_writes_no_draft() {
+    let live = Live::unowned(&[("pages/a.md", "- one\n")]);
+    let drafts = live.app().join("drafts-v2");
+    let unavailable = live
+        .host
+        .draft_status()
+        .unavailable
+        .expect("drafts are down");
+    assert!(unavailable.contains("owner lock"), "{unavailable}");
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    let version = live.answer(&key, id).answer.unwrap().version;
+    live.until_published(&[(key.clone(), version, None)]);
+    assert_eq!(live.disk(&key), "- two\n");
+    assert!(live.host.drafts_retry().is_err());
+    assert!(live.host.draft_status().unavailable.is_some());
+    let moving = HostOp {
+        separate_case_entries: false,
+        inputs: None,
+        creation_checks: Vec::new(),
+        pages: vec![
+            (
+                PageId::from("pages/b.md"),
+                Effect::Write(Arc::from(&b"- two\n"[..])),
+                Expected::Absent,
+            ),
+            (
+                PageId::from("pages/a.md"),
+                Effect::Delete,
+                Expected::Bytes(Arc::from(&b"- two\n"[..])),
+            ),
+        ],
+        kinds: vec![EditKind::InsertBlocks],
+        policy: Input::Refuse,
+        moves: vec![(PageId::from("pages/b.md"), PageId::from("pages/a.md"))],
+        publications: None,
+        view: None,
+        saved: Vec::new(),
+    };
+    assert_eq!(live.host.apply(moving), Err(ApplyRefusal::DraftFailed));
+    assert_eq!(live.disk(&key), "- two\n");
+    assert!(!live.root.join("pages/b.md").exists());
+    // Only the page save's own custody (its guarded trash marker, unchanged
+    // by ownership) may live there: no vehicle, decision or temp file.
+    let custody = drafts.join("test-graph").join("trash-custody");
+    let created: Vec<_> = walkdir_names(&drafts)
+        .into_iter()
+        .filter(|name| !std::path::Path::new(name).starts_with(&custody))
+        .filter(|name| std::path::Path::new(name) != drafts.join("test-graph"))
+        .collect();
+    assert!(
+        created.is_empty(),
+        "an unowned host wrote a draft: {created:?}"
+    );
+    assert!(live.drafts().is_empty());
+    live.host.stop();
+}
+
+/// Every entry under `dir` (none when it is missing).
+fn walkdir_names(dir: &std::path::Path) -> Vec<String> {
+    let mut names = vec![];
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            names.push(entry.path().display().to_string());
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    names.sort();
+    names
 }

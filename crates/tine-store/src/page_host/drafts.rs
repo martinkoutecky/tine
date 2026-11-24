@@ -60,12 +60,14 @@ const ESCAPE: u8 = 0;
 const TAG_OPERATION: u8 = 0;
 const TAG_DECISION: u8 = 1;
 
-/// A durable choice on one paired receiver (the design's tag 1 record).
+/// A durable choice on one paired endpoint, the receiver or the source
+/// (the design's tag 1 record).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Decision {
     /// The operation's stable request id: its vehicle's filename UUID.
     pub op: [u8; 16],
-    /// The receiver's zero-based record index in the operation draft.
+    /// The chosen endpoint's (receiver's or source's) zero-based record
+    /// index in the operation draft.
     pub member: u32,
     pub wseq: u64,
     pub choice: Choice,
@@ -73,7 +75,8 @@ pub(super) struct Decision {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Choice {
-    /// `0`: take disk (Use Disk); cancels the pair's source removal.
+    /// `0`: take disk (Use Disk). On the receiver it cancels the move, on
+    /// the source its removal.
     TakeDisk,
     /// `1`: reviewed text; `2`: superseding editor input. Decoded and
     /// validated here, acted on by no code yet: an operation with one
@@ -329,7 +332,8 @@ pub(super) fn op_id(name: &str) -> Option<[u8; 16]> {
     Some(uuid::Uuid::try_parse(id).ok()?.into_bytes())
 }
 
-/// A fresh decision vehicle name for `member` (receiver `page`) of `op`.
+/// A fresh decision vehicle name for `member` (endpoint `page`, the receiver
+/// or the source) of `op`.
 pub(super) fn decision_vehicle(page: &str, op: &[u8; 16], member: u32) -> String {
     let page = page_name(page);
     let stem = page.strip_suffix(".draft").unwrap();
@@ -389,7 +393,8 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
         .pairs
         .retain(|name, _| result.files.contains_key(name));
     // Cross-check each decision with its operation: filename, id, member
-    // (a receiver index, its page the name's hash) and sequence.
+    // (a receiver's or a source's index, its page the name's hash) and
+    // sequence.
     for (name, op, member, body) in decisions {
         let vehicle = op_vehicle(&op);
         let Some(pairs) = result.pairs.get(&vehicle) else {
@@ -405,14 +410,15 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
             continue;
         };
         let records = &result.files[&vehicle];
-        let receiver = pairs
+        let endpoint = pairs
             .iter()
-            .find(|(receiver, _)| *receiver == member)
-            .map(|(receiver, _)| &records[*receiver as usize]);
+            .flat_map(|&(receiver, source)| [receiver, source])
+            .find(|&index| index == member)
+            .map(|index| &records[index as usize]);
         let matches = |d: &Decision| {
             d.op == op
                 && d.member == member
-                && receiver.is_some_and(|r| name.starts_with(&page_prefix(&r.page)))
+                && endpoint.is_some_and(|r| name.starts_with(&page_prefix(&r.page)))
         };
         match body {
             Ok(Body::Decision(d)) if matches(&d) => {

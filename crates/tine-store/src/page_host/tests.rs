@@ -1455,7 +1455,10 @@ fn a_paired_removal_copies_nothing_and_keeps_the_sibling_after_crash() {
                 Disposition::Applied
             );
             h.receive("a.md");
-            assert!(h.op_waits("a.md"), "the pair still owes a's removal");
+            // Use Disk on the source decided its pair (`sourceDisk`, model
+            // `decideDisk`): a's removal is no longer owed, and its pair's
+            // records still stay with the pair.
+            assert!(!h.op_waits("a.md"), "the source's choice decided the pair");
             let before = h.fs.draft_files(true);
             assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Waiting);
             assert!(h.worker.is_none(), "no copy, no absorb");
@@ -1596,10 +1599,14 @@ fn rename_cost_an_op_absorbing_an_older_op_keeps_published_bytes_at_every_cut() 
             completed |= h.worker.is_none();
             if h.worker.is_none() {
                 // `live_op`: outside a running worker a page has at most one
-                // operation vehicle (op2 absorbed op1 before it finished).
+                // unpaired operation vehicle (op2 absorbed any unpaired one).
+                // A paired one is never absorbed: it leaves whole, once its
+                // pair settled (items 2 and call 20).
                 for (page, names) in &h.vehicles_of {
-                    let ops = names.iter().filter(|n| n.starts_with("op-")).count();
-                    assert!(ops <= 1, "{page} in {ops} operation vehicles");
+                    let ops = (names.iter())
+                        .filter(|n| n.starts_with("op-") && h.order.paired(n).is_none())
+                        .count();
+                    assert!(ops <= 1, "{page} in {ops} unpaired operation vehicles");
                 }
             }
             restart(&mut h, power, false);

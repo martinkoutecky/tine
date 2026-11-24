@@ -36,7 +36,9 @@ names:
 - Tag `1` is a **decision record**
   (`p-<page-hash>-<nonce>-<op-uuid>-<member>.draft`): 16 raw UUID bytes, the
   receiver's member index (`u32`), a new write sequence (`u64`) and a choice
-  byte. `0` is take disk (Use Disk), with no payload. `1` (reviewed text) and
+  byte. `0` is take disk (Use Disk), with no payload. The member is the
+  pair's receiver or, for a choice on the source, its source: the format is
+  unchanged, and an older reader blocks on a source member it does not know. `1` (reviewed text) and
   `2` (superseding input) carry a page version, a `Base` and a `Text`; they
   are decoded and validated now and acted on by a later change; until then
   an operation with one blocks its source removal.
@@ -51,16 +53,28 @@ permission and settlement, adopted at the draft's durable terminal and
 reinstalled by `Host::launch` from the scan before any recovered work. A
 source is removed only after its receiver's disk bytes equal the certified
 receiver image immediately before the trash step and again after the
-source's durability steps. Use Disk on an unwitnessed receiver writes its
-decision durably before it takes effect. The paired draft is immutable and
-retires whole once every pair is settled or cancelled: superseded page
-drafts, then the operation draft, then its decisions.
+source's durability steps, each time with a durability witness for those
+bytes (the host's own durable publication, unchanged since; a weak graph
+offers none). Use Disk on an unwitnessed receiver, or on the source of an
+undecided pair, writes its decision durably before it takes effect; a
+source's decision cancels only that source's removal across relaunch. A
+decided pair whose source already left its slot keeps the source's admitted
+text for a guarded restoration (when the slot is empty and the trash holds
+that text) or as custody. The paired draft is immutable, never absorbed by a
+later operation, and retires whole once every pair is settled or cancelled:
+superseded page drafts, then the operation draft, then its decisions. The
+graph's owner lock is the only serializer of the draft namespace: a host
+whose owner claim yields no lease starts with drafts unowned (no draft
+writes, no paired destructive step), its page saves unchanged.
 
 Unit cost (I-25): five bytes per singleton rename (escape, tag, pair count,
 two small indexes), no added file, fsync, launch read or listing on the clean
 path, and two receiver reads per removed source. The 1- and 60-block fixtures
 write 305 and 4,142 bytes (300 and 4,137 before), the 60-block source 1,900. A
-Use Disk decision is one 62-byte private file and two publication syncs.
+Use Disk decision is one 62-byte private file and two publication syncs,
+plus up to two page reads on a paired endpoint (the other endpoint's bytes);
+a launch reads each decided pair's two pages once. The durability witness is
+memory only (a file stamp per own publication).
 
 ## Consequences
 
@@ -77,13 +91,17 @@ Use Disk decision is one 62-byte private file and two publication syncs.
   with the same bytes, which re-witnesses its durability before the source's
   removal may follow.
 - A settled pair's records can still be reinstalled by a relaunch while its
-  operation draft remains on disk (a sibling pair unresolved, a crash between
-  the second check and the draft's unlink, or a failed unlink). An outside
-  change to that receiver after settlement then shows as a conflict. Closing
-  this needs a durable settlement record, a draft format change left open.
-- The Quint storage models do not yet describe the durable pairing; the
-  conformance suite that replays them fails on the reinstalled order until
-  they do.
-- Not yet covered (follow-up): restoring a source that was already moved when
-  its receiver diverged (the draft keeps the text meanwhile), reviewed-text
-  and superseding decisions, and the recovery panel for an occupied source.
+  operation draft remains on disk (a sibling pair unresolved, a page at risk,
+  a crash between the second check and the draft's unlink, or a failed
+  unlink); the relaunch re-witnesses the exact state. The settlement rewrite
+  that drops just that pair from its draft (same format) is chosen but not
+  implemented: today the pair leaves only with the whole draft. An outside
+  change to that receiver after settlement then shows as a conflict.
+- The Quint storage models (s3.5 to s3.7) describe the durable pairing, and
+  the conformance suite replays them on the host in all four profiles.
+- A matching receiver another program wrote holds its pair until the host
+  observes its own durable publication there, where the model would certify
+  a durable outside write too: stricter, never weaker.
+- Not yet covered (follow-up): the window's restoration entry and the
+  recovery panel for an occupied source, reviewed-text and superseding
+  decisions, and the settlement rewrite above.

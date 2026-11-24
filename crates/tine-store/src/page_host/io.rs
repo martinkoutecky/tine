@@ -124,6 +124,13 @@ pub(super) trait HostIo {
     fn page_temp(&mut self, page: &str, bytes: &Text) -> IoResult<()>;
     fn page_rename(&mut self, page: &str) -> IoResult<()>;
     fn page_sync(&mut self, page: &str) -> IoResult<Witness>;
+    /// A durability witness for the page's current file (a paired
+    /// receiver's check, which compares its bytes): it is still the file
+    /// this host's own save published and directory-synced, unchanged
+    /// since; or the graph reports no durability at all, where the live
+    /// bytes are all there is (the weak-filesystem exemption). Another
+    /// program's bytes carry no witness. Adapter memory only.
+    fn durable_page(&mut self, page: &str) -> bool;
     /// The page file's alternate-extension twin (`.md` ↔ `.org`), if one
     /// exists: another file claiming the page's name (STEP3 §3.2, Q9).
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>>;

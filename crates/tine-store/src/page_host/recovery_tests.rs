@@ -339,6 +339,7 @@ fn refresh_publishes_an_external_edit_to_a_held_page_before_returning() {
         &store,
         &dir.path().join("app"),
         "test-graph",
+        crate::DraftOwnership::Owned,
         |_, _| {},
         move |m| {
             let _ = sent.send(m);

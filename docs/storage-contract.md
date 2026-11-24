@@ -1316,23 +1316,40 @@ from the scanned drafts before any recovered save or choice.
   before the trash step, and again after the source's trash, trash sync and
   directory sync. A failed first check holds the removal (the source stays);
   a failed second check keeps the operation draft, which holds the source's
-  text as its base, so the text is never only in trash. An exact receiver
-  observed later resumes the pair. Guarded restoration of a moved source is
-  not implemented: the draft keeps custody until it is. A source that
+  text as its base, so the text is never only in trash. Equal bytes certify
+  the receiver only with a durability witness for them: the host's own
+  durable publication of that file, unchanged since (or a weak graph, which
+  offers none to wait for). Bytes another program wrote, or a write a power
+  cut may still revert, hold the removal like different bytes. The second
+  check does not surface the receiver's read; its next observation does. An
+  exact, witnessed receiver observed later resumes the pair. A source that
   publishes newer text of its own supersedes its removal and disarms the pair.
-- **Use Disk on a pair's unwitnessed receiver** (a conflict's Use Disk, or the
-  host-level Discard of a recovered receiver) first writes a decision record
+- **Use Disk on a pair's endpoint** (a conflict's Use Disk, or the host-level
+  Discard of a recovered page), on its unwitnessed receiver or on a source
+  whose pair is undecided, first writes a decision record
   `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft` (escape, tag `1`, the
-  16-byte request id, the receiver's member index, a new write sequence, choice
-  `0`), through the draft vehicle path (temp, fsync, rename, directory sync).
+  16-byte request id, the chosen endpoint's member index, a new write
+  sequence, choice `0`), through the draft vehicle path (temp, fsync, rename,
+  directory sync).
   Only once it is durable does the receiver take its disk state, the source
   revert to its disk bytes and the request answer; a write that fails refuses
   the Discard `DraftFailed`, and one that may have reached the disk still
   disarms the pair. This also resolves a held or blocked pair at once, with
   no relaunch: its pages stop waiting. A durable cancellation disarms that pair across every
   later launch: neither its receiver's nor its source's operation record is
-  recovered. Sibling pairs continue; referrers keep today's cancellation
-  behaviour (their rewrites still publish).
+  recovered. A source's decision cancels only the source's removal: no
+  relaunch reinstalls it, and the receiver's record still recovers; a later
+  Use Disk on that receiver records the full cancellation. Sibling pairs
+  continue; referrers keep today's cancellation behaviour (their rewrites
+  still publish).
+- A decided pair whose source is no longer at its slot keeps the source's
+  admitted text (its record's base) in the operation draft: **restore** when
+  the slot is empty and Tine's trash holds that text, else **retained**
+  (custody only). The host's guarded restoration puts that text back into
+  the source page at risk over an absent base; its own draft and guarded
+  create publish it, refused over an occupied slot, a claimant or twin, or
+  unsaved text, and that publication cancels the pair. The window does not
+  offer restoration yet (follow-up): the draft keeps custody meanwhile.
 - A decision this code does not act on (reviewed text `1`, superseding input
   `2`) or an unreadable or mismatched decision naming a readable paired
   operation blocks that operation's source removals and raises a draft error;
@@ -1342,8 +1359,23 @@ from the scanned drafts before any recovered save or choice.
   store Retry or a later launch; the Retry re-arms them in place.
 - Retirement: the paired draft retires whole once each pair is settled or
   cancelled and no page is at risk: superseded page drafts first, then the
-  operation draft, then its decisions. A decision left by a crash after its
-  operation is durably absent is removed at launch.
+  operation draft, then its decisions. A paired record a newer vehicle
+  superseded counts as history then. A later operation never absorbs a
+  paired draft: its records never leave their pair as standalone page
+  drafts. A decision left by a crash after its operation is durably absent
+  is removed at launch.
+- A paired source's removal takes its destructive step only while draft I/O
+  is up; while it is down (`draft_status` names why) the removal waits.
+- **Ownership (call 21).** The graph's owner lock is the only serializer of
+  its draft namespace. One function answers whether a starting host owns it
+  (`src-tauri/src/owner/lease.rs` `draft_ownership`): the desktop window and
+  `tine serve` own it exactly when their claim holds the lock; mobile, with
+  no command-line owner, always does. A host whose claim yields no lease (the
+  lock call failed or is unsupported) starts with drafts unowned: it reads
+  the namespace but never creates, writes, syncs or retires anything there,
+  Retry cannot bring draft I/O up, an operation that needs a draft and Use
+  Disk on a pair refuse `DraftFailed`, and paired removals wait. Page saves
+  are unchanged (their custody marker included).
 - No chaining: an operation over any page of a running order, or of a paired
   operation draft with a pair still unresolved (armed, held or blocked),
   waits until that order ends or the pair resolves. A settled, cancelled or

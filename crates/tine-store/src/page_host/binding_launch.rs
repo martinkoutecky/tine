@@ -20,11 +20,13 @@ impl PageHost {
     /// `load_graph_for_label` → `route_bound_root`, step 3b P2b). Draft I/O
     /// failures leave the host up with draft I/O down; the error is only
     /// the defensive "did not launch", when the host is not alive after
-    /// its launch.
+    /// its launch. `drafts` is the caller's owner claim's answer to whether this host
+    /// owns its draft namespace (`DraftOwnership`, call 21).
     pub fn start(
         store: &Arc<Store>,
         app_data: &Path,
         graph_id: &str,
+        drafts: DraftOwnership,
         kinds: impl FnMut(&str, &[EditKind]) + Send + 'static,
         mail: impl FnMut(PageMail) + Send + 'static,
     ) -> Result<Self, String> {
@@ -32,6 +34,7 @@ impl PageHost {
             store: store.clone(),
             app_data: app_data.to_path_buf(),
             graph_id: graph_id.into(),
+            drafts,
             mail: Arc::new(Mutex::new(Box::new(mail))),
             kinds: Arc::new(Mutex::new(Box::new(kinds))),
         })
@@ -42,7 +45,14 @@ impl PageHost {
     /// discarded.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn start_for_tests(store: &Arc<Store>, app_data: &Path) -> Result<Self, String> {
-        Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
+        Self::start(
+            store,
+            app_data,
+            "test-graph",
+            DraftOwnership::Owned,
+            |_, _| {},
+            |_| {},
+        )
     }
 
     /// Fixture-only spelling setup after the test physically moved an entry.
@@ -171,6 +181,7 @@ impl PageHost {
             store,
             app_data,
             graph_id,
+            drafts,
             ..
         } = &launch;
         let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
@@ -188,6 +199,7 @@ impl PageHost {
             graph_id,
             &trash,
             graph.root_binding.clone(),
+            *drafts == DraftOwnership::Owned,
         );
         let spellings = io.spellings().clone();
         io.marks = Some(graph.clone());

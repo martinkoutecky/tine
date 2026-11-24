@@ -595,7 +595,13 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 63)
+## Page host (ceiling: 64)
+# RCD slice 1 part 3, call 21 (63 -> 64): `DraftOwnership`, the owner claim's
+# answer `start` takes: a host whose claim holds no lock starts with drafts
+# unowned. `start` cannot answer it without a parameter, and `bool` would not
+# name the answer at its callers (graph.rs launch_host, owner::serve). A
+# parameter on the existing constructor, no sibling start.
+enum page_host::DraftOwnership
 # GH #964: wait_published's disposition cannot identify a coalesced save's
 # actual revision. Extend that existing result with one serialized evidence
 # carrier; no new operation or publicly accessible field is added.
@@ -720,7 +726,7 @@ use crate::storage_diag::DraftAdoptionReason
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftOwnership,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}

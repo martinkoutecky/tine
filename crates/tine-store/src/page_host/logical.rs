@@ -203,13 +203,20 @@ impl<F: HostIo> Host<F> {
     }
 
     /// RENAME-COST L1: the operation vehicle holding a record of `key`.
-    /// Outside a running worker there is at most one: an operation install
-    /// absorbs its pages' older vehicle before it finishes, and launch
-    /// explodes every vehicle (pinned by
+    /// Outside a running worker there is at most one unpaired one: an
+    /// operation install absorbs its pages' older unpaired vehicle before it
+    /// finishes, and launch explodes every vehicle (pinned by
     /// `rename_cost_an_op_absorbing_an_older_op_keeps_published_bytes_at_every_cut`).
+    /// A paired operation vehicle is never absorbed (it leaves whole once its
+    /// pair settled), so it may share a page with that one: the unpaired
+    /// vehicle is preferred.
     pub(super) fn live_op(&self, key: &str) -> Option<String> {
         let names = self.vehicles_of.get(key).into_iter().flatten();
-        names.filter(|n| n.starts_with("op-")).next().cloned()
+        let mut ops = names.filter(|n| n.starts_with("op-"));
+        let ops: Vec<&String> = ops.by_ref().collect();
+        (ops.iter().find(|n| self.order.paired(n).is_none()))
+            .or(ops.first())
+            .map(|n| (*n).clone())
     }
 
     /// RENAME-COST L1: a page whose desired draft is none keeps its record
@@ -405,12 +412,24 @@ impl<F: HostIo> Host<F> {
             self.order
                 .adopt(name.clone(), order::PairedOp::new(id, records, pairs));
         }
+        // A receiver's decision outranks its source's own Use Disk.
         for (decision, d) in &scan.decisions {
             if d.choice == drafts::Choice::TakeDisk {
                 let name = drafts::op_vehicle(&d.op);
-                self.order.cancel(&name, d.member, Some(decision.clone()));
+                self.order
+                    .decide(&name, d.member, None, Some(decision.clone()));
             }
         }
+        // Where each decided pair's original text stands now: one read of
+        // each endpoint, for decided pairs only (none on a clean launch).
+        let reads: BTreeMap<PageKey, Option<Text>> = (self.order.decided_pages())
+            .into_iter()
+            .map(|key| {
+                let bytes = self.fs.read_page(&key).ok();
+                (key, bytes)
+            })
+            .collect();
+        self.order.decided_phases(&reads);
         for (decision, name) in &scan.blocking {
             self.order.block(name, decision.clone());
             // The existing draft error: the decision stays in place and
@@ -427,12 +446,13 @@ impl<F: HostIo> Host<F> {
             let Some(op) = self.order.paired(name) else {
                 continue;
             };
-            for pair in op
-                .pairs
-                .iter()
-                .filter(|p| p.phase == order::PairPhase::Cancelled)
-            {
-                for key in [&pair.receiver, &pair.source] {
+            for pair in &op.pairs {
+                let keys = match pair.choice {
+                    order::PairChoice::None => vec![],
+                    order::PairChoice::SourceDisk => vec![&pair.source],
+                    order::PairChoice::ReceiverDisk => vec![&pair.receiver, &pair.source],
+                };
+                for key in keys {
                     let own = records.iter().find(|r| &r.page == key).map(|r| r.wseq);
                     if scan.logical.get(key).map(|r| r.wseq) == own {
                         skipped.insert(key.clone());

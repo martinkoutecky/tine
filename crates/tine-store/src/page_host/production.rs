@@ -39,6 +39,10 @@ pub(super) struct ProductionIo {
     /// the publication read's handle stamps before and after its bytes
     /// (GH #811). None means that read could not establish an identity.
     publications: BTreeMap<String, Option<(crate::watch::Stamp, crate::watch::Stamp)>>,
+    /// `HostIo::durable_page`: each page's file as this host's last own
+    /// publication left it once its directory sync succeeded (its post-read
+    /// stamp), kept past the save. Lost at a restart.
+    durable_pages: BTreeMap<String, crate::watch::Stamp>,
     /// Each page key's current graph-relative spelling (STEP3 §2): a key
     /// resolved through a case alias at registration, or moved by the alias
     /// spelling move (Q4). The one table (B1); the store's held index reads
@@ -103,6 +107,7 @@ impl ProductionIo {
             graph_id,
             trash,
             std::sync::Arc::new(crate::root_binding::RootBinding::new(graph)),
+            true,
         )
     }
 
@@ -112,9 +117,10 @@ impl ProductionIo {
         graph_id: &str,
         trash: &Path,
         root_binding: std::sync::Arc<crate::root_binding::RootBinding>,
+        owned: bool,
     ) -> Self {
         let drafts = app_data.join("drafts-v2").join(graph_id);
-        let listing = list(&drafts);
+        let listing = list(&drafts, owned);
         let mut io = Self {
             store: Default::default(),
             creation_rules: BTreeMap::new(),
@@ -133,6 +139,7 @@ impl ProductionIo {
             paths: BTreeMap::new(),
             stamps: BTreeMap::new(),
             publications: BTreeMap::new(),
+            durable_pages: BTreeMap::new(),
             spellings: Default::default(),
             quarantines: BTreeMap::new(),
             directories: BTreeMap::new(),
@@ -163,6 +170,9 @@ impl ProductionIo {
                 }
             }
             Err(error) => io.down = Some(Down::Unlisted(error.to_string())),
+        }
+        if !owned {
+            io.down = Some(Down::Unowned);
         }
         io
     }
@@ -284,11 +294,25 @@ enum Down {
     Unlisted(String),
     /// Launch could not sync the recovered census (M2).
     Unsynced,
+    /// The host does not own the namespace (its owner claim failed or is
+    /// unsupported): the census is read and recovered, nothing is written,
+    /// and no re-probe brings draft I/O up.
+    Unowned,
 }
 
 /// Create the drafts directory with the strict app-data recipe and read
 /// every vehicle in it, by name. An error is never an empty listing.
-fn list(drafts: &Path) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
+/// `owned`: the host owns the namespace (`DraftOwnership`). An unowned
+/// host only reads it: it creates and syncs nothing, and a missing
+/// directory lists empty.
+fn list(drafts: &Path, owned: bool) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
+    let found = BTreeMap::new();
+    if !owned {
+        return listed(drafts, found).or_else(|error| match error.kind() {
+            io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            _ => Err(error),
+        });
+    }
     // The custody directory is not created here: a malformed one must not
     // stop the graph from opening (REVIEW-2b-r2 V1). The listing creates it.
     durability::create_dir_all_with_sync(drafts, durability::sync_private_directory)?;
@@ -305,7 +329,14 @@ fn list(drafts: &Path) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
             break;
         }
     }
-    let mut found = BTreeMap::new();
+    listed(drafts, found)
+}
+
+/// The vehicles in `drafts` (custody, quarantine and temp entries skipped).
+fn listed(
+    drafts: &Path,
+    mut found: BTreeMap<String, (PathBuf, Vec<u8>)>,
+) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
     for entry in fs::read_dir(drafts)? {
         let entry = entry?;
         if ((entry.file_name() == "unreadable" || entry.file_name() == CUSTODY)
@@ -656,6 +687,7 @@ impl HostIo for ProductionIo {
     fn page_rename(&mut self, page: &str) -> IoResult<()> {
         self.before(super::io::Phase::PageRename)?;
         self.check_path(&self.page_path(page))?;
+        self.durable_pages.remove(page);
         let prepared = self.page_temps.remove(page).ok_or(IoFailure {
             kind: ErrorKind::Io,
             completed: false,
@@ -743,6 +775,9 @@ impl HostIo for ProductionIo {
         match result {
             Ok(witness) => {
                 self.creation_rules.remove(page);
+                if let Some(Some((_, after))) = self.publications.get(page) {
+                    self.durable_pages.insert(page.into(), after.clone());
+                }
                 Ok(witness)
             }
             Err((error, proof)) => {
@@ -750,6 +785,15 @@ impl HostIo for ProductionIo {
                 Err(error)
             }
         }
+    }
+
+    fn durable_page(&mut self, page: &str) -> bool {
+        // One metadata call: the file must be the one the own publication
+        // left (identity, size and times), as for its directory sync.
+        let path = self.page_path(page);
+        let current = crate::watch::stamp_metadata(&path);
+        (self.durable_pages.get(page))
+            .is_some_and(|stamp| current.is_some_and(|now| stamp.same_metadata(&now)))
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
@@ -1063,6 +1107,9 @@ impl HostIo for ProductionIo {
             unavailable: self.down.as_ref().map(|down| match down {
                 Down::Unlisted(error) => format!("{drafts}: {error}"),
                 Down::Unsynced => format!("{drafts}: the recovered drafts could not be synced"),
+                Down::Unowned => format!(
+                    "{drafts}: this window could not take the graph's owner lock, so it keeps no crash-recovery copies"
+                ),
             }),
             unreadable: self.untouchable.iter().cloned().collect(),
             unsaved: vec![],
@@ -1076,6 +1123,7 @@ impl HostIo for ProductionIo {
     fn drafts_reprobe(&mut self) -> Result<(), String> {
         match self.down.take() {
             None => {}
+            Some(Down::Unowned) => self.down = Some(Down::Unowned),
             Some(Down::Unsynced) => {
                 if !matches!(self.draft_sync(), Ok(Witness::Durable)) {
                     self.down = Some(Down::Unsynced);
@@ -1084,7 +1132,7 @@ impl HostIo for ProductionIo {
             // The census was never known. Only a listing that finds no
             // vehicle can bring draft I/O up in place; vehicles found now
             // are left untouched for the next launch to recover.
-            Some(Down::Unlisted(_)) => match list(&self.drafts) {
+            Some(Down::Unlisted(_)) => match list(&self.drafts, true) {
                 Ok(found) if found.is_empty() => {}
                 Ok(found) => {
                     self.down = Some(Down::Unlisted(format!(

@@ -355,6 +355,17 @@ impl HostIo for NativeFs {
             |fs| fs.page_sync(page),
         )
     }
+    fn durable_page(&mut self, page: &str) -> bool {
+        // The ledger is the refined model's answer; the native adapter must
+        // not certify more than it does.
+        let ledger = self.ledger.durable_page(page);
+        let native = self.native.durable_page(page);
+        assert!(
+            !native || ledger || self.ledger.weak_graph,
+            "native witness beyond the ledger: {page}"
+        );
+        ledger
+    }
     fn trash_move(&mut self, page: &str, name: &str) -> MoveResult {
         let mut removed = None;
         let result = self.phase(
@@ -498,6 +509,7 @@ fn excluded(program: &Value) -> Option<&'static str> {
 /// ModelFs-only scenarios, with the `excluded` reason.
 const NATIVE_MODELFS_ONLY: &[&str] = &[
     "mMDE:power",
+    "mMForgetChoice:power",
     "mMLS:power",
     "mMQ:power",
     "mMRE:power",
@@ -513,8 +525,10 @@ const NATIVE_MODELFS_ONLY: &[&str] = &[
     "ownLoadRenameTargetPower5:power",
     "ownLoadRenameTargetPower6:power",
     "ownLoadRenameTargetPower7:power",
+    "ownMergeCrashSrcFirst:fork-probe",
     "ownMergeSrcWaits:fork-probe",
     "ownMergeSrcWaitsUncertain:fork-probe",
+    "ownOrderAcceptedAcrossCrash:fork-probe",
     "ownOrderFailingDstKeepsSrc:fork-probe",
     "ownOrderRefWaitsForDst:fork-probe",
     "ownOrderSrcWaitsForDst:fork-probe",
@@ -668,7 +682,7 @@ fn native_committed_scenarios_in_four_profiles() {
     }
     assert_eq!(skipped, NATIVE_MODELFS_ONLY, "native exclusion ledger");
     assert_eq!(refinements, NATIVE_REFINEMENTS, "native refinement ledger");
-    assert_eq!((ran.len(), comparisons), (158, 618));
+    assert_eq!((ran.len(), comparisons), (167, 654));
     assert_eq!((twins, occupied, queued, effective), (4, 0, 0, 8));
     eprintln!(
         "native scenarios: {} selected, {comparisons} profile outcomes; {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames; ran={ran:?}; ModelFs-only={skipped:?}; refinement={refinements:?}", ran.len()

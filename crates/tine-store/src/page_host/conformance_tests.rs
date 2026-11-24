@@ -524,7 +524,7 @@ fn all_s3_scenarios_in_four_profiles() {
     assert_eq!(comparisons, 824);
     assert_eq!(
         (actions, barriers, twins, occupied, queued, effective),
-        (8154, 12362, 4, 0, 0, 8)
+        (8162, 11446, 4, 0, 0, 8)
     );
     eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers / {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames");
 }
@@ -964,4 +964,196 @@ fn short_witnesses_through_host() {
         .unwrap()
         .retain(|trace| trace["states"].as_array().unwrap().len() <= 100);
     ratchet(&replay(&fixture, None), "Replayed { traces: 41, scripted: 504, actions: 504, barriers: 722, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
+}
+
+/// The directed paired-recovery vocabulary of the model's
+/// `scenarios-paired-recovery.inc`, as driver steps (each compared with the
+/// oracle): `admitted`, `writeMember`, `removeSource`, `openPairPage` and
+/// `takeDisk` expand exactly as there.
+fn paired(d: &mut Driver, macro_name: &str, p: usize) {
+    let save = |del: &str| {
+        vec![
+            (del.to_owned(), json!([p])),
+            ("check".into(), json!([])),
+            ("rename".into(), json!([])),
+            ("dirSync".into(), json!([true])),
+        ]
+    };
+    let steps: Vec<(String, Value)> = match macro_name {
+        "admitted" => vec![
+            ("load".into(), json!([0])),
+            ("load".into(), json!([1])),
+            ("load".into(), json!([2])),
+            ("opRename".into(), json!([0, 2, [1], [[1, 3]]])),
+        ],
+        "writeMember" => save("flush"),
+        "removeSource" => save("flushDel"),
+        "openPairPage" => vec![
+            ("wOpen".into(), json!([p])),
+            ("deliverUp".into(), json!([true])),
+            ("wRecv".into(), json!([p])),
+        ],
+        "takeDisk" => vec![
+            ("wDiscard".into(), json!([p])),
+            ("deliverUp".into(), json!([true])),
+            ("wRecv".into(), json!([p])),
+        ],
+        other => panic!("no paired macro {other}"),
+    };
+    for (name, args) in steps {
+        assert!(
+            d.step(&name, args.as_array().unwrap()),
+            "{macro_name}/{name}/{args}"
+        );
+    }
+}
+
+fn checked_members(profile: &str) -> Driver {
+    let mut d = Driver::new(profile, 3);
+    paired(&mut d, "admitted", 0);
+    paired(&mut d, "writeMember", 2);
+    paired(&mut d, "writeMember", 1);
+    d
+}
+
+/// Model `movedAndReplaced`: the source moved, then the receiver replaced
+/// before the post-check could witness it.
+fn moved_and_replaced(profile: &str) -> Driver {
+    let mut d = checked_members(profile);
+    run(
+        &mut d,
+        &[
+            ("flushDel", json!([0])),
+            ("check", json!([])),
+            ("rename", json!([])),
+            ("extWrite", json!([2, 3])),
+            ("dirSync", json!([true])),
+        ],
+    );
+    d
+}
+
+/// Capsule `ownPairVolatileReceiverIsNotCertified` (item 5): the receiver
+/// is replaced durably, then written back to the image volatilely. In a
+/// strong profile the source's pre-check holds (no durability witness for
+/// the bytes it compares); a weak graph gives no witness to wait for.
+#[test]
+fn s35_volatile_matching_receiver_is_not_certified() {
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut d = checked_members(profile);
+        run(
+            &mut d,
+            &[
+                ("extWrite", json!([2, 3])),
+                ("extWriteD", json!([2, 1, false])),
+                ("flushDel", json!([0])),
+                ("check", json!([])),
+            ],
+        );
+        let s = d.abstract_state();
+        assert_eq!(s["disk"][0], json!(1), "{profile}");
+        if profile.contains("weak") || profile == "all" {
+            assert_eq!(s["job"]["phase"], json!(2), "{profile}");
+        } else {
+            assert_eq!(s["pairs"][0]["phase"], json!("held"), "{profile}");
+            assert_eq!(s["job"]["on"], json!(false), "{profile}");
+        }
+    }
+}
+
+/// Capsule `ownPairRestoresSourceAfterRacedReceiver` (item 4): Use Disk on
+/// a receiver replaced after the source moved records the choice, keeps
+/// the source's admitted preimage selectable across relaunch, and a guarded
+/// restoration writes it back over the absent slot.
+#[test]
+fn s35_restores_source_after_raced_receiver() {
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut d = moved_and_replaced(profile);
+        paired(&mut d, "openPairPage", 2);
+        paired(&mut d, "takeDisk", 2);
+        run(&mut d, &[("crash", json!([])), ("launch", json!([]))]);
+        let s = d.abstract_state();
+        assert_eq!(s["pairs"][0]["phase"], json!("restore"), "{profile}");
+        assert_eq!(s["pairs"][0]["decision"], json!("cancelled"), "{profile}");
+        run(
+            &mut d,
+            &[("restoreSource", json!([0])), ("draftSync", json!([0]))],
+        );
+        paired(&mut d, "writeMember", 0);
+        let s = d.abstract_state();
+        assert_eq!(
+            (s["disk"][0].clone(), s["disk"][2].clone()),
+            (json!(1), json!(3)),
+            "{profile}"
+        );
+    }
+}
+
+/// The model's `ownPairOccupiedSourceRetainsPreimage` and
+/// `ownPairCannotRestoreOverClaimant`: restoration never writes over an
+/// occupied source slot or a claimant.
+#[test]
+fn s35_restoration_refuses_occupied_source() {
+    let mut d = moved_and_replaced("base");
+    run(&mut d, &[("extWrite", json!([0, 2]))]);
+    paired(&mut d, "openPairPage", 2);
+    paired(&mut d, "takeDisk", 2);
+    run(&mut d, &[("crash", json!([])), ("launch", json!([]))]);
+    let s = d.abstract_state();
+    assert_eq!(s["pairs"][0]["phase"], json!("retained"));
+    assert_eq!(s["pairs"][0]["records"][0]["base"], json!(1));
+    assert!(!d.step("restoreSource", &[json!(0)]));
+
+    let mut d = moved_and_replaced("base");
+    paired(&mut d, "openPairPage", 2);
+    paired(&mut d, "takeDisk", 2);
+    run(
+        &mut d,
+        &[
+            ("extClaim", json!([0, true])),
+            ("crash", json!([])),
+            ("launch", json!([])),
+        ],
+    );
+    assert!(!d.step("restoreSource", &[json!(0)]));
+}
+
+/// Item 1 across relaunch: Use Disk on the source of an admitted pair is a
+/// durable `sourceDisk` decision, so relaunch never reinstalls the
+/// source's deletion and the source keeps its disk text.
+#[test]
+fn s35_source_use_disk_survives_relaunch() {
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut d = Driver::new(profile, 3);
+        paired(&mut d, "admitted", 0);
+        paired(&mut d, "openPairPage", 0);
+        paired(&mut d, "takeDisk", 0);
+        run(&mut d, &[("crash", json!([])), ("launch", json!([]))]);
+        let s = d.abstract_state();
+        assert_eq!(s["pairs"][0]["decision"], json!("sourceDisk"), "{profile}");
+        assert_eq!(s["disk"][0], json!(1), "{profile}");
+        assert!(!s["pages"][0]["held"].as_bool().unwrap(), "{profile}");
+    }
+}
+
+/// Call 21 (item 3): with draft I/O down (an unowned host keeps it down for
+/// good), a paired source's removal takes no destructive step; the model's
+/// `flushDel` needs `canDraft`.
+#[test]
+fn s35_paired_removal_waits_while_drafts_are_down() {
+    let mut d = checked_members("base");
+    d.host.fs.drafts_unsynced();
+    assert_eq!(d.host.start_save(&key(0)), Disposition::Disabled);
+    assert!(d.host.job.is_none());
+    assert_eq!(
+        label(
+            &d.host
+                .fs
+                .physical()
+                .files
+                .get(&format!("graph/{}", key(0)))
+                .cloned()
+        ),
+        1
+    );
 }

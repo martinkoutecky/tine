@@ -542,10 +542,15 @@ impl<F: ConformanceIo> Driver<F> {
                     .order
                     .paired(name)
                     .and_then(|op| op.pairs.iter().find(|pair| pair.member == receiver));
-                let decision = if scan.decisions.values().any(|d| {
-                    d.op == id && d.member == receiver && d.choice == drafts::Choice::TakeDisk
-                }) {
+                let took = |member| {
+                    scan.decisions.values().any(|d| {
+                        d.op == id && d.member == member && d.choice == drafts::Choice::TakeDisk
+                    })
+                };
+                let decision = if took(receiver) {
                     "cancelled"
+                } else if took(source) {
+                    "sourceDisk"
                 } else if scan.blocking.values().any(|blocked| blocked == name) {
                     "unreadable"
                 } else if live.is_some_and(|pair| pair.phase == PairPhase::Disarmed) {
@@ -560,8 +565,13 @@ impl<F: ConformanceIo> Driver<F> {
                     Some(PairPhase::Disarmed) => "disarmed",
                     Some(PairPhase::Cancelled) => "cancelled",
                     Some(PairPhase::Blocked) => "blocked",
+                    Some(PairPhase::Restore) => "restore",
+                    Some(PairPhase::Retained) => "retained",
                     Some(PairPhase::Armed) | None => match decision {
+                        // Down, a decided pair's phase is its decision
+                        // until launch recomputes it (model `down`).
                         "cancelled" => "cancelled",
+                        "sourceDisk" => "sourceDisk",
                         "unreadable" => "blocked",
                         _ => "armed",
                     },

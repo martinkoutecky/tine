@@ -45,9 +45,19 @@ impl<F: HostIo> Host<F> {
         if self.order.gated(key) {
             return Disposition::Waiting;
         }
-        // A durable pair's held, blocked or cancelled source removal.
-        if page.buf.is_none() && self.order.removal(key) == Removal::Refused {
-            return Disposition::Disabled;
+        // A durable pair's held, blocked or cancelled source removal; and
+        // any paired removal while draft I/O is down (an unowned host, or
+        // one whose drafts are unavailable): the destructive step needs a
+        // durable vehicle (model `flushDel`'s `canDraft`). `draft_status`
+        // says why; the removal waits for draft I/O to come up.
+        if page.buf.is_none() {
+            match self.order.removal(key) {
+                Removal::Refused => return Disposition::Disabled,
+                Removal::Checked { .. } if self.fs.draft_status().unavailable.is_some() => {
+                    return Disposition::Disabled
+                }
+                _ => {}
+            }
         }
         let bench = crate::bench_events::save_begin(page.version, || self.fs.spelling(key));
         self.job = Some(SaveJob {
@@ -115,14 +125,28 @@ impl<F: HostIo> Host<F> {
     }
 
     /// The pair's receiver check: `None` when `key` is no checked source or
-    /// its receiver's live disk bytes are exactly the certified image; else
-    /// the receiver and the bytes it has.
+    /// its receiver is certified (`receiver_certified`); else the receiver
+    /// and the bytes it has.
     fn receiver_diverged(&mut self, key: &str) -> Result<Option<(PageKey, Text)>, IoFailure> {
         let Removal::Checked { receiver, image } = self.order.removal(key) else {
             return Ok(None);
         };
         let bytes = self.fs.read_page(&receiver)?;
-        Ok((bytes != image).then_some((receiver, bytes)))
+        let certified = self.receiver_certified(&receiver, &bytes, &image);
+        Ok((!certified).then_some((receiver, bytes)))
+    }
+
+    /// A receiver read as `bytes` carries its certified `image` (the model's
+    /// `certified`): exactly those bytes, with a durability witness for
+    /// them (`HostIo::durable_page`). Matching bytes another program wrote,
+    /// or that a power cut may still revert, certify nothing.
+    pub(super) fn receiver_certified(
+        &mut self,
+        receiver: &str,
+        bytes: &Text,
+        image: &Text,
+    ) -> bool {
+        bytes == image && self.fs.durable_page(receiver)
     }
 
     /// Surface a diverged receiver as its ordinary read (a held page with
@@ -172,7 +196,9 @@ impl<F: HostIo> Host<F> {
     /// The second receiver check, after the source's trash, trash sync and
     /// source-directory sync: the exact receiver settles the pair; anything
     /// else (a receiver replaced meanwhile, or an unreadable one) holds it,
-    /// and the operation draft keeps the source's text as custody.
+    /// and the operation draft keeps the source's text as custody. Unlike
+    /// the pre-check it does not surface the receiver's read (the model's
+    /// `publishedPair`): its next observation does, as for any outside change.
     fn post_check(&mut self, key: &str) {
         match self.receiver_diverged(key) {
             Ok(None) => {
@@ -180,19 +206,16 @@ impl<F: HostIo> Host<F> {
                     self.repair_op(&name);
                 }
             }
-            Ok(Some((receiver, bytes))) => {
-                if !self.allocator_busy() {
-                    self.receiver_differs(&receiver, bytes);
-                }
-                self.hold_pair(key, true);
-            }
-            Err(_) => self.hold_pair(key, true),
+            Ok(Some(_)) | Err(_) => self.hold_pair(key, true),
         }
     }
 
     /// `receiver`'s disk bytes are known to be `bytes`: a held pair whose
     /// receiver is exact again resumes.
     pub(super) fn receiver_seen(&mut self, receiver: &str, bytes: &Text) {
+        if !self.order.held_receiver(receiver, bytes) || !self.fs.durable_page(receiver) {
+            return;
+        }
         for name in self.order.receiver_read(receiver, bytes) {
             self.repair_op(&name);
             let sources: Vec<PageKey> = (self.order.paired(&name))
@@ -524,8 +547,12 @@ impl<F: HostIo> Host<F> {
                 } else {
                     self.receiver_seen(&key, &job.bytes);
                     // A paired source that published newer text: its removal
-                    // is superseded, and its operation stops blocking.
+                    // is superseded, and its operation stops blocking. A
+                    // restored preimage cancels its pair.
                     if let Some(name) = self.order.disarm(&key) {
+                        self.repair_op(&name);
+                    }
+                    for name in self.order.restored(&key, &job.bytes) {
                         self.repair_op(&name);
                     }
                 }
