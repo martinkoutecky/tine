@@ -34,8 +34,12 @@ pub(crate) fn affects_config_lookup(rel: &str) -> bool {
     fn nested(inner: &str, outer: &str) -> bool {
         (inner.strip_prefix(outer)).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
     }
+    // Keys are spelled with `/` on every platform; a `PathBuf` is not.
     let placeholder = super::config_placeholder(Path::new(CONFIG_FILE));
-    let lookups = [CONFIG_FILE, placeholder.to_str().expect("a UTF-8 constant")];
+    let name = (placeholder.file_name().and_then(|name| name.to_str())).expect("a UTF-8 constant");
+    let (dir, _) = CONFIG_FILE.rsplit_once('/').expect("a nested constant");
+    let placeholder = format!("{dir}/{name}");
+    let lookups = [CONFIG_FILE, placeholder.as_str()];
     (lookups.iter()).any(|lookup| nested(rel, lookup) || nested(lookup, rel))
 }
 

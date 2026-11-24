@@ -192,6 +192,7 @@ fn config_problems_answer_alike_from_files() {
         ("under a file", &[("logseq", "x")]),
         ("in iCloud", &[("logseq/.config.edn.icloud", "x")]),
     ];
+    let mut wrong = Vec::new();
     for (case, extra) in cases {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(temp.path().join("pages")).unwrap();
@@ -209,12 +210,14 @@ fn config_problems_answer_alike_from_files() {
         let memory = view.config().problem.as_ref().map(|error| error.kind);
         // Windows opens a directory as PermissionDenied: the problem is there,
         // its kind is the platform's.
-        if cfg!(unix) {
-            assert_eq!(memory, disk, "{case}");
+        if cfg!(unix) && memory != disk {
+            wrong.push(format!("{case}: memory {memory:?}, disk {disk:?}"));
         }
-        assert_eq!(memory.is_some(), disk.is_some(), "{case}");
-        assert_eq!(disk.is_some(), case != "absent", "{case}: {disk:?}");
+        if memory.is_some() != disk.is_some() || disk.is_some() != (case != "absent") {
+            wrong.push(format!("{case}: memory {memory:?}, disk {disk:?}"));
+        }
     }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 /// Paths no directory can hold are refused, not truncated or merged
@@ -488,6 +491,7 @@ fn layouts_open_or_refuse_alike() {
             true,
         ),
     ];
+    let mut wrong = Vec::new();
     for (case, config, as_files, opens) in cases {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
@@ -507,7 +511,11 @@ fn layouts_open_or_refuse_alike() {
         }
         let disk = open_disk(root).map(|(store, _)| store.close()).is_ok();
         let memory = WholeGraph::from_files(files_under(root), Vec::new(), false).is_ok();
-        assert_eq!(disk, *opens, "{case}: the disk");
-        assert_eq!(memory, disk, "{case}: memory against the disk");
+        if disk != *opens || memory != disk {
+            wrong.push(format!(
+                "{case}: expected {opens}, disk {disk}, memory {memory}"
+            ));
+        }
     }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
