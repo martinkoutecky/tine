@@ -669,3 +669,81 @@ fn the_page_state_census_catches_its_bypass_mutants() {
         missed.join("\n")
     );
 }
+
+/// One answerer of "does this paired operation still owe a settlement"
+/// (rcd-impl-2d): `Order::holds`, asked live. Production may call it only
+/// where the answer is used at once, and no `live_ops` entry may keep a copy
+/// (an `Order` phase change would then have to refresh it).
+const HOLDS_READERS: &[(&str, &str)] = &[
+    (
+        "logical.rs::waits",
+        "whole retirement, candidacy (`op_waits`, `pair_retains`) and the reference ask it",
+    ),
+    (
+        "logical.rs::reindex_owed",
+        "whether an owed-set change alone turns the vehicle's waiting on or off",
+    ),
+];
+
+/// `LiveOp`'s fields: what only the census and the pages answer.
+const LIVE_OP_FIELDS: &[&str] = &["versions", "owed"];
+
+fn holds_violations(files: &BTreeMap<String, String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let (_, calls) = census(files);
+    for (function, body) in &calls {
+        if body.contains("order . holds (") && !HOLDS_READERS.iter().any(|(f, _)| f == function) {
+            out.push(format!("{function} reads `Order::holds`"));
+        }
+    }
+    let logical = syn::parse_file(&files["logical.rs"]).expect("Rust source must parse");
+    let fields: Vec<String> = (logical.items.iter())
+        .find_map(|item| match item {
+            syn::Item::Struct(s) if s.ident == "LiveOp" => Some(&s.fields),
+            _ => None,
+        })
+        .expect("logical.rs declares LiveOp")
+        .iter()
+        .map(|f| f.ident.as_ref().map_or(String::new(), ToString::to_string))
+        .collect();
+    if fields != LIVE_OP_FIELDS {
+        out.push(format!(
+            "LiveOp has fields {fields:?}, not {LIVE_OP_FIELDS:?}"
+        ));
+    }
+    out
+}
+
+#[test]
+fn no_operation_vehicle_caches_whether_its_order_holds() {
+    let files = production_files(&page_host_dir());
+    let (_, calls) = census(&files);
+    for (reader, why) in HOLDS_READERS {
+        assert!(
+            calls
+                .get(*reader)
+                .is_some_and(|b| b.contains("order . holds (")),
+            "the holds reader {reader} ({why}) no longer reads it; drop it"
+        );
+    }
+    let violations = holds_violations(&files);
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+    // Its mutants: the cached field back, and a new reader that keeps it.
+    let mutants = [
+        (
+            "pub(super) owed: BTreeSet<PageKey>,\n}",
+            "pub(super) owed: BTreeSet<PageKey>,\n    pub(super) held: bool,\n}",
+        ),
+        (
+            "    pub(super) fn repair_op(",
+            "    fn held_mutant(&mut self, name: &str) -> bool { self.order.holds(name) }\n    pub(super) fn repair_op(",
+        ),
+    ];
+    for (from, to) in mutants {
+        let mut files = files.clone();
+        let source = files.get_mut("logical.rs").unwrap();
+        assert!(source.contains(from), "mutant anchor {from}");
+        *source = source.replacen(from, to, 1);
+        assert!(!holds_violations(&files).is_empty(), "missed mutant {to}");
+    }
+}

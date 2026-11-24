@@ -177,7 +177,7 @@ impl<F: HostIo> Host<F> {
         // history: that vehicle holds the page's text (call 20's rewrite
         // drops the settled pair with its own records only).
         let paired = self.order.paired(op).is_some();
-        let whole = !live.waits()
+        let whole = !logical::waits(&self.order, op, live)
             && records.iter().all(|r| {
                 let winner = self.durable.get(&r.page).is_some_and(|w| w.wseq == r.wseq);
                 let superseded = self.durable.get(&r.page).is_some_and(|w| w.wseq > r.wseq);

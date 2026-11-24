@@ -935,24 +935,16 @@ impl Reference {
                 .filter(|(key, version)| logical::owes(host.pages.get(*key), **version))
                 .map(|(key, _)| key.clone())
                 .collect();
-            let held = host.order.holds(name);
-            live_ops.insert(
-                name.clone(),
-                LiveOp {
-                    versions,
-                    owed,
-                    held,
-                },
-            );
+            live_ops.insert(name.clone(), LiveOp { versions, owed });
         }
         assert_eq!(
             host.live_ops, live_ops,
             "RENAME-COST reference: live operation vehicles"
         );
         let op_waits = |key: &PageKey| {
-            live_ops
-                .values()
-                .any(|op| op.versions.contains_key(key) && op.waits())
+            (live_ops.iter()).any(|(name, op)| {
+                op.versions.contains_key(key) && logical::waits(&host.order, name, op)
+            })
         };
         let drafted: BTreeSet<_> = if host.alive {
             let candidates = self.pages.keys().chain(self.logical.keys());
