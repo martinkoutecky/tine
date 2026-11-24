@@ -13,3 +13,7 @@ Build with `lake build` in `docs/model-composition/lean` using the pinned Lean t
 ## Does an admitted request finish? (Quint, bounded)
 
 `quint/finish.inc` extends the storage scenarios with a request identity, a driver and a terminal observer for one admitted rename with a rewritten referrer; `quint/check.cjs` generates the models, searches every reachable state to a stated depth for pending loops, and checks two mutants (a starving driver, a premature success). This is bounded evidence, not a proof. It found two runs where a request stays pending although the app runs, I/O works and other writers have stopped: a stale window edit that replaces the admitted referrer draft, and a crash between a discard and the removal of its drafts. Both are open questions for the next stages of the composition.
+
+## Several moves in one request (Quint, bounded)
+
+`quint/batch-model.cjs` generates a variant of the storage scenarios in which one admission carries several moves under one gate over the whole written footprint; `batch-order.inc` adds the gate and its order checks, `batch-scenarios.inc` the five-slot probes (two moves sharing a referrer), and `batch-check.cjs` runs the bounded searches and three mutants (one gate per pair, an early source, a discard that restores both sources). Within the searched bounds the design holds. One statement is refuted with a trace: the bytes a move planned to remove are not always recoverable (a discard followed by an outside overwrite); the bytes actually removed are.
