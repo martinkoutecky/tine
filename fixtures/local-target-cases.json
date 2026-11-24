@@ -399,6 +399,42 @@
       }
     },
     {
+      "id": "5.4-7",
+      "case": "5.4",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[C:docs/note.txt][x]]",
+      "owner": "refused-malformed",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive-relative path is refused (the authored text, not one rebuilt from the parser's fields)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-8",
+      "case": "5.4",
+      "format": "md",
+      "origin": "md-link",
+      "source": "<C:docs/note.txt>",
+      "owner": "refused-malformed",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive-relative path is refused (the authored text, not one rebuilt from the parser's fields)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
       "id": "5.5-1",
       "case": "5.5",
       "format": "org",
@@ -2285,6 +2321,24 @@
       },
       "change": {
         "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-24",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](file:////server/share/a.txt)",
+      "owner": "file-url:file:////server/share/a.txt",
+      "today": {
+        "renderer": "open:file://server/share/a.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: the authored file URL is kept (the parser's fields drop its second //)",
         "liveness": null,
         "export": null
       }

@@ -21,6 +21,7 @@ pub use tine_outline::outline as outline_kernel;
 pub mod graph_paths;
 pub mod html_sanitize;
 pub mod latency;
+pub mod link_scheme;
 pub mod local_target;
 pub use tine_outline::logbook;
 pub mod media_mime;

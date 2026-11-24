@@ -1091,6 +1091,26 @@ pub fn pdf_asset_file(path: &str) -> String {
     tine_core::local_target::pdf_asset_file(path)
 }
 
+/// The one scheme-route rule (`tine_core::link_scheme`): route in bits 0–2,
+/// browser-resource answer in bits 4–5. A number, so a rendered link costs one
+/// crossing and no allocation back. O(destination bytes), no I/O.
+#[wasm_bindgen]
+pub fn link_scheme_route(dest: &str) -> u32 {
+    tine_core::link_scheme::scheme_route_code(dest)
+}
+
+/// The lowercased URL scheme, or none (no scheme, or a drive letter). O(bytes).
+#[wasm_bindgen]
+pub fn link_scheme(dest: &str) -> Option<String> {
+    tine_core::link_scheme::link_scheme(dest)
+}
+
+/// The one media extension inventory, `ext:kind` pairs joined by commas.
+#[wasm_bindgen]
+pub fn media_inventory() -> String {
+    tine_core::local_target::media_inventory()
+}
+
 /// The one owner of "which local target does this destination name". A parser
 /// link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
 /// plain text destination) and `full` text; the answer is the `LocalTarget`

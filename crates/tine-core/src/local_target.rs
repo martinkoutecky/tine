@@ -13,6 +13,7 @@
 //! attachment. Where a product question is still open, this module keeps the
 //! renderer's current answer and says so at that site ("Pending decision").
 
+use crate::link_scheme::{scheme_route, SchemeRoute};
 use crate::lsdoc::ast::Url;
 
 /// Where a destination was written. The route can depend on it (Markdown
@@ -50,8 +51,10 @@ impl Origin {
     }
 }
 
-/// The parser's own node (never a rebuilt string), or the text of a macro
-/// argument, HTML attribute or page icon value.
+/// A parser link node (its `url` and its `full` source text), or the text of
+/// a macro argument, HTML attribute or page icon value. A link's destination
+/// is the parser's `v`, or for a `Complex` URL the authored text located in
+/// `full` (see [`authored`]); it is never rebuilt from the URL fields.
 #[derive(Debug, Clone, Copy)]
 pub enum Destination<'a> {
     Link { url: &'a Url, full: &'a str },
@@ -243,7 +246,7 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
     }
     let mut image = false;
     let (text, search) = match dest {
-        Destination::Link { url, full: _ } => match url {
+        Destination::Link { url, full } => match url {
             Url::BlockRef { v } => return LocalTarget::of(Route::BlockRef { id: v.clone() }),
             // OG `show-link?`: a bare Org reference to an asset or media file is an image.
             Url::PageRef { v } if origin == Origin::OrgBare && org_bare_image(v) => {
@@ -255,36 +258,40 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
                 if origin == Origin::OrgBare
                     && is_drive(&decode_once(js_trim(v)).replace('\\', "/")) =>
             {
-                return path_target(v, Decision::Drive, origin);
+                return path_target(v, SchemeRoute::Drive, origin);
             }
             Url::PageRef { v } => return LocalTarget::of(Route::PageRef { name: v.clone() }),
             Url::Search { v } => (v.clone(), true),
             Url::File { v } | Url::EmbedData { v } => (v.clone(), false),
-            // The parser emits Complex only for `scheme://`, so `C://x` keeps its slashes.
-            Url::Complex { protocol, link } => match (protocol, link) {
-                (Some(p), Some(l)) => (format!("{p}://{l}"), false),
-                (_, l) => (l.clone().unwrap_or_default(), false),
+            Url::Complex {
+                protocol: Some(p),
+                link: Some(l),
+            } => match authored(full, p, l, origin) {
+                Some(text) => (text.to_owned(), false),
+                None => return LocalTarget::of(Route::RefusedMalformed),
             },
+            // The parser always fills both fields; nothing authored to read.
+            Url::Complex { .. } => return LocalTarget::of(Route::RefusedMalformed),
         },
         Destination::Text(text) => (text.to_owned(), false),
     };
     if origin == Origin::HtmlResource {
         return html_resource(&text);
     }
-    let decision = decision(&text);
+    let decision = scheme_route(&text);
     // Pending decision 3 (dotless drive targets): like the renderer, a dotless
     // scheme-less search target, `C:/folder` included, is a page reference.
     if search
-        && matches!(decision, Decision::Relative | Decision::Drive)
+        && matches!(decision, SchemeRoute::Relative | SchemeRoute::Drive)
         && search_target_is_page(&text)
     {
         return LocalTarget::of(Route::PageRef { name: text });
     }
     let mut target = match decision {
-        Decision::Drop => LocalTarget::of(Route::Refused),
-        Decision::Web => LocalTarget::of(Route::Web),
-        Decision::Mail => LocalTarget::of(Route::Mail),
-        Decision::Defer(scheme) => LocalTarget::of(Route::AppScheme { scheme }),
+        SchemeRoute::Drop => LocalTarget::of(Route::Refused),
+        SchemeRoute::Web => LocalTarget::of(Route::Web),
+        SchemeRoute::Mail => LocalTarget::of(Route::Mail),
+        SchemeRoute::Defer(scheme) => LocalTarget::of(Route::AppScheme { scheme }),
         _ => path_target(&text, decision, origin),
     };
     if target.route == Route::Web {
@@ -299,6 +306,65 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
         target.media = Some(Media::Image);
     }
     target
+}
+
+/// The destination as written, located in the parser's `full` link text. The
+/// parser's `Complex` fields drop what stood between `protocol:` and `link`
+/// (no slashes, `//`, or a second `//`) and Markdown escapes, so `[[C:x][y]]`
+/// and `[[C://x][y]]` share their fields; only `full` tells them apart. An
+/// autolink's `full` is its destination. Otherwise the destination is where
+/// `protocol:`, then 4, 2 or no slashes, then `link` (a `\` before ASCII
+/// punctuation skipped) is followed by the end of a destination: the last such
+/// place in Markdown (the label comes first), the first in Org. None when
+/// `full` holds none. O(full bytes) per `protocol:` occurrence tried.
+fn authored<'a>(full: &'a str, protocol: &str, link: &str, origin: Origin) -> Option<&'a str> {
+    let markdown = matches!(origin, Origin::MdLink | Origin::MdEmbed);
+    let head = format!("{protocol}:");
+    if full.starts_with(&head) {
+        return Some(full);
+    }
+    let mut found = None;
+    for (at, _) in full.match_indices(&head) {
+        let start = at + head.len();
+        let end = [4, 2, 0].into_iter().find_map(|slashes| {
+            let tail = full.get(start + slashes..)?;
+            if full[start..start + slashes].bytes().any(|b| b != b'/') {
+                return None;
+            }
+            let end = start + slashes + escaped_prefix(tail, link)?;
+            matches!(
+                full.as_bytes().get(end),
+                None | Some(b')' | b']' | b'>' | b' ' | b'\t' | b'\n' | b'\r')
+            )
+            .then_some(end)
+        });
+        if let Some(end) = end {
+            found = Some(&full[at..end]);
+            if !markdown {
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// How many bytes of `raw` spell `text`, where `raw` may escape ASCII
+/// punctuation with `\`. None when `raw` does not begin with it. O(bytes).
+fn escaped_prefix(raw: &str, text: &str) -> Option<usize> {
+    let (raw, text) = (raw.as_bytes(), text.as_bytes());
+    let (mut i, mut j) = (0, 0);
+    while j < text.len() {
+        if raw.get(i) == Some(&text[j]) {
+            j += 1;
+        } else if !(raw.get(i) == Some(&b'\\')
+            && text[j].is_ascii_punctuation()
+            && raw.get(i + 1) == Some(&text[j]))
+        {
+            return None;
+        }
+        i += 1;
+    }
+    Some(i)
 }
 
 /// Resolve a file route against the graph root bound when the user acted.
@@ -339,86 +405,12 @@ pub fn resolve_file(route: &Route, root: &str) -> Option<String> {
     Some(format!("{prefix}{}", segments.join("/")))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Decision {
-    Relative,
-    Web,
-    Mail,
-    File,
-    Drive,
-    Defer(String),
-    Drop,
-}
-
-const REFUSED_SCHEMES: &str = include_str!("../../../src-tauri/external-link-schemes.json");
-
-fn refused_scheme(scheme: &str) -> bool {
-    // A refused name is one of the list's quoted strings. O(list bytes).
-    let s = scheme.as_bytes();
-    !s.is_empty()
-        && REFUSED_SCHEMES
-            .as_bytes()
-            .windows(s.len() + 2)
-            .any(|w| w[0] == b'"' && w[s.len() + 1] == b'"' && &w[1..=s.len()] == s)
-}
-
-/// The leading scheme (`Some(name)`) or drive letter (`Some("")`), read the
-/// way a browser does: leading C0 controls and spaces dropped, tabs and line
-/// breaks ignored; `compact` ignores every control and space. O(bytes); byte
-/// loops rather than `str` patterns keep the wasm module small.
-fn scheme_prefix(dest: &str, compact: bool) -> Option<String> {
-    let mut name = String::new();
-    for &c in dest.as_bytes() {
-        if c <= b' ' && (compact || name.is_empty() || matches!(c, b'\t' | b'\n' | b'\r')) {
-            continue;
-        }
-        if c == b':' && !name.is_empty() {
-            return Some(if name.len() == 1 { String::new() } else { name });
-        }
-        let valid = if name.is_empty() {
-            c.is_ascii_alphabetic()
-        } else {
-            c.is_ascii_alphanumeric() || matches!(c, b'+' | b'.' | b'-')
-        };
-        if !valid {
-            return None;
-        }
-        name.push(c.to_ascii_lowercase() as char);
-    }
-    None
-}
-
-/// The scheme policy, read on the authored text before decoding (a scheme is
-/// never spelled with escapes). One-letter prefixes name a drive. O(bytes).
-fn decision(dest: &str) -> Decision {
-    let Some(scheme) = scheme_prefix(dest, false) else {
-        return match scheme_prefix(dest, true) {
-            Some(s) if refused_scheme(&s) => Decision::Drop,
-            _ => Decision::Relative,
-        };
-    };
-    match scheme.as_str() {
-        "" => Decision::Drive,
-        s if refused_scheme(s) => Decision::Drop,
-        "http" | "https" => Decision::Web,
-        "mailto" => Decision::Mail,
-        "file"
-            if js_trim(dest)
-                .get(..5)
-                .is_some_and(|p| p.eq_ignore_ascii_case("file:")) =>
-        {
-            Decision::File
-        }
-        _ => Decision::Defer(scheme),
-    }
-}
-
 /// A scheme-less, file: or drive destination: attachment, graph file, drive
 /// file or outside file, with its PDF and media identities.
-fn path_target(dest: &str, decision: Decision, origin: Origin) -> LocalTarget {
+fn path_target(dest: &str, decision: SchemeRoute, origin: Origin) -> LocalTarget {
     // Pending decision 2 (whitespace trimming): JavaScript's trim, as rendered today.
     let mut text = js_trim(dest);
-    if decision == Decision::File {
+    if decision == SchemeRoute::File {
         text = &text[5..];
         if matches!(text.as_bytes().first(), Some(b'/' | b'\\')) {
             return file_url(dest.trim(), origin);
@@ -438,7 +430,7 @@ fn path_target(dest: &str, decision: Decision, origin: Origin) -> LocalTarget {
         LocalTarget::of(Route::Drive {
             path: normalize_drive(&decoded),
         })
-    } else if let Some(name) = (decision == Decision::Relative)
+    } else if let Some(name) = (decision == SchemeRoute::Relative)
         .then(|| attachment_name(text))
         .flatten()
     {
@@ -592,9 +584,9 @@ fn html_resource(src: &str) -> LocalTarget {
         || src.starts_with("\\\\")
         || is_drive(src) && matches!(src.as_bytes().get(2), Some(b'/' | b'\\'));
     if !local {
-        return LocalTarget::of(match decision(src) {
-            Decision::Web => Route::Web,
-            Decision::Drop | Decision::Defer(_) | Decision::Mail => Route::Refused,
+        return LocalTarget::of(match scheme_route(src) {
+            SchemeRoute::Web => Route::Web,
+            SchemeRoute::Drop | SchemeRoute::Defer(_) | SchemeRoute::Mail => Route::Refused,
             _ => Route::Fragment {
                 href: src.to_owned(),
             },
@@ -664,6 +656,9 @@ const OG_ORG_MEDIA: &[&str] = &[
     "gif", "svg", "jpeg", "ico", "png", "jpg", "bmp", "webp", "mp3", "ogg", "mpeg", "wav", "m4a",
     "flac", "wma", "aac", "mp4", "webm", "mov", "flv", "avi", "mkv",
 ];
+/// The one media extension inventory (OG's media sets, so a clone graph stays
+/// compatible): the owner classifies with it and `src/media.ts` reads it
+/// through [`media_inventory`].
 const MEDIA_EXTS: &[(&str, Media)] = &[
     ("png", Media::Image),
     ("jpg", Media::Image),
@@ -692,6 +687,25 @@ const MEDIA_EXTS: &[(&str, Media)] = &[
     ("opus", Media::Audio),
     ("mpeg", Media::Audio),
 ];
+
+/// The one media inventory for every other reader (insertion, page icons,
+/// playback in `src/media.ts`), as `ext:kind` pairs joined by commas. Read
+/// once per session. O(inventory).
+pub fn media_inventory() -> String {
+    let mut out = String::new();
+    for (ext, media) in MEDIA_EXTS {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(ext);
+        out.push_str(match media {
+            Media::Image => ":image",
+            Media::Audio => ":audio",
+            Media::Video => ":video",
+        });
+    }
+    out
+}
 
 /// The extension, ignoring a `?`/`#` tail. O(bytes).
 fn ext_of(name: &str) -> &str {
@@ -763,7 +777,7 @@ fn is_block_ref(v: &str) -> bool {
 }
 
 /// JavaScript `String.prototype.trim`. O(bytes).
-fn js_trim(s: &str) -> &str {
+pub(crate) fn js_trim(s: &str) -> &str {
     let js_space = |c: char| {
         matches!(
             c,

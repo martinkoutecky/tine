@@ -132,6 +132,18 @@ export function journal_day_json(name: string, file_format: string, title_format
 export function last_panic(): string;
 
 /**
+ * The lowercased URL scheme, or none (no scheme, or a drive letter). O(bytes).
+ */
+export function link_scheme(dest: string): string | undefined;
+
+/**
+ * The one scheme-route rule (`tine_core::link_scheme`): route in bits 0–2,
+ * browser-resource answer in bits 4–5. A number, so a rendered link costs one
+ * crossing and no allocation back. O(destination bytes), no I/O.
+ */
+export function link_scheme_route(dest: string): number;
+
+/**
  * OG property tokens, shared with native property atomization. O(value bytes).
  */
 export function linkable_property_names(value: string, is_org: boolean): string[];
@@ -155,6 +167,11 @@ export function logbook_clock_out(raw: string, is_org: boolean, with_seconds: bo
 export function logbook_info_json(raw: string, is_org: boolean): string;
 
 export function lsdoc_tag(): string;
+
+/**
+ * The one media extension inventory, `ext:kind` pairs joined by commas.
+ */
+export function media_inventory(): string;
 
 /**
  * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
@@ -420,6 +437,8 @@ export interface InitOutput {
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly last_panic: () => [number, number];
+    readonly link_scheme: (a: number, b: number) => [number, number];
+    readonly link_scheme_route: (a: number, b: number) => number;
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
     readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
@@ -427,6 +446,7 @@ export interface InitOutput {
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
+    readonly media_inventory: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];

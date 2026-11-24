@@ -471,6 +471,37 @@ function __tine_raw_last_panic() {
 }
 
 /**
+ * The lowercased URL scheme, or none (no scheme, or a drive letter). O(bytes).
+ * @param {string} dest
+ * @returns {string | undefined}
+ */
+function __tine_raw_link_scheme(dest) {
+    const ptr0 = passStringToWasm0(dest, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.link_scheme(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * The one scheme-route rule (`tine_core::link_scheme`): route in bits 0–2,
+ * browser-resource answer in bits 4–5. A number, so a rendered link costs one
+ * crossing and no allocation back. O(destination bytes), no I/O.
+ * @param {string} dest
+ * @returns {number}
+ */
+function __tine_raw_link_scheme_route(dest) {
+    const ptr0 = passStringToWasm0(dest, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.link_scheme_route(ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
  * OG property tokens, shared with native property atomization. O(value bytes).
  * @param {string} value
  * @param {boolean} is_org
@@ -620,6 +651,23 @@ function __tine_raw_lsdoc_tag() {
     let deferred1_1;
     try {
         const ret = wasm.lsdoc_tag();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * The one media extension inventory, `ext:kind` pairs joined by commas.
+ * @returns {string}
+ */
+function __tine_raw_media_inventory() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.media_inventory();
         deferred1_0 = ret[0];
         deferred1_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -1878,6 +1926,8 @@ export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
+export const link_scheme = __tineGuard("link_scheme", __tine_raw_link_scheme);
+export const link_scheme_route = __tineGuard("link_scheme_route", __tine_raw_link_scheme_route);
 export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
 export const local_target_json = __tineGuard("local_target_json", __tine_raw_local_target_json);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
@@ -1885,6 +1935,7 @@ export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbo
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
 export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_logbook_info_json);
 export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
+export const media_inventory = __tineGuard("media_inventory", __tine_raw_media_inventory);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
 export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);

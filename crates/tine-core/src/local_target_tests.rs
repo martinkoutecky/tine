@@ -208,3 +208,75 @@ fn asset_name_and_target_are_built_only_by_the_owner() {
         "LocalTarget's fields must stay private: {fields}"
     );
 }
+
+fn parsed(source: &str, format: &str) -> (Url, String) {
+    let nodes = crate::render::parse_inline_bounded(source, format).unwrap();
+    let nodes = serde_json::to_value(&nodes).unwrap();
+    let link = find(&nodes, "link").unwrap();
+    (
+        serde_json::from_value(link["url"].clone()).unwrap(),
+        link["full"].as_str().unwrap().to_owned(),
+    )
+}
+
+fn owner_of(url: &Url, full: &str, origin: Origin) -> String {
+    describe(&local_target(Destination::Link { url, full }, origin))
+}
+
+/// The owner reads the authored destination from the parser's `full` text,
+/// never from the `Complex` fields: for each Org form of `C://docs/note.txt`
+/// the parser's own node gives the drive file, and the same fields under a
+/// `full` that does not contain them give nothing (a rebuild would still
+/// answer the drive file).
+#[test]
+fn complex_destinations_come_from_full() {
+    for (source, origin) in [
+        ("[[C://docs/note.txt][x]]", Origin::OrgLink),
+        ("[[C://docs/note.txt]]", Origin::OrgBare),
+        ("<C://docs/note.txt>", Origin::OrgBare),
+    ] {
+        let (url, full) = parsed(source, "org");
+        let want = "drive:C:/docs/note.txt";
+        assert_eq!(owner_of(&url, &full, origin), want, "{source}");
+        let other = owner_of(&url, "[[D://elsewhere.txt]]", origin);
+        assert_eq!(other, "refused-malformed", "{source}");
+    }
+    // The parser gives `C:docs` and `C://docs` the same fields; `full` keeps the
+    // drive-relative form, which is refused, and the second `//` of a file URL.
+    let cases = [
+        ("org", "[[C:docs/note.txt][x]]", "refused-malformed"),
+        ("org", "[[C://d/n.txt][C:x]]", "drive:C:/d/n.txt"),
+        ("md", "<C:docs/note.txt>", "refused-malformed"),
+        ("md", "[C:x](C://docs/note.txt)", "drive:C:/docs/note.txt"),
+        ("md", "[x](file:////s/a.txt)", "file-url:file:////s/a.txt"),
+        ("md", "[x](https://e/a\\_b.png \"t\")", "web media=image"),
+    ];
+    for (format, source, want) in cases {
+        let (url, full) = parsed(source, format);
+        let origin = if format == "md" {
+            Origin::MdLink
+        } else {
+            Origin::OrgLink
+        };
+        let owner = owner_of(&url, &full, origin);
+        assert_eq!(owner, want, "{source} ({url:?}, {full:?})");
+    }
+}
+
+/// One inventory: the owner's classifier and the list `src/media.ts` reads
+/// are the same table.
+#[test]
+fn media_inventory_is_the_classifier_table() {
+    let inventory = media_inventory();
+    for pair in inventory.split(',') {
+        let (ext, kind) = pair.split_once(':').unwrap();
+        let want = match kind {
+            "image" => Media::Image,
+            "audio" => Media::Audio,
+            "video" => Media::Video,
+            other => panic!("unknown kind {other}"),
+        };
+        assert_eq!(media_kind(&format!("x.{}", ext.to_uppercase())), Some(want));
+    }
+    assert_eq!(inventory.split(',').count(), MEDIA_EXTS.len());
+}
