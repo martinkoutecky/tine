@@ -1,4 +1,5 @@
 //! Durable rename vehicles and their in-memory recovery state in the Quint oracle.
+use super::order::gate_obligations;
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +52,13 @@ impl Pair {
         self.src == p && self.unresolved()
     }
 
+    fn gated(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Armed | Phase::Held | Phase::Moved | Phase::Blocked
+        )
+    }
+
     pub(super) fn member(&self, p: usize) -> bool {
         self.records[p].bytes != NONE
     }
@@ -78,9 +86,13 @@ impl Pair {
         disk: &[Text],
         stable: &[Text],
         trash: &[BTreeSet<Text>],
-        weak: bool,
+        config: &Config,
+        at_launch: bool,
     ) -> Phase {
-        if self.source_present(disk, stable, weak) || self.certified(disk, stable, weak) {
+        let witnessed = !at_launch || config.weak || config.mutant("MUseLaunchBytes");
+        if self.source_present(disk, stable, config.weak)
+            || (witnessed && self.certified(disk, stable, config.weak))
+        {
             Phase::Cancelled
         } else if self.restorable(disk, trash) {
             Phase::Restore
@@ -103,26 +115,36 @@ impl Pair {
     }
 }
 
-pub(super) fn install_pair(s: &mut Sys, dst: usize, src: usize, footprint: &BTreeSet<usize>) {
-    let records = s
-        .pages
-        .iter()
-        .enumerate()
-        .map(|(p, page)| {
-            if footprint.contains(&p) {
-                draft_entry(page)
-            } else {
-                nodraft()
-            }
-        })
-        .collect();
-    s.pairs.push(Pair {
-        dst,
-        src,
-        records,
-        phase: Phase::Armed,
-        decision: Decision::None,
-    });
+pub(super) fn install_pairs(
+    s: &mut Sys,
+    moves: &BTreeMap<usize, usize>,
+    footprint: &BTreeSet<usize>,
+    vehicle: i64,
+) {
+    let endpoints: BTreeSet<_> = moves.keys().chain(moves.values()).copied().collect();
+    let refs: BTreeSet<_> = footprint.difference(&endpoints).copied().collect();
+    for (&dst, &src) in moves {
+        let records = s
+            .pages
+            .iter()
+            .enumerate()
+            .map(|(p, page)| {
+                if p == dst || p == src || refs.contains(&p) {
+                    draft_entry(page)
+                } else {
+                    nodraft()
+                }
+            })
+            .collect();
+        s.pairs.push(Pair {
+            vehicle,
+            dst,
+            src,
+            records,
+            phase: Phase::Armed,
+            decision: Decision::None,
+        });
+    }
 }
 
 pub(super) fn can_draft(s: &Sys) -> bool {
@@ -130,9 +152,12 @@ pub(super) fn can_draft(s: &Sys) -> bool {
 }
 
 pub(super) fn retained(s: &Sys, p: usize) -> bool {
-    s.pairs
-        .iter()
-        .any(|pair| pair.unresolved() && pair.member(p))
+    s.pairs.iter().any(|pair| {
+        pair.member(p)
+            && s.pairs
+                .iter()
+                .any(|sibling| sibling.vehicle == pair.vehicle && sibling.unresolved())
+    })
 }
 
 pub(super) fn wanted_draft(x: &State, p: usize) -> Draft {
@@ -149,9 +174,18 @@ pub(super) fn awaits(s: &Sys, p: usize) -> bool {
 }
 
 pub(super) fn decide_disk(x: &State, s: &mut Sys, p: usize, src: Option<usize>) {
+    let shared = x
+        .config
+        .mutant("MSharedChoice")
+        .then(|| {
+            s.pairs
+                .iter()
+                .find(|pair| pair.dst == p && src == Some(pair.src))
+                .map(|pair| pair.vehicle)
+        })
+        .flatten();
     for pair in &mut s.pairs {
-        if pair.dst == p
-            && src == Some(pair.src)
+        if ((pair.dst == p && src == Some(pair.src)) || shared == Some(pair.vehicle))
             && (pair.unresolved() || pair.decision == Decision::SourceDisk)
         {
             pair.decision = Decision::Cancelled;
@@ -160,7 +194,7 @@ pub(super) fn decide_disk(x: &State, s: &mut Sys, p: usize, src: Option<usize>) 
         } else {
             continue;
         }
-        pair.phase = pair.cancel_phase(&s.disk, &s.stable, &s.trash, x.config.weak);
+        pair.phase = pair.cancel_phase(&s.disk, &s.stable, &s.trash, &x.config, false);
     }
 }
 
@@ -196,7 +230,7 @@ pub(super) fn published_pair(x: &State, s: &mut Sys, g: &mut Ghost, p: usize, by
                 };
             }
             (text, Phase::Armed | Phase::Held) if text != ABSENT => {
-                pair.phase = if present || certified {
+                pair.phase = if present || certified || x.config.mutant("MDropPreimage") {
                     Phase::Disarmed
                 } else {
                     Phase::Retained
@@ -212,7 +246,8 @@ pub(super) fn published_pair(x: &State, s: &mut Sys, g: &mut Ghost, p: usize, by
 pub(super) fn recovery_draft(s: &Sys, p: usize) -> Draft {
     if s.pairs.iter().any(|pair| {
         ((pair.decision == Decision::Cancelled && (pair.src == p || pair.dst == p))
-            || (pair.decision == Decision::SourceDisk && pair.src == p))
+            || (matches!(pair.decision, Decision::SourceDisk | Decision::Disarmed)
+                && pair.src == p))
             && pair.original(&s.drafts, p)
     }) {
         nodraft()
@@ -227,18 +262,21 @@ pub(super) fn recover_pairs(x: &State, s: &mut Sys, g: &mut Ghost) {
             pair.decision,
             Decision::Cancelled | Decision::Disarmed | Decision::SourceDisk
         ) {
-            pair.phase = pair.cancel_phase(&s.disk, &s.stable, &s.trash, x.config.weak);
+            pair.phase = pair.cancel_phase(&s.disk, &s.stable, &s.trash, &x.config, true);
         }
-        if !matches!(
-            pair.phase,
-            Phase::Armed | Phase::Held | Phase::Moved | Phase::Blocked
-        ) {
-            continue;
-        }
+    }
+    let mut vehicles: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for pair in s.pairs.iter().filter(|pair| pair.gated()) {
+        vehicles.entry(pair.vehicle).or_default().push(pair);
+    }
+    for pairs in vehicles.values() {
         let open: BTreeSet<_> = (0..s.pages.len())
-            .filter(|&p| pair.member(p) && s.pages[p].held)
+            .filter(|&p| s.pages[p].held && pairs.iter().any(|pair| pair.member(p)))
             .collect();
-        if !open.contains(&pair.src) && !open.contains(&pair.dst) {
+        if !pairs
+            .iter()
+            .any(|p| open.contains(&p.src) || open.contains(&p.dst))
+        {
             continue;
         }
         let vers: Vec<_> = s
@@ -247,44 +285,65 @@ pub(super) fn recover_pairs(x: &State, s: &mut Sys, g: &mut Ghost) {
             .enumerate()
             .map(|(p, pg)| if open.contains(&p) { pg.ver } else { NONE })
             .collect();
-        for &p in &open {
-            if p != pair.dst && open.contains(&pair.dst) {
-                g.obl.insert((p, pair.dst, vers[pair.dst], pair.dst));
-            }
-            if p != pair.dst && p != pair.src && open.contains(&pair.src) {
-                g.obl.insert((pair.src, p, vers[p], pair.dst));
-            }
-        }
+        let gate = Gate {
+            moves: pairs.iter().map(|p| (p.dst, p.src)).collect(),
+            vers,
+            open,
+        };
+        g.obl.extend(gate_obligations(&gate));
         if !x.config.mutant("MForgetGates") {
-            s.gates.push(Gate {
-                dst: pair.dst,
-                src: pair.src,
-                vers,
-                open,
-            });
+            s.gates.push(gate);
         }
     }
 }
 
 pub(super) fn pair_rewrite(x: &State, src: usize, ok: bool) -> Option<State> {
-    let matches = |pair: &Pair| pair.src == src && !pair.unresolved();
-    if !x.s.alive || !x.s.owners.contains(&0) || !x.s.pairs.iter().any(matches) {
+    if !x.s.alive || !x.s.owners.contains(&0) {
         return None;
     }
+    let target =
+        x.s.pairs
+            .iter()
+            .rfind(|pair| pair.src == src && !pair.unresolved())?;
+    let survives = |pair: &Pair| {
+        pair.vehicle != target.vehicle || (pair.src != src && !x.config.mutant("MDropSibling"))
+    };
     let mut s = x.s.clone();
-    if ok && s.draft_ok {
+    if (ok || x.config.mutant("MRewriteOnFailure")) && s.draft_ok {
         for p in 0..s.pages.len() {
-            if s.pairs.iter().filter(|pair| matches(pair)).any(|pair| {
-                pair.original(&s.drafts, p) && (p == pair.src || p == pair.dst || !s.pages[p].risk)
-            }) {
+            let shared = s
+                .pairs
+                .iter()
+                .filter(|pair| survives(pair))
+                .any(|pair| pair.vehicle == target.vehicle && pair.member(p));
+            if target.original(&s.drafts, p)
+                && (p == src || p == target.dst || !s.pages[p].risk)
+                && (!shared || x.config.mutant("MDropShared"))
+            {
                 s.drafts[p] = nodraft();
             }
         }
         if !x.config.mutant("MKeepSettled") {
-            s.pairs.retain(|pair| !matches(pair));
+            s.pairs.retain(survives);
         }
     }
     commit(x, s, x.g.clone(), "pairRewrite")
+}
+
+pub(super) fn disjoint_pairs(s: &Sys) -> bool {
+    let mut endpoints = BTreeSet::new();
+    s.pairs
+        .iter()
+        .all(|p| endpoints.insert((p.vehicle, p.src)) && endpoints.insert((p.vehicle, p.dst)))
+}
+
+pub(super) fn retained_records(s: &Sys) -> bool {
+    s.pairs.iter().filter(|p| p.unresolved()).all(|pair| {
+        s.drafts
+            .iter()
+            .enumerate()
+            .all(|(p, draft)| !pair.member(p) || draft.bytes != NONE)
+    })
 }
 
 pub(super) fn restore_source(x: &State, src: usize) -> Option<State> {

@@ -1,5 +1,5 @@
 {
-  "model_sha256": "33974dbcf9490f782ea79ba0b241cf3194672c4953f5ea5faa178350f458c65f",
+  "model_sha256": "1a95520bd10967ab4715a6acc27ca506885e760afdde065e0ed64c544d99b3ab",
   "scenarios_sha256": "ea443e23cb11eb43e45cd72ca6880e81c9de60c40bc3a60792e10154b8f95f71",
   "scope": "bounded semantic endpoints; default driver supplies scheduling; not full-state refinement",
   "cases": [

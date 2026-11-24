@@ -1,7 +1,7 @@
 # s3.5 executable storage model
 
 This private, unwired module transcribes `storage-s35.qnt` s3.5, SHA-256
-`52a474a903c21a0a1bb8f0c8c53536de3a5a053a58c9de7b06fa20204837955b`.
+`b2423457e3580604422586328d8c6ff8b30f0f4f718b5884a88c3105f1ca3d13`.
 The scenario source is `scenarios-s35.inc` s3.5, SHA-256
 `bf9605a64f6a0f1ea7b9d2984191a7865ba0997df25f6990ceaf1324ee8c4960`.
 s3.4 adds durable external name claimants (`Sys.claimed`, `extClaim`), the
@@ -20,6 +20,12 @@ source check requires the certified receiver before the trash step and again
 after directory sync. A durable Use Disk choice prevents replay of the
 cancelled removal. Recovery retains the preimage when the source needs
 restoration. The owner claim gates draft changes and paired removals.
+A vehicle can carry disjoint pairs with shared referrers. Its receivers
+publish before the referrers, and each source can finish once those effects
+are witnessed. A successful private rewrite retires the selected pair and
+its exclusive records. A failed rewrite keeps the old vehicle. On a strong
+filesystem launch has no receiver publication witness, so matching bytes
+alone keep a decided pair's unresolved custody in Restore or Retained.
 `orderHolds` includes exclusive ownership and exact receiver preflight.
 `renameResolves` includes durable preimage coverage alongside the existing
 invariant. `saving.rs` contains the ordinary save and draft transitions.
@@ -81,8 +87,9 @@ Generators never write into the supplied model directory or proof lanes.
 Quint calls take `$TINE_AGENTS/og/.tlc.lock`; `TINE_AGENTS` defaults to the
 repository's sibling `tine-agents` directory.
 
-Regenerate the 206 scenarios, four profile oracles, 50 model-mutant oracles and
-three-path random traces from the repository root:
+Regenerate the 206 three-page scenarios, 15 five-page vehicle scenarios, four
+profile oracles, 57 model-mutant oracles and three-path random traces from the
+repository root:
 
 ```sh
 python3 -B scripts/s2/generate.py docs/storage-model/quint --scenario-source docs/storage-model/quint/scenarios-s35.inc --quint docs/storage-model/quint/node_modules/.bin/quint
@@ -90,8 +97,8 @@ python3 -B scripts/s2/witnesses.py docs/storage-model/quint --quint docs/storage
 bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/target/s3/traces.json; cargo test -p tine-store'
 ```
 
-The generator checks both pinned source hashes, expands intermediate assertions,
-conditionals and refusal checks, and compares 11,124 scenario outcomes. It
+The generator checks the pinned source hashes and expands intermediate
+assertions, conditionals and refusal checks for 12,731 scenario outcomes. It
 distinguishes pass, disabled action, failed assertion and test returned false.
 Quint also reports QNT508 when an expectation follows a disabled action. The
 generator reads the diagnostic message to classify that case. Each sweep

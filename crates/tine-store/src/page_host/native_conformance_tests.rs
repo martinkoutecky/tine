@@ -646,6 +646,9 @@ fn native_committed_scenarios_in_four_profiles() {
     let mut queued = 0;
     let mut effective = 0;
     for (name, program) in fixture["scenarios"].as_object().unwrap() {
+        if !fixture["scenario_pages"][name].is_null() {
+            continue;
+        }
         if let Some(reason) = excluded(program) {
             skipped.push(format!("{name}:{reason}"));
             continue;
@@ -692,4 +695,9 @@ fn native_committed_scenarios_in_four_profiles() {
     eprintln!(
         "native scenarios: {} selected, {comparisons} profile outcomes; {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames; ran={ran:?}; ModelFs-only={skipped:?}; refinement={refinements:?}", ran.len()
     );
+}
+
+#[test]
+fn native_vehicle_recovery_scenarios_in_four_profiles() {
+    super::tests::vehicle_scenarios_through_host::<NativeFs>();
 }

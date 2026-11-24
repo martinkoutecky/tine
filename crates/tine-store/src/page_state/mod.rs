@@ -1,7 +1,7 @@
 //! Executable, unwired transcription of storage-s3.qnt. See README.md.
 #![allow(dead_code)]
 
-use operations::{flush_del, load, op_apply, op_delete, op_rename};
+use operations::{flush_del, load, op_apply, op_apply_moves, op_delete, op_rename};
 #[cfg(test)]
 use operations::{op_clean, op_cur};
 use order::{
@@ -10,7 +10,7 @@ use order::{
 };
 use pairing::*;
 use saving::{check, dir_sync, draft_sync, flush, observe, rename, save_fail};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod operations;
 mod order;
@@ -20,7 +20,7 @@ mod saving;
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "52a474a903c21a0a1bb8f0c8c53536de3a5a053a58c9de7b06fa20204837955b";
+const MODEL_SHA: &str = "b2423457e3580604422586328d8c6ff8b30f0f4f718b5884a88c3105f1ca3d13";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -86,12 +86,11 @@ record!(Up {
     cur: bool
 });
 record!(Gate {
-    dst: usize,
-    src: usize,
+    moves: BTreeSet<(usize, usize)>,
     vers: Vec<i64>,
     open: BTreeSet<usize>
 });
-record!(Pair { dst: usize, src: usize, records: Vec<Draft>, phase: Phase, decision: Decision });
+record!(Pair { vehicle: i64, dst: usize, src: usize, records: Vec<Draft>, phase: Phase, decision: Decision });
 record!(Sys { alive: bool, claimed: BTreeSet<usize>, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate>, pairs: Vec<Pair>, owners: BTreeSet<usize>, #[cfg_attr(test, serde(rename = "draftOK"))] draft_ok: bool });
 record!(Promise {
     on: bool,
@@ -757,13 +756,8 @@ fn up_discard(x: &State, mut s: Sys, m: &Up, ok: bool, rok: bool) -> Option<Stat
                 g.bad.insert("choice-without-durable-decision".into());
             }
         }
-        discarded(&mut s, p);
-        if source.is_some() {
-            s.gates.retain(|gt| gt.dst != p);
-            g.obl.retain(|o| o.3 != p);
-        } else {
-            obl_discarded(&mut g.obl, p);
-        }
+        discarded(&mut s, p, source);
+        obl_discarded(&mut g.obl, p, source);
         ack_mail(&mut s, p, ok, v1, false);
     }
     commit(
@@ -1198,6 +1192,11 @@ enum Action {
         i64,
         i64,
     ),
+    OpApplyMoves(
+        BTreeMap<usize, Text>,
+        BTreeMap<usize, Text>,
+        BTreeMap<usize, usize>,
+    ),
     Load(usize),
     FlushDel(usize),
     PowerK(BTreeSet<usize>),
@@ -1252,6 +1251,12 @@ fn step(x: &State, a: Action) -> Option<State> {
                 && page(*dst)
                 && page(*src)
         }
+        Action::OpApplyMoves(eff, plan, moves) => {
+            eff.iter()
+                .all(|(p, t)| *p < n && (real(*t) || *t == ABSENT))
+                && plan.keys().all(|p| *p < n)
+                && moves.iter().all(|(dst, src)| *dst < n && *src < n)
+        }
         Action::PlanCreate(p)
         | Action::ExtClaim(p, _)
         | Action::OpDelete(p)
@@ -1285,6 +1290,7 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::OpRename(p, q, refs, rt) => op_rename(x, p, q, &refs, &rt),
         Action::OpDelete(p) => op_delete(x, p),
         Action::OpApply(eff, plan, dst, src) => op_apply(x, &eff, &plan, dst, src),
+        Action::OpApplyMoves(eff, plan, moves) => op_apply_moves(x, &eff, &plan, &moves),
         Action::Load(p) => load(x, p),
         Action::FlushDel(p) => flush_del(x, p),
         Action::PowerK(keep) => power_k(x, &keep),
