@@ -1,39 +1,39 @@
-// The scheme route and the media kind each have one rule, in core
-// (crates/tine-core/src/link_scheme.rs, local_target.rs). The TypeScript modules
-// that name their answers keep no list or classifier of their own.
+// The scheme route has one rule, in core (crates/tine-core/src/link_scheme.rs);
+// the TypeScript policy only names its answers. The media kind has one
+// classifier, src/media.ts (wasm-free, so a stored asset's reference never
+// waits on the parser); the link-target owner answers no media kind.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { media_inventory } from "./render/wasm/lsdoc_wasm.js";
-import { mediaInventory, mediaKind } from "./media";
+import { parseBlock } from "./render/parse";
+import { localTarget } from "./localTarget";
+import { mediaKind } from "./media";
 import { anchorDecision, linkScheme, previewResourceDecision, rememberableLinkScheme } from "./linkSchemePolicy";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = (name: string) => readFileSync(path.join(root, "src", name), "utf8");
-const coreInventory = () => media_inventory().split(",").map((pair) => pair.split(":") as [string, string]);
+const source = (name: string) => readFileSync(path.join(root, name), "utf8");
 
-describe("one media inventory", () => {
-  it("media.ts keeps no extension list of its own", () => {
-    // A single default (clipboard png, a recording's container) names a new
-    // file's extension, not a media kind; a list of two or more is an inventory.
-    const exts = new Set(coreInventory().map(([ext]) => ext));
-    const lists = source("media.ts").match(/\[[^[\]]*\]|\|[^;{]*\|/g) ?? [];
-    const own = lists.filter((list) => (list.match(/["'`]([a-z0-9]+)["'`]/g) ?? [])
-      .filter((quoted) => exts.has(quoted.slice(1, -1))).length >= 2);
-    expect(own).toEqual([]);
+describe("one media classifier", () => {
+  it("is media.ts; core keeps no media inventory and exports none", () => {
+    expect(source("src/media.ts")).toMatch(/VIDEO_EXTS = \[/);
+    const owner = source("crates/tine-core/src/local_target.rs");
+    for (const own of [/MEDIA_EXTS/, /fn media_kind/, /fn media_inventory/, /enum Media\b/]) expect(owner).not.toMatch(own);
+    expect(source("crates/lsdoc-wasm/src/lib.rs")).not.toMatch(/media_inventory/);
   });
 
-  it("is core's table, read once", () => {
-    expect([...mediaInventory()]).toEqual(coreInventory());
-    expect(mediaInventory()).toBe(mediaInventory());
-    expect(mediaKind("../assets/clip.MP4?v=1")).toBe("video");
+  it("the owner answers no media kind, so it cannot disagree with the renderer's", () => {
+    const link = JSON.stringify(parseBlock("![x](https://example.test/clip.mKv)", false)).match(/"url":(\{[^}]*\})/);
+    const answer = localTarget({ url: JSON.parse(link![1]) }, "md-embed");
+    expect(answer).not.toHaveProperty("media");
+    expect(answer.route.kind).toBe("web");
+    expect(mediaKind("https://example.test/clip.mKv")).toBe("video");
   });
 });
 
 describe("one scheme-route rule", () => {
   it("linkSchemePolicy.ts parses no scheme and lists no route of its own", () => {
-    const policy = source("linkSchemePolicy.ts");
+    const policy = source("src/linkSchemePolicy.ts");
     for (const own of [/["'](?:https?|mailto|data)["']/, /\\u0000/, /\.exec\(/, /\[a-z\]\):/]) {
       expect(policy).not.toMatch(own);
     }
@@ -55,5 +55,16 @@ describe("one scheme-route rule", () => {
     expect(previewResourceDecision("tel:1")).toBe("drop");
     expect(["zotero", "http", "mailto", "file", "tine", "javascript"].map(rememberableLinkScheme))
       .toEqual([true, false, false, false, false, false]);
+  });
+
+  it("reads only the bounded prefix: long inputs keep their answer", () => {
+    const query = "q=" + "a".repeat(20_000);
+    expect(anchorDecision(`https://example.test/x?${query}`)).toBe("web");
+    expect(previewResourceDecision(`data:image/png;base64,${"A".repeat(20_000)}`)).toBe("browser");
+    expect(anchorDecision(`docs/a b.pdf?${query}`)).toBe("relative");
+    expect(linkScheme(`zotero://select/${query}`)).toBe("zotero");
+    // Undecided within the bound (a scheme hidden past it): refused, never opened.
+    expect(anchorDecision(`${" ".repeat(600)}javascript:alert(1)`)).toBe("drop");
+    expect(previewResourceDecision(`${" ".repeat(600)}javascript:alert(1)`)).toBe("drop");
   });
 });

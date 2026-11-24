@@ -132,16 +132,27 @@ export function journal_day_json(name: string, file_format: string, title_format
 export function last_panic(): string;
 
 /**
- * The lowercased URL scheme, or none (no scheme, or a drive letter). O(bytes).
+ * The anchor route of a destination (relative, web, mail, file, drive,
+ * defer, drop as 0–6). A number: no allocation back. O(prefix bytes).
+ */
+export function link_anchor_route(dest: string): number;
+
+/**
+ * The browser-resource route of a raw HTML resource (local candidate,
+ * browser, drop as 0–2). O(prefix bytes).
+ */
+export function link_preview_route(dest: string): number;
+
+/**
+ * The lowercased URL scheme, or none (no scheme, or a drive letter). O(prefix bytes).
  */
 export function link_scheme(dest: string): string | undefined;
 
 /**
- * The one scheme-route rule (`tine_core::link_scheme`): route in bits 0–2,
- * browser-resource answer in bits 4–5. A number, so a rendered link costs one
- * crossing and no allocation back. O(destination bytes), no I/O.
+ * The one scheme-route rule's bound (`tine_core::link_scheme`): callers pass
+ * at most this many leading bytes, as every answer depends only on them.
  */
-export function link_scheme_route(dest: string): number;
+export function link_scheme_prefix_bytes(): number;
 
 /**
  * OG property tokens, shared with native property atomization. O(value bytes).
@@ -151,12 +162,11 @@ export function linkable_property_names(value: string, is_org: boolean): string[
 /**
  * The one owner of "which local target does this destination name". A parser
  * link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
- * plain text destination) and `full` text; the answer is the `LocalTarget`
- * JSON, or `null` for an unknown origin or Url tag. O(destination bytes), no
- * parse or filesystem I/O. Plain arguments, not JSON: both modules have a
- * size ceiling.
+ * plain text destination); the answer is the `LocalTarget` JSON, or `null`
+ * for an unknown origin or Url tag. O(destination bytes), no parse or
+ * filesystem I/O. Plain arguments, not JSON: both modules have a size ceiling.
  */
-export function local_target_json(url_type: string, v: string | null | undefined, protocol: string | null | undefined, link: string | null | undefined, full: string, origin: string): string;
+export function local_target_json(url_type: string, v: string | null | undefined, protocol: string | null | undefined, link: string | null | undefined, origin: string): string;
 
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
 
@@ -167,11 +177,6 @@ export function logbook_clock_out(raw: string, is_org: boolean, with_seconds: bo
 export function logbook_info_json(raw: string, is_org: boolean): string;
 
 export function lsdoc_tag(): string;
-
-/**
- * The one media extension inventory, `ext:kind` pairs joined by commas.
- */
-export function media_inventory(): string;
 
 /**
  * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
@@ -437,16 +442,17 @@ export interface InitOutput {
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly last_panic: () => [number, number];
+    readonly link_anchor_route: (a: number, b: number) => number;
+    readonly link_preview_route: (a: number, b: number) => number;
     readonly link_scheme: (a: number, b: number) => [number, number];
-    readonly link_scheme_route: (a: number, b: number) => number;
+    readonly link_scheme_prefix_bytes: () => number;
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
-    readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];
+    readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
-    readonly media_inventory: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];

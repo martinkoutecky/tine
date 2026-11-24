@@ -1,13 +1,21 @@
 // Media/asset helpers shared by insertion (naming + markdown) and rendering.
-// The insert paths (paste / file-picker) and the renderer read one media
-// inventory (core's, below) and one inserted-name policy, so they agree on what
-// counts as image vs video vs audio.
+// Keeping the extension sets + the inserted-name policy in one place means the
+// insert paths (paste / file-picker) and the renderer agree on what counts as
+// image vs video vs audio.
 
 import { assetNameFormat } from "./assetSettings";
 import type { Format } from "./types";
 
 import { appNow } from "./journal";
-import { asset_rel_path, media_inventory } from "./render/wasm/lsdoc_wasm.js";
+import { asset_rel_path } from "./render/wasm/lsdoc_wasm.js";
+// Image extensions Tine renders as <img> (unchanged from the prior inline check).
+export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
+// OG's media format sets (deps/.../config.cljs): reused so a clone graph stays
+// compatible. We recognize these for INSERTION (the `![]` media form, like OG)
+// and RENDERING (inline <video>/<audio> with an external-open fallback).
+export const VIDEO_EXTS = ["mp4", "webm", "mov", "flv", "avi", "mkv", "m4v", "ogv"];
+export const AUDIO_EXTS = ["mp3", "ogg", "oga", "wav", "m4a", "flac", "wma", "aac", "opus", "mpeg"];
+
 export type MediaKind = "image" | "video" | "audio";
 
 /** Lowercased extension (no dot) of a filename or URL, ignoring any `?`/`#` tail. */
@@ -17,20 +25,13 @@ export function extOf(nameOrUrl: string): string {
   return dot >= 0 ? q.slice(dot + 1).toLowerCase() : "";
 }
 
-// The one extension inventory lives in core (crates/tine-core/src/local_target.rs,
-// OG's media sets so a clone graph stays compatible); insertion, page icons and
-// playback read it here. One wasm call, on first use (the parser is ready by then).
-let inventory: ReadonlyMap<string, MediaKind> | undefined;
-export function mediaInventory(): ReadonlyMap<string, MediaKind> {
-  return inventory ??= new Map(media_inventory().split(",").map((pair) => {
-    const [ext, kind] = pair.split(":");
-    return [ext, kind as MediaKind];
-  }));
-}
-
 /** Which media kind a filename/URL is, or `null` if it's not embeddable media. */
 export function mediaKind(nameOrUrl: string): MediaKind | null {
-  return mediaInventory().get(extOf(nameOrUrl)) ?? null;
+  const e = extOf(nameOrUrl);
+  if (IMAGE_EXTS.includes(e)) return "image";
+  if (VIDEO_EXTS.includes(e)) return "video";
+  if (AUDIO_EXTS.includes(e)) return "audio";
+  return null;
 }
 
 export interface AssetMarkdownOptions {

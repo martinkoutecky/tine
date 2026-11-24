@@ -25,14 +25,7 @@ fn local_target_table_export() {
         let owner = row["owner"].as_str().unwrap();
         let kept: Vec<String> = owner
             .strip_prefix("attachment:")
-            .map(|rest| {
-                rest.split(" pdf=")
-                    .next()
-                    .unwrap()
-                    .split(" media=")
-                    .next()
-                    .unwrap()
-            })
+            .map(|rest| rest.split(" pdf=").next().unwrap())
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
             .into_iter()

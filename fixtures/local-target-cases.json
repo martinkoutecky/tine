@@ -404,14 +404,14 @@
       "format": "org",
       "origin": "org-link",
       "source": "[[C:docs/note.txt][x]]",
-      "owner": "refused-malformed",
+      "owner": "drive:C:/docs/note.txt",
       "today": {
         "renderer": "open:file:///C://docs/note.txt",
         "collector": [],
         "export": []
       },
       "change": {
-        "renderer": "finding: a drive-relative path is refused (the authored text, not one rebuilt from the parser's fields)",
+        "renderer": "parser gives no distinction; as Logseq (C:x arrives as C://x; a drive path is normalized, C:// to C:/)",
         "liveness": null,
         "export": null
       }
@@ -422,14 +422,14 @@
       "format": "md",
       "origin": "md-link",
       "source": "<C:docs/note.txt>",
-      "owner": "refused-malformed",
+      "owner": "drive:C:/docs/note.txt",
       "today": {
         "renderer": "open:file:///C://docs/note.txt",
         "collector": [],
         "export": []
       },
       "change": {
-        "renderer": "finding: a drive-relative path is refused (the authored text, not one rebuilt from the parser's fields)",
+        "renderer": "parser gives no distinction; as Logseq (C:x arrives as C://x; a drive path is normalized, C:// to C:/)",
         "liveness": null,
         "export": null
       }
@@ -762,7 +762,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](C:/assets/photo.png)",
-      "owner": "drive:C:/assets/photo.png media=image",
+      "owner": "drive:C:/assets/photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -820,7 +820,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](C%3a%5Cassets/bad%.png)",
-      "owner": "drive:C:/assets/bad%.png media=image",
+      "owner": "drive:C:/assets/bad%.png",
       "today": {
         "renderer": "image:bad%.png",
         "collector": [
@@ -932,7 +932,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](docs.v1/%41ssets/photo.png)",
-      "owner": "graph-file:docs.v1/Assets/photo.png media=image",
+      "owner": "graph-file:docs.v1/Assets/photo.png",
       "today": {
         "renderer": "none",
         "collector": [],
@@ -1246,7 +1246,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../%61ssets/photo.png)",
-      "owner": "outside-escapes:../assets/photo.png media=image",
+      "owner": "outside-escapes:../assets/photo.png",
       "today": {
         "renderer": "none",
         "collector": [],
@@ -1264,7 +1264,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](../assets%2Fphoto.png)",
-      "owner": "outside-escapes:../assets/photo.png media=image",
+      "owner": "outside-escapes:../assets/photo.png",
       "today": {
         "renderer": "open:file:///assets/photo.png",
         "collector": [],
@@ -1282,7 +1282,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets%5Cphoto.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "none",
         "collector": [],
@@ -1300,7 +1300,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../ASSETS/photo.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [],
@@ -1318,7 +1318,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/sub%5Cphoto.png)",
-      "owner": "attachment:sub/photo.png media=image",
+      "owner": "attachment:sub/photo.png",
       "today": {
         "renderer": "image:sub%5Cphoto.png",
         "collector": [
@@ -1341,7 +1341,7 @@
       "format": "org",
       "origin": "org-bare",
       "source": "[[../assets/photo.png]]",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1363,7 +1363,7 @@
       "format": "md",
       "origin": "img-macro",
       "source": "{{img ../assets/photo.png}}",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1403,7 +1403,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](﻿../assets/photo.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1425,7 +1425,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/photo.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1449,7 +1449,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](https://example.com/%61ssets/x.png)",
-      "owner": "web media=image",
+      "owner": "web",
       "today": {
         "renderer": "open:https://example.com/%61ssets/x.png",
         "collector": [],
@@ -1467,7 +1467,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](https://example.com/assets/x.png)",
-      "owner": "web media=image",
+      "owner": "web",
       "today": {
         "renderer": "open:https://example.com/assets/x.png",
         "collector": [
@@ -1489,7 +1489,7 @@
       "format": "md",
       "origin": "img-macro",
       "source": "{{img ../assets/photo.png, 200}}",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png,",
         "collector": [
@@ -1511,7 +1511,7 @@
       "format": "md",
       "origin": "img-macro",
       "source": "{{img ../assets/photo.png,200}}",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png,",
         "collector": [
@@ -1533,7 +1533,7 @@
       "format": "md",
       "origin": "img-macro",
       "source": "{{img ../assets/photo.png left}}",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1555,7 +1555,7 @@
       "format": "md",
       "origin": "img-macro",
       "source": "{{img ../assets/photo.png 200 100}}",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1577,7 +1577,7 @@
       "format": "md",
       "origin": "img-macro",
       "source": "{{IMG ../assets/photo.png}}",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "image:photo.png",
         "collector": [
@@ -1669,7 +1669,7 @@
       "origin": "html-resource",
       "source": "<img src=\"file:///C:/docs/x.png\">",
       "dest": "file:///C:/docs/x.png",
-      "owner": "drive:C:/docs/x.png media=image",
+      "owner": "drive:C:/docs/x.png",
       "today": {
         "renderer": "local-image:C:/docs/x.png",
         "collector": [],
@@ -1688,7 +1688,7 @@
       "origin": "html-resource",
       "source": "<img src=\"/abs/x%20y.png\">",
       "dest": "/abs/x%20y.png",
-      "owner": "outside-absolute:/abs/x y.png media=image",
+      "owner": "outside-absolute:/abs/x y.png",
       "today": {
         "renderer": "local-image:/abs/x y.png",
         "collector": [],
@@ -1729,7 +1729,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/photo%23v2.png)",
-      "owner": "attachment:photo#v2.png media=image",
+      "owner": "attachment:photo#v2.png",
       "today": {
         "renderer": "image:photo%23v2.png",
         "collector": [
@@ -1752,7 +1752,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/photo%3Fv2.png)",
-      "owner": "attachment:photo?v2.png media=image",
+      "owner": "attachment:photo?v2.png",
       "today": {
         "renderer": "image:photo%3Fv2.png",
         "collector": [
@@ -1775,7 +1775,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/demo%2520v2.png)",
-      "owner": "attachment:demo%20v2.png media=image",
+      "owner": "attachment:demo%20v2.png",
       "today": {
         "renderer": "image:demo%2520v2.png",
         "collector": [
@@ -1796,7 +1796,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/demo%252Fv2.png)",
-      "owner": "attachment:demo%2Fv2.png media=image",
+      "owner": "attachment:demo%2Fv2.png",
       "today": {
         "renderer": "image:demo%252Fv2.png",
         "collector": [
@@ -1817,7 +1817,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/demo%25FFv2.png)",
-      "owner": "attachment:demo%FFv2.png media=image",
+      "owner": "attachment:demo%FFv2.png",
       "today": {
         "renderer": "image:demo%25FFv2.png",
         "collector": [
@@ -1838,7 +1838,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](../assets/my%20file.png)",
-      "owner": "attachment:my file.png media=image",
+      "owner": "attachment:my file.png",
       "today": {
         "renderer": "attachment:my file.png",
         "collector": [
@@ -1861,7 +1861,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/my%20file.png)",
-      "owner": "attachment:my file.png media=image",
+      "owner": "attachment:my file.png",
       "today": {
         "renderer": "image:my%20file.png",
         "collector": [
@@ -1884,7 +1884,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](../assets/photo.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "attachment:photo.png",
         "collector": [
@@ -1942,7 +1942,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](docs/assets/photo.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "attachment:photo.png",
         "collector": [
@@ -1964,7 +1964,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](/abs/assets/photo.png)",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "attachment:photo.png",
         "collector": [
@@ -2009,7 +2009,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/clip.mp4)",
-      "owner": "attachment:clip.mp4 media=video",
+      "owner": "attachment:clip.mp4",
       "today": {
         "renderer": "media:clip.mp4",
         "collector": [
@@ -2031,7 +2031,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](../assets/song.mp3)",
-      "owner": "attachment:song.mp3 media=audio",
+      "owner": "attachment:song.mp3",
       "today": {
         "renderer": "media:song.mp3",
         "collector": [
@@ -2053,7 +2053,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](https://example.com/a.png)",
-      "owner": "web media=image",
+      "owner": "web",
       "today": {
         "renderer": "open:https://example.com/a.png",
         "collector": [],
@@ -2071,7 +2071,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "https://example.com/a.png",
-      "owner": "web media=image",
+      "owner": "web",
       "today": {
         "renderer": "image-web",
         "collector": [],
@@ -2089,7 +2089,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](https://example.com/a.png)",
-      "owner": "web media=image",
+      "owner": "web",
       "today": {
         "renderer": "image-web",
         "collector": [],
@@ -2107,7 +2107,7 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](file:///tmp/a.pdf)",
-      "owner": "file-url:file:///tmp/a.pdf",
+      "owner": "outside-absolute:/tmp/a.pdf",
       "today": {
         "renderer": "open:file:///tmp/a.pdf",
         "collector": [],
@@ -2125,7 +2125,7 @@
       "format": "md",
       "origin": "md-embed",
       "source": "![x](file:///tmp/a.pdf)",
-      "owner": "file-url:file:///tmp/a.pdf pdf=outside",
+      "owner": "outside-absolute:/tmp/a.pdf pdf=outside",
       "today": {
         "renderer": "outside-pdf:file:///tmp/a.pdf",
         "collector": [],
@@ -2179,7 +2179,7 @@
       "format": "org",
       "origin": "org-link",
       "source": "[[file:../assets/a.png][x]]",
-      "owner": "outside-escapes:../assets/a.png media=image",
+      "owner": "outside-escapes:../assets/a.png",
       "today": {
         "renderer": "open:file:///assets/a.png",
         "collector": [
@@ -2273,7 +2273,7 @@
       "format": "org",
       "origin": "org-link",
       "source": "[[../assets/photo.png][x]]",
-      "owner": "attachment:photo.png media=image",
+      "owner": "attachment:photo.png",
       "today": {
         "renderer": "attachment:photo.png",
         "collector": [
@@ -2295,7 +2295,7 @@
       "format": "org",
       "origin": "org-bare",
       "source": "[[https://example.com/a.png]]",
-      "owner": "web media=image",
+      "owner": "web",
       "today": {
         "renderer": "open:https://example.com/a.png",
         "collector": [],
@@ -2331,14 +2331,14 @@
       "format": "md",
       "origin": "md-link",
       "source": "[x](file:////server/share/a.txt)",
-      "owner": "file-url:file:////server/share/a.txt",
+      "owner": "graph-file:server/share/a.txt",
       "today": {
         "renderer": "open:file://server/share/a.txt",
         "collector": [],
         "export": []
       },
       "change": {
-        "renderer": "finding: the authored file URL is kept (the parser's fields drop its second //)",
+        "renderer": "parser gives no distinction; as Logseq (file:////server and file://server arrive alike, and a Complex file link is its bare path)",
         "liveness": null,
         "export": null
       }

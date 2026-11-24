@@ -1,6 +1,7 @@
 //! Which local file or attachment an authored destination names: the one
 //! owner of the route (page, web, attachment, graph file, drive file …), the
-//! attachment identity, the PDF reader identity and the media kind.
+//! attachment identity and the PDF reader identity. The media kind is not its
+//! question: `src/media.ts` answers it.
 //!
 //! Pure: it reads only the destination text and where it was written, costs
 //! O(destination bytes) and does no I/O, so its answer cannot go stale. The
@@ -51,13 +52,13 @@ impl Origin {
     }
 }
 
-/// A parser link node (its `url` and its `full` source text), or the text of
-/// a macro argument, HTML attribute or page icon value. A link's destination
-/// is the parser's `v`, or for a `Complex` URL the authored text located in
-/// `full` (see [`authored`]); it is never rebuilt from the URL fields.
+/// A parser link node's `url`, or the text of a macro argument, HTML
+/// attribute or page icon value. A link's destination is the parser's `v`,
+/// or for a `Complex` URL [`complex_destination`] of its fields; the link's
+/// source text is never read.
 #[derive(Debug, Clone, Copy)]
 pub enum Destination<'a> {
-    Link { url: &'a Url, full: &'a str },
+    Link { url: &'a Url },
     Text(&'a str),
 }
 
@@ -129,18 +130,10 @@ pub enum Pdf {
     OutsideReader { fallback: Option<AssetName> },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Media {
-    Image,
-    Audio,
-    Video,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalTarget {
     route: Route,
     pdf: Option<Pdf>,
-    media: Option<Media>,
 }
 
 impl LocalTarget {
@@ -149,9 +142,6 @@ impl LocalTarget {
     }
     pub fn pdf(&self) -> Option<&Pdf> {
         self.pdf.as_ref()
-    }
-    pub fn media(&self) -> Option<Media> {
-        self.media
     }
     /// The attachment this destination keeps alive, if any.
     pub fn attachment(&self) -> Option<&AssetName> {
@@ -215,20 +205,11 @@ impl LocalTarget {
                 out.push('}');
             }
         }
-        out.push_str(match self.media {
-            None => r#","media":null}"#,
-            Some(Media::Image) => r#","media":"image"}"#,
-            Some(Media::Audio) => r#","media":"audio"}"#,
-            Some(Media::Video) => r#","media":"video"}"#,
-        });
+        out.push('}');
         out
     }
     fn of(route: Route) -> LocalTarget {
-        LocalTarget {
-            route,
-            pdf: None,
-            media: None,
-        }
+        LocalTarget { route, pdf: None }
     }
 }
 
@@ -244,13 +225,12 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
             _ => LocalTarget::of(Route::RefusedMalformed),
         };
     }
-    let mut image = false;
     let (text, search) = match dest {
-        Destination::Link { url, full } => match url {
+        Destination::Link { url } => match url {
             Url::BlockRef { v } => return LocalTarget::of(Route::BlockRef { id: v.clone() }),
-            // OG `show-link?`: a bare Org reference to an asset or media file is an image.
+            // OG `show-link?`: a bare Org reference to an asset or media file
+            // is an image, so a file rather than a page.
             Url::PageRef { v } if origin == Origin::OrgBare && org_bare_image(v) => {
-                image = true;
                 (v.clone(), false)
             }
             // Design: a bare Org drive link names the drive file, not a page.
@@ -266,11 +246,8 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
             Url::Complex {
                 protocol: Some(p),
                 link: Some(l),
-            } => match authored(full, p, l, origin) {
-                Some(text) => (text.to_owned(), false),
-                None => return LocalTarget::of(Route::RefusedMalformed),
-            },
-            // The parser always fills both fields; nothing authored to read.
+            } => (complex_destination(p, l), false),
+            // The parser always fills both fields.
             Url::Complex { .. } => return LocalTarget::of(Route::RefusedMalformed),
         },
         Destination::Text(text) => (text.to_owned(), false),
@@ -287,84 +264,27 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
     {
         return LocalTarget::of(Route::PageRef { name: text });
     }
-    let mut target = match decision {
+    match decision {
         SchemeRoute::Drop => LocalTarget::of(Route::Refused),
         SchemeRoute::Web => LocalTarget::of(Route::Web),
         SchemeRoute::Mail => LocalTarget::of(Route::Mail),
         SchemeRoute::Defer(scheme) => LocalTarget::of(Route::AppScheme { scheme }),
         _ => path_target(&text, decision, origin),
-    };
-    if target.route == Route::Web {
-        target.media = media_kind(&text[..query_start(&text)]);
     }
-    if image
-        && matches!(
-            target.route,
-            Route::Web | Route::Attachment { .. } | Route::GraphFile { .. }
-        )
-    {
-        target.media = Some(Media::Image);
-    }
-    target
 }
 
-/// The destination as written, located in the parser's `full` link text. The
-/// parser's `Complex` fields drop what stood between `protocol:` and `link`
-/// (no slashes, `//`, or a second `//`) and Markdown escapes, so `[[C:x][y]]`
-/// and `[[C://x][y]]` share their fields; only `full` tells them apart. An
-/// autolink's `full` is its destination. Otherwise the destination is where
-/// `protocol:`, then 4, 2 or no slashes, then `link` (a `\` before ASCII
-/// punctuation skipped) is followed by the end of a destination: the last such
-/// place in Markdown (the label comes first), the first in Org. None when
-/// `full` holds none. O(full bytes) per `protocol:` occurrence tried.
-fn authored<'a>(full: &'a str, protocol: &str, link: &str, origin: Origin) -> Option<&'a str> {
-    let markdown = matches!(origin, Origin::MdLink | Origin::MdEmbed);
-    let head = format!("{protocol}:");
-    if full.starts_with(&head) {
-        return Some(full);
+/// The destination of a parser `Complex` URL, built from its fields as
+/// Logseq does (`frontend/components/block.cljs`, `string-of-url`): the bare
+/// `link` for the protocol `file` (exact case), otherwise
+/// `protocol://link`. The parser drops what stood between `protocol:` and
+/// `link`, so `C:x` and `C://x` (and `file://` and `file:////`) arrive alike
+/// and are read alike, as in Logseq. O(link bytes).
+pub fn complex_destination(protocol: &str, link: &str) -> String {
+    if protocol == "file" {
+        link.to_owned()
+    } else {
+        format!("{protocol}://{link}")
     }
-    let mut found = None;
-    for (at, _) in full.match_indices(&head) {
-        let start = at + head.len();
-        let end = [4, 2, 0].into_iter().find_map(|slashes| {
-            let tail = full.get(start + slashes..)?;
-            if full[start..start + slashes].bytes().any(|b| b != b'/') {
-                return None;
-            }
-            let end = start + slashes + escaped_prefix(tail, link)?;
-            matches!(
-                full.as_bytes().get(end),
-                None | Some(b')' | b']' | b'>' | b' ' | b'\t' | b'\n' | b'\r')
-            )
-            .then_some(end)
-        });
-        if let Some(end) = end {
-            found = Some(&full[at..end]);
-            if !markdown {
-                break;
-            }
-        }
-    }
-    found
-}
-
-/// How many bytes of `raw` spell `text`, where `raw` may escape ASCII
-/// punctuation with `\`. None when `raw` does not begin with it. O(bytes).
-fn escaped_prefix(raw: &str, text: &str) -> Option<usize> {
-    let (raw, text) = (raw.as_bytes(), text.as_bytes());
-    let (mut i, mut j) = (0, 0);
-    while j < text.len() {
-        if raw.get(i) == Some(&text[j]) {
-            j += 1;
-        } else if !(raw.get(i) == Some(&b'\\')
-            && text[j].is_ascii_punctuation()
-            && raw.get(i + 1) == Some(&text[j]))
-        {
-            return None;
-        }
-        i += 1;
-    }
-    Some(i)
 }
 
 /// Resolve a file route against the graph root bound when the user acted.
@@ -406,7 +326,7 @@ pub fn resolve_file(route: &Route, root: &str) -> Option<String> {
 }
 
 /// A scheme-less, file: or drive destination: attachment, graph file, drive
-/// file or outside file, with its PDF and media identities.
+/// file or outside file, with its PDF identity.
 fn path_target(dest: &str, decision: SchemeRoute, origin: Origin) -> LocalTarget {
     // Pending decision 2 (whitespace trimming): JavaScript's trim, as rendered today.
     let mut text = js_trim(dest);
@@ -452,9 +372,6 @@ fn path_target(dest: &str, decision: SchemeRoute, origin: Origin) -> LocalTarget
     };
     if target.pdf.is_none() && is_pdf(&decoded) {
         target.pdf = file_pdf(&target.route, &decoded, origin);
-    }
-    if target.pdf.is_none() {
-        target.media = media_kind(&decoded);
     }
     target
 }
@@ -607,16 +524,14 @@ fn html_resource(src: &str) -> LocalTarget {
     {
         path.remove(0);
     }
-    let mut target = LocalTarget::of(if is_drive(&path) {
+    LocalTarget::of(if is_drive(&path) {
         Route::Drive { path }
     } else {
         Route::OutsideFile {
             path,
             reason: OutsideReason::Absolute,
         }
-    });
-    target.media = Some(Media::Image);
-    target
+    })
 }
 
 /// Pending decision 6 (page icons): icons keep their page-relative rule; a
@@ -656,57 +571,6 @@ const OG_ORG_MEDIA: &[&str] = &[
     "gif", "svg", "jpeg", "ico", "png", "jpg", "bmp", "webp", "mp3", "ogg", "mpeg", "wav", "m4a",
     "flac", "wma", "aac", "mp4", "webm", "mov", "flv", "avi", "mkv",
 ];
-/// The one media extension inventory (OG's media sets, so a clone graph stays
-/// compatible): the owner classifies with it and `src/media.ts` reads it
-/// through [`media_inventory`].
-const MEDIA_EXTS: &[(&str, Media)] = &[
-    ("png", Media::Image),
-    ("jpg", Media::Image),
-    ("jpeg", Media::Image),
-    ("gif", Media::Image),
-    ("webp", Media::Image),
-    ("svg", Media::Image),
-    ("bmp", Media::Image),
-    ("avif", Media::Image),
-    ("mp4", Media::Video),
-    ("webm", Media::Video),
-    ("mov", Media::Video),
-    ("flv", Media::Video),
-    ("avi", Media::Video),
-    ("mkv", Media::Video),
-    ("m4v", Media::Video),
-    ("ogv", Media::Video),
-    ("mp3", Media::Audio),
-    ("ogg", Media::Audio),
-    ("oga", Media::Audio),
-    ("wav", Media::Audio),
-    ("m4a", Media::Audio),
-    ("flac", Media::Audio),
-    ("wma", Media::Audio),
-    ("aac", Media::Audio),
-    ("opus", Media::Audio),
-    ("mpeg", Media::Audio),
-];
-
-/// The one media inventory for every other reader (insertion, page icons,
-/// playback in `src/media.ts`), as `ext:kind` pairs joined by commas. Read
-/// once per session. O(inventory).
-pub fn media_inventory() -> String {
-    let mut out = String::new();
-    for (ext, media) in MEDIA_EXTS {
-        if !out.is_empty() {
-            out.push(',');
-        }
-        out.push_str(ext);
-        out.push_str(match media {
-            Media::Image => ":image",
-            Media::Audio => ":audio",
-            Media::Video => ":video",
-        });
-    }
-    out
-}
-
 /// The extension, ignoring a `?`/`#` tail. O(bytes).
 fn ext_of(name: &str) -> &str {
     extension(&name[..query_start(name)])
@@ -717,16 +581,6 @@ fn query_start(url: &str) -> usize {
     url.bytes()
         .position(|b| b == b'?' || b == b'#')
         .unwrap_or(url.len())
-}
-
-/// Media kind from the extension of a decoded name (a `?` or `#` in it is
-/// part of the file name) or of a URL with its query and fragment removed.
-fn media_kind(name: &str) -> Option<Media> {
-    let ext = extension(name);
-    MEDIA_EXTS
-        .iter()
-        .find(|(known, _)| known.eq_ignore_ascii_case(ext))
-        .map(|(_, media)| *media)
 }
 
 fn extension(name: &str) -> &str {

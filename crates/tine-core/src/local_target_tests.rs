@@ -45,8 +45,7 @@ fn target_of(row: &Value) -> LocalTarget {
     match find(&nodes, "link") {
         Some(link) => {
             let url: Url = serde_json::from_value(link["url"].clone()).unwrap();
-            let full = link["full"].as_str().unwrap();
-            local_target(Destination::Link { url: &url, full }, origin)
+            local_target(Destination::Link { url: &url }, origin)
         }
         None => local_target(Destination::Text(source), origin),
     }
@@ -85,13 +84,7 @@ pub(crate) fn describe(t: &LocalTarget) -> String {
             fallback: Some(name),
         }) => format!(" pdf=outside>asset:{}", name.as_str()),
     };
-    let media = match t.media() {
-        None => "",
-        Some(Media::Image) => " media=image",
-        Some(Media::Audio) => " media=audio",
-        Some(Media::Video) => " media=video",
-    };
-    format!("{route}{pdf}{media}")
+    format!("{route}{pdf}")
 }
 
 fn strings(v: &Value) -> Vec<String> {
@@ -154,7 +147,7 @@ fn table_owner_and_collector() {
 #[test]
 fn table_cost() {
     let rows = rows();
-    let inputs: Vec<(Url, String, Origin)> = rows
+    let inputs: Vec<(Url, Origin)> = rows
         .iter()
         .filter(|row| row.get("dest").is_none() && row["origin"] != "img-macro")
         .filter_map(|row| {
@@ -165,18 +158,14 @@ fn table_cost() {
             let nodes = serde_json::to_value(&nodes).ok()?;
             let link = find(&nodes, "link")?;
             let url = serde_json::from_value(link["url"].clone()).ok()?;
-            Some((
-                url,
-                link["full"].as_str()?.to_owned(),
-                Origin::parse(row["origin"].as_str()?)?,
-            ))
+            Some((url, Origin::parse(row["origin"].as_str()?)?))
         })
         .collect();
     let started = std::time::Instant::now();
     const ROUNDS: u32 = 1000;
     for _ in 0..ROUNDS {
-        for (url, full, origin) in &inputs {
-            std::hint::black_box(local_target(Destination::Link { url, full }, *origin));
+        for (url, origin) in &inputs {
+            std::hint::black_box(local_target(Destination::Link { url }, *origin));
         }
     }
     let per_table = started.elapsed() / ROUNDS;
@@ -209,74 +198,109 @@ fn asset_name_and_target_are_built_only_by_the_owner() {
     );
 }
 
-fn parsed(source: &str, format: &str) -> (Url, String) {
+fn parsed(source: &str, format: &str) -> Url {
     let nodes = crate::render::parse_inline_bounded(source, format).unwrap();
     let nodes = serde_json::to_value(&nodes).unwrap();
     let link = find(&nodes, "link").unwrap();
-    (
-        serde_json::from_value(link["url"].clone()).unwrap(),
-        link["full"].as_str().unwrap().to_owned(),
-    )
+    serde_json::from_value(link["url"].clone()).unwrap()
 }
 
-fn owner_of(url: &Url, full: &str, origin: Origin) -> String {
-    describe(&local_target(Destination::Link { url, full }, origin))
+fn owner_of(url: &Url, origin: Origin) -> String {
+    describe(&local_target(Destination::Link { url }, origin))
 }
 
-/// The owner reads the authored destination from the parser's `full` text,
-/// never from the `Complex` fields: for each Org form of `C://docs/note.txt`
-/// the parser's own node gives the drive file, and the same fields under a
-/// `full` that does not contain them give nothing (a rebuild would still
-/// answer the drive file).
+/// The destination of a `Complex` link is Logseq's rule over the parser's
+/// fields, never a scan of the link's source: titles, labels and escapes in
+/// the source cannot move it.
 #[test]
-fn complex_destinations_come_from_full() {
-    for (source, origin) in [
-        ("[[C://docs/note.txt][x]]", Origin::OrgLink),
-        ("[[C://docs/note.txt]]", Origin::OrgBare),
-        ("<C://docs/note.txt>", Origin::OrgBare),
-    ] {
-        let (url, full) = parsed(source, "org");
-        let want = "drive:C:/docs/note.txt";
-        assert_eq!(owner_of(&url, &full, origin), want, "{source}");
-        let other = owner_of(&url, "[[D://elsewhere.txt]]", origin);
-        assert_eq!(other, "refused-malformed", "{source}");
-    }
-    // The parser gives `C:docs` and `C://docs` the same fields; `full` keeps the
-    // drive-relative form, which is refused, and the second `//` of a file URL.
+fn complex_destination_is_logseqs_rule() {
     let cases = [
-        ("org", "[[C:docs/note.txt][x]]", "refused-malformed"),
-        ("org", "[[C://d/n.txt][C:x]]", "drive:C:/d/n.txt"),
-        ("md", "<C:docs/note.txt>", "refused-malformed"),
-        ("md", "[C:x](C://docs/note.txt)", "drive:C:/docs/note.txt"),
-        ("md", "[x](file:////s/a.txt)", "file-url:file:////s/a.txt"),
-        ("md", "[x](https://e/a\\_b.png \"t\")", "web media=image"),
+        (
+            "[x](C://docs/note.txt \"see C:docs/note.txt here\")",
+            Origin::MdLink,
+            "drive:C:/docs/note.txt",
+        ),
+        (
+            "[x](C://docs/a\\(1\\).txt)",
+            Origin::MdLink,
+            "drive:C:/docs/a(1).txt",
+        ),
+        (
+            "[x](C\\://docs/n.txt)",
+            Origin::MdLink,
+            "drive:C:/docs/n.txt",
+        ),
+        (
+            "[x](C:\\/\\/docs/n.txt)",
+            Origin::MdLink,
+            "drive:C:/docs/n.txt",
+        ),
+        (
+            "[x](C://docs\\\\n.txt)",
+            Origin::MdLink,
+            "drive:C:/docs/n.txt",
+        ),
+        (
+            "[x](<C://docs/n.txt>)",
+            Origin::MdLink,
+            "drive:C:/docs/n.txt",
+        ),
+        (
+            "![x](file:///tmp/a.txt \"file:////tmp/a.txt\")",
+            Origin::MdEmbed,
+            "outside-absolute:/tmp/a.txt",
+        ),
+        (
+            "[file:////s/x](file:///tmp/a.txt)",
+            Origin::MdLink,
+            "outside-absolute:/tmp/a.txt",
+        ),
+        (
+            "<file:///tmp/a\\_b.txt>",
+            Origin::MdLink,
+            "outside-absolute:/tmp/a_b.txt",
+        ),
+        ("[x](https://e.test/a\\_b \"t\")", Origin::MdLink, "web"),
     ];
-    for (format, source, want) in cases {
-        let (url, full) = parsed(source, format);
+    let mut failures = Vec::new();
+    for (source, origin, want) in cases {
+        let owner = owner_of(&parsed(source, "md"), origin);
+        if owner != want {
+            failures.push(format!("{source}: {owner} != {want}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The rule itself, and its cost: it reads only the two fields (a link's
+/// source text is not an input), so a destination twice as long costs twice.
+#[test]
+fn complex_destination_reads_the_fields() {
+    assert_eq!(complex_destination("C", "docs/n.txt"), "C://docs/n.txt");
+    assert_eq!(
+        complex_destination("https", "e.test/a_b"),
+        "https://e.test/a_b"
+    );
+    assert_eq!(complex_destination("file", "/tmp/a.txt"), "/tmp/a.txt");
+    assert_eq!(
+        complex_destination("FILE", "/tmp/a.txt"),
+        "FILE:///tmp/a.txt"
+    );
+    // The parser's output for the forms it cannot tell apart: read alike.
+    for (format, a, b) in [
+        ("org", "[[C:docs/n.txt][x]]", "[[C://docs/n.txt][x]]"),
+        ("md", "<C:docs/n.txt>", "<C://docs/n.txt>"),
+        ("md", "[x](file:////s/a.txt)", "[x](file://s/a.txt)"),
+    ] {
+        assert_eq!(parsed(a, format), parsed(b, format), "{a} / {b}");
         let origin = if format == "md" {
             Origin::MdLink
         } else {
             Origin::OrgLink
         };
-        let owner = owner_of(&url, &full, origin);
-        assert_eq!(owner, want, "{source} ({url:?}, {full:?})");
+        assert_eq!(
+            owner_of(&parsed(a, format), origin),
+            owner_of(&parsed(b, format), origin)
+        );
     }
-}
-
-/// One inventory: the owner's classifier and the list `src/media.ts` reads
-/// are the same table.
-#[test]
-fn media_inventory_is_the_classifier_table() {
-    let inventory = media_inventory();
-    for pair in inventory.split(',') {
-        let (ext, kind) = pair.split_once(':').unwrap();
-        let want = match kind {
-            "image" => Media::Image,
-            "audio" => Media::Audio,
-            "video" => Media::Video,
-            other => panic!("unknown kind {other}"),
-        };
-        assert_eq!(media_kind(&format!("x.{}", ext.to_uppercase())), Some(want));
-    }
-    assert_eq!(inventory.split(',').count(), MEDIA_EXTS.len());
 }

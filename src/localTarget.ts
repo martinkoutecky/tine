@@ -37,21 +37,20 @@ export type LocalPdf =
 export interface LocalTarget {
   route: LocalRoute;
   pdf: LocalPdf | null;
-  media: "image" | "audio" | "video" | null;
 }
 
-/** The parser's link node (its `url` and `full` text), or the text of a macro
- * argument, raw HTML attribute or page icon value. */
-export type LocalDestination = { url: Url; full: string } | { text: string };
+/** The parser's link node's `url`, or the text of a macro argument, raw HTML
+ * attribute or page icon value. */
+export type LocalDestination = { url: Url } | { text: string };
 
 /** Ask the owner. Pure, O(destination bytes), no I/O. Throws on an input the
  * owner refuses to read (an unknown origin), which is a programming error. */
 export function localTarget(destination: LocalDestination, origin: LocalTargetOrigin): LocalTarget {
   const json = "text" in destination
-    ? local_target_json("", destination.text, undefined, undefined, "", origin)
+    ? local_target_json("", destination.text, undefined, undefined, origin)
     : destination.url.type === "complex"
-      ? local_target_json("complex", undefined, destination.url.protocol, destination.url.link, destination.full, origin)
-      : local_target_json(destination.url.type, destination.url.v, undefined, undefined, destination.full, origin);
+      ? local_target_json("complex", undefined, destination.url.protocol, destination.url.link, origin)
+      : local_target_json(destination.url.type, destination.url.v, undefined, undefined, origin);
   const answer = JSON.parse(json) as LocalTarget | null;
   if (answer === null) throw new Error(`local target: unreadable destination for ${origin}`);
   return answer;

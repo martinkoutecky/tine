@@ -22,6 +22,7 @@ import type { GraphMeta } from "../types";
 import { pageIdentityKey } from "../pageIdentity";
 import { pageIconAsset } from "../pageIconImage";
 import { rawHtmlPresentation } from "./htmlSanitize";
+import { mediaKind, type MediaKind } from "../media";
 import { localTarget, type AssetName, type LocalDestination, type LocalRoute, type LocalTarget, type LocalTargetOrigin } from "../localTarget";
 
 interface Row {
@@ -71,7 +72,7 @@ function destinationOf(row: Row): { destination: LocalDestination; link: Link | 
   }
   const link = first(blocks, "link") as Link | null;
   if (!link) return { destination: { text: row.source }, link: null };
-  return { destination: { url: link.url, full: link.full }, link };
+  return { destination: { url: link.url }, link };
 }
 
 export function describeTarget(t: LocalTarget): string {
@@ -89,7 +90,18 @@ export function describeTarget(t: LocalTarget): string {
     : r.kind.replace("_", "-");
   const pdf = !t.pdf ? "" : t.pdf.kind === "asset_reader" ? ` pdf=asset:${t.pdf.name}`
     : ` pdf=outside${t.pdf.fallback === null ? "" : `>asset:${t.pdf.fallback}`}`;
-  return route + pdf + (t.media ? ` media=${t.media}` : "");
+  return route + pdf;
+}
+
+/** The media kind of the owner's file or web URL, from the one classifier
+ * (media.ts) the renderer uses; the owner answers no media kind. */
+function mediaOf(row: Row, t: LocalTarget, link: Link | null): MediaKind | null {
+  const r = t.route;
+  if (t.pdf) return null;
+  if (r.kind === "attachment") return mediaKind(r.name);
+  if (r.kind === "graph_file" || r.kind === "outside_file" || r.kind === "drive") return mediaKind(r.path);
+  if (r.kind === "web") return mediaKind(link ? urlDest(link.url) : row.dest ?? row.source);
+  return null;
 }
 
 function resolved(r: LocalRoute): string {
@@ -122,8 +134,11 @@ function projected(row: Row, t: LocalTarget, link: Link | null): string {
   if (row.origin === "html-resource") return r.kind === "drive" || r.kind === "outside_file" ? `local-image:${r.path}` : "browser";
   if (r.kind === "page_ref") return `page:${pageIdentityKey(r.name)}`;
   if (r.kind === "refused" || r.kind === "refused_malformed") return "inert";
-  const av = t.media === "audio" || t.media === "video";
-  const imageOnly = row.origin === "img-macro" || (link?.url.type === "page_ref" && t.media === "image");
+  const media = mediaOf(row, t, link);
+  const av = media === "audio" || media === "video";
+  // A bare Org reference that the owner reads as a file is OG's image form.
+  const imageOnly = row.origin === "img-macro"
+    || (link?.url.type === "page_ref" && (["web", "attachment", "graph_file"].includes(r.kind) || media === "image"));
   // An image with no graph asset and no web URL renders nothing.
   if (imageOnly) return r.kind === "attachment" ? `image:${r.name}` : r.kind === "web" ? "image-web" : "none";
   if (t.pdf?.kind === "asset_reader") return `asset-pdf:${t.pdf.name}`;
@@ -133,7 +148,7 @@ function projected(row: Row, t: LocalTarget, link: Link | null): string {
     if (r.kind === "web") return av ? "media-web" : "image-web";
     if (["graph_file", "outside_file", "drive", "fragment"].includes(r.kind)) return av ? "media:none" : "none";
   }
-  if (r.kind === "web" && row.origin === "md-link" && /^https?:\/\//i.test(link!.full.trimStart()) && (av || t.media === "image")) {
+  if (r.kind === "web" && row.origin === "md-link" && /^https?:\/\//i.test(link!.full.trimStart()) && (av || media === "image")) {
     return av ? "media-web" : "image-web";
   }
   if (r.kind === "attachment") return `attachment:${r.name}`;

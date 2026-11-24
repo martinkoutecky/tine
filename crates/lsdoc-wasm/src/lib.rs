@@ -1091,39 +1091,44 @@ pub fn pdf_asset_file(path: &str) -> String {
     tine_core::local_target::pdf_asset_file(path)
 }
 
-/// The one scheme-route rule (`tine_core::link_scheme`): route in bits 0–2,
-/// browser-resource answer in bits 4–5. A number, so a rendered link costs one
-/// crossing and no allocation back. O(destination bytes), no I/O.
+/// The one scheme-route rule's bound (`tine_core::link_scheme`): callers pass
+/// at most this many leading bytes, as every answer depends only on them.
 #[wasm_bindgen]
-pub fn link_scheme_route(dest: &str) -> u32 {
-    tine_core::link_scheme::scheme_route_code(dest)
+pub fn link_scheme_prefix_bytes() -> u32 {
+    tine_core::link_scheme::ROUTE_PREFIX_BYTES as u32
 }
 
-/// The lowercased URL scheme, or none (no scheme, or a drive letter). O(bytes).
+/// The anchor route of a destination (relative, web, mail, file, drive,
+/// defer, drop as 0–6). A number: no allocation back. O(prefix bytes).
+#[wasm_bindgen]
+pub fn link_anchor_route(dest: &str) -> u32 {
+    tine_core::link_scheme::anchor_route_code(dest)
+}
+
+/// The browser-resource route of a raw HTML resource (local candidate,
+/// browser, drop as 0–2). O(prefix bytes).
+#[wasm_bindgen]
+pub fn link_preview_route(dest: &str) -> u32 {
+    tine_core::link_scheme::preview_resource_code(dest)
+}
+
+/// The lowercased URL scheme, or none (no scheme, or a drive letter). O(prefix bytes).
 #[wasm_bindgen]
 pub fn link_scheme(dest: &str) -> Option<String> {
     tine_core::link_scheme::link_scheme(dest)
 }
 
-/// The one media extension inventory, `ext:kind` pairs joined by commas.
-#[wasm_bindgen]
-pub fn media_inventory() -> String {
-    tine_core::local_target::media_inventory()
-}
-
 /// The one owner of "which local target does this destination name". A parser
 /// link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
-/// plain text destination) and `full` text; the answer is the `LocalTarget`
-/// JSON, or `null` for an unknown origin or Url tag. O(destination bytes), no
-/// parse or filesystem I/O. Plain arguments, not JSON: both modules have a
-/// size ceiling.
+/// plain text destination); the answer is the `LocalTarget` JSON, or `null`
+/// for an unknown origin or Url tag. O(destination bytes), no parse or
+/// filesystem I/O. Plain arguments, not JSON: both modules have a size ceiling.
 #[wasm_bindgen]
 pub fn local_target_json(
     url_type: &str,
     v: Option<String>,
     protocol: Option<String>,
     link: Option<String>,
-    full: &str,
     origin: &str,
 ) -> String {
     use lsdoc::ast::Url;
@@ -1142,7 +1147,7 @@ pub fn local_target_json(
         "complex" => Url::Complex { protocol, link },
         _ => return "null".into(),
     };
-    local_target(Destination::Link { url: &url, full }, origin).to_json()
+    local_target(Destination::Link { url: &url }, origin).to_json()
 }
 
 /// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.

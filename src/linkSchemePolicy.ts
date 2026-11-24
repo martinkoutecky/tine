@@ -1,5 +1,5 @@
 import schemes from "../src-tauri/external-link-schemes.json";
-import { link_scheme, link_scheme_route } from "./render/wasm/lsdoc_wasm.js";
+import { link_anchor_route, link_preview_route, link_scheme, link_scheme_prefix_bytes } from "./render/wasm/lsdoc_wasm.js";
 
 // Which scheme route a destination takes is one rule in core
 // (crates/tine-core/src/link_scheme.rs), shared with the link-target owner;
@@ -7,9 +7,17 @@ import { link_scheme, link_scheme_route } from "./render/wasm/lsdoc_wasm.js";
 // handoff against the same refused list.
 const NATIVE_SCHEMES = ["file", "tine"];
 
+// Core's rule reads only a bounded prefix, so only that crosses into wasm. The
+// bound is in bytes; a slice of that many UTF-16 units is at least as long.
+let prefixBytes: number | undefined;
+function head(dest: string): string {
+  prefixBytes ??= link_scheme_prefix_bytes();
+  return dest.length > prefixBytes ? dest.slice(0, prefixBytes) : dest;
+}
+
 /** The lowercased URL scheme for consent, reserving single letters for drives. O(bytes). */
 export function linkScheme(dest: string): string | null {
-  return link_scheme(dest) ?? null;
+  return link_scheme(head(dest)) ?? null;
 }
 
 export function refusedLinkScheme(scheme: string): boolean {
@@ -31,7 +39,7 @@ export type AnchorDecision = "relative" | "web" | "mail" | "file" | "drive" | "d
 const ROUTES: readonly AnchorDecision[] = ["relative", "web", "mail", "file", "drive", "defer", "drop"];
 const PREVIEWS = ["local-candidate", "browser", "drop"] as const;
 export function anchorDecision(dest: string): AnchorDecision {
-  return ROUTES[link_scheme_route(dest) & 7];
+  return ROUTES[link_anchor_route(head(dest))];
 }
 
 export function isSchemeLess(decision: AnchorDecision): boolean {
@@ -50,7 +58,7 @@ export function hasWebUrlPrefix(dest: string): boolean {
 /** Browser media may use web URLs and DOMPurify's data-URI subset. Local image
  * candidates still need the existing path resolver and opt-in. O(bytes), no I/O. */
 export function previewResourceDecision(dest: string): "local-candidate" | "browser" | "drop" {
-  return PREVIEWS[(link_scheme_route(dest) >> 4) & 3];
+  return PREVIEWS[link_preview_route(head(dest))];
 }
 
 /** Check a browser handoff (published reader, browser preview) before
