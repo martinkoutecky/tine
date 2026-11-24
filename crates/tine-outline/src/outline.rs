@@ -13,7 +13,7 @@
 
 use crate::block_regions;
 use crate::edit_kind::EditKind;
-use crate::editor_text::{self, js_blank, HidePolicy};
+use crate::editor_text::{self, js_blank, js_trim, HidePolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -1397,12 +1397,6 @@ fn insert_empty_child(cx: &mut Cx, parent: &str, at: usize) -> Result<(), Reason
         raw_offset: Some(0),
     });
     Ok(())
-}
-
-/// JavaScript's `String.prototype.trim()` (see [`js_blank`]).
-fn js_trim(s: &str) -> &str {
-    let blank = |c: char| js_blank(c.encode_utf8(&mut [0; 4]));
-    s.trim_matches(blank)
 }
 
 #[cfg(test)]

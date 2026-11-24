@@ -198,6 +198,38 @@ fn asset_name_and_target_are_built_only_by_the_owner() {
     );
 }
 
+/// The strict percent-decoder and the ECMAScript trim set each have one Rust
+/// answer, in `tine-outline` (`page_filename::decode_uri_component`,
+/// `editor_text::is_js_whitespace`); the owner asks them and holds neither.
+#[test]
+fn owner_holds_no_decoder_or_whitespace_set() {
+    let own = include_str!("local_target.rs");
+    let own = &own[..own.find("#[cfg(test)]").unwrap()];
+    for (needle, what) in [
+        ("fn js_trim", "a trim of its own"),
+        ("fn strict_decode", "a strict decoder of its own"),
+        ("fn decode_uri_component", "a strict decoder of its own"),
+        ("from_utf8(", "a strict UTF-8 decode of its own"),
+        ("\\u{feff}", "a whitespace set of its own"),
+        ("\\u{FEFF}", "a whitespace set of its own"),
+        ("\\u{3000}", "a whitespace set of its own"),
+    ] {
+        assert!(!own.contains(needle), "the owner holds {what}: `{needle}`");
+    }
+    assert!(own.contains("use tine_outline::editor_text::js_trim;"));
+    assert!(own.contains("use tine_outline::page_filename::decode_uri_component as strict_decode;"));
+    // The shared answers still give the owner's rule: strict on malformed,
+    // truncated and non-UTF-8 escapes; trim strips CRLF, NBSP and U+FEFF and
+    // keeps U+0085.
+    use tine_outline::{editor_text::js_trim, page_filename::decode_uri_component};
+    assert_eq!(decode_uri_component("caf%C3%A9").as_deref(), Some("café"));
+    for bad in ["50%", "%E", "%zz", "%C3", "%FF"] {
+        assert_eq!(decode_uri_component(bad), None, "{bad}");
+    }
+    assert_eq!(js_trim("\r\n\u{a0}\u{feff}a\u{3000} "), "a");
+    assert_eq!(js_trim("\u{85}a"), "\u{85}a");
+}
+
 fn parsed(source: &str, format: &str) -> Url {
     let nodes = crate::render::parse_inline_bounded(source, format).unwrap();
     let nodes = serde_json::to_value(&nodes).unwrap();

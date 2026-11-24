@@ -16,6 +16,10 @@
 
 use crate::link_scheme::{scheme_route, SchemeRoute};
 use crate::lsdoc::ast::Url;
+// The strict decoder and the ECMAScript trim set are the outline's: one Rust
+// answer each (pinned by `owner_holds_no_decoder_or_whitespace_set`).
+pub(crate) use tine_outline::editor_text::js_trim;
+use tine_outline::page_filename::decode_uri_component as strict_decode;
 
 /// Where a destination was written. The route can depend on it (Markdown
 /// links never open a PDF reader; embeds and Org links do).
@@ -630,53 +634,10 @@ fn is_block_ref(v: &str) -> bool {
         })
 }
 
-/// JavaScript `String.prototype.trim`. O(bytes).
-pub(crate) fn js_trim(s: &str) -> &str {
-    let js_space = |c: char| {
-        matches!(
-            c,
-            '\t' | '\n'
-                | '\u{b}'
-                | '\u{c}'
-                | '\r'
-                | ' '
-                | '\u{a0}'
-                | '\u{1680}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-                | '\u{2000}'..='\u{200a}'
-        )
-    };
-    s.trim_matches(js_space)
-}
-
 /// The one decoder of file names. Pending decision 1 (bad escapes): an invalid
 /// escape stays literal, as the Rust PDF identity decodes today.
 fn decode_once(s: &str) -> String {
     percent_decode(s)
-}
-
-/// JavaScript `decodeURIComponent`: None on any invalid escape or UTF-8.
-fn strict_decode(s: &str) -> Option<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' {
-            let h = hex_nibble(*b.get(i + 1)?)?;
-            let l = hex_nibble(*b.get(i + 2)?)?;
-            out.push((h << 4) | l);
-            i += 3;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok()
 }
 
 /// Resolve a graph asset relative to `assets/`, normalizing separators and case
