@@ -41,7 +41,9 @@ pub(super) struct ProductionIo {
     publications: BTreeMap<String, Option<(crate::watch::Stamp, crate::watch::Stamp)>>,
     /// `HostIo::durable_page`: each page's file as this host's last own
     /// publication left it once its directory sync succeeded (its post-read
-    /// stamp), kept past the save. Lost at a restart.
+    /// stamp), kept past the save while the host needs it: only receivers of
+    /// unresolved pairs keep theirs (`HostIo::release_durable`). Lost at a
+    /// restart.
     durable_pages: BTreeMap<String, crate::watch::Stamp>,
     /// Each page key's current graph-relative spelling (STEP3 §2): a key
     /// resolved through a case alias at registration, or moved by the alias
@@ -94,6 +96,12 @@ pub(super) struct ProductionIo {
 }
 
 impl ProductionIo {
+    /// The pages whose durability witness this adapter keeps (PC-9).
+    #[cfg(test)]
+    pub(super) fn witnessed(&self) -> Vec<&str> {
+        self.durable_pages.keys().map(String::as_str).collect()
+    }
+
     /// `trash` is the existing typed transaction-trash directory chosen by the
     /// store (pages/journals/conflicts). Step 3 supplies that classification.
     /// Graph/page keys and graph ID are already resolved by the store boundary.
@@ -788,12 +796,18 @@ impl HostIo for ProductionIo {
     }
 
     fn durable_page(&mut self, page: &str) -> bool {
-        // One metadata call: the file must be the one the own publication
-        // left (identity, size and times), as for its directory sync.
-        let path = self.page_path(page);
-        let current = crate::watch::stamp_metadata(&path);
-        (self.durable_pages.get(page))
-            .is_some_and(|stamp| current.is_some_and(|now| stamp.same_metadata(&now)))
+        // One metadata call, and none without a stamp (a launch has none):
+        // the file must be the one the own publication left (identity, size
+        // and times), as for its directory sync.
+        let Some(stamp) = self.durable_pages.get(page) else {
+            return false;
+        };
+        let current = crate::watch::stamp_metadata(&self.page_path(page));
+        current.is_some_and(|now| stamp.same_metadata(&now))
+    }
+
+    fn release_durable(&mut self, page: &str) {
+        self.durable_pages.remove(page);
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {

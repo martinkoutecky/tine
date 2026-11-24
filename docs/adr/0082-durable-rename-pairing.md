@@ -55,8 +55,11 @@ source is removed only after its receiver's disk bytes equal the certified
 receiver image immediately before the trash step and again after the
 source's durability steps, each time with a durability witness for those
 bytes (the host's own durable publication, unchanged since; a weak graph
-offers none). Use Disk on an unwitnessed receiver, or on the source of an
-undecided pair, writes its decision durably before it takes effect; a
+offers none). That one check answers every pair decision, a launch's
+included, where no witness survives: a matching receiver there certifies
+nothing, so a decided pair whose source left its slot keeps the source's
+text. Use Disk on an unwitnessed or uncertified receiver, or on the source of
+an undecided pair, writes its decision durably before it takes effect; a
 source's decision cancels only that source's removal across relaunch. A
 decided pair whose source already left its slot keeps the source's admitted
 text for a guarded restoration (when the slot is empty and the trash holds
@@ -74,7 +77,8 @@ write 305 and 4,142 bytes (300 and 4,137 before), the 60-block source 1,900. A
 Use Disk decision is one 62-byte private file and two publication syncs,
 plus up to two page reads on a paired endpoint (the other endpoint's bytes);
 a launch reads each decided pair's two pages once. The durability witness is
-memory only (a file stamp per own publication).
+memory only: a file stamp per own publication, kept only for receivers of
+unresolved pairs.
 
 ## Consequences
 

@@ -1324,9 +1324,20 @@ from the scanned drafts before any recovered save or choice.
   check does not surface the receiver's read; its next observation does. An
   exact, witnessed receiver observed later resumes the pair. A source that
   publishes newer text of its own supersedes its removal and disarms the pair.
+  One host check answers whether a receiver holds its certified image (equal
+  bytes plus the witness), and every pair decision asks it: both removal
+  checks, a held pair's resumption, Use Disk's choice and phase, and a
+  launch's decided pairs. The witness is memory only and kept only for the
+  receivers of unresolved pairs, so none survives a relaunch: at launch a
+  receiver whose bytes match certifies nothing, and a decided pair whose
+  source left its slot stays restore or retained (below), with its operation
+  draft keeping the source's text, until Tine itself publishes the receiver
+  again or the source is restored.
 - **Use Disk on a pair's endpoint** (a conflict's Use Disk, or the host-level
-  Discard of a recovered page), on its unwitnessed receiver or on a source
-  whose pair is undecided, first writes a decision record
+  Discard of a recovered page), on its unwitnessed receiver, on a receiver
+  that does not hold its certified image (by the check above: equal bytes
+  another program wrote count as not holding it), or on a source whose pair
+  is undecided, first writes a decision record
   `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft` (escape, tag `1`, the
   16-byte request id, the chosen endpoint's member index, a new write
   sequence, choice `0`), through the draft vehicle path (temp, fsync, rename,

@@ -440,6 +440,13 @@ impl Order {
         self.paired.get(name)
     }
 
+    /// `key` is the receiver of an unresolved pair, whose checks ask for its
+    /// durability witness (`Host::receiver_certified`).
+    pub fn needs_witness(&self, key: &str) -> bool {
+        self.pairs()
+            .any(|(_, p)| p.receiver == key && p.phase.unresolved())
+    }
+
     /// The operation still owes a source settlement: its draft retires
     /// only once every pair is settled or cancelled.
     pub fn holds(&self, name: &str) -> bool {
@@ -453,8 +460,15 @@ impl Order {
     /// unwitnessed (`unwitnessed`), not at its certified image, held (its
     /// source moved or not) or blocked; or, in any phase, a pair whose
     /// source took its disk while the receiver is still unwitnessed. On a
-    /// source: a choice-free unresolved pair. None otherwise.
-    pub fn use_disk(&self, key: &str, unwitnessed: bool, bytes: Option<&Text>) -> Option<Chosen> {
+    /// source: a choice-free unresolved pair. None otherwise. `certified`
+    /// answers whether the receiver holds a pair's image
+    /// (`Host::receiver_certified`, the model's `certified` in `partner`).
+    pub fn use_disk(
+        &self,
+        key: &str,
+        unwitnessed: bool,
+        mut certified: impl FnMut(&PageKey, &Text) -> bool,
+    ) -> Option<Chosen> {
         self.paired.iter().find_map(|(name, op)| {
             op.pairs.iter().find_map(|p| {
                 let on_receiver = p.receiver == key
@@ -463,7 +477,7 @@ impl Order {
                             p.phase.unresolved()
                                 && (unwitnessed
                                     || p.phase != PairPhase::Armed
-                                    || bytes.is_none_or(|bytes| *bytes != p.image))
+                                    || !certified(&p.receiver, &p.image))
                         }
                         // The move itself is still cancellable while its
                         // receiver is unwitnessed, whatever the source chose.
@@ -522,15 +536,20 @@ impl Order {
         }
     }
 
-    /// Launch: each decided pair's phase from its endpoints' disk bytes,
-    /// read by `read` (receiver, source). A failed read keeps custody.
-    pub fn decided_phases(&mut self, reads: &BTreeMap<PageKey, Option<Text>>) {
+    /// Launch: each decided pair's phase from its endpoints' disk bytes
+    /// (`reads`), the receiver's judged by `certified` (receiver, bytes,
+    /// image: `Host::receiver_certified`). A failed read keeps custody.
+    pub fn decided_phases(
+        &mut self,
+        reads: &BTreeMap<PageKey, Option<Text>>,
+        mut certified: impl FnMut(&PageKey, &Text, &Text) -> bool,
+    ) {
         for op in self.paired.values_mut() {
             for pair in op.pairs.iter_mut().filter(|p| p.choice != PairChoice::None) {
                 let read = |key: &PageKey| reads.get(key).cloned().flatten();
                 let phase = match (read(&pair.source), read(&pair.receiver)) {
                     (Some(source), Some(receiver)) => {
-                        let certified = receiver.is_some() && receiver == pair.image;
+                        let certified = certified(&pair.receiver, &receiver, &pair.image);
                         cancel_phase(&pair.preimage, &source, certified, true)
                     }
                     _ => PairPhase::Retained,
@@ -667,27 +686,27 @@ impl Order {
         None
     }
 
-    /// `receiver`'s disk bytes were read as `bytes`: a held pair whose
-    /// receiver is exact again re-arms (or settles, its source already
-    /// removed). Returns the operations whose state changed.
-    /// Whether a held pair would resume on reading `receiver` as `bytes`
-    /// (the cheap test before its durability witness is asked for).
-    pub fn held_receiver(&self, receiver: &str, bytes: &Text) -> bool {
-        self.pairs().any(|(_, p)| {
-            p.receiver == receiver && p.image == *bytes && matches!(p.phase, PairPhase::Held { .. })
-        })
-    }
-
-    pub fn receiver_read(&mut self, receiver: &str, bytes: &Text) -> Vec<String> {
+    /// `receiver` was read: a held pair whose receiver holds its image
+    /// again (`certified`, given the image: `Host::receiver_certified`)
+    /// re-arms, or settles with its source already removed (the model's
+    /// `resumePair`). Returns the operations whose state changed.
+    pub fn receiver_read(
+        &mut self,
+        receiver: &str,
+        mut certified: impl FnMut(&Text) -> bool,
+    ) -> Vec<String> {
         let mut changed = vec![];
         for (name, op) in &mut self.paired {
             for pair in &mut op.pairs {
-                if pair.receiver == receiver && pair.image == *bytes {
-                    match pair.phase {
-                        PairPhase::Held { removed: true } => pair.phase = PairPhase::Settled,
-                        PairPhase::Held { removed: false } => pair.phase = PairPhase::Armed,
-                        _ => continue,
-                    }
+                let PairPhase::Held { removed } = pair.phase else {
+                    continue;
+                };
+                if pair.receiver == receiver && certified(&pair.image) {
+                    pair.phase = if removed {
+                        PairPhase::Settled
+                    } else {
+                        PairPhase::Armed
+                    };
                     changed.push(name.clone());
                 }
             }
@@ -755,7 +774,8 @@ impl Order {
     pub fn reverts(&self, key: &str) -> Option<PageKey> {
         let unwitnessed = self.partner(key).is_some();
         (self.partner(key).cloned()).or_else(|| {
-            let chosen = self.use_disk(key, unwitnessed, None)?;
+            // Unread: judged not certified, so both pages are locked.
+            let chosen = self.use_disk(key, unwitnessed, |_, _| false)?;
             Some(if chosen.on_receiver {
                 chosen.source
             } else {
@@ -898,7 +918,10 @@ impl<F: HostIo> Host<F> {
         // takes effect or is acknowledged, so no relaunch replays the
         // removal it cancelled.
         let unwitnessed = self.order.partner(key).is_some();
-        let chosen = self.order.use_disk(key, unwitnessed, Some(&bytes));
+        let fs = &mut self.fs;
+        let chosen = (self.order).use_disk(key, unwitnessed, |receiver, image| {
+            Self::receiver_certified(fs, receiver, &bytes, image)
+        });
         // The source the choice reverts while its page holds the removal.
         let src = (self.order.partner(key).cloned())
             .or_else(|| {
@@ -931,7 +954,8 @@ impl<F: HostIo> Host<F> {
             let (Ok(source), Ok(receiver)) = (source, receiver) else {
                 return self.refused(request, key, Refusal::ReadFailed);
             };
-            let certified = self.receiver_certified(&chosen.receiver, &receiver, &chosen.image);
+            let certified =
+                Self::receiver_certified(&mut self.fs, &chosen.receiver, &receiver, &chosen.image);
             let phase = cancel_phase(&chosen.preimage, &source, certified, chosen.removed);
             let written = self.write_decision(key, chosen, phase);
             self.repair_op(&chosen.name);

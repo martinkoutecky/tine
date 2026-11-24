@@ -365,9 +365,19 @@ fn a_receiver_replaced_before_the_trash_step_holds_the_removal() {
     retire_drafts(&mut f);
     assert!(drafted(&f, OLD), "the operation draft is retained");
     assert!(blocked(&f, "a.md") && blocked(&f, "b.md") && blocked(&f, "c.md"));
-    // The receiver exact again re-arms the pair; the removal then finishes.
-    fs::write(f.graph.join("c.md"), OLD).unwrap();
+    // Another program's exact bytes (a new file) certify nothing: the pair
+    // stays held. (This once rewrote C in place, which re-armed the pair
+    // only when the rewrite kept C's size and timestamp tick, so the own
+    // publication's stamp still matched: a flaky pass.)
+    replace_outside(&f, "c.md", OLD);
     assert_eq!(f.host.observe("c.md"), Disposition::Applied);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled, "held");
+    // The receiver exact again by this host's own publication re-arms the
+    // pair; the removal then finishes.
+    replace_outside(&f, "c.md", "- other\n");
+    assert_eq!(f.host.observe("c.md"), Disposition::Applied);
+    f.edit("c.md", OLD);
+    assert_eq!(f.save("c.md"), Outcome::Published);
     assert_eq!(f.save("a.md"), Outcome::Published);
     assert!(
         !blocked(&f, "a.md") && !blocked(&f, "b.md") && !blocked(&f, "c.md"),
@@ -788,4 +798,131 @@ fn newer_source_text_disarms_the_pair_and_releases_its_pages() {
     settle_all(&mut f);
     assert_eq!(on_disk(&f, "a.md").as_deref(), Some("- kept\n"));
     assert!(trashed(&f).is_empty());
+}
+
+/// Another program replaces `key` with `text` (a new file at the path, as
+/// a sync client delivers it): equal bytes carry no witness of this host.
+fn replace_outside(f: &Fixture, key: &str, text: &str) {
+    let temp = f.graph.join(format!(".{key}.outside"));
+    fs::write(&temp, text).unwrap();
+    fs::rename(&temp, f.graph.join(key)).unwrap();
+}
+
+/// The review's launch trace. A moved to trash, then C replaced before the
+/// post-check: the pair is held with A removed. Use Disk on C records the
+/// cancellation (Restore: A's slot is free and its text is only in the
+/// trash and the operation draft). An outside program then writes C's
+/// image back, and the app relaunches. No witness survives the relaunch, so
+/// the byte match certifies nothing: the pair stays Restore and the
+/// operation draft keeps A's admitted text, across a second relaunch too.
+/// Before, launch certified C on bytes alone, cancelled the pair and
+/// retired the draft, leaving A's text only in the trash.
+#[test]
+fn a_launch_time_byte_match_keeps_the_source_text_until_restored() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    while f.graph.join("a.md").exists() {
+        f.host.advance_save();
+        assert!(f.host.job.is_some());
+    }
+    fs::write(f.graph.join("c.md"), "- other\n").unwrap();
+    for _ in 0..15 {
+        f.host.advance_save();
+        if f.host.job.is_none() {
+            break;
+        }
+    }
+    assert_eq!(trashed(&f), vec![OLD.to_string()]);
+    f.send("c.md", RequestKind::Discard);
+    assert!(f.host.order.restorable("a.md").is_some(), "Restore");
+    replace_outside(&f, "c.md", OLD);
+    let mut f = reopen(f);
+    assert!(
+        f.host.order.restorable("a.md").is_some(),
+        "a launch-time byte match does not cancel the pair"
+    );
+    assert!(blocked(&f, "a.md") && blocked(&f, "c.md"));
+    settle_all(&mut f);
+    assert!(drafted(&f, OLD), "the operation draft keeps A's text");
+    let mut f = reopen(f);
+    settle_all(&mut f);
+    assert!(drafted(&f, OLD), "and keeps it after a second relaunch");
+    assert!(f.host.order.restorable("a.md").is_some());
+    assert_eq!(on_disk(&f, "a.md"), None);
+}
+
+/// The running-session trace: C was published by this host (witnessed),
+/// then another program wrote the same bytes as a new file. Use Disk on C
+/// now finds C not certified, as the removal's pre-check does, so it writes
+/// the cancellation (the model's `partner`) and A's removal is reverted.
+/// Before, Use Disk compared bytes only, wrote no decision, and the
+/// pre-check then held the pair.
+#[test]
+fn a_use_disk_on_a_matching_receiver_without_a_witness_cancels_the_pair() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    replace_outside(&f, "c.md", OLD);
+    f.send("c.md", RequestKind::Discard);
+    assert_eq!(pending_drafts(&f), 2, "the operation and its decision");
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(OLD.as_bytes()),
+        "A's removal is reverted"
+    );
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled);
+    retire_drafts(&mut f);
+    assert_eq!(pending_drafts(&f), 0);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "A stays");
+    assert_eq!(on_disk(&f, "c.md").as_deref(), Some(OLD));
+    assert!(trashed(&f).is_empty());
+    let mut f = reopen(f);
+    settle_all(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert!(trashed(&f).is_empty());
+}
+
+/// PC-9: the adapter keeps a durability witness only for the receiver of an
+/// unresolved pair. A plain page's publication keeps none; the receiver's
+/// is kept while its pair owes A's removal and released once it settles;
+/// a closed page releases its own.
+#[test]
+fn durability_witnesses_are_kept_only_for_unresolved_receivers() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert!(f.host.fs.witnessed().is_empty(), "none survives a relaunch");
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.host.fs.witnessed(), vec!["c.md"], "the receiver's");
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.host.fs.witnessed(), vec!["c.md"], "no referrer's");
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert!(f.host.fs.witnessed().is_empty(), "released at settlement");
+    retire_drafts(&mut f);
+    assert_eq!(on_disk(&f, "c.md").as_deref(), Some(OLD));
+    // A plain edit and save, then the page closes.
+    f.edit("d.md", "- d\n");
+    assert_eq!(f.save("d.md"), Outcome::Published);
+    assert!(f.host.fs.witnessed().is_empty(), "a plain page keeps none");
+}
+
+/// PC-9 with a closed receiver: a receiver whose pair still owes its
+/// source's removal keeps its witness while closed, so the rename still
+/// finishes; the witness leaves at settlement.
+#[test]
+fn a_closed_receiver_keeps_its_witness_while_its_pair_owes() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    let keys = BTreeSet::from(["c.md".to_string()]);
+    f.host.with_locks(&keys, |h| h.close_clean("c.md"));
+    assert!(!f.host.pages.contains_key("c.md"), "C closed");
+    assert_eq!(
+        f.host.fs.witnessed(),
+        vec!["c.md"],
+        "the pair still needs it"
+    );
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.save("a.md"), Outcome::Published, "C is still certified");
+    assert_eq!(trashed(&f), vec![OLD.to_string()]);
+    assert!(f.host.fs.witnessed().is_empty());
 }

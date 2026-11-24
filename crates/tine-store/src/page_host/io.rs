@@ -131,6 +131,11 @@ pub(super) trait HostIo {
     /// bytes are all there is (the weak-filesystem exemption). Another
     /// program's bytes carry no witness. Adapter memory only.
     fn durable_page(&mut self, page: &str) -> bool;
+    /// The host no longer needs `page`'s durability witness (it is no
+    /// receiver of an unresolved pair): drop it, so the adapter's witnesses
+    /// stay bounded by the unresolved pairs and are not one per page ever
+    /// saved. A later own publication takes a new one.
+    fn release_durable(&mut self, _page: &str) {}
     /// The page file's alternate-extension twin (`.md` ↔ `.org`), if one
     /// exists: another file claiming the page's name (STEP3 §3.2, Q9).
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>>;

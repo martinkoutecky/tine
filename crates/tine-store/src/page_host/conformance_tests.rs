@@ -1157,3 +1157,60 @@ fn s35_paired_removal_waits_while_drafts_are_down() {
         1
     );
 }
+
+/// One answer to "does the receiver hold its certified image" at launch:
+/// after Use Disk on a receiver replaced once the source moved (Restore),
+/// another program writes the image back without making it durable, then
+/// the process dies. The model's launch `cancelPhase` finds the receiver
+/// not certified (`stable` is not the image), so the pair stays Restore and
+/// its operation draft keeps the source's admitted text; a weak graph
+/// certifies on bytes. The host's launch asks the same answerer as its
+/// running checks, and no witness survives the relaunch.
+#[test]
+fn s35_launch_does_not_certify_a_volatile_matching_receiver() {
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut d = moved_and_replaced(profile);
+        paired(&mut d, "openPairPage", 2);
+        paired(&mut d, "takeDisk", 2);
+        run(
+            &mut d,
+            &[
+                ("extWriteD", json!([2, 1, false])),
+                ("crash", json!([])),
+                ("launch", json!([])),
+            ],
+        );
+        let s = d.abstract_state();
+        let weak = profile.contains("weak") || profile == "all";
+        let phase = if weak { "cancelled" } else { "restore" };
+        assert_eq!(s["pairs"][0]["phase"], json!(phase), "{profile}");
+        assert_eq!(s["pairs"][0]["decision"], json!("cancelled"), "{profile}");
+        assert_eq!(s["disk"][2], json!(1), "{profile}");
+    }
+}
+
+/// The same answer in a running session: a witnessed receiver whose bytes
+/// equal its image again only by another program's volatile write is not
+/// certified, so Use Disk on it records the cancellation, as the model's
+/// `partner` does (before, `Order::use_disk` compared bytes only and wrote
+/// no decision, while the removal's pre-check held the pair).
+#[test]
+fn s35_use_disk_on_a_volatile_matching_receiver_decides_the_pair() {
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut d = checked_members(profile);
+        run(
+            &mut d,
+            &[
+                ("extWrite", json!([2, 3])),
+                ("extWriteD", json!([2, 1, false])),
+            ],
+        );
+        paired(&mut d, "openPairPage", 2);
+        paired(&mut d, "takeDisk", 2);
+        let s = d.abstract_state();
+        let weak = profile.contains("weak") || profile == "all";
+        let decision = if weak { "none" } else { "cancelled" };
+        assert_eq!(s["pairs"][0]["decision"], json!(decision), "{profile}");
+        assert_eq!(s["disk"][0], json!(1), "{profile}");
+    }
+}

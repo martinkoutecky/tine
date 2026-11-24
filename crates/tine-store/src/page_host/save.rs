@@ -132,21 +132,26 @@ impl<F: HostIo> Host<F> {
             return Ok(None);
         };
         let bytes = self.fs.read_page(&receiver)?;
-        let certified = self.receiver_certified(&receiver, &bytes, &image);
+        let certified = Self::receiver_certified(&mut self.fs, &receiver, &bytes, &image);
         Ok((!certified).then_some((receiver, bytes)))
     }
 
-    /// A receiver read as `bytes` carries its certified `image` (the model's
-    /// `certified`): exactly those bytes, with a durability witness for
-    /// them (`HostIo::durable_page`). Matching bytes another program wrote,
-    /// or that a power cut may still revert, certify nothing.
+    /// The one answer to "does the receiver hold its certified image?" (the
+    /// model's `certified`): read as `bytes`, it has exactly `image`, with a
+    /// durability witness for them (`HostIo::durable_page`). Matching bytes
+    /// another program wrote, or that a power cut may still revert, certify
+    /// nothing. The witness is memory only: at launch none survives, so a
+    /// launch-time match certifies nothing (Restore or Retained, never
+    /// Cancelled) until this host publishes the receiver again. Every pair
+    /// check asks this: the removal checks, Use Disk's choice and phase,
+    /// launch's decided phases and a held pair's resumption.
     pub(super) fn receiver_certified(
-        &mut self,
+        fs: &mut F,
         receiver: &str,
         bytes: &Text,
         image: &Text,
     ) -> bool {
-        bytes == image && self.fs.durable_page(receiver)
+        bytes == image && fs.durable_page(receiver)
     }
 
     /// Surface a diverged receiver as its ordinary read (a held page with
@@ -210,13 +215,24 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    /// PC-9: a page's durability witness serves only the receiver checks of
+    /// an unresolved pair. Released after each publication and whenever an
+    /// operation's pairs change (`index_op`), unless such a pair still needs
+    /// it; so a page that closes holds one only while its pair is unresolved.
+    pub(super) fn release_witness(&mut self, key: &str) {
+        if !self.order.needs_witness(key) {
+            self.fs.release_durable(key);
+        }
+    }
+
     /// `receiver`'s disk bytes are known to be `bytes`: a held pair whose
     /// receiver is exact again resumes.
     pub(super) fn receiver_seen(&mut self, receiver: &str, bytes: &Text) {
-        if !self.order.held_receiver(receiver, bytes) || !self.fs.durable_page(receiver) {
-            return;
-        }
-        for name in self.order.receiver_read(receiver, bytes) {
+        let fs = &mut self.fs;
+        let changed = (self.order).receiver_read(receiver, |image| {
+            Self::receiver_certified(fs, receiver, bytes, image)
+        });
+        for name in changed {
             self.repair_op(&name);
             let sources: Vec<PageKey> = (self.order.paired(&name))
                 .map(|op| op.pairs.iter().map(|p| p.source.clone()).collect())
@@ -557,6 +573,7 @@ impl<F: HostIo> Host<F> {
                     }
                 }
                 self.order.published(&key, job.version);
+                self.release_witness(&key);
                 crate::bench_events::emit(|| Ev::Published {
                     key: job.bench,
                     version: job.version,

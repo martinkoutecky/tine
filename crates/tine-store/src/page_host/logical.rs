@@ -133,11 +133,19 @@ impl<F: HostIo> Host<F> {
     /// RENAME-COST L1: recompute operation vehicle `name`'s entry in
     /// `live_ops` from `drafts` and `pages` (dropped once it is gone).
     pub(super) fn index_op(&mut self, name: &str) {
+        // A pair that resolved, or left with its vehicle, no longer needs
+        // its receiver's durability witness (PC-9).
+        let receivers: Vec<PageKey> = (self.order.paired(name).into_iter())
+            .flat_map(|op| op.pairs.iter().map(|p| p.receiver.clone()))
+            .collect();
         let records = self.drafts.get(name).filter(|_| name.starts_with("op-"));
         let Some(records) = records else {
             self.live_ops.remove(name);
             // Its vehicle is durably gone: the pairing owes nothing more.
             self.order.forget(name);
+            for receiver in receivers {
+                self.release_witness(&receiver);
+            }
             return;
         };
         let versions: BTreeMap<PageKey, u64> = records
@@ -159,6 +167,9 @@ impl<F: HostIo> Host<F> {
                 held,
             },
         );
+        for receiver in receivers {
+            self.release_witness(&receiver);
+        }
     }
 
     /// `Order` changed paired operation `name`: refresh its entry, marking
@@ -429,7 +440,13 @@ impl<F: HostIo> Host<F> {
                 (key, bytes)
             })
             .collect();
-        self.order.decided_phases(&reads);
+        // No durability witness survives a relaunch, so a receiver whose
+        // bytes match certifies nothing here: the pair restores or retains,
+        // and its operation draft keeps the source's admitted text.
+        let fs = &mut self.fs;
+        (self.order).decided_phases(&reads, |receiver, bytes, image| {
+            Self::receiver_certified(fs, receiver, bytes, image)
+        });
         for (decision, name) in &scan.blocking {
             self.order.block(name, decision.clone());
             // The existing draft error: the decision stays in place and

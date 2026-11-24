@@ -366,6 +366,11 @@ impl HostIo for NativeFs {
         );
         ledger
     }
+    fn release_durable(&mut self, page: &str) {
+        // Only the native witness is bounded; the ledger's is the model's
+        // physical durability, which no release changes.
+        self.native.release_durable(page);
+    }
     fn trash_move(&mut self, page: &str, name: &str) -> MoveResult {
         let mut removed = None;
         let result = self.phase(
