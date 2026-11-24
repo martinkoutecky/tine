@@ -253,6 +253,16 @@ note = "Read-only stat identity on Linux/macOS/iOS, vanish-only metadata on Andr
 mutations = "OpenOptions::new=1"
 
 [[site]]
+file = "crates/tine-store/src/model/file_source_walk.rs"
+fn = "open_root"
+domain = "primitive"
+guard = ""
+test = "crates/tine-store/src/model/file_source_names_tests.rs#a_missing_suffix_costs_linear_components"
+oracle = false
+note = "Read-only directory handle on the graph root for the layout check's walk down a configured directory's existing prefixes: Unix opens it O_DIRECTORY (O_PATH on Linux/Android) for fstatat/openat; Windows opens it for attributes only with backup semantics, as the root of relative NtCreateFile opens. Held only for one lookup. The census counts both platform OpenOptions without write/create; no mutation or persisted record."
+mutations = "OpenOptions::new=2"
+
+[[site]]
 file = "crates/tine-store/src/page_host/production.rs"
 fn = "ProductionIo::page_sync"
 domain = "graph"

@@ -1655,13 +1655,15 @@ spelled as a directory, or a path whose deepest existing prefix is a file, is no
 reports a path under a file as not found and drops a trailing `/` or `.`) refuses what Linux refuses. On Windows a name holding `:` (a drive-relative `C:` or an alternate data
 stream) is refused before anything is probed; the spelling check refuses only a leading drive (`C:x`), and the
 containment check would pass `x/C:`. The memory source locates in one tree walk. The disk builds the probed path once
-(the root's own spelling, then the names after the platform separator) and probes it nearest first: one `lstat`, and
-only after a not-found answer one `stat` per missing ancestor, each a borrowed prefix of that path. Construction and each lookup are one
-walk of the path's names (O(path bytes)); a parse read of a held file is a view of its bytes after the parse-input
+(the root's own spelling, then the names after the platform separator) and probes it once: one `lstat`. Only after a
+not-found answer does it walk down from the root, one name per step relative to the directory the step before opened
+(`openat` on Unix, `NtCreateFile` with a root directory on Windows), to the first name that is missing or not a
+directory: at most three components submitted per name in all, never one full prefix per missing name. Construction
+and each lookup are one walk of the path's names (O(path bytes)); a parse read of a held file is a view of its bytes after the parse-input
 checks, never a copy. Proof: `layouts_open_or_refuse_alike`, `from_files_refuses_paths_no_directory_holds`,
 `a_deep_first_key_builds_in_linear_time`, `a_memory_parse_read_does_not_copy`, `backslash_names_open_alike`,
 `config_problems_answer_alike_from_files`, `windows_answers_read_as_tine_reads_them`,
-`memory_and_disk_name_the_same_kinds`, `a_lookup_visits_each_name_once`.
+`memory_and_disk_name_the_same_kinds`, `a_lookup_visits_each_name_once`, `a_missing_suffix_costs_linear_components`.
 
 An export's `WholeGraph::subgraph` can retain its serialized page sources.
 The private graph and the snapshot share those bytes. The captured

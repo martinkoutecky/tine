@@ -612,3 +612,36 @@ fn layouts_open_or_refuse_alike() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// A pages directory configured 256 names deep, none or half of them
+/// present (a partial sync), opens on both sources, as a missing directory
+/// does. Run with `--nocapture` for the disk open's time.
+#[test]
+fn a_deep_missing_pages_directory_opens() {
+    let depth = 256;
+    let spelling = vec!["n"; depth].join("/");
+    let mut wrong = Vec::new();
+    for present in [0, depth / 2] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join("logseq")).unwrap();
+        let config = format!("{{:pages-directory \"{spelling}\"}}");
+        std::fs::write(root.join("logseq/config.edn"), config).unwrap();
+        if present > 0 {
+            std::fs::create_dir_all(root.join(vec!["n"; present].join("/"))).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let disk = open_disk(root).map(|(store, _)| store.close());
+        let took = started.elapsed();
+        let memory = WholeGraph::from_files(files_under(root), Vec::new(), false);
+        eprintln!("depth {depth}, {present} present: disk open {took:?}");
+        if let Err(error) = &disk {
+            wrong.push(format!("{present} present: disk {error:?}"));
+        }
+        if let Err(error) = &memory {
+            wrong.push(format!("{present} present: memory {error:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

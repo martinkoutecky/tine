@@ -152,7 +152,7 @@ fn spelled_as_directory(mut spelling: &str) -> bool {
 }
 
 /// What a lookup of a spelling's names found ([`Files::locate`],
-/// [`locate_nearest`]): how many of its `names` exist (`depth`), and what is
+/// [`locate_deepest`]): how many of its `names` exist (`depth`), and what is
 /// at the deepest existing prefix (`None`: a directory nothing probed, the
 /// root or an ancestor the platform would not answer for).
 pub(crate) struct Located<T> {
@@ -223,57 +223,57 @@ fn spelled_path<'a>(root: &Path, names: impl Iterator<Item = &'a str>) -> (PathB
     (PathBuf::from(path), count)
 }
 
-/// The disk's lookup of `path`, `names` names below the graph root
-/// ([`spelled_path`]), nearest first: `whole` is the answer for `path`
-/// itself; only after its `NotFound`, `ancestor` is asked for each parent
-/// (a borrowed prefix of `path`, `Path::parent`) up to the first that exists.
-/// The root is never asked; an ancestor that answers another error settles
-/// nothing (taken as a directory, so the spelling stays not found).
-/// Cost: one answer, plus one per missing ancestor; no allocation.
-fn locate_nearest<T>(
-    path: &Path,
-    names: usize,
+/// The disk's lookup of a spelling's `names` (`count` of them): `whole` is
+/// the answer for the whole path ([`spelled_path`]); only after its
+/// `NotFound`, `step` is asked for each name but the last, top down from the
+/// root, each relative to the directory the step before found
+/// ([`DiskWalk::step`]), until one is missing or not a directory. A path's
+/// prefixes exist top down (a missing or non-directory name ends every
+/// longer prefix), so the first such step is the deepest existing prefix.
+/// The root is only the walk's start, never asked; a step that answers
+/// another error settles nothing (taken as a directory, so the spelling
+/// stays not found). Cost: one answer, plus one step per existing prefix
+/// and one for the first missing name, each a single name; no allocation
+/// here (the disk walk reuses one name buffer).
+fn locate_deepest<'a, T>(
+    names: impl Iterator<Item = &'a str>,
+    count: usize,
     whole: io::Result<T>,
-    mut ancestor: impl FnMut(&Path) -> io::Result<T>,
+    is_dir: impl Fn(&T) -> bool,
+    mut step: impl FnMut(&'a str) -> io::Result<T>,
 ) -> io::Result<Located<T>> {
     match whole {
         Ok(at) => {
             return Ok(Located {
-                depth: names,
-                names,
+                depth: count,
+                names: count,
                 at: Some(at),
             })
         }
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         Err(_) => {}
     }
-    let mut prefix = path;
-    for depth in (1..names).rev() {
-        prefix = prefix
-            .parent()
-            .expect("a prefix below the root has a parent");
-        match ancestor(prefix) {
-            Ok(at) => {
-                return Ok(Located {
-                    depth,
-                    names,
-                    at: Some(at),
-                })
+    let (mut depth, mut at) = (0, None);
+    for name in names.take(count.saturating_sub(1)) {
+        match step(name) {
+            Ok(found) => {
+                let deeper = is_dir(&found);
+                (depth, at) = (depth + 1, Some(found));
+                if !deeper {
+                    break;
+                }
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
             Err(_) => {
-                return Ok(Located {
-                    depth,
-                    names,
-                    at: None,
-                })
+                (depth, at) = (depth + 1, None);
+                break;
             }
         }
     }
     Ok(Located {
-        depth: 0,
-        names,
-        at: None,
+        depth,
+        names: count,
+        at,
     })
 }
 
@@ -709,24 +709,25 @@ impl FileSource {
 
     /// What the graph-relative spelling `rel` (a configured directory) names
     /// under `root`, by [`spelled_kind`]: the memory tree's one walk
-    /// ([`Files::node`]), or on disk [`locate_nearest`] over the path built
+    /// ([`Files::node`]), or on disk [`locate_deepest`] over the path built
     /// once ([`spelled_path`]): one `lstat` of it (a `stat` when spelled as a
     /// directory, so `pages/` through a link still opens), and only after a
-    /// `NotFound` one `stat` per missing ancestor.
+    /// `NotFound` a walk down from the root ([`DiskWalk`]), one name per step,
+    /// to the deepest existing prefix: linear in the depth.
     pub(crate) fn lstat_spelled(&self, root: &Path, rel: &str) -> io::Result<EntryKind> {
         if let FileSource::Memory(_) = self {
             return self.lstat(&root.join(rel));
         }
         let as_directory = spelled_as_directory(rel);
-        let (path, names) = spelled_path(root, tine_names(rel)?);
+        let spelled = tine_names(rel)?;
+        let (path, names) = spelled_path(root, spelled.clone());
+        #[cfg(test)]
+        names_tests::COMPONENTS.with(|count| count.set(count.get() + names));
         let whole = disk_kind(&path, as_directory);
-        let located = locate_nearest(&path, names, whole, |prefix| disk_kind(prefix, true));
-        spelled_kind(
-            as_directory,
-            located,
-            |kind| matches!(kind, EntryKind::Dir),
-            &path,
-        )
+        let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
+        let mut walk = DiskWalk::new(root);
+        let located = locate_deepest(spelled, names, whole, is_dir, |name| walk.step(name));
+        spelled_kind(as_directory, located, is_dir, &path)
     }
 
     /// Whether `path` is a regular file of the graph at `root`: not a
@@ -904,6 +905,10 @@ impl Graph {
         super::read_parse_input_in(&self.source, path)
     }
 }
+
+#[path = "file_source_walk.rs"]
+mod walk;
+use walk::DiskWalk;
 
 #[cfg(test)]
 #[path = "file_source_names_tests.rs"]
