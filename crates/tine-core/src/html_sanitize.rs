@@ -6,8 +6,12 @@
 //! Media tags (`audio`/`video`/`source`) follow OG 6e7afa8eb's raw-HTML DOMPurify path
 //! (src/main/frontend/security.cljs:5-11, components/block.cljs:3258-3261); keep the set
 //! bounded to media, never iframe/object/embed. `autoplay` stays absent.
+//! `style` keeps only colour declarations, with the same rule as the app
+//! (`colorOnlyStyle` in `src/render/htmlSanitize.ts`), so an export shows the
+//! colours the app shows and nothing that positions, hides or fetches.
 
 use ammonia::Builder;
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -23,8 +27,14 @@ struct NativePolicy {
     deny_data_tag_attributes: HashMap<String, Vec<String>>,
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserPolicy {
+    style_properties: Vec<String>,
+}
+#[derive(Deserialize)]
 struct Policy {
     tags: Vec<String>,
+    browser: BrowserPolicy,
     native: NativePolicy,
 }
 fn policy() -> &'static Policy {
@@ -35,9 +45,43 @@ fn policy() -> &'static Policy {
     })
 }
 
+/// The colour declarations of a `style` value, serialized `prop: value; …`;
+/// "" if none. Mirrors the app's `colorOnlyStyle`: the property must be one of
+/// the policy's `browser.styleProperties`, and the value one closed colour
+/// literal (no url(), var(), calc(), image-set() or `!important`).
+fn color_only_style(value: &str) -> String {
+    static COLOR_VALUE: OnceLock<Regex> = OnceLock::new();
+    static FUNCTION_BANNED: OnceLock<Regex> = OnceLock::new();
+    let color = COLOR_VALUE.get_or_init(|| {
+        Regex::new(r"(?i)^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$")
+            .expect("colour literal pattern")
+    });
+    let banned = FUNCTION_BANNED.get_or_init(|| {
+        Regex::new(r"(?i)var|calc|url|env|attr|image|min|max|clamp").expect("banned functions")
+    });
+    let properties = &policy().browser.style_properties;
+    let mut kept = Vec::new();
+    for declaration in value.split(';') {
+        let Some((property, v)) = declaration.split_once(':') else {
+            continue;
+        };
+        let property = property.trim().to_lowercase();
+        let v = v.trim();
+        if !properties.contains(&property) || !color.is_match(v) {
+            continue;
+        }
+        // A function body may contain letters (`from`, `none`) but never a nested call.
+        if v.find('(').is_some_and(|open| banned.is_match(&v[open..])) {
+            continue;
+        }
+        kept.push(format!("{property}: {v}"));
+    }
+    kept.join("; ")
+}
+
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
-/// `style`, `<iframe>`/`<script>`, and `javascript:` URIs are stripped;
-/// `href`/`src` are limited to safe schemes.
+/// `<iframe>`/`<script>`, and `javascript:` URIs are stripped; `style` keeps
+/// only colour declarations; `href`/`src` are limited to safe schemes.
 pub fn sanitize(html: &str) -> String {
     let policy = policy();
     let tags: HashSet<&str> = policy.tags.iter().map(String::as_str).collect();
@@ -46,6 +90,7 @@ pub fn sanitize(html: &str) -> String {
         .generic_attributes
         .iter()
         .map(String::as_str)
+        .chain(["style"])
         .collect();
     let tag_attrs = policy
         .native
@@ -66,10 +111,17 @@ pub fn sanitize(html: &str) -> String {
         .tag_attributes(tag_attrs)
         .url_schemes(schemes)
         .attribute_filter(|element, attribute, value| {
-            let is_data = value
-                .trim_start_matches(|c: char| c.is_ascii_control() || c == ' ')
-                .to_ascii_lowercase()
-                .starts_with("data:");
+            if attribute == "style" {
+                let kept = color_only_style(value);
+                return (!kept.is_empty()).then(|| kept.into());
+            }
+            let start = value.trim_start_matches(|c: char| c.is_ascii_control() || c == ' ');
+            // The export's link rule (`safe_export_url`): a network-path or
+            // backslash link never falls through to the relative case.
+            if attribute == "href" && (start.starts_with("//") || start.contains('\\')) {
+                return None;
+            }
+            let is_data = start.to_ascii_lowercase().starts_with("data:");
             // DOMPurify permits data: only in media-tag data-URI attributes
             // (src); it strips data: from link hrefs and from `poster`. Mirror
             // both exclusions so live render and static export agree.
@@ -199,6 +251,36 @@ mod tests {
         // `poster` is stripped, matching DOMPurify's live-render behavior.
         assert!(!out.contains("data:image"), "poster kept: {out:?}");
         assert!(out.contains("data:video/mp4;base64,AAAA"), "src: {out:?}");
+    }
+
+    #[test]
+    fn network_path_and_backslash_links_lose_their_href() {
+        for href in [
+            "//evil.example/x",
+            " //evil.example",
+            "\\\\evil.example",
+            "/\\evil.example",
+        ] {
+            let out = sanitize(&format!("<a href=\"{href}\">x</a>"));
+            assert!(!out.contains("href="), "{href:?}: {out:?}");
+            assert!(out.contains(">x</a>"), "{href:?}: {out:?}");
+        }
+        for href in [
+            "https://ok.example/",
+            "page.html#b1",
+            "#b1",
+            "../assets/a.pdf",
+        ] {
+            let out = sanitize(&format!("<a href=\"{href}\">x</a>"));
+            assert!(
+                out.contains(&format!("href=\"{href}\"")),
+                "{href:?}: {out:?}"
+            );
+        }
+        // Media sources are unchanged: the export's link rule is about navigation.
+        assert!(
+            sanitize("<img src=\"//cdn.example/a.png\">").contains("src=\"//cdn.example/a.png\"")
+        );
     }
 
     #[test]

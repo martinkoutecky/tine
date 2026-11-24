@@ -286,6 +286,62 @@ mod tests {
         assert_eq!(base64_encode(&[0xff, 0xef, 0xbf]), "/++/");
     }
 
+    /// Published pages and the print/PDF document emit Hiccup through the shared
+    /// sanitizer: no page overlay, handler or form, and the colour stays.
+    #[test]
+    fn published_and_printed_hiccup_match_the_shared_sanitizer() {
+        for (name, hiccup, html) in super::super::tests::hiccup_sanitize_cases() {
+            let want = tine_core::html_sanitize::sanitize(&html);
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir_all(dir.path().join("pages")).unwrap();
+            fs::write(
+                dir.path().join("pages/Hiccup.md"),
+                format!("- {hiccup}\n- inline {hiccup} text\n"),
+            )
+            .unwrap();
+            let store = Store::open(dir.path(), Default::default()).unwrap().0;
+            let printed = crate::print::page_print_html(&store, "Hiccup", Default::default())
+                .unwrap()
+                .expect("page prints");
+            let whole = store.whole_graph().unwrap();
+            let corpus = whole.corpus(None, false);
+            let graph = RenderGraph::new(&corpus, &whole, &store, None);
+            let mut files = HashMap::<String, String>::new();
+            publish_graph(
+                &graph,
+                PageSelection::AllButOptedOut,
+                &[],
+                &mut |n, bytes| {
+                    files.insert(n.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
+                    Ok(())
+                },
+            )
+            .unwrap();
+            for (surface, out) in [("print", &printed), ("publish", &files["hiccup.html"])] {
+                // The page body: the inlined stylesheet itself positions things.
+                let out = &out[out.find("<h1 class=\"page\"").expect("page title")..];
+                assert_eq!(
+                    out.matches(want.as_str()).count(),
+                    2,
+                    "[{name}] {surface}: {out}"
+                );
+                for needle in [
+                    "inset:0",
+                    "steal()",
+                    "<form><input",
+                    "name=\"pw\"",
+                    "<button>Log in",
+                ] {
+                    assert!(
+                        !out.contains(needle),
+                        "[{name}] {surface} kept {needle}: {out}"
+                    );
+                }
+            }
+            store.close();
+        }
+    }
+
     #[test]
     fn print_nested_assets_keep_their_full_identity() {
         let dir = tempfile::tempdir().unwrap();

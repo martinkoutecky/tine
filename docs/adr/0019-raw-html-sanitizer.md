@@ -81,3 +81,21 @@ lsdoc is untouched.
   guard. Adding a tag/attr means editing both modules and adding a fixture.
 - The export now serves sanitized user HTML (by design); the sanitizer, not the
   escape pass, is the safety boundary for the published site.
+
+## Amendment (2026-11-24): Hiccup and colour styles
+
+- **Hiccup goes through the same sanitizer in the export.** lsdoc transcribes a
+  Hiccup vector (`[:div {:style …} …]`) to HTML; the export
+  (`body_html` in `crates/tine-graph-features/src/render.rs`) turns that HTML into
+  a raw-HTML node before rendering, so published pages, print and PDF pass it
+  through `html_sanitize::sanitize` like typed HTML. lsdoc's own Hiccup checks
+  still decide which vectors transcribe at all, but they are no longer the
+  export's safety boundary. A vector lsdoc refuses stays escaped text.
+- **`style` keeps colour declarations, in both surfaces.** The app already kept
+  colour declarations of `style` (`colorOnlyStyle` in `src/render/htmlSanitize.ts`);
+  ammonia now applies the same rule (`color_only_style`), reading the same
+  `browser.styleProperties` list from the policy file. Everything else in `style`
+  (positioning, sizing, `url()`, `var()`, `!important`) is still dropped, so a note
+  cannot overlay or hide a published page.
+- So an export shows what the app shows: a Hiccup or raw-HTML colour survives,
+  and positioning, forms, `id`s and event handlers do not.
