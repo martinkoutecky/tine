@@ -216,6 +216,21 @@ impl<F: ConformanceIo> Driver<F> {
                 self.compare("refused operation save schedule stutter");
                 return self.accept_stutter(kind, name);
             }
+            if name == "restoreSource" {
+                let before = self.untouched();
+                let result = self
+                    .host
+                    .restore_source(&key(args[0].as_u64().unwrap() as usize));
+                self.mutate_refusal(name);
+                assert_ne!(
+                    result,
+                    Disposition::Applied,
+                    "{name}: host restored past the model"
+                );
+                self.assert_untouched(&before, name);
+                self.compare("restoration refusal stutter");
+                return false;
+            }
             if name == "opRename" {
                 // R5/A-W1: oracle refs describe actual effects, whereas the
                 // public host input supplies candidates. Independently derive
@@ -634,6 +649,9 @@ impl<F: ConformanceIo> Driver<F> {
                     .fs
                     .external(&key(p), text(v(1)), name == "extWrite" || b(2));
             }
+            "restoreSource" => {
+                assert_eq!(self.host.restore_source(&key(p)), Disposition::Applied);
+            }
             "windowCrash" => {
                 self.host.window_crash();
                 self.windows.fill(Window::default());
@@ -798,7 +816,19 @@ impl<F: ConformanceIo> Driver<F> {
                             .find(|gt| {
                                 gt["dst"] == p && gt["open"].as_array().unwrap().contains(&json!(p))
                             })
-                            .map(|gt| gt["src"].as_u64().unwrap() as usize);
+                            .map(|gt| gt["src"].as_u64().unwrap() as usize)
+                            // Or a durable pair's receiver (model `partner`):
+                            // the source revert is checked by its version.
+                            .or_else(|| {
+                                before["s"]["pairs"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .find_map(|pair| {
+                                        (pair["dst"] == p)
+                                            .then(|| pair["src"].as_u64().unwrap() as usize)
+                                    })
+                            });
                         if actual["pages"][p]["ver"] != before["s"]["pages"][p]["ver"] {
                             for p in [Some(p), partner].into_iter().flatten() {
                                 let page = &actual["pages"][p];
@@ -902,6 +932,23 @@ impl<F: ConformanceIo> Driver<F> {
                 g["guard"] = json!(false);
             }
             "saveFail" => g["guard"] = json!(false),
+            "launch" => {
+                for gate in actual["gates"].as_array().unwrap() {
+                    let src = gate["src"].as_u64().unwrap() as usize;
+                    let dst = gate["dst"].as_u64().unwrap() as usize;
+                    let open: BTreeSet<usize> =
+                        serde_json::from_value(gate["open"].clone()).unwrap();
+                    let version = |p| gate["vers"][p].as_i64().unwrap();
+                    for &p in &open {
+                        if p != dst && open.contains(&dst) {
+                            obl.insert((p, dst, version(dst), dst));
+                        }
+                        if p != dst && p != src && open.contains(&src) {
+                            obl.insert((src, p, version(p), dst));
+                        }
+                    }
+                }
+            }
             "extWrite" | "extWriteD" => {
                 renamed.retain(|r| r.0 != p && r.1 != p);
                 g["ext"][p] = json!(self.host.fs.physical().epochs[&key(p)]);

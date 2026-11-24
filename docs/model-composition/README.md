@@ -19,3 +19,21 @@ Build with `lake build` in `docs/model-composition/lean` using the pinned Lean t
 ## Several moves in one request (Quint, bounded)
 
 `quint/batch-model.cjs` generates a variant of the storage scenarios in which one admission carries several moves under one gate over the whole written footprint; `batch-order.inc` adds the gate and its order checks, `batch-scenarios.inc` the five-slot probes (two moves sharing a referrer), and `batch-check.cjs` runs the bounded searches and three mutants (one gate per pair, an early source, a discard that restores both sources). Within the searched bounds the design holds. One statement is refuted with a trace: the bytes a move planned to remove are not always recoverable (a discard followed by an outside overwrite); the bytes actually removed are.
+
+## Paired recovery and the exact end state (Lean)
+
+`CompositionPairedRecovery.admit_paired_decision` uses the checked Stage 6
+batch admission and the same physical patch codec. Each durable pair decodes
+to a cross-path binding from the successful conceptual decision. Recovery
+compares the certified receiver's exact planned bytes. This applies to a
+merge survivor with an unchanged image as well as to a newly written receiver.
+The host supplies slot identity, admission guards and live disk agreement at
+the effect slots.
+
+Every paired continuation satisfies exact preimage coverage and the paired
+preflight order property. From a pending compatible prefix, a successful
+quiet replay reaches Applied and both disk views decode to the conceptual
+candidate on the written footprint. `paired_recovery_exact_image` extends
+that equality to all encoded slots when the untouched live and stable
+entries agree with the conceptual input. The separate entry mover for a
+same-slot respelling keeps its own composition theorem.

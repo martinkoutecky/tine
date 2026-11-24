@@ -137,6 +137,25 @@ answers Applied after staging and checking recovery, without `delete_checked`
 | s3.4 | 2026-10-13 | `storage-s34.qnt` (`ddcc4332`) | `scenarios-s34.inc` (`b322d41b`), 191 | Name-slot admission: a new page cannot take a name another file already claims. |
 | s3.5 | 2026-10-14 | `storage-s35.qnt` (`7ebed877`) | `scenarios-s35.inc` (`9200a284`), 194 | A cancelling Discard of a rename's destination restores the source's text only when the source is still held (s3.4 also rewrote a retired, unheld source's buffer; no disk, draft or trash effect, all targets held). Three lines changed, one mutant (`MRH`) and three scenarios added. |
 
+The current s3.5, s3.6 and s3.7-gitpull Quint models include durable paired
+recovery. The models keep the source preimage and the certified receiver image
+in the operation vehicle. Launch reinstalls unresolved pairs, while a durable
+Use Disk decision suppresses the original deletion. An exact receiver gates
+source removal and settles it after the directory barrier. The settled pair
+leaves the vehicle at the private rewrite barrier. A crash or a failed rewrite
+before that barrier leaves the original pair for launch to re-witness. With
+strong durability and no intervening outside write, replay sees the exact
+bytes, so the recovery itself creates no conflict. The existing owner lock is
+the sole draft namespace claim. An unowned host can save pages and refuses
+draft changes and paired removals.
+
+`quint/scenarios-paired-recovery.inc` checks recovery, settlement and owner
+claims directly in all three revisions. The page-host trace driver covers one
+move per operation and one local owner. The Lean
+`PairedRecovery` and `CompositionPairedRecovery` packages state the batch and
+composition properties. The historical s3.5 replay against `Storage35` uses
+the model and scenarios from revision `8f50fd330`.
+
 Every s3.x model behaves exactly like s2.1 on runs that use none of the page operations (checked by
 `cons.py` for each version, and proved in Lean for s3, s3.1, s3.3, s3.4 and s3.5). s3.3 adds to s3.2 and
 s3.4 adds to s3.3 without changing existing actions; s3.5 changes only the one guard above (checked: all 191
@@ -185,6 +204,60 @@ reachable from the initial state through enabled actions. Its input texts are ne
 page deletion is fully modelled (the deletion path writes the absent value through the normal guarded save,
 and the proof covers it). What the abstract model takes as given is unchanged: the filesystem assumptions
 above, finding every referrer and computing its rewrite, and the one-designated-move shape of `opApply`.
+
+## Durable recovery for paired operations
+
+`PairedRecovery` starts at a durable admission of one Stage 6 batch with
+disjoint source and receiver slots. The admitted plan supplies the exact
+source preimages and the exact receiver images. Process stops and launches
+discard the driver's observations and permits. A power cut can select an old
+or new graph entry and trash image independently. The admitted draft and
+acknowledged choices survive these cuts.
+
+Receivers are witnessed before the remaining non-source effects. The source
+preflight requires settled dependencies, exact durable receiver bytes and the
+declared source base. The trash move changes one source path. Its post-check
+witnesses the exact receiver again after the source and trash barriers. An
+outside replacement can intervene between these steps. The source
+guard-to-syscall race can be enabled independently. Trash custody records the
+bytes actually moved.
+
+Use Disk on the receiver permanently disarms its paired removal. A reviewed
+receiver permits removal only if its selected result is the exact admitted
+image and the pair has never been disarmed. A resolved divergent referrer can
+release the dependency and contributes a Conflict outcome. If a disarmed
+source is known to have moved, a guarded create can restore its preimage at a
+free source path when the receiver diverges. An occupied source path leaves
+the original bytes in the recoverable draft. Evidence of the move can itself
+be uncertain after a cut. The retained draft also covers that case.
+
+`renameResolves_reachable` gives exact coverage for every undeleted pair
+whose operation record is retained. This includes terminal conflicts that
+still owe custody. `retirement_witness` requires each released pair to have a
+durably observed original source, a certified receiver, or an explicit
+deletion. That observation is the pair's settlement boundary for later
+outside writes. `cancellation_survives` and `orderHolds_reachable` cover
+relaunch and `stable_trash_survives` covers witnessed trash custody.
+
+One operation has at most one terminal disposition. Applied witnesses every
+planned effect. Cancelled requires every pair to have been abandoned by
+receiver Use Disk before a durable trash move or explicit source deletion,
+with the remaining rewrites witnessed and custody settled. A resolved
+divergence that meets neither rule is Conflict. Unresolved effects stay
+pending. The model observes one terminal retirement event and permits a
+terminal Conflict to retain recoverable custody. It uses a history value for
+a retired disposition and leaves post-retirement queries by operation ID
+outside the protocol.
+
+`PairedRecoveryProgress` constructs a finite successful replay queue when
+each live entry at a written slot is still the before-image or already the
+exact after-image, and there are no superseding choices. Fair service of that
+queue reaches Applied with the exact durable written footprint. Concurrent
+writers can replace a previously witnessed file before private retirement.
+The stronger simultaneous end-state equality uses the quiet replay premise.
+General progress from pending conflicts and native filesystem conformance are
+separate obligations. The guarantee assumes a durable private store and
+ordinary per-file durability. Weak providers retain best-effort behavior.
 
 ## The trust gaps
 
@@ -404,7 +477,6 @@ cd docs/storage-model/quint
 npm ci                                                     # installs Quint 0.33.0 into ./node_modules
 QNT=storage-s35.qnt SCEN=scenarios-s35.inc python3 sweep.py # all scenarios x 4 profiles, every mutant (s3.5)
 python3 cons.py storage-s2x.qnt storage-s35.qnt scenarios-s2.inc --two-pages   # s3.5 vs s2.1 on old runs
-python3 cons.py storage-s34.qnt storage-s35.qnt scenarios-s34.inc --full       # s3.5 vs s3.4, every mutant/profile
 QNT=storage-s35.qnt SCEN=scenarios-s35.inc INV='guarantee and orderHolds and renameResolves' \
   python3 run.py base none 4000 60                         # random simulation (s3.2+: three invariants)
 ```

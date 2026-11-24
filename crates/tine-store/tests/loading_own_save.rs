@@ -49,7 +49,15 @@ fn todays_journal_created_on_the_host_while_loading_waits_for_no_graph_build() {
     let send = move |m| {
         let _ = sink.send(serde_json::to_value(m).unwrap());
     };
-    let host = PageHost::start(&store, &dir.path().join("app"), "load", |_, _| {}, send).unwrap();
+    let host = PageHost::start(
+        &store,
+        &dir.path().join("app"),
+        "load",
+        crate::DraftOwnership::Owned,
+        |_, _| {},
+        send,
+    )
+    .unwrap();
     let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
     let session = reloaded["session"].as_u64().unwrap();
     let id = reloaded["nextId"].as_u64().unwrap();

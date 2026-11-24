@@ -197,7 +197,15 @@ fn todays_journal_saves(client: bool) {
     let send = move |m| {
         let _ = sink.send(serde_json::to_value(m).unwrap());
     };
-    let host = PageHost::start(&store, app.path(), "gh811", |_, _| {}, send).unwrap();
+    let host = PageHost::start(
+        &store,
+        app.path(),
+        "gh811",
+        tine_store::DraftOwnership::Owned,
+        |_, _| {},
+        send,
+    )
+    .unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let worker = client.then(|| sync_client(&root.join("journals"), stop.clone()));
     let mut seen = Vec::new();
@@ -351,7 +359,15 @@ fn same_size_saves_and_the_page_mtime_another_process_sees() {
     let send = move |m| {
         let _ = sink.send(serde_json::to_value(m).unwrap());
     };
-    let host = PageHost::start(&store, app.path(), "gh811", |_, _| {}, send).unwrap();
+    let host = PageHost::start(
+        &store,
+        app.path(),
+        "gh811",
+        tine_store::DraftOwnership::Owned,
+        |_, _| {},
+        send,
+    )
+    .unwrap();
     let answer = |id: u64| loop {
         let value = mail.recv_timeout(Duration::from_secs(10)).unwrap();
         if value["answer"]["id"] == id {

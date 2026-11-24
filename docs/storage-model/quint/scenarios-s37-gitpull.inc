@@ -262,19 +262,19 @@
     .then(save(2)).then(save(1)).then(saveD(0)).expect(renamed and ok)
   // From the CLI: no page is open in the window; the backend loads each page before the operation.
   run ownRenameCli = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(save(2)).then(save(1)).then(saveD(0)).expect(renamed and ok)
-  // Interrupted after the old file went: the text and the rewrite are in drafts; launch restores them and
-  // their saves complete the rename (D5). s3.2: the old file goes first only after a relaunch (no order across a
-  // crash), so the restated run crashes once before the deletion's save.
-  run ownRenameInterrupted = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(crash).then(launch).then(saveD(0)).then(draftSync(0)).then(crash).then(launch)
-    .expect(s.pages.get(2).buf == 1 and s.pages.get(2).risk and s.pages.get(1).buf == 3 and s.disk.get(1) == 2 and ok)
-    .then(save(2)).then(save(1)).expect(renamed and ok)
+  // Crash after the source moves and before its directory barrier. Relaunch
+  // re-witnesses every exact member and the source's absence.
+  run ownRenameInterrupted = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(crash).then(launch)
+    .then(save(2)).then(save(1)).then(flushDel(0)).then(check).then(rename).then(crash).then(launch)
+    .expect(s.pages.get(2).buf == 1 and s.pages.get(2).risk and s.pages.get(1).buf == 3 and s.disk.get(1) == 3 and ok)
+    .then(save(2)).then(save(1)).then(saveD(0)).expect(renamed and ok)
   // A rename whose old file is already gone only rewrites references (running it again after another
   // program or a lost rewrite left an old reference).
   run ownRenameRerun = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(save(2)).then(save(1)).then(saveD(0)).then(extWrite(1, 1)).then(observe(1))
     .then(renameAB).expect(s.pages.get(1).buf == 3 and s.pages.get(0).buf == ABSENT and ok).then(save(1)).expect(renamed and ok)
-  // s3.2: as ownRenameInterrupted, the deletion's save precedes the destination's only after a relaunch.
-  run ownRenamePower = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(crash).then(launch).then(saveD(0)).then(powerK(Set())).expect(s.drafts.get(2).bytes == 1 and ok)
-    .then(launch).then(save(2)).expect(s.disk.get(2) == 1 and ok)
+  run ownRenamePower = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(save(2)).then(powerK(Set()))
+    .expect(s.drafts.get(2).bytes == 1 and s.disk.get(0) == 1 and ok)
+    .then(launch).then(save(2)).then(save(1)).then(saveD(0)).expect(renamed and ok)
   run ownRenameRefusedDirtyRef = init.then(open(1)).then(load(0)).then(load(2)).then(typeIn(1, 3)).then(renameAB.fail())
   run ownRenameRefusedDirtySrc = init.then(open(0)).then(load(1)).then(load(2)).then(typeIn(0, 3)).then(renameAB.fail())
   run ownRenameRefusedTarget = init.then(extWrite(2, 3)).then(load(0)).then(load(1)).then(load(2)).then(renameAB.fail())
@@ -296,7 +296,7 @@
   run ownDeleteRefusedDirty = init.then(open(0)).then(typeIn(0, 3)).then(opDelete(0).fail())
   run ownDeleteNothing = init.then(load(2)).then(opDelete(2).fail())
   // Mutants (each passes on the spec).
-  run mMRN1 = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(crash).then(launch).then(saveD(0)).then(crash).expect(ok)
+  run mMRN1 = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(crash).expect(ok)
   run mMRN2 = init.then(open(1)).then(load(0)).then(load(2)).then(typeIn(1, 1)).then(if (opClean(s, 1) or MUTANT == "MRN2") renameAB else noop).expect(ok)
   // The target exists and the window has even shown it (so G would accept replacing it): no-clobber is its own
   // property.
@@ -313,7 +313,7 @@
   // and their saves complete the rename (no duplicate).
   run ownRenameCrashBeforeSaves = init.then(load(0)).then(load(1)).then(load(2)).then(renameAB).then(crash).then(launch)
     .expect(s.pages.get(0).buf == ABSENT and s.pages.get(2).buf == 1 and s.pages.get(1).buf == 3 and ok)
-    .then(saveD(0)).then(save(2)).then(save(1)).expect(renamed and ok)
+    .then(save(2)).then(save(1)).then(saveD(0)).expect(renamed and ok)
   // A delete made durable keeps its trash copy across a power cut; one not yet durable is undone whole.
   run ownDeleteTrashPower = init.then(load(0)).then(opDelete(0)).then(saveD(0)).then(powerK(Set()))
     .expect((if (RACES.contains("weak")) s.disk.get(0) == 1 and s.trash.get(0) == Set()
@@ -459,11 +459,12 @@
   // A discarded referrer leaves the order; the rest completes.
   run ownOrderDiscardRef = init.then(renLoaded).then(open(1)).then(discard(1)).then(save(2)).then(saveD(0))
     .expect(s.disk.get(0) == ABSENT and s.disk.get(2) == 1 and s.disk.get(1) == 2 and s.gates == List() and ok)
-  // Across a crash only A and completion hold: the accepted effect (SPEC-s3 s3.2) of a failing destination write.
+  // A failing recovered destination keeps the reinstalled source gate closed.
   run ownOrderAcceptedAcrossCrash = init.then(renLoaded).then(crash).then(launch)
-    .expect(s.gates == List() and g.obl == Set() and g.renamed == Set() and ok)
-    .then(flush(2)).then(saveFail).then(saveD(0))
-    .expect(s.disk.get(0) == ABSENT and s.disk.get(2) == ABSENT and s.drafts.get(2).bytes == 1 and s.trash.get(0) == Set(1) and ok)
+    .expect(s.gates != List() and g.obl != Set() and ok)
+    .then(flush(2)).then(saveFail)
+    .expect(s.disk.get(0) == 1 and s.disk.get(2) == ABSENT and s.drafts.get(2).bytes == 1 and s.trash.get(0) == Set() and ok)
+    .then(flushDel(0).fail())
   // Mutants (each passes on the spec; each fails orderHolds with no power cut).
   run mMDF = init.then(renLoaded).then(if (MUTANT == "MDF") flushDel(0) else noop).expect(ok)
   run mMRF = init.then(renLoaded).then(if (MUTANT == "MRF") flush(1) else noop).expect(ok)
@@ -484,10 +485,9 @@
   run ownMergeSrcWaitsUncertain = init.then(merge).then(flush(0)).then(publishIo(false)).then(flushDel(1).fail())
   // The merge crash: survivor written, source deletion pending; relaunch completes the deletion.
   run ownMergeCrash = init.then(merge).then(save(0)).then(crash).then(launch)
-    .expect(s.pages.get(1).buf == ABSENT and s.pages.get(1).risk and ok).then(saveD(1)).expect(merged and ok)
-  // Across a crash only A and completion: the deletion may go first after a relaunch; the survivor's draft holds it.
-  run ownMergeCrashSrcFirst = init.then(merge).then(crash).then(launch).then(saveD(1))
-    .expect(s.disk.get(1) == ABSENT and s.drafts.get(0).bytes == 3 and ok).then(save(0)).expect(merged and ok)
+    .expect(s.pages.get(1).buf == ABSENT and s.pages.get(1).risk and ok).then(save(0)).then(saveD(1)).expect(merged and ok)
+  run ownMergeCrashSrcFirst = init.then(merge).then(crash).then(launch)
+    .expect(s.disk.get(1) == 2 and s.drafts.get(0).bytes == 3 and ok).then(flushDel(1).fail())
   // A Discard of the unwitnessed survivor cancels the merge: the source takes its disk bytes again.
   run ownMergeDiscardSurvivor = init.then(merge).then(open(0)).then(discard(0))
     .expect(s.pages.get(0).buf == 1 and s.pages.get(1).buf == 2 and clean(s.pages.get(1)) and s.gates == List()
@@ -599,6 +599,32 @@
       and s.pages.get(0).ver == g.vc and clean(s.pages.get(0))
       and s.pages.get(2).buf == ABSENT and s.gates == List() and g.obl == Set() and ok)
 
+  action pairReady = renLoaded.then(save(2)).then(save(1))
+  action removedBeforePost = pairReady.then(flushDel(0)).then(check).then(rename).then(extWrite(2, 3))
+  run mMForgetGates = init.then(if (MUTANT == "MForgetGates") renLoaded.then(crash).then(launch) else noop)
+    .expect(MUTANT != "MForgetGates" or s.gates != List())
+  run mMForgetChoice = init.then(if (MUTANT == "MForgetChoice") renLoaded.then(crash).then(launch)
+      .then(open(2)).then(discard(2)).then(powerK(Set())).then(launch) else noop)
+    .expect(MUTANT != "MForgetChoice" or not(s.pages.get(0).held))
+  run mMSkipPrecheck = init.then(if (MUTANT == "MSkipPrecheck") pairReady.then(extWrite(2, 3)).then(flushDel(0)).then(check) else noop)
+    .expect(ok)
+  run mMSkipPostcheck = init.then(if (MUTANT == "MSkipPostcheck") removedBeforePost.then(dirSync(true)) else noop).expect(ok)
+  run mMNoResave = init.then(if (MUTANT == "MNoResave") renLoaded.then(save(2)).then(crash).then(launch).then(flush(2)).then(check) else noop)
+    .expect(MUTANT != "MNoResave" or s.job.on)
+  run mMDropRetained = init.then(if (MUTANT == "MDropRetained") renLoaded.then(save(2)).then(draftSync(2)) else noop)
+    .expect(MUTANT != "MDropRetained" or s.drafts.get(2).bytes == 1)
+  run mMRejectRetainedSwitch = init.then(if (MUTANT == "MRejectRetainedSwitch") renLoaded.then(save(2)) else noop)
+    .expect(MUTANT != "MRejectRetainedSwitch" or canSwitch)
+  run mMForgetTouches = init.then(if (MUTANT == "MForgetTouches") removedBeforePost.then(dirSync(true)) else noop)
+    .expect(MUTANT != "MForgetTouches" or touches(s, Set(0)))
+  run mMSkipDecision = init.then(if (MUTANT == "MSkipDecision") renLoaded.then(open(2)).then(draftStore(false)).then(discard(2)) else noop)
+    .expect(ok)
+  run mMKeepSettled = init.then(if (MUTANT == "MKeepSettled") pairReady.then(saveD(0)).then(pairRewrite(0, true)).then(crash).then(launch) else noop)
+    .expect(MUTANT != "MKeepSettled" or s.pairs == List())
+  run mMDoubleOwner = init.then(if (MUTANT == "MDoubleOwner") crash.then(otherOwner(true)).then(launch) else noop).expect(ok)
+  run mMUnownedDelete = init.then(if (MUTANT == "MUnownedDelete") renLoaded.then(crash).then(launchWithClaim(false))
+      .then(save(2)).then(save(1)).then(flushDel(0)) else noop).expect(ok)
+
   // ---- s3.6: a plain creating save keeps input while its slot is occupied.
   action plainCreate = open(2).then(typeIn(2, 3))
   run ownPlainSlotArrived = init.then(plainCreate).then(extClaim(2, true))
@@ -670,10 +696,11 @@
   run qGitResume = gitSetup.then(gitStart).then(gitPublishPage).then(crash).then(gitResumePages)
     .then(gitPublishOther).then(gitFinish)
     .expect(gitAllOk and s.git.head == 1 and s.git.index == pullTree)
-  // Destination first, a crash, the source's deletion from its durable draft, then a separate HostOp for the
-  // remaining page. No checkout or undo step.
+  // The surviving pair re-witnesses its destination before deleting its
+  // source, then Git applies the remaining page in a separate HostOp.
   run qGitRenameResume = init.then(gitFetch(renameTree, 2, 0, true)).then(gitStart)
     .then(load(0)).then(load(2)).then(gitPageOp).then(save(2)).then(crash).then(launch)
+    .expect(s.gates != List() and gitAllOk).then(save(2))
     .then(flushDel(0)).then(publishIo(true)).then(gitStart).then(load(1)).then(gitPageOp)
     .then(save(1)).then(gitPagesDone).then(gitOtherStart).then(gitFinish)
     .expect(gitAllOk and s.git.head == 1 and s.disk.get(0) == ABSENT and s.disk.get(2) == 1 and s.disk.get(1) == 3)

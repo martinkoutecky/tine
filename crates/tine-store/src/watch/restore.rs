@@ -3,7 +3,7 @@
 
 use std::fs;
 
-use super::{collect_with_revs, config_stamp, stamp, Core, RestoreBaseline, WatchHandle};
+use super::{collect_with_revs, stamp, Core, RestoreBaseline, WatchHandle};
 use crate::store::{journal_ids_from_entries, ChangeKind, LoadStatus, Origin};
 
 fn collect_restore(core: &Core) -> RestoreBaseline {
@@ -64,8 +64,8 @@ impl WatchHandle {
             };
             if path == self.core.graph.root.join("logseq/config.edn") {
                 config_changed = true;
-                let _ = self.core.read_config();
-                *self.core.config_stamp.lock().unwrap() = config_stamp(&self.core.graph.root);
+                let _ = self.core.read_config(&path);
+                *self.core.config_stamp.lock().unwrap() = stamp(&path);
             }
             if let Some(id) = self.core.file_id(&path) {
                 if id.as_str().starts_with("assets/") {

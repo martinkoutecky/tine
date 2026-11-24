@@ -23,10 +23,8 @@ pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
 pub(crate) mod asset_ref_index;
 mod calendar_days;
-mod config_read;
 pub(crate) mod file_source;
 pub(crate) mod fileless_names;
-pub(crate) use config_read::*;
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) mod index_oracle;
 #[cfg(test)]
@@ -160,7 +158,77 @@ impl std::fmt::Display for ParserPanicked {
 
 impl std::error::Error for ParserPanicked {}
 
-/// A parse-input read of `path` from `source`: a disk read's buffer, or a memory
+/// A config read: the effective config, its read problem and its text.
+pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
+
+/// The config an open reads at `path` through `source`: the parsed text; a
+/// missing file is the defaults with [`missing_config_problem`]; another
+/// read error is the defaults with that error.
+pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
+    match read_parse_input_in(source, path) {
+        Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+            Config::default(),
+            missing_config_problem(source, path),
+            None,
+        ),
+        Err(error) => {
+            let (config, problem) = config_of_read_error(error);
+            (config, problem, None)
+        }
+    }
+}
+
+/// Why a graph with no `logseq/config.edn` must not take the defaults, if it
+/// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
+/// file exists but is not downloaded: its settings are unknown, so the graph
+/// opens read-only (`ConfigState::problem`) instead of writing under the
+/// default :legacy file names. A plainly absent config.edn is no problem
+/// (Logseq's defaults). Cost: one metadata call.
+pub(crate) fn missing_config_problem(
+    source: &FileSource,
+    config_path: &Path,
+) -> Option<crate::IoError> {
+    source
+        .lstat(&config_placeholder(config_path))
+        .is_ok()
+        .then(|| {
+            io::Error::other(
+                "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
+            )
+            .into()
+        })
+}
+
+/// Where iCloud keeps a not-yet-downloaded `config_path`
+/// (`logseq/.config.edn.icloud`): the second path a config read looks up.
+pub(crate) fn config_placeholder(config_path: &Path) -> PathBuf {
+    config_path.with_file_name(".config.edn.icloud")
+}
+
+/// The config a graph uses when its `config.edn` exists but could not be
+/// read, and the problem it reports: the one mapping graph open (desktop and
+/// browser) and live reload share. Bytes over the store's parse limit are over
+/// the EDN reader's limit too (both 64 MiB), so they take the reader's verdict
+/// for oversized input, which fails closed; any other read error keeps the
+/// defaults. Cost: one type check.
+pub(crate) fn config_of_read_error(error: io::Error) -> (Config, Option<crate::IoError>) {
+    let too_large = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ParseInputTooLarge>());
+    let config = if too_large {
+        Config::over_read_limit()
+    } else {
+        Config::default()
+    };
+    (config, Some(error.into()))
+}
+
+pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
+    read_parse_input_in(&FileSource::Disk, path).map(std::borrow::Cow::into_owned)
+}
+
+/// [`read_parse_input`] from `source`: a disk read's buffer, or a memory
 /// file's text without a copy.
 pub(crate) fn read_parse_input_in<'a>(
     source: &'a FileSource,
@@ -2854,7 +2922,8 @@ impl Graph {
     /// A graph over `source` under the config it holds at
     /// `logseq/config.edn`: the one config read of a graph open.
     fn open_from(root: PathBuf, source: FileSource) -> Graph {
-        let (config, problem, config_source) = read_config_in(&source, &root);
+        let path = root.join(file_source::CONFIG_FILE);
+        let (config, problem, config_source) = read_config_in(&source, &path);
         let journal_format = config.journal_format();
         let mut graph = Self::empty_with_config(root, source, config, journal_format);
         graph.config_read_problem = problem;

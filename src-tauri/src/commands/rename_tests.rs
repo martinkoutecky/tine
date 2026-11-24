@@ -274,6 +274,7 @@ fn a_merge_refusal_after_flush_saves_pending_edits_but_merges_nothing() {
             &store,
             data.path(),
             "pending-refusal",
+            tine_store::DraftOwnership::Owned,
             |_, _| {},
             move |mail| {
                 let _ = send.send(serde_json::to_value(mail).unwrap());

@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   PINNED_FORMAT_COUNT, PERSISTED_FORMATS,
-  checkFormatCount, checkSizeRatchet, checkWriterSites, isProduction,
-  readSizeCounts, readWriterSiteCounts, writerSiteCounts,
+  checkFormatCount, checkOrgExtensionSites, checkSizeRatchet, checkWriterSites, isProduction,
+  orgExtensionSites, readOrgExtensionSites, readSizeCounts, readWriterSiteCounts, writerSiteCounts,
 } from "../scripts/lib/og-enforcement.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // timer; the assertions still inspect the exact source snapshot read here.
 const sizeCounts = readSizeCounts(root);
 const writerCounts = readWriterSiteCounts(root);
+const orgExtensionCounts = readOrgExtensionSites(root);
 
 describe("og campaign enforcement", () => {
   it("treats out-of-line Rust test modules as test code", () => {
@@ -74,6 +75,17 @@ describe("og campaign enforcement", () => {
     expect(writerSiteCounts("fn f() {\n    #[cfg(all(test, unix))]\n    mod tests {\n        fs::write(foo, bar);\n    }\n    fs::write(path, bytes);\n}\n")).toBe(1);
     // The audited replace primitive is a writer site too (ADR 0070's checkpoint).
     expect(writerSiteCounts("crate::atomic_file::atomic_write_with_check(&path, &bytes, || Ok(()));\n")).toBe(1);
+  });
+
+  it("only Format::from_path judges a graph file Org or Markdown", () => {
+    expect(() => checkOrgExtensionSites(orgExtensionCounts)).not.toThrow();
+    // Planted copies: each spelling the old copies used is caught, test modules are not.
+    expect(orgExtensionSites('let org = path.ends_with(".org");\n')).toBe(1);
+    expect(orgExtensionSites('if path.to_ascii_lowercase().ends_with(".org")\n')).toBe(1);
+    expect(orgExtensionSites('const org = pagePath.toLowerCase().endsWith(".org");\n')).toBe(1);
+    expect(orgExtensionSites('return /\\.org$/i.test(path) ? "org" : "md";\n')).toBe(1);
+    expect(orgExtensionSites('#[cfg(test)]\nmod tests {\n    let org = p.ends_with(".org");\n}\n')).toBe(0);
+    expect(() => checkOrgExtensionSites({ "src/new.ts": 1 })).toThrow(/Format::from_path/);
   });
 });
 

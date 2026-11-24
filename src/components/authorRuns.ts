@@ -61,12 +61,14 @@ function hasEmbed(raw: string, format: "md" | "org"): boolean {
 export function authorSiblingNeighbors(ids: () => readonly string[], list: ListRun = {}): { ids: () => readonly string[]; neighbours: (id: string) => AuthorNeighbors } {
   const members = createMemo(ids, undefined, { equals: (before, after) => before === after
     || before.length === after.length && before.every((id, index) => id === after[index]) });
+  // One index per row (no pair per row: a 2000-row list renders a few dozen of them).
   const positions = createMemo(() => {
     const rows = members();
-    return new Map(rows.map((id, i) => [id, [rows[i - 1], rows[i + 1]] as const]));
+    return { rows, at: new Map(rows.map((id, i) => [id, i])) };
   });
   return { ids: members, neighbours: id => () => {
-    const [prev, next] = positions().get(id) ?? [undefined, undefined];
+    const { rows, at } = positions(), i = at.get(id);
+    const prev = i === undefined ? undefined : rows[i - 1], next = i === undefined ? undefined : rows[i + 1];
     return { prev, next, head: prev === undefined ? list.head : undefined,
       after: next === undefined ? list.after?.() : undefined, results: list.results, index: list.index?.() };
   } };

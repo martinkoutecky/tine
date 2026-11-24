@@ -171,7 +171,15 @@ fn l8_01_a_recovered_draft_does_not_follow_a_folder_retargeted_while_stopped() {
     listed.sort();
     eprintln!("L8-01 recovered draft: cold store lists {listed:?}");
     drop(view);
-    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
+    let host = PageHost::start(
+        &store,
+        &app,
+        "test-graph",
+        crate::DraftOwnership::Owned,
+        |_, _| {},
+        |_| {},
+    )
+    .unwrap();
     let target = outside.path().join("sub/a.md");
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&target).unwrap() == "- one\n" && Instant::now() < deadline {

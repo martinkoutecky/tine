@@ -114,9 +114,10 @@ mod root_binding;
 #[cfg(feature = "test-faults")]
 pub use page_host::faults as host_faults;
 pub use page_host::{
-    ApplyRefusal, DiskToken, DraftStatus, Effect as HostEffect, Expected as HostExpected,
-    HostInputs, HostOp, HostRead, HostReadError, Input, Opened, PageHost, PageMail, PageOperation,
-    PageRefusal, PublishedRevision, Reloaded, Saved as HostSaved, StopMode, StopState, Stopped,
+    ApplyRefusal, DiskToken, DraftOwnership, DraftStatus, Effect as HostEffect,
+    Expected as HostExpected, HostInputs, HostOp, HostRead, HostReadError, Input, Opened, PageHost,
+    PageMail, PageOperation, PageRefusal, PublishedRevision, Reloaded, Saved as HostSaved,
+    StopMode, StopState, Stopped,
 };
 pub use root_binding::BoundDirectory;
 #[cfg(test)]

@@ -294,7 +294,15 @@ fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
             ..
         } = live;
         drop(host);
-        let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), |_| {}).unwrap();
+        let host = PageHost::start(
+            &store,
+            &app,
+            "test-graph",
+            crate::DraftOwnership::Owned,
+            recording(&kinds),
+            |_| {},
+        )
+        .unwrap();
         let live = Live {
             _dir,
             root,

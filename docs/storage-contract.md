@@ -1291,14 +1291,106 @@ has published durably (directory sync) at the operation's version, and the
 deletion waits for every other page (`page_host/order.rs`). Scenario: a disk
 error (a full disk, an I/O error) keeps failing the destination's save; the
 old file and every `[[Old]]` link keep resolving, and the rename finishes
-once the write succeeds. The order is memory only:
+once the write succeeds. The pairing survives relaunch (ADR 0082,
+REG-RENAME-CANCEL-RELAUNCH): an operation with moves writes a **paired
+operation draft**, the ordinary `TINEDRF2` envelope whose body is an escape byte
+`0x00`, tag `0`, the ordered records and the zero-based `(receiver, source)`
+record index pairs. The page host's `Order` is the one answerer of "may this
+source be removed now, and what is still owed": it adopts the pairing at the
+draft's durable terminal, and `Host::launch` reinstalls it, with the same order,
+from the scanned drafts before any recovered save or choice.
 - A stop saves nothing gated; the operation's draft carries those pages.
-- A launch completes the rename from its drafts, with no order. Across a
-  crash only no loss and completion hold. Accepted effect: a crash while the
-  destination's write is also failing can leave the page with no file until
-  the write succeeds; its bytes are in the trash or the drafts.
-- No chaining: an operation over any page of a running order waits until
-  that order ends. A deletion answers `Waiting`. A rename waits up to
+- A launch completes the rename from its drafts in the same order (receivers,
+  then referrers, then source removals). The paired draft is immutable: launch
+  does not explode it into page drafts, and a newer page draft supersedes a
+  member's editor text without splitting it. A legacy operation draft (the
+  nonempty record-vector body) recovers exactly as before, exploded and with
+  no order. An older Tine reads a paired body as an empty vector and
+  quarantines it, so it never replays a paired source as a lone deletion.
+- A recovered page an order waits for whose file already holds its exact
+  record (it published, or its trash step ran, before the process died) is
+  saved again with the same state, which re-witnesses its file and directory
+  durability. It is not refused as an outside change, and the order moves on.
+- A source is removed only after two receiver checks under both path locks:
+  the receiver's disk bytes equal the certified receiver image immediately
+  before the trash step, and again after the source's trash, trash sync and
+  directory sync. A failed first check holds the removal (the source stays);
+  a failed second check keeps the operation draft, which holds the source's
+  text as its base, so the text is never only in trash. Equal bytes certify
+  the receiver only with a durability witness for them: the host's own
+  durable publication of that file, unchanged since (or a weak graph, which
+  offers none to wait for). Bytes another program wrote, or a write a power
+  cut may still revert, hold the removal like different bytes. The second
+  check does not surface the receiver's read; its next observation does. An
+  exact, witnessed receiver observed later resumes the pair. A source that
+  publishes newer text of its own supersedes its removal and disarms the pair.
+  One host check answers whether a receiver holds its certified image (equal
+  bytes plus the witness), and every pair decision asks it: both removal
+  checks, a held pair's resumption, Use Disk's choice and phase, and a
+  launch's decided pairs. The witness is memory only and kept only for the
+  receivers of unresolved pairs, so none survives a relaunch: at launch a
+  receiver whose bytes match certifies nothing, and a decided pair whose
+  source left its slot stays restore or retained (below), with its operation
+  draft keeping the source's text, until Tine itself publishes the receiver
+  again or the source is restored.
+- **Use Disk on a pair's endpoint** (a conflict's Use Disk, or the host-level
+  Discard of a recovered page), on its unwitnessed receiver, on a receiver
+  that does not hold its certified image (by the check above: equal bytes
+  another program wrote count as not holding it), or on a source whose pair
+  is undecided, first writes a decision record
+  `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft` (escape, tag `1`, the
+  16-byte request id, the chosen endpoint's member index, a new write
+  sequence, choice `0`), through the draft vehicle path (temp, fsync, rename,
+  directory sync).
+  Only once it is durable does the receiver take its disk state, the source
+  revert to its disk bytes and the request answer; a write that fails refuses
+  the Discard `DraftFailed`, and one that may have reached the disk still
+  disarms the pair. This also resolves a held or blocked pair at once, with
+  no relaunch: its pages stop waiting. A durable cancellation disarms that pair across every
+  later launch: neither its receiver's nor its source's operation record is
+  recovered. A source's decision cancels only the source's removal: no
+  relaunch reinstalls it, and the receiver's record still recovers; a later
+  Use Disk on that receiver records the full cancellation. Sibling pairs
+  continue; referrers keep today's cancellation behaviour (their rewrites
+  still publish).
+- A decided pair whose source is no longer at its slot keeps the source's
+  admitted text (its record's base) in the operation draft: **restore** when
+  the slot is empty and Tine's trash holds that text, else **retained**
+  (custody only). The host's guarded restoration puts that text back into
+  the source page at risk over an absent base; its own draft and guarded
+  create publish it, refused over an occupied slot, a claimant or twin, or
+  unsaved text, and that publication cancels the pair. The window does not
+  offer restoration yet (follow-up): the draft keeps custody meanwhile.
+- A decision this code does not act on (reviewed text `1`, superseding input
+  `2`) or an unreadable or mismatched decision naming a readable paired
+  operation blocks that operation's source removals and raises a draft error;
+  it stays in place, never quarantined. A malformed paired operation draft is
+  quarantined intact like any unreadable vehicle. A launch whose draft
+  directory sync fails blocks every source removal until a successful draft
+  store Retry or a later launch; the Retry re-arms them in place.
+- Retirement: the paired draft retires whole once each pair is settled or
+  cancelled and no page is at risk: superseded page drafts first, then the
+  operation draft, then its decisions. A paired record a newer vehicle
+  superseded counts as history then. A later operation never absorbs a
+  paired draft: its records never leave their pair as standalone page
+  drafts. A decision left by a crash after its operation is durably absent
+  is removed at launch.
+- A paired source's removal takes its destructive step only while draft I/O
+  is up; while it is down (`draft_status` names why) the removal waits.
+- **Ownership (call 21).** The graph's owner lock is the only serializer of
+  its draft namespace. One function answers whether a starting host owns it
+  (`src-tauri/src/owner/lease.rs` `draft_ownership`): the desktop window and
+  `tine serve` own it exactly when their claim holds the lock; mobile, with
+  no command-line owner, always does. A host whose claim yields no lease (the
+  lock call failed or is unsupported) starts with drafts unowned: it reads
+  the namespace but never creates, writes, syncs or retires anything there,
+  Retry cannot bring draft I/O up, an operation that needs a draft and Use
+  Disk on a pair refuse `DraftFailed`, and paired removals wait. Page saves
+  are unchanged (their custody marker included).
+- No chaining: an operation over any page of a running order, or of a paired
+  operation draft with a pair still unresolved (armed, held or blocked),
+  waits until that order ends or the pair resolves. A settled, cancelled or
+  disarmed pair releases its pages before its draft retires. A deletion answers `Waiting`. A rename waits up to
   `OPERATION_WAIT` (10 s) and is then refused `Busy`, changing nothing.
   Feature writers run as host operations too. Admission holds no caller-side
   reservation: it compares the planned bytes and context under the path locks.
@@ -1560,8 +1652,7 @@ another key's directory are refused (`InvalidInput`), never normalized. The layo
 over its names as Tine splits them, never as the platform normalizes it: each source locates the spelling (how many of
 its names exist, and what is at the deepest existing prefix) and `spelled_kind` decides from that alone. A file
 spelled as a directory, or a path whose deepest existing prefix is a file, is not a directory, so Windows (which
-reports a path under a file as not found and drops a trailing `/` or `.`) refuses what Linux refuses and reads a
-config under a file as a config problem. On Windows a name holding `:` (a drive-relative `C:` or an alternate data
+reports a path under a file as not found and drops a trailing `/` or `.`) refuses what Linux refuses. On Windows a name holding `:` (a drive-relative `C:` or an alternate data
 stream) is refused before anything is probed; the spelling check refuses only a leading drive (`C:x`), and the
 containment check would pass `x/C:`. The memory source locates in one tree walk. The disk builds the probed path once
 (the root's own spelling, then the names after the platform separator) and probes it nearest first: one `lstat`, and
@@ -2729,12 +2820,15 @@ pages once; it still reloads only clean rewritten pages and discards moved pages
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2;
 re-measured after RENAME-COST 2026-10-11): the 1-/60-block referrer fixtures
-write 4 files and 300/4,137 bytes with 15 syncs for the rename itself: the operation draft, the
+write 4 files and 305/4,142 bytes with 15 syncs for the rename itself (the paired operation
+draft adds 5 bytes: escape, tag, pair count and two indexes; a 60-block source writes
+1,900 bytes), with no added sync, launch read or listing; the two receiver checks add
+two receiver reads per removed source: the operation draft, the
 referrer, the destination page and the source's custody marker (16 before
 RO3 (a), which stopped syncing the trashed source's data). The probe counts 20: one more is the
 host launch's draft sync, and four are the fresh graph's first deletion creating the trash chain
 and the custody directory (each created directory's parent sync, counted since 2026-10-21). On
-Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files and 199/4,036 bytes and counts 17 syncs
+Windows the custody marker is not written, so a rename writes 3 files and 204/4,041 bytes and counts 17 syncs
 (measured with markers forced off on Linux; the counter counts each sync call, and Windows'
 directory syncs are no-ops). The
 referrer's old and new payloads are each written once into the operation

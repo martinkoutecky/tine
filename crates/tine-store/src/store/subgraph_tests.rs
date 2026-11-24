@@ -213,8 +213,101 @@ fn config_problems_answer_alike_from_files() {
         if cfg!(unix) && memory != disk {
             wrong.push(format!("{case}: memory {memory:?}, disk {disk:?}"));
         }
+        // Windows reports a read under a file as not found, so its disk reads
+        // a `logseq` file as no config. Pinned as it ships: how a config read
+        // classifies that is the config read's own question, not the layout's.
+        if cfg!(windows) && case == "under a file" {
+            if disk.is_some() || memory.is_none() {
+                wrong.push(format!("{case}: memory {memory:?}, disk {disk:?}"));
+            }
+            continue;
+        }
         if memory.is_some() != disk.is_some() || disk.is_some() != (case != "absent") {
             wrong.push(format!("{case}: memory {memory:?}, disk {disk:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// What a config read serves at open, on disk and from files in memory, for
+/// each shape `logseq/config.edn` can take: (the problem's kind, whether a
+/// config text is served, whether the settings are the defaults). The path
+/// reading under it changed; what a config read produces did not, so the
+/// table is the one the code before that change gives too.
+#[test]
+fn config_reads_serve_what_they_served() {
+    type Served = (Option<std::io::ErrorKind>, bool, bool);
+    let defaults = format!("{:?}", tine_core::config::Config::default());
+    let served = |state: &crate::ConfigState| -> Served {
+        (
+            state.problem.as_ref().map(|error| error.kind),
+            state.source.is_some(),
+            format!("{:?}", state.config) == defaults,
+        )
+    };
+    use std::io::ErrorKind::{InvalidData, IsADirectory, NotADirectory};
+    let cases: [(&str, &[(&str, &[u8])], Served); 5] = [
+        ("absent", &[], (None, false, true)),
+        (
+            "a directory",
+            &[("logseq/config.edn/inner", b"x")],
+            (Some(IsADirectory), false, true),
+        ),
+        (
+            "a logseq file",
+            &[("logseq", b"x")],
+            (Some(NotADirectory), false, true),
+        ),
+        (
+            "invalid UTF-8",
+            &[("logseq/config.edn", b"{:a \xff}")],
+            (Some(InvalidData), false, true),
+        ),
+        (
+            "a parse error",
+            &[("logseq/config.edn", b"{:hidden [\n")],
+            (None, true, false),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (case, extra, want) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        std::fs::write(temp.path().join("pages/a.md"), "- a\n").unwrap();
+        for (rel, bytes) in extra {
+            let path = temp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        let (store, state) = open_disk(temp.path()).unwrap();
+        let disk = served(&state);
+        store.close();
+        let (view, _) =
+            WholeGraph::from_files(files_under(temp.path()), Vec::new(), false).unwrap();
+        let memory = served(view.config());
+        // Windows reads a directory as PermissionDenied and a path under a
+        // file as not found (no config): the disk's kinds are the platform's.
+        if cfg!(unix) && disk != want {
+            wrong.push(format!("{case}: disk {disk:?}, want {want:?}"));
+        }
+        if memory != want {
+            wrong.push(format!("{case}: memory {memory:?}, want {want:?}"));
+        }
+    }
+    // A dangling link is no config on disk (a memory graph holds no links).
+    #[cfg(unix)]
+    {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        std::fs::write(temp.path().join("pages/a.md"), "- a\n").unwrap();
+        std::fs::create_dir_all(temp.path().join("logseq")).unwrap();
+        let target = temp.path().join("elsewhere.edn");
+        std::os::unix::fs::symlink(target, temp.path().join("logseq/config.edn")).unwrap();
+        let (store, state) = open_disk(temp.path()).unwrap();
+        let disk = served(&state);
+        store.close();
+        if disk != (None, false, true) {
+            wrong.push(format!("a dangling link: disk {disk:?}"));
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");

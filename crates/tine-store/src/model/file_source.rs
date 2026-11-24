@@ -729,29 +729,6 @@ impl FileSource {
         )
     }
 
-    /// A failed read of the graph-relative file `rel` under `root` (a fixed
-    /// spelling, such as [`CONFIG_FILE`]) as [`spelled_kind`] reads it, with
-    /// `error` as the answer for `rel` itself: a `NotFound` under a file is
-    /// not a directory. A memory read's error already is ([`Files::node`]).
-    /// Free unless `error` is `NotFound` on disk; then one `stat` per missing
-    /// ancestor ([`locate_nearest`]).
-    pub(crate) fn read_error(&self, root: &Path, rel: &str, error: io::Error) -> io::Error {
-        if matches!(self, FileSource::Memory(_)) || error.kind() != io::ErrorKind::NotFound {
-            return error;
-        }
-        let names = match tine_names(rel) {
-            Ok(names) => names,
-            Err(_) => return error,
-        };
-        let (path, names) = spelled_path(root, names);
-        let located = locate_nearest(&path, names, Err(error), |prefix| disk_kind(prefix, true));
-        let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
-        match spelled_kind(false, located, is_dir, &path) {
-            Err(error) => error,
-            Ok(_) => unreachable!("a missing file stays missing"),
-        }
-    }
-
     /// Whether `path` is a regular file of the graph at `root`: not a
     /// symlink, and on disk inside the root once its ancestors resolve.
     pub(crate) fn graph_file(&self, root: &Path, path: &Path) -> io::Result<bool> {
@@ -833,13 +810,9 @@ impl Graph {
             .collect();
         let undo = self.memory_files()?.replace(changes)?;
         let before = reread.then(|| {
-            let found = super::find_config(&self.source, &self.root);
-            let in_force = self.config_source.is_some();
-            let (settings, problem) =
-                super::config_outcome(&self.source, &self.root, found, in_force);
-            let (config, text) =
-                settings.unwrap_or_else(|| (self.config.clone(), self.config_source.clone()));
-            self.set_config_read((config, problem, text))
+            let path = self.root.join(CONFIG_FILE);
+            let read = super::read_config_in(&self.source, &path);
+            self.set_config_read(read)
         });
         let replaced: Vec<Replaced> = (undo.iter())
             .map(|(rel, before)| Replaced {

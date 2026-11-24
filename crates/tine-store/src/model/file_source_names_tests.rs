@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 thread_local! {
-    /// How many probes the disk source made on this thread ([`super::disk_probe`]).
+    /// How many probes the disk source made on this thread ([`locate_nearest`]).
     pub(super) static DISK_PROBES: Cell<usize> = const { Cell::new(0) };
     /// How many names a lookup visited on this thread: a memory walk's step,
     /// or a name the disk wrote into a probed path.
@@ -145,8 +145,6 @@ fn windows_answers_read_as_tine_reads_them() {
         let (kind, probed) = decide(rel, &[("x", "file")]);
         assert_eq!((kind.as_str(), probed.len()), ("NotADirectory", 2), "{rel}");
     }
-    let (kind, probed) = decide("logseq/config.edn", &[("logseq", "file")]);
-    assert_eq!((kind.as_str(), probed.len()), ("NotADirectory", 2));
     // A file spelled as a directory: probed by its clean names, found.
     for rel in ["x/", "x/.", "x//./"] {
         let (kind, probed) = decide(rel, &[("x", "file")]);
@@ -275,12 +273,6 @@ fn the_disk_reads_configured_spellings_by_tines_names() {
     for rel in ["x/pages", "x/j", "x/./pages"] {
         assert_eq!(counted(rel), ("NotADirectory".into(), under), "{rel}");
     }
-    let read = |rel: &str| {
-        let error = std::fs::File::open(root.join(rel)).err().unwrap();
-        disk.read_error(root, rel, error).kind()
-    };
-    assert_eq!(read("x/config.edn"), ErrorKind::NotADirectory);
-    assert_eq!(read("a/config.edn"), ErrorKind::NotFound);
 }
 
 /// The same spellings over the memory and the disk source give the same

@@ -91,3 +91,4 @@ see the project `CLAUDE.md`.
 | [0077](0077-unlinked-mentions-count-code-text.md) | Unlinked mentions count text inside code, math and other literal regions (supersedes 0043's code-exclusion rule; matches OG) | Accepted |
 | [0080](0080-theme-typography-local-fonts.md) | Theme API 0.3 lets a package name local fonts and a block line height (closed grammar, no CSS, no downloads) | Accepted |
 | [0081](0081-browser-mock-on-the-core.md) | The browser mock answers no graph question: the browser core does | Accepted |
+| [0082](0082-durable-rename-pairing.md) | A rename's pairing is recorded in its operation draft | Accepted |

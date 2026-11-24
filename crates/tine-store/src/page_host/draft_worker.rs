@@ -109,12 +109,18 @@ impl<F: HostIo> Host<F> {
                 if previous.is_none() {
                     return Disposition::Disabled;
                 }
-                let op = host.live_op(key);
-                if let Some(op) = &op {
+                // A settled paired operation leaves through its own whole
+                // retirement only (the settlement rewrite), never split.
+                let ops: Vec<String> = (host.vehicles_of.get(key).into_iter().flatten())
+                    .filter(|name| name.starts_with("op-"))
+                    .cloned()
+                    .collect();
+                for op in &ops {
                     if host.retire_whole(op) {
                         return Disposition::Pending;
                     }
                 }
+                let op = host.live_op(key);
                 // L2 (RENAME-COST): this page's record leaves with its
                 // operation vehicle, after the other pages' copies.
                 let mut tasks = op.map(|op| host.absorb(&op, &keys)).unwrap_or_default();
@@ -160,10 +166,16 @@ impl<F: HostIo> Host<F> {
         }
         let live = &self.live_ops[op];
         let records = &self.drafts[op];
-        let whole = live.owed.is_empty()
+        // A paired operation's record that a newer vehicle superseded is
+        // history: that vehicle holds the page's text (call 20's rewrite
+        // drops the settled pair with its own records only).
+        let paired = self.order.paired(op).is_some();
+        let whole = !live.waits()
             && records.iter().all(|r| {
-                !self.pages.get(&r.page).is_some_and(|p| p.risk)
-                    && self.durable.get(&r.page).is_some_and(|w| w.wseq == r.wseq)
+                let winner = self.durable.get(&r.page).is_some_and(|w| w.wseq == r.wseq);
+                let superseded = self.durable.get(&r.page).is_some_and(|w| w.wseq > r.wseq);
+                (winner && !self.pages.get(&r.page).is_some_and(|p| p.risk))
+                    || (paired && superseded)
             });
         if !whole {
             return false;
@@ -176,6 +188,10 @@ impl<F: HostIo> Host<F> {
             .map(Vehicle::remove)
             .collect();
         tasks.push_back(Vehicle::remove(op.into()));
+        // A paired operation's decisions leave after it: one left behind by
+        // a crash once the operation is durably absent is cleanup only.
+        let decisions = self.order.paired(op).map(|p| p.decisions.clone());
+        tasks.extend(decisions.into_iter().flatten().map(Vehicle::remove));
         let task = tasks.pop_front().unwrap();
         self.worker = Some(DraftWorker {
             effect: op.into(),
@@ -201,6 +217,13 @@ impl<F: HostIo> Host<F> {
     /// a durable copy of each other page's record, then its unlink. For
     /// those pages a representation stutter (§2a rule 3).
     pub(super) fn absorb(&self, op: &str, except: &BTreeSet<PageKey>) -> VecDeque<Vehicle> {
+        // A paired operation draft is immutable: a newer page draft wins for
+        // editor text without erasing the original obligation, and a pair's
+        // records never leave their pair as standalone records (a settled
+        // pair leaves only through its whole retirement, `retire_whole`).
+        if self.order.paired(op).is_some() {
+            return VecDeque::new();
+        }
         let records = self.drafts[op].iter().filter(|r| !except.contains(&r.page));
         let mut tasks: VecDeque<_> = records
             .map(|r| Vehicle::write(drafts::page_name(&r.page), std::slice::from_ref(r)))
@@ -240,12 +263,22 @@ impl<F: HostIo> Host<F> {
         // Every rename writes a page, and so does an apply that is not only
         // deletions; a deletion's records have no bytes (M6 `renaming`).
         let rename = matches!(reply, Reply::Caller(_)) && records.iter().any(|r| r.bytes.is_some());
+        // A caller's operation with moves writes the paired operation draft
+        // (its pairing survives relaunch); everything else the legacy body.
+        let pairs = gates
+            .as_ref()
+            .filter(|_| matches!(reply, Reply::Caller(_)))
+            .and_then(|gates| drafts::pairing(&records, gates.moves()));
+        let task = match &pairs {
+            Some(pairs) => Vehicle::write_operation(name.clone(), &records, pairs),
+            None => Vehicle::write(name.clone(), &records),
+        };
         self.worker = Some(DraftWorker {
             effect: name.clone(),
             refresh: None,
             pages: keys,
             before,
-            task: Vehicle::write(name, &records),
+            task,
             remaining: VecDeque::new(),
             application: Some(Application::Operation {
                 pages,
@@ -435,6 +468,15 @@ impl<F: HostIo> Host<F> {
                 let versions: BTreeMap<PageKey, u64> =
                     pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
                 if present {
+                    let paired = drafts::op_id(&worker.task.name).and_then(|id| {
+                        let moves = gates.as_ref()?.moves();
+                        let pairs = drafts::pairing(&records, moves)?;
+                        Some(order::PairedOp::new(id, &records, &pairs))
+                    });
+                    if let Some(paired) = paired {
+                        self.order.adopt(worker.task.name.clone(), paired);
+                        self.repair_op(&worker.task.name.clone());
+                    }
                     self.order.install(gates);
                     self.version = last_version;
                     for (key, page) in pages {

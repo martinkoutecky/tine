@@ -16,6 +16,8 @@ mod guard_tests;
 mod production_crash_tests;
 #[path = "production_move_crash_tests.rs"]
 mod production_move_crash_tests;
+#[path = "production_rename_relaunch_tests.rs"]
+mod production_rename_relaunch_tests;
 #[path = "storage_acceptance_tests.rs"]
 mod storage_acceptance_tests;
 
@@ -1559,9 +1561,55 @@ fn second_deletion_with_owed_custody_keeps_both_payloads() {
 }
 
 /// An op over k pages with several deletions: each keeps its own marker
-/// across a restart, and launch completes each independently.
+/// across a restart, and launch completes each independently. Here the
+/// unpaired operation (no move, the legacy body), which has no order; the
+/// paired rename's order survives the restart
+/// (`k_page_rename_keeps_its_order_and_deletion_custody_after_restart`).
 #[test]
 fn k_page_operation_keeps_independent_deletion_custody_after_restart() {
+    let mut f = Fixture::new();
+    let effects = BTreeMap::from([
+        ("a.md".to_string(), (None, Some(Arc::from(&b"A"[..])))),
+        ("b.md".to_string(), (None, Some(Arc::from(&b"B"[..])))),
+        ("c.md".to_string(), (Some(Arc::from(&b"A"[..])), None)),
+    ]);
+    assert_eq!(f.host.apply(&effects, &[]), Disposition::Pending);
+    f.drain();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    let fault = |f: &mut Fixture| {
+        f.host
+            .fs
+            .faults
+            .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
+    };
+    fault(&mut f);
+    assert_eq!(f.save("b.md"), Outcome::Uncertain);
+    // A restart (completion only): launch's custody for b fails again, so
+    // b's marker stays, and a's recovered deletion runs.
+    fault(&mut f);
+    relaunch(&mut f);
+    fault(&mut f);
+    assert_eq!(f.save("a.md"), Outcome::Uncertain);
+    assert_eq!(markers(&mut f), 2);
+    reset_syncs();
+    relaunch(&mut f);
+    assert_eq!(syncs(), 0, "launch custody syncs no payload data (RO3 (a))");
+    assert_eq!(markers(&mut f), 0);
+    for page in ["a.md", "b.md"] {
+        assert_eq!(f.host.observe(page), Disposition::Applied);
+        reset_syncs();
+        assert_eq!(f.save(page), Outcome::Published);
+        assert_eq!(syncs(), 1, "only the restored deletion's marker");
+    }
+    assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
+    assert_eq!(fs::read_dir(&f.trash).unwrap().count(), 2);
+}
+
+/// The paired case: a rename whose referrer is also deleted. Each deletion
+/// keeps its own marker across restarts, and the order survives them: the
+/// source's removal still waits for the referrer's witness after a relaunch.
+#[test]
+fn k_page_rename_keeps_its_order_and_deletion_custody_after_restart() {
     let mut f = Fixture::new();
     assert_eq!(
         f.host.rename_with(
@@ -1592,23 +1640,43 @@ fn k_page_operation_keeps_independent_deletion_custody_after_restart() {
         Disposition::Waiting,
         "b is unwitnessed"
     );
-    // A restart ends the order (completion only): launch's custody for b
-    // fails again, so b's marker stays, and a's recovered deletion runs.
+    // A restart keeps the order (the paired draft reinstalls it): launch's
+    // custody for b fails again, so b's marker stays, and a waits for b.
     fault(&mut f);
     relaunch(&mut f);
+    assert_eq!(markers(&mut f), 1, "b's marker stays");
+    assert_eq!(
+        f.host.start_save("a.md"),
+        Disposition::Waiting,
+        "after the restart a still waits for b"
+    );
+    // The receiver saves first again; its bytes are already on disk, so the
+    // save of the same bytes re-witnesses its durability (Published).
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Waiting);
+    // b's deletion is already on disk (its trash step ran): its custody step
+    // finishes b's marker, and its save re-witnesses the deletion.
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(markers(&mut f), 0, "its custody step finished b's marker");
     fault(&mut f);
     assert_eq!(f.save("a.md"), Outcome::Uncertain);
-    assert_eq!(markers(&mut f), 2);
+    assert_eq!(markers(&mut f), 1, "a's own marker");
     reset_syncs();
     relaunch(&mut f);
     assert_eq!(syncs(), 0, "launch custody syncs no payload data (RO3 (a))");
     assert_eq!(markers(&mut f), 0);
-    for page in ["a.md", "b.md"] {
-        assert_eq!(f.host.observe(page), Disposition::Applied);
-        reset_syncs();
-        assert_eq!(f.save(page), Outcome::Published);
-        assert_eq!(syncs(), 1, "only the restored deletion's marker");
-    }
+    assert_eq!(f.host.observe("a.md"), Disposition::Applied);
+    assert_eq!(
+        f.host.start_save("a.md"),
+        Disposition::Waiting,
+        "order again"
+    );
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    reset_syncs();
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert_eq!(syncs(), 1, "only the restored deletion's marker");
+    assert!(!f.graph.join("a.md").exists() && !f.graph.join("b.md").exists());
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
     assert_eq!(fs::read_dir(&f.trash).unwrap().count(), 2);
 }
@@ -1875,8 +1943,45 @@ fn process_restart_selects_newest_draft_preserves_corruption_and_ignores_v1() {
     assert!(f.root.path().exists());
 }
 
+/// The unpaired operation (no move, the legacy body) is exploded at
+/// launch into page drafts, every record kept.
 #[test]
 fn real_operation_install_explosion_and_restart_keep_all_records() {
+    let mut f = Fixture::new();
+    fs::write(f.graph.join("b.md"), b"- [[A]]\n").unwrap();
+    let bytes = |b: &[u8]| Some(Arc::from(b));
+    let effects = BTreeMap::from([
+        ("a.md".to_string(), (None, bytes(b"A"))),
+        (
+            "b.md".to_string(),
+            (bytes(b"- [[C]]\n"), bytes(b"- [[A]]\n")),
+        ),
+        ("c.md".to_string(), (bytes(b"A"), None)),
+    ]);
+    assert_eq!(f.host.apply(&effects, &[]), Disposition::Pending);
+    for _ in 0..3 {
+        f.host.advance_draft();
+    }
+    assert_eq!(f.host.start_save("c.md"), Disposition::Waiting);
+    f.restart(); // durable-but-unapplied op recovered from real files
+    assert_eq!(f.host.pages["c.md"].buf.as_deref(), Some(b"A".as_slice()));
+    assert_eq!(f.host.pages["a.md"].buf, None);
+    assert_eq!(
+        f.host.pages["b.md"].buf.as_deref(),
+        Some(b"- [[C]]\n".as_slice())
+    );
+    let files = f.host.fs.draft_files(true);
+    assert_eq!(files.len(), 3);
+    assert!(files.iter().all(|(name, _)| name.starts_with("p-")));
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
+}
+
+/// The paired case: a rename's operation draft is immutable, so launch
+/// recovers every record from it without exploding it, and reinstalls its
+/// order (the receiver saves first).
+#[test]
+fn real_paired_operation_restart_keeps_all_records_in_one_draft() {
     let mut f = Fixture::new();
     fs::write(f.graph.join("b.md"), b"- [[A]]\n").unwrap();
     assert_eq!(
@@ -1902,8 +2007,14 @@ fn real_operation_install_explosion_and_restart_keep_all_records() {
         Some(b"- [[C]]\n".as_slice())
     );
     let files = f.host.fs.draft_files(true);
-    assert_eq!(files.len(), 3);
-    assert!(files.iter().all(|(name, _)| name.starts_with("p-")));
+    assert_eq!(files.len(), 1, "not exploded");
+    assert_eq!(
+        drafts::decode(&files[0].1).unwrap().len(),
+        3,
+        "every record"
+    );
+    assert!(drafts::pairs_of(&files[0].1).is_some());
+    assert_eq!(f.host.start_save("a.md"), Disposition::Waiting);
     assert_eq!(f.save("c.md"), Outcome::Published);
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"A");
 }

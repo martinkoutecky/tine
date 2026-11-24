@@ -3,7 +3,7 @@
 
 Run at repository root: python3 docs/storage-model/replay/replay36.py
 Use --check to regenerate and compare without rewriting the committed fixture.
-Full ITF/logs stay in artifacts/sb1-model/. This supplement does not replace the
+Full ITF/logs stay in target/s36-policy/. This supplement does not replace the
 s3.5 transcription, full-state conformance corpus or its Lean proof.
 """
 import hashlib
@@ -44,7 +44,7 @@ def decode(v):
 
 def main():
     os.environ.update(QNT='storage-s36.qnt', SCEN='scenarios-s36.inc')
-    run.OUT = ROOT / 'artifacts/sb1-model/quint-replay'
+    run.OUT = ROOT / 'target/s36-policy'
     fixture = {key: hashlib.sha256((run.ROOT / file).read_bytes()).hexdigest()
                for key, file in [('model_sha256', 'storage-s36.qnt'),
                                  ('scenarios_sha256', 'scenarios-s36.inc')]}

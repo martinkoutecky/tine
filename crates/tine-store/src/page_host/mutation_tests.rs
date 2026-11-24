@@ -355,6 +355,9 @@ fn switch_checks_job_and_representation_worker_after_confirmation() {
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
     assert_eq!(h.switch_finish(), Disposition::Waiting);
 
+    // A rename's paired operation draft is immutable: the edit's refresh is
+    // a newer page draft beside it, with no representation phase; every
+    // record stays durable, so the switch need not wait for one.
     let mut h = host();
     assert_eq!(
         h.rename_with("a.md", "c.md", &BTreeSet::new(), |bytes, _, _| Ok(
@@ -362,6 +365,28 @@ fn switch_checks_job_and_representation_worker_after_confirmation() {
         )),
         Disposition::Pending
     );
+    for _ in 0..4 {
+        h.advance_draft();
+    }
+    edit(&mut h, "c.md", "edited");
+    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
+    for _ in 0..4 {
+        h.advance_draft();
+    }
+    assert!(h.worker.is_none(), "paired: no representation phase");
+    let scan = drafts::scan(h.fs.draft_files(true));
+    assert_eq!(scan.files.len(), 2, "the operation draft and c's refresh");
+    assert_eq!(scan.logical["a.md"].bytes, None, "a's record is kept");
+    assert_eq!(scan.logical["c.md"].bytes, text("edited"));
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
+
+    // The unpaired operation (no move: the legacy body).
+    let mut h = host();
+    let effects = BTreeMap::from([
+        ("a.md".to_string(), (None, text("A"))),
+        ("c.md".to_string(), (text("A"), None)),
+    ]);
+    assert_eq!(h.apply(&effects, &[]), Disposition::Pending);
     for _ in 0..4 {
         h.advance_draft();
     }

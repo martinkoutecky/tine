@@ -1,9 +1,9 @@
 # s3.5 executable storage model
 
 This private, unwired module transcribes `storage-s35.qnt` s3.5, SHA-256
-`7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c`.
+`52a474a903c21a0a1bb8f0c8c53536de3a5a053a58c9de7b06fa20204837955b`.
 The scenario source is `scenarios-s35.inc` s3.5, SHA-256
-`9200a28404f60177fa3dadda6e3b932f8a866c6bb7a2110854fcd7e181abe6b5`.
+`bf9605a64f6a0f1ea7b9d2984191a7865ba0997df25f6990ceaf1324ee8c4960`.
 s3.4 adds durable external name claimants (`Sys.claimed`, `extClaim`), the
 absent-create admission guard and `name-slot-create-over-claim` tag (MNS).
 s3.5 restores a cancelling rename's source only when held (MRH).
@@ -12,14 +12,17 @@ bytes to a page set, each page's expected bytes checked against the host's
 current bytes (`opCur`), with an optional move whose gates order the writes as
 a rename's do. Its mutants MEX/MAC/MAN/MAM drop the stale-base check, the clean
 check, the drafts and the move gates.
-s3.2 adds a rename's in-run write order (`order.rs`, STEP3-DESIGN "rename
-ordering = option 2"): a full rename installs gates over the pages it changes,
-a gated page's save does not start, a page's witness is its `dirSync(ok)` at the
-operation's version, a Discard of an unwitnessed destination reverts the source
-while it still holds the deletion, and `down` clears the gates. The ghost checks
-`orderHolds` (no save started with an unretired obligation) and
-`renameResolves` (a renamed page keeps a file at one of its two paths) beside
-the guarantee; a power cut or launch clears both obligations.
+Rename order is installed over the receiver, referrers and source. A page's
+publication witnesses its operation version. `pairing.rs` keeps the original
+source and certified receiver image in the durable operation record. Launch
+rebuilds the gates from surviving pairs and re-witnesses exact members. The
+source check requires the certified receiver before the trash step and again
+after directory sync. A durable Use Disk choice prevents replay of the
+cancelled removal. Recovery retains the preimage when the source needs
+restoration. The owner claim gates draft changes and paired removals.
+`orderHolds` includes exclusive ownership and exact receiver preflight.
+`renameResolves` includes durable preimage coverage alongside the existing
+invariant. `saving.rs` contains the ordinary save and draft transitions.
 It performs no I/O and has no clock, async tasks or production consumers.
 Replay establishes transcription evidence, not backend or native I/O conformance.
 
@@ -73,24 +76,26 @@ and request subactions preserve the model's commit boundaries.
 
 The existing `scripts/s2/` and `tests/fixtures/s2/` paths are retained to avoid
 unrelated path/reference changes; their contents now describe s3. All generated
-models, logs, ITF and larger corpora stay under ignored `scratch/s3/`.
+models, logs, ITF and larger corpora stay under ignored `target/s3/`.
 Generators never write into the supplied model directory or proof lanes.
 Quint calls take `$TINE_AGENTS/og/.tlc.lock`; `TINE_AGENTS` defaults to the
 repository's sibling `tine-agents` directory.
 
-Regenerate the 194 scenarios, four profile oracles, 38 model-mutant oracles and
+Regenerate the 206 scenarios, four profile oracles, 50 model-mutant oracles and
 three-path random traces from the repository root:
 
 ```sh
-python3 -B scripts/s2/generate.py /path/to/og/merged --scenario-source /path/to/og/merged/scenarios-s35.inc --quint /path/to/og/model/tools/node_modules/.bin/quint
-python3 -B scripts/s2/witnesses.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
-bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; cargo test -p tine-store'
+python3 -B scripts/s2/generate.py docs/storage-model/quint --scenario-source docs/storage-model/quint/scenarios-s35.inc --quint docs/storage-model/quint/node_modules/.bin/quint
+python3 -B scripts/s2/witnesses.py docs/storage-model/quint --quint docs/storage-model/quint/node_modules/.bin/quint
+bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/target/s3/traces.json; cargo test -p tine-store'
 ```
 
 The generator checks both pinned source hashes, expands intermediate assertions,
-conditionals and refusal checks, and compares 8,148 scenario outcomes. It
-distinguishes pass, disabled action (QNT507/QNT513), failed assertion (QNT508)
-and test returned false (QNT511). All 38 sweep mutants fail their own scenario.
+conditionals and refusal checks, and compares 11,124 scenario outcomes. It
+distinguishes pass, disabled action, failed assertion and test returned false.
+Quint also reports QNT508 when an expectation follows a disabled action. The
+generator reads the diagnostic message to classify that case. Each sweep
+mutant has a failing scenario.
 MRH fails the retired-source outcome assertion while the three invariants hold.
 MRN5 violates the restored-deletion completion assertion rather than the
 checked invariants (guarantee, orderHolds, renameResolves);
@@ -114,7 +119,9 @@ instrumentation-only capture stutter exports the last state's guard/predicate
 oracles; it is checked to preserve Sys/Ghost and excluded from replay.
 Parameterized witnesses instantiate one, two and five paths, including sparse
 launch version numbering. Three longer witnesses cross the diagnostic 1,000
-bounds; they use the same lossless delta encoding, never extra transition guards.
+bounds and use the same lossless delta encoding. The 2,002-step queue witness
+runs in chunks of 200 actions and checks equality of every state field at each
+boundary. The final chunk checks that the queue exceeds 1,000 entries.
 
 Regenerate supporting reachability samples:
 
