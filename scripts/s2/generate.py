@@ -54,15 +54,19 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c"
-SCENARIO_SHA = "9200a28404f60177fa3dadda6e3b932f8a866c6bb7a2110854fcd7e181abe6b5"
-SCENARIO_COUNT = 194
+SHA = "52a474a903c21a0a1bb8f0c8c53536de3a5a053a58c9de7b06fa20204837955b"
+SCENARIO_SHA = "bf9605a64f6a0f1ea7b9d2984191a7865ba0997df25f6990ceaf1324ee8c4960"
+SCENARIO_COUNT = 206
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
     "weak": 'Set("crash", "power", "weak")',
     "all": 'Set("crash", "power", "R1", "weak")',
 }
+PACKED_APPLY = """  action opApplyPacked(e0: bool, e1: bool, e2: bool, t0: int, t1: int, t2: int, c0: int, c1: int, c2: int, dst: int, src: int): bool =
+    opApply(PAGES.filter(p => (p == 0 and e0) or (p == 1 and e1) or (p == 2 and e2)).mapBy(p => if (p == 0) t0 else if (p == 1) t1 else t2),
+      Map(0 -> c0, 1 -> c1, 2 -> c2), dst, src)
+"""
 
 def scenarios(source):
     source = re.sub(r"//[^\n]*", "", source)
@@ -164,10 +168,7 @@ def traced_model(model):
     driver = """  action powerKBits(k0: bool, k1: bool, k2: bool): bool = powerK(PAGES.filter(p => (p == 0 and k0) or (p == 1 and k1) or (p == 2 and k2)))
   action opRenamePacked(src: int, dst: int, r0: bool, r1: bool, r2: bool, t0: int, t1: int, t2: int): bool =
     opRename(src, dst, PAGES.exclude(Set(src, dst)).filter(p => (p == 0 and r0) or (p == 1 and r1) or (p == 2 and r2)), Map(0 -> t0, 1 -> t1, 2 -> t2))
-  action opApplyPacked(e0: bool, e1: bool, e2: bool, t0: int, t1: int, t2: int, c0: int, c1: int, c2: int, dst: int, src: int): bool =
-    opApply(PAGES.filter(p => (p == 0 and e0) or (p == 1 and e1) or (p == 2 and e2)).mapBy(p => if (p == 0) t0 else if (p == 1) t1 else t2),
-      Map(0 -> c0, 1 -> c1, 2 -> c2), dst, src)
-  var traceAction: { name: str, args: List[int] }
+""" + PACKED_APPLY + """  var traceAction: { name: str, args: List[int] }
   action traceInit = all { init, traceAction' = { name: "init", args: List() } }
   action traceStep = any {
 """ + ",\n".join(groups) + "\n  }\n"
@@ -177,7 +178,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--quint", type=Path)
-    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.5 scenarios (og/merged/scenarios-s35.inc; hash-pinned)")
+    ap.add_argument("--scenario-source", type=Path, required=True, help="hash-pinned s3.5 scenarios in docs/storage-model/quint")
     ap.add_argument("--traces-per-profile", type=int, default=64)
     ap.add_argument("--steps", type=int, default=40)
     ap.add_argument("--sample", type=int, default=8, help="committed traces per profile; all generated traces are also replayed")
@@ -185,7 +186,8 @@ def main():
     ap.add_argument("--reuse-scenarios", action="store_true", help="reuse scenario oracle logs but generate fresh random traces")
     args = ap.parse_args()
     root = Path(__file__).resolve().parents[2]
-    work = root/"scratch"/"s3"; work.mkdir(parents=True, exist_ok=True)
+    work = root / "target/s3"
+    work.mkdir(parents=True, exist_ok=True)
     fixture = root/"crates/tine-store/tests/fixtures/s2"; fixture.mkdir(parents=True, exist_ok=True)
     model = (args.model_dir/"storage-s35.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
@@ -206,8 +208,14 @@ def main():
             assert result.returncode in [0, 1], log.read_text()
         out = log.read_text()
         statuses = {n: "pass" for n in re.findall(r"ok (\w+) passed", out)}
-        errors = dict(re.findall(r"\n\s+\d+\) (\w+):\n\s+Error \[(QNT\d+)\]", out))
-        statuses.update({n: {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled", "QNT511": "false"}.get(e, e) for n, e in errors.items()})
+        errors = re.findall(r"\n\s+\d+\) (\w+):\n\s+Error \[(QNT\d+)\]: ([^\n]*)", out)
+        for name, code, message in errors:
+            # Quint also uses QNT508 when a disabled action prevents reaching
+            # a later expectation. No predicate ran in that case.
+            if code == "QNT508" and message.startswith('Cannot continue to "expect"'):
+                statuses[name] = "disabled"
+            else:
+                statuses[name] = {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled", "QNT511": "false"}.get(code, code)
         assert len(statuses) == SCENARIO_COUNT, (p, m, len(statuses), out)
         assert m != "none" or set(statuses.values()) == {"pass"}
         assert m == "none" or statuses["m"+m] == "assertion"

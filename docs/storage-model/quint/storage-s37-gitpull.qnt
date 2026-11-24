@@ -121,7 +121,7 @@ module storage {
   pure val RACES: Set[str] = Set("crash", "power")
   // Deliberately broken variants, to show the properties catch losses. "none" is the spec.
   pure val MUTANT: str = "none"
-  // SWEEP-MUTS: {'MRN1': 'base', 'MRN2': 'base', 'MRN3': 'base', 'MRN4': 'base', 'MRN5': 'base', 'MTS': 'base', 'MDT': 'base', 'MC': 'base', 'MC1': 'R1', 'MQ': 'base', 'MLS': 'base', 'MLO': 'base', 'MCL': 'base', 'MX': 'base', 'MST': 'base', 'MWA': 'base', 'MOD': 'base', 'MIS': 'base', 'MDQ': 'base', 'MRB': 'base', 'MRE': 'base', 'MAK': 'base', 'MDO': 'base', 'MBD': 'base', 'MDA': 'base', 'MDE': 'base', 'MDD': 'base', 'MDF': 'base', 'MRD': 'base', 'MPR': 'base', 'MCV': 'base', 'MRF': 'base', 'MEX': 'base', 'MAC': 'base', 'MAN': 'base', 'MAM': 'base', 'MNS': 'base', 'MRH': 'base', 'MNC': 'base', 'MPD': 'base', 'MGI': 'base', 'MGB': 'base', 'MGC': 'base', 'MGA': 'base', 'MGE': 'base', 'MGO': 'base', 'MGD': 'base'}
+  // SWEEP-MUTS: {'MRN1': 'base', 'MRN2': 'base', 'MRN3': 'base', 'MRN4': 'base', 'MRN5': 'base', 'MTS': 'base', 'MDT': 'base', 'MC': 'base', 'MC1': 'R1', 'MQ': 'base', 'MLS': 'base', 'MLO': 'base', 'MCL': 'base', 'MX': 'base', 'MST': 'base', 'MWA': 'base', 'MOD': 'base', 'MIS': 'base', 'MDQ': 'base', 'MRB': 'base', 'MRE': 'base', 'MAK': 'base', 'MDO': 'base', 'MBD': 'base', 'MDA': 'base', 'MDE': 'base', 'MDD': 'base', 'MDF': 'base', 'MRD': 'base', 'MPR': 'base', 'MCV': 'base', 'MRF': 'base', 'MEX': 'base', 'MAC': 'base', 'MAN': 'base', 'MAM': 'base', 'MNS': 'base', 'MRH': 'base', 'MNC': 'base', 'MPD': 'base', 'MGI': 'base', 'MGB': 'base', 'MGC': 'base', 'MGA': 'base', 'MGE': 'base', 'MGO': 'base', 'MGD': 'base', 'MForgetChoice': 'base', 'MForgetGates': 'base', 'MSkipPrecheck': 'base', 'MSkipPostcheck': 'base', 'MNoResave': 'base', 'MDropRetained': 'base', 'MRejectRetainedSwitch': 'base', 'MForgetTouches': 'base', 'MSkipDecision': 'base', 'MKeepSettled': 'base', 'MDoubleOwner': 'base', 'MUnownedDelete': 'base'}
   // s3.4 additionally tests the isolated C3 mutant in the ordinary sweep.
   // SWEEP-CONTROL: {}
   // TLC bounds (tlc2.py rewrites these three lines).
@@ -157,6 +157,8 @@ module storage {
   // the operation's page); open: its pages still without their witness. A referrer waits for dst; src waits for
   // every other page.
   type Gate = { dst: int, src: int, vers: int -> int, open: Set[int] }
+  // Durable operation records, independent of the running order.
+  type Pair = { dst: int, src: int, records: int -> Draft, phase: str, decision: str }
   // s3.7: the git layer of one bounded pull. head: 0 = the captured H, 1 = the fetched U (upstream), 2 = any
   // other tip. Trees map PATHS to blobs (bytes; ABSENT = no entry). other/otherStable: the non-page file
   // (path 3) as disk/stable. index.lock (lockFile) survives a crash; its holder dies with Tine.
@@ -183,7 +185,10 @@ module storage {
     trashStable: int -> Set[int], // s3: the part of trash a power cut cannot revert (as stable for paths)
     pages: int -> Page, job: Job,
     w: int -> W, mb: int -> Mail, up: List[Up],
-    gates: List[Gate]              // s3.2: running renames' orders, in install order
+    gates: List[Gate],             // running renames' orders, in install order
+    pairs: List[Pair],             // durable vehicles, including any unresolved custody
+    owners: Set[int],              // 0 is this host; 1 is another claimant of the same namespace
+    draftOK: bool
   }
   var s: Sys
 
@@ -258,11 +263,20 @@ module storage {
     else pr
   pure def endPromise(pr: Promise, watermark: int): Promise = { ...pr, on: false, ver: watermark }
 
+  pure def mapPairs(pairs: List[Pair], f: Pair => Pair): List[Pair] =
+    pairs.foldl(List(), (acc, pair) => acc.append(f(pair)))
+  pure def filterPairs(pairs: List[Pair], keep: Pair => bool): List[Pair] =
+    pairs.foldl(List(), (acc, pair) => if (keep(pair)) acc.append(pair) else acc)
+
   def down(sys: Sys): Sys =
     { ...sys, alive: false,
       git: { ...sys.git, phase: "idle", holder: false, io: 0, ioGuard: false, applied: Set() },
       pages: PAGES.mapBy(_ => NOPAGE), job: NOJOB,
-      w: PAGES.mapBy(_ => NOW), mb: PAGES.mapBy(_ => NOMAIL), up: List(), gates: List() }
+      w: PAGES.mapBy(_ => NOW), mb: PAGES.mapBy(_ => NOMAIL), up: List(), gates: List(), owners: sys.owners.exclude(Set(0)),
+      pairs: mapPairs(sys.pairs, pair => {
+        val decision = if (MUTANT == "MForgetChoice") "none" else pair.decision
+        { ...pair, decision: decision, phase: if (decision == "none") "armed" else if (decision == "unreadable") "blocked" else decision }
+      }) }
   def gDown(gh: Ghost): Ghost = { ...gh, owed: Set(), guard: false, obl: Set(), renamed: Set() }
   def locked(p: int): bool = s.job.on and s.job.p == p
   // The answer to a window request goes to the window that sent it; an earlier window's answer is dropped.
@@ -281,11 +295,82 @@ module storage {
     gt.open.contains(k) and k != gt.dst and not(MUTANT == "MRF" and k != gt.src)
       and (gt.open.contains(gt.dst) or (k == gt.src and gt.open.size() > 1 and MUTANT != "MRD"))
   pure def gated(sys: Sys, k: int): bool = sys.gates.foldl(false, (acc, gt) => acc or gates1(gt, k))
+  pure def unresolved(pair: Pair): bool = Set("armed", "held", "moved", "blocked", "restore", "retained").contains(pair.phase)
+  pure def pairMember(pair: Pair, p: int): bool = pair.records.get(p).bytes != NONE
+  pure def canDraft(sys: Sys): bool = sys.owners.contains(0) and sys.draftOK
+  pure def retained(sys: Sys, p: int): bool = sys.pairs.foldl(false, (found, pair) =>
+    found or (unresolved(pair) and pairMember(pair, p)))
+  pure def sourcePair(pair: Pair, p: int): bool = pair.src == p and unresolved(pair)
+  pure def heldSource(sys: Sys, p: int): bool = sys.pairs.foldl(false, (found, pair) =>
+    found or (sourcePair(pair, p) and pair.phase != "armed"))
+  pure def awaits(sys: Sys, p: int): bool = sys.gates.foldl(false, (found, gt) => found or gt.open.contains(p))
+  pure def certified(sys: Sys, pair: Pair): bool = {
+    val image = pair.records.get(pair.dst).bytes
+    sys.disk.get(pair.dst) == image and (sys.stable.get(pair.dst) == image or RACES.contains("weak"))
+  }
+  pure def sourcePresent(sys: Sys, pair: Pair): bool = {
+    val preimage = pair.records.get(pair.src).base
+    sys.disk.get(pair.src) == preimage and (sys.stable.get(pair.src) == preimage or RACES.contains("weak"))
+  }
+  pure def restorable(sys: Sys, pair: Pair): bool =
+    sys.disk.get(pair.src) == ABSENT and sys.trash.get(pair.src).contains(pair.records.get(pair.src).base)
+  pure def cancelPhase(sys: Sys, pair: Pair): str =
+    if (sourcePresent(sys, pair) or certified(sys, pair)) "cancelled"
+    else if (restorable(sys, pair)) "restore" else "retained"
+  pure def selectPair(sys: Sys, p: int, phase: str): Sys =
+    { ...sys, pairs: mapPairs(sys.pairs, pair => if (sourcePair(pair, p)) { ...pair, phase: phase } else pair) }
+  pure def newPair(sys: Sys, dst: int, src: int, footprint: Set[int], pages: int -> Page): List[Pair] =
+    sys.pairs.append({ dst: dst, src: src, records: PAGES.mapBy(p => if (footprint.contains(p)) draftEntry(pages.get(p)) else NODRAFT),
+      phase: "armed", decision: "none" })
+  pure def originalRecord(sys: Sys, pair: Pair, p: int): bool =
+    pairMember(pair, p) and sys.drafts.get(p) == pair.records.get(p)
+  pure def recoveryDraft(sys: Sys, p: int): Draft =
+    if (sys.pairs.foldl(false, (skip, pair) => skip or
+        (((pair.decision == "cancelled" and Set(pair.src, pair.dst).contains(p)) or
+          (pair.decision == "sourceDisk" and pair.src == p)) and originalRecord(sys, pair, p)))) NODRAFT
+    else sys.drafts.get(p)
+  pure def decideDisk(sys: Sys, p: int, src: int): Sys =
+    { ...sys, pairs: mapPairs(sys.pairs, pair => {
+        if (pair.dst == p and pair.src == src and (unresolved(pair) or pair.decision == "sourceDisk"))
+          { ...pair, phase: cancelPhase(sys, pair), decision: "cancelled" }
+        else if (sourcePair(pair, p) and pair.decision == "none")
+          { ...pair, phase: cancelPhase(sys, pair), decision: "sourceDisk" }
+        else pair
+      }) }
+  pure def resumePair(sys: Sys, p: int): Sys =
+    { ...sys, pairs: mapPairs(sys.pairs, pair => {
+        if (pair.dst == p and certified(sys, pair)) {
+          if (pair.phase == "held") { ...pair, phase: "armed" }
+          else if (pair.phase == "moved") { ...pair, phase: "settled" }
+          else pair
+        } else pair
+      }) }
+  pure def publishedPair(sys: Sys, p: int, bytes: int): Sys = {
+    val read = resumePair(sys, p)
+    { ...read, pairs: mapPairs(read.pairs, pair => {
+        if (not(sourcePair(pair, p))) pair
+        else if (bytes == ABSENT and pair.phase == "armed") {
+          val exact = certified(read, pair) and read.disk.get(p) == ABSENT and
+            (read.trash.get(p) == read.trashStable.get(p) or RACES.contains("weak"))
+          { ...pair, phase: if (exact or MUTANT == "MSkipPostcheck") "settled" else "moved" }
+        } else if (bytes != ABSENT and Set("armed", "held").contains(pair.phase)) {
+          { ...pair, phase: if (sourcePresent(read, pair) or certified(read, pair)) "disarmed" else "retained",
+            decision: "disarmed" }
+        } else if (pair.phase == "restore" and sourcePresent(read, pair)) { ...pair, phase: "cancelled" }
+        else pair
+      }) }
+  }
   // D4 with no chaining: an operation over any page of a running order (witnessed ones included) waits.
-  pure def touches(sys: Sys, ks: Set[int]): bool = sys.gates.foldl(false, (acc, gt) => acc or ks.exists(k => gt.vers.get(k) != NONE))
+  pure def touches(sys: Sys, ks: Set[int]): bool =
+    sys.gates.foldl(false, (acc, gt) => acc or ks.exists(k => gt.vers.get(k) != NONE)) or
+    (MUTANT != "MForgetTouches" and ks.exists(k => retained(sys, k)))
   // The source a Discard of k also reverts: a running rename's source, when k is its unwitnessed destination.
   pure def partner(sys: Sys, k: int): int =
-    sys.gates.foldl(NONE, (acc, gt) => if (acc == NONE and gt.dst == k and gt.open.contains(k)) gt.src else acc)
+    sys.pairs.foldl(NONE, (acc, pair) =>
+      if (pair.dst == k and unresolved(pair) and Set("none", "unreadable").contains(pair.decision) and
+          (awaits(sys, k) or not(certified(sys, pair)) or Set("held", "moved", "blocked").contains(pair.phase))) pair.src else acc)
+    .orPartner(sys.gates.foldl(NONE, (acc, gt) => if (gt.dst == k and gt.open.contains(k)) gt.src else acc))
+  pure def orPartner(pair: int, gate: int): int = if (pair == NONE) gate else pair
   // q's witness at version ver: q leaves every order that installed it at ver or earlier; an emptied order ends.
   pure def discharge(sys: Sys, q: int, ver: int): Sys =
     { ...sys, gates: sys.gates.foldl(List(), (acc, gt) => {
@@ -340,7 +425,8 @@ module storage {
   action init = all {
     s' = { alive: true, git: noGit, claimed: Set(), disk: initDisk, stable: initDisk,
       drafts: PAGES.mapBy(_ => NODRAFT), trash: PAGES.mapBy(_ => Set()), trashStable: PAGES.mapBy(_ => Set()), pages: PAGES.mapBy(_ => NOPAGE), job: NOJOB,
-      w: PAGES.mapBy(_ => NOW), mb: PAGES.mapBy(_ => NOMAIL), up: List(), gates: List() },
+      w: PAGES.mapBy(_ => NOW), mb: PAGES.mapBy(_ => NOMAIL), up: List(), gates: List(),
+      pairs: List(), owners: Set(0), draftOK: true },
     g' = { vc: 0, promise: PAGES.mapBy(_ => NOPROMISE), ext: PAGES.mapBy(_ => 0),
       wrote: PAGES.mapBy(_ => Set()), owed: Set(), guard: false,
       seen: PAGES.mapBy(_ => Set()), mine: Set(), opRead: PAGES.mapBy(_ => Set()), removed: PAGES.mapBy(_ => Set()), delDurable: PAGES.mapBy(_ => Set()),
@@ -440,6 +526,7 @@ module storage {
     // holds the operation's deletion, takes its own disk bytes the same way (version v1 + 1; both reads must
     // succeed); newer input typed into the source stays. The gates and the ghost's obligations follow.
     val src = if (partner(sys, m.p) == NONE) m.p else partner(sys, m.p)
+    val choosesPair = src != m.p or sys.pairs.foldl(false, (found, pair) => found or sourcePair(pair, m.p))
     val revert = src != m.p and (sys.pages.get(src).held or MUTANT == "MRH") and sys.pages.get(src).buf == ABSENT
     val sp = sys.pages.get(src)
     val sd = s.disk.get(src)
@@ -452,10 +539,18 @@ module storage {
     val prom1 = g.promise.set(m.p, npr)
     val prom2 = if (revert) prom1.set(src, if (slive and sprm.bytes == sd) sprm else endPromise(sprm, v2)) else prom1
     if (not(pg.held)) commit(sys, { ...g, bad: g.bad.union(Set("request-to-unheld")) }, "uDiscard")
-    else if (not(rok)) commit(ackMail(sys, m.p, ok, pg.ver, false), g, "uDiscardFail")
-    else commit(ackMail(discarded({ ...sys, pages: pages2 }, m.p), m.p, ok, v1, false),
+    else if (not(rok) or (choosesPair and not(canDraft(sys)) and MUTANT != "MSkipDecision"))
+      commit(ackMail(sys, m.p, ok, pg.ver, false), g, "uDiscardFail")
+    else {
+      val chosen = if (choosesPair and canDraft(sys)) decideDisk(sys, m.p, src) else sys
+      val ngates = discarded({ ...chosen, pages: pages2 }, m.p)
+      val applied = if (src == m.p) ngates else { ...ngates,
+        gates: ngates.gates.foldl(List(), (acc, gt) => if (gt.dst == m.p) acc else acc.append(gt)) }
+      commit(ackMail(applied, m.p, ok, v1, false),
       { ...g, vc: if (revert) v2 else v1, promise: prom2, mine: if (revert) Set(m.p, src) else Set(m.p),
-              obl: oblDiscarded(g.obl, m.p) }, "uDiscard") }
+              obl: if (src == m.p) oblDiscarded(g.obl, m.p) else g.obl.filter(o => o._4 != m.p),
+              bad: g.bad.union(if (choosesPair and not(canDraft(sys))) Set("choice-without-durable-decision") else Set()) }, "uDiscard")
+    } }
 
   // B'(2): a submitted text becomes the page's buffer.
   action upSubmit(sys: Sys, m: Up, ok: bool): bool = {
@@ -495,7 +590,7 @@ module storage {
     val drafted = if (MUTANT == "MOD") sys.drafts else sys.drafts.set(dst, draftEntry(nb))
     val owed = g.owed.exclude(Set((src, m.t), (dst, m.t2)))
     if (not(a.held) or not(b.held)) commit(sys, { ...g, bad: g.bad.union(Set("request-to-unheld")) }, "uOp")
-    else if ((not(dok) and MUTANT != "MOD") or (stale != Set() and MUTANT != "MSM"))
+    else if (not(canDraft(sys)) or (not(dok) and MUTANT != "MOD") or (stale != Set() and MUTANT != "MSM"))
       commit(ackMail(ackMail(sys, dst, ok, b.ver, false), src, ok, a.ver, false), { ...g, owed: owed }, "uOpRefused")
     else commit(ackMail(ackMail({ ...sys, drafts: drafted, pages: sys.pages.set(dst, nb).set(src, na) }, dst, ok, vD, nb.buf == m.t2), src, ok, vS, na.buf == m.t),
       { ...g, vc: vS, owed: owed, mine: Set(src, dst).exclude(stale),
@@ -520,8 +615,9 @@ module storage {
   // d != obs, which skipped a read after Tine's own save of bytes another program then wrote back).
   action observe(p: int): bool = { val pg = s.pages.get(p); val d = s.disk.get(p); val v1 = g.vc + 1
     val nw = table(pg, d, v1)
-    all { s.alive, pg.held, not(locked(p)), nw != pg,
-      commit({ ...s, pages: s.pages.set(p, nw) }, { ...g, vc: if (nw.ver == v1) v1 else g.vc }, "observe") } }
+    val resumed = resumePair(s, p)
+    all { s.alive, pg.held, not(locked(p)), nw != pg or resumed != s,
+      commit({ ...resumed, pages: s.pages.set(p, nw) }, { ...g, vc: if (nw.ver == v1) v1 else g.vc }, "observe") } }
 
   // §4.1 guarded publish: temp file written and fsynced, guard check, rename, directory fsync.
   // s3.2: a page a running rename holds back does not start its save; orderOk records a save started early.
@@ -539,12 +635,24 @@ module storage {
     val p = s.job.p
     val d = s.disk.get(p)
     val v1 = g.vc + 1
-    if (d != s.job.base and MUTANT != "MC" and MUTANT != "MC1") {
+    val exact = d == s.job.bytes and awaits(s, p) and MUTANT != "MNoResave"
+    val pairedDeletion = s.job.bytes == ABSENT and s.pairs.foldl(false, (found, pair) => found or sourcePair(pair, p))
+    val receiver = s.pairs.foldl(NONE, (dst, pair) =>
+      if (sourcePair(pair, p) and not(certified(s, pair))) pair.dst else dst)
+    if (d != s.job.base and not(exact) and MUTANT != "MC" and MUTANT != "MC1") {
       val nw = table(s.pages.get(p), d, v1)
-      val ns = { ...s, job: NOJOB, pages: s.pages.set(p, nw) }
+      val ns = { ...resumePair(s, p), job: NOJOB, pages: s.pages.set(p, nw) }
       // MCV: a save that ends without publishing discharges the page's gates.
       commit(if (MUTANT == "MCV") discharge(ns, p, s.job.ver) else ns, { ...g, vc: if (nw.ver == v1) v1 else g.vc }, "mismatch")
-    } else commit({ ...s, job: { ...s.job, phase: 2 } }, { ...g, guard: d == s.job.base }, "check") }
+    } else if (pairedDeletion and receiver != NONE and MUTANT != "MSkipPrecheck") {
+      val pg = s.pages.get(receiver)
+      val nw = if (pg.held) table(pg, s.disk.get(receiver), v1) else pg
+      val removed = s.pairs.foldl(false, (found, pair) => found or (sourcePair(pair, p) and restorable(s, pair)))
+      val phase = if (removed) "moved" else "held"
+      commit({ ...selectPair(s, p, phase), job: NOJOB, pages: s.pages.set(receiver, nw) },
+        { ...g, vc: if (nw.ver == v1) v1 else g.vc }, "pairHeld")
+    } else commit({ ...s, job: { ...s.job, base: if (exact) d else s.job.base, phase: 2 } },
+      { ...g, guard: d == s.job.base or exact, orderOk: g.orderOk and (not(pairedDeletion) or receiver == NONE) }, "check") }
 
   // C: the rename follows a guard check that found the base (R1 allows only a write after that check).
   // G: the bytes the guard check found (the save's base; R1 writes after the check are C's accepted race)
@@ -586,9 +694,13 @@ module storage {
       git: { ...gs, phase: if (not(ok) and s.git.phase == "pages" and gitPulling(p, j.bytes)) "incomplete" else s.git.phase } }
     // s3.2: Published (ok, on a weak filesystem too) is the page's witness. MPR took it at the file step; MCV takes
     // it at any end.
-    commit(if ((ok and MUTANT != "MPR") or MUTANT == "MCV") discharge(ns, p, j.ver) else ns,
+    val witnessed = if (ok) publishedPair(ns, p, j.bytes) else ns
+    val badSettlement = ok and j.bytes == ABSENT and ns.pairs.foldl(false, (bad, pair) =>
+      bad or (pair.src == p and pair.phase == "armed" and MUTANT == "MSkipPostcheck" and not(certified(ns, pair))))
+    commit(if ((ok and MUTANT != "MPR") or MUTANT == "MCV") discharge(witnessed, p, j.ver) else witnessed,
       { ...g, promise: if (ok) g.promise.set(p, ack(pr, j.bytes, j.ver, true, j.ep)) else g.promise,
               obl: if (ok) oblPublished(g.obl, p, j.ver) else g.obl,
+              bad: g.bad.union(if (badSettlement) Set("settled-without-exact-receiver") else Set()),
               delDurable: if (durable and j.bytes == ABSENT) g.delDurable.set(p, g.removed.get(p)) else g.delDurable }, "dirSync") }
 
   // A write error before the rename (temp write, sharing violation, failed read of the target).
@@ -599,9 +711,13 @@ module storage {
   // The draft store follows the page (one file per page; the newest state is written). A write can fail
   // (disk full; Martin 2026-10-05 ruling 5): nothing changes and the user sees a sticky error (a stutter).
   // MBD: a text typed on an older version is recorded with the current disk bytes as its base.
-  action draftSync(p: int): bool = { val pg = s.pages.get(p); val e0 = draftEntry(pg)
+  pure def wantedDraft(sys: Sys, p: int): Draft = {
+    val wanted = draftEntry(sys.pages.get(p))
+    if (wanted.bytes == NONE and MUTANT != "MDropRetained" and retained(sys, p)) sys.drafts.get(p) else wanted
+  }
+  action draftSync(p: int): bool = { val e0 = wantedDraft(s, p)
     val e = if (MUTANT == "MBD" and e0.base == UNKNOWN) { ...e0, base: s.disk.get(p) } else e0
-    all { s.alive, s.drafts.get(p) != e,
+    all { s.alive, canDraft(s), s.drafts.get(p) != e,
       val ng = if (e.bytes != NONE) { ...g,
           wrote: g.wrote.set(p, g.wrote.get(p).union(Set((e.bytes, e.ver)))),
           promise: g.promise.set(p, ack(g.promise.get(p), e.bytes, e.ver, false, 0)) } else g
@@ -616,7 +732,8 @@ module storage {
     val pg = s.pages.get(p)
     val a = s.w.get(p)
     not(a.pend) and not(a.sent) and (not(pg.held) or clean(pg) or pg.risk)
-      and (s.drafts.get(p) == draftEntry(pg) or (MUTANT == "MX" and pg.held and pg.risk)) })
+      and (s.drafts.get(p) == (if (MUTANT == "MRejectRetainedSwitch") draftEntry(pg) else wantedDraft(s, p))
+        or (MUTANT == "MX" and pg.held and pg.risk)) })
   action switchFin = all { canSwitch, commit(down(s), gDown(g), "switchFin") }
 
   // ================================================================ s3: page operations
@@ -696,13 +813,14 @@ module storage {
     val gate = { dst: dst, src: src, vers: PAGES.mapBy(p => if (all3.contains(p)) v.get(p) else NONE), open: all3 }
     val obl = refs.map(r => (r, dst, v.get(dst), dst)).union(refs.map(r => (src, r, v.get(r), dst)))
       .union(Set((src, dst, v.get(dst), dst)))
-    all { s.alive, src != dst, opFree(all3), opHeld(all3.union(Set(src))), refs.forall(r => r != src and r != dst),
+    all { s.alive, canDraft(s), src != dst, opFree(all3), opHeld(all3.union(Set(src))), refs.forall(r => r != src and r != dst),
       not(touches(s, refs.union(Set(src, dst)))),
       not(full) or opClean(s, src),
       not(full) or ((opCur(s, dst) == ABSENT and opClean(s, dst)) or MUTANT == "MRN3"),
       refs.forall(r => opClean(s, r) or MUTANT == "MRN2"),
       all3 != Set(),
-      commit({ ...s, pages: pages, drafts: drafted, gates: if (full) s.gates.append(gate) else s.gates },
+      commit({ ...s, pages: pages, drafts: drafted, gates: if (full) s.gates.append(gate) else s.gates,
+        pairs: if (full) newPair(s, dst, src, all3, pages) else s.pairs },
         { ...g, vc: g.vc + PAGES.size(), mine: named.union(refs.filter(r => opClean(s, r))), opRead: read,
           obl: if (full) g.obl.union(obl) else g.obl,
           renamed: unrename(g.renamed, Set(src, dst)).union(if (full and s.disk.get(src) != ABSENT) Set((src, dst)) else Set()),
@@ -720,7 +838,7 @@ module storage {
     val pg = s.pages.get(p)
     val v1 = g.vc + 1
     val np = { ...opEdit(s, p, ABSENT, v1), risk: MUTANT != "MDD" }
-    all { s.alive, opFree(Set(p)), opHeld(Set(p)), opClean(s, p), opCur(s, p) != ABSENT, not(touches(s, Set(p))),
+    all { s.alive, canDraft(s), opFree(Set(p)), opHeld(Set(p)), opClean(s, p), opCur(s, p) != ABSENT, not(touches(s, Set(p))),
       commit({ ...s, pages: s.pages.set(p, np), drafts: if (MUTANT == "MDD") s.drafts else s.drafts.set(p, draftEntry(np)) },
         { ...g, vc: v1, mine: Set(p), renamed: unrename(g.renamed, Set(p)), opRead: g.opRead.set(p, g.opRead.get(p).union(Set(if (pg.held) pg.base else s.disk.get(p)))),
           wrote: if (MUTANT == "MDD") g.wrote else g.wrote.set(p, g.wrote.get(p).union(Set((ABSENT, v1)))),
@@ -756,14 +874,15 @@ module storage {
     val stale = ps.exists(p => not(plan.keys().contains(p)) or opCur(s, p) != plan.get(p))
     // C3: absent primary bytes alone do not prove that a page's name slot is free.
     val claimedCreates = ps.filter(p => plan.get(p) == ABSENT and eff.get(p) != ABSENT and s.claimed.contains(p))
-    all { s.alive, ps != Set(), opFree(ps), opHeld(ps), not(touches(s, ps)),
+    all { s.alive, canDraft(s), ps != Set(), opFree(ps), opHeld(ps), not(touches(s, ps)),
       ps.forall(p => opClean(s, p) or MUTANT == "MAC"),
       not(stale) or MUTANT == "MEX",
       claimedCreates == Set() or MUTANT == "MNS",
       if (mv) all { dst != src, ps.contains(dst), ps.contains(src), eff.get(src) == ABSENT, eff.get(dst) != ABSENT,
                     plan.get(src) != ABSENT }
       else src == NONE,
-      commit({ ...s, git: gx, pages: pages, drafts: drafted, gates: if (mv and MUTANT != "MAM") s.gates.append(gate) else s.gates },
+      commit({ ...s, git: gx, pages: pages, drafts: drafted, gates: if (mv and MUTANT != "MAM") s.gates.append(gate) else s.gates,
+        pairs: if (mv) newPair(s, dst, src, ps, pages) else s.pairs },
         { ...g, vc: g.vc + PAGES.size(), mine: ps.filter(p => opClean(s, p)),
           // G: each page's text was computed from the bytes the feature expected (MEX: not the bytes it replaces).
           opRead: PAGES.mapBy(p => if (ps.contains(p)) g.opRead.get(p).union(Set(plan.get(p))) else g.opRead.get(p)),
@@ -779,9 +898,11 @@ module storage {
   // The save of "no file": s2's guarded save (flush) with the delete as its file step (rename above).
   // s3.2: as flush, it waits while gated (MDF: the deletion ignores its gate).
   action flushDel(p: int): bool = { val pg = s.pages.get(p)
+    val paired = s.pairs.foldl(false, (found, pair) => found or sourcePair(pair, p))
     all { s.alive, not(s.job.on), pg.held, not(pg.conflict), pg.buf == ABSENT, dirty(pg), MUTANT == "MDF" or not(gated(s, p)),
+      not(paired) or ((canDraft(s) or MUTANT == "MUnownedDelete") and not(heldSource(s, p))),
       commit({ ...s, job: { on: true, p: p, bytes: pg.buf, base: pg.base, ver: pg.ver, phase: 1, ep: 0 } },
-        { ...g, orderOk: g.orderOk and not(g.obl.exists(o => o._1 == p)) }, "flush") } }
+        { ...g, orderOk: g.orderOk and not(g.obl.exists(o => o._1 == p)) and (not(paired) or canDraft(s)) }, "flush") } }
 
   // ================================================================ environment
   pure def window(sys: Sys, p: int): bool =     // R1: between the guard check and the rename
@@ -832,13 +953,72 @@ module storage {
   // else touches the page. A restored buffer is a new version. Text typed on an older version is restored with its
   // unknown base (MRB: rebased onto the disk), so it is never saved until resolved or discarded.
   def restored: int -> Page = PAGES.mapBy(p => {
-      val d = s.drafts.get(p)
+      val d = recoveryDraft(s, p)
       if (d.bytes == NONE) NOPAGE
       else { ...NOPAGE, held: true, buf: d.bytes, base: if (MUTANT == "MRB" and d.base == UNKNOWN) s.disk.get(p) else d.base,
-             obs: NONE, ver: g.vc + 1 + PAGES.filter(q => q < p and s.drafts.get(q).bytes != NONE).size(), risk: true, typed: true } })
-  action launch = all { not(s.alive),
-    commit({ ...s, alive: true, pages: restored },
-      { ...g, vc: g.vc + PAGES.filter(p => s.drafts.get(p).bytes != NONE).size(), }, "launch") }
+             obs: NONE, ver: g.vc + 1 + PAGES.filter(q => q < p and recoveryDraft(s, q).bytes != NONE).size(), risk: true, typed: true } })
+  pure def recoveredGates(sys: Sys): List[Gate] = sys.pairs.foldl(List(), (gates, pair) => {
+    val members = PAGES.filter(p => pairMember(pair, p) and sys.pages.get(p).held)
+    if (Set("armed", "held", "moved", "blocked").contains(pair.phase) and
+        members.intersect(Set(pair.src, pair.dst)) != Set())
+      gates.append({ dst: pair.dst, src: pair.src, vers: PAGES.mapBy(p => if (members.contains(p)) sys.pages.get(p).ver else NONE), open: members })
+    else gates
+  })
+  pure def gateObligations(gt: Gate): Set[(int, int, int, int)] =
+    gt.open.filter(p => p != gt.dst and gt.open.contains(gt.dst)).map(p => (p, gt.dst, gt.vers.get(gt.dst), gt.dst))
+      .union(gt.open.filter(p => p != gt.dst and p != gt.src and gt.open.contains(gt.src)).map(p => (gt.src, p, gt.vers.get(p), gt.dst)))
+  action launchWithClaim(claim: bool): bool = all { not(s.alive),
+    val owners = if (claim and (s.owners == Set() or MUTANT == "MDoubleOwner")) s.owners.union(Set(0)) else s.owners
+    val live = { ...s, alive: true, pages: restored, owners: owners, pairs: mapPairs(s.pairs, pair => {
+      if (Set("cancelled", "sourceDisk", "disarmed").contains(pair.decision)) { ...pair, phase: cancelPhase(s, pair) }
+      else pair
+    }) }
+    val gates = recoveredGates(live)
+    commit({ ...live, gates: if (MUTANT == "MForgetGates") List() else gates },
+      { ...g, vc: g.vc + PAGES.filter(p => recoveryDraft(s, p).bytes != NONE).size(),
+        obl: gates.foldl(Set(), (acc, gate) => acc.union(gateObligations(gate))) }, "launch") }
+  action launch = launchWithClaim(true)
+
+  // The existing owner lock serializes the device-local draft namespace.
+  action otherOwner(claim: bool): bool = all {
+    if (claim) s.owners == Set() else s.owners.contains(1),
+    commit({ ...s, owners: if (claim) Set(1) else s.owners.exclude(Set(1)) }, g, "owner") }
+  action draftStore(ok: bool): bool = all { s.alive, s.owners.contains(0), s.draftOK != ok,
+    commit({ ...s, draftOK: ok }, g, "draftStore") }
+  action unreadableDecision(dst: int): bool = all { s.alive,
+    s.pairs.foldl(false, (found, pair) => found or (pair.dst == dst and pair.phase == "armed")),
+    commit({ ...s, pairs: mapPairs(s.pairs, pair => if (pair.dst == dst and pair.phase == "armed")
+      { ...pair, phase: "blocked", decision: "unreadable" } else pair) }, g, "unreadableDecision") }
+  action pairedDraftFailure(p: int): bool = all { s.alive, not(canDraft(s)),
+    s.pairs.foldl(false, (found, pair) => found or sourcePair(pair, p)),
+    commit(s, g, "DraftFailed") }
+
+  // This barrier removes the settled pair from the vehicle. A failed rewrite
+  // retains exactly the old vehicle, so launch must re-witness the pair.
+  action pairRewrite(src: int, ok: bool): bool = all { s.alive, s.owners.contains(0),
+    s.pairs.foldl(false, (found, pair) => found or (pair.src == src and not(unresolved(pair)))),
+    val removed = filterPairs(s.pairs, pair => pair.src == src and not(unresolved(pair)))
+    val pairs = if (ok and s.draftOK and MUTANT != "MKeepSettled")
+      filterPairs(s.pairs, pair => pair.src != src or unresolved(pair)) else s.pairs
+    val drafts = PAGES.mapBy(p => {
+      val retired = removed.foldl(false, (found, pair) => found or
+        (originalRecord(s, pair, p) and (p == pair.src or p == pair.dst or not(s.pages.get(p).risk))))
+      if (retired) NODRAFT else s.drafts.get(p)
+    })
+    commit({ ...s, pairs: pairs, drafts: if (ok and s.draftOK) drafts else s.drafts }, g, "pairRewrite") }
+
+  // Recovery supplies a guarded create using the admitted source preimage.
+  // An occupied slot keeps the operation in visible recoverable custody.
+  action restoreSource(src: int): bool = all { s.alive, canDraft(s), not(locked(src)), not(s.claimed.contains(src)),
+    val bytes = s.pairs.foldl(NONE, (text, pair) =>
+      if (pair.src == src and Set("restore", "retained").contains(pair.phase) and
+          Set("cancelled", "sourceDisk").contains(pair.decision) and restorable(s, pair)) pair.records.get(src).base else text)
+    val pg = s.pages.get(src)
+    val v = g.vc + 1
+    all { bytes != NONE, not(pg.held) or clean(pg),
+      commit({ ...selectPair(s, src, "restore"), pages: s.pages.set(src,
+        { ...NOPAGE, held: true, buf: bytes, ver: v, risk: true, typed: true }) },
+        { ...g, vc: v, opRead: g.opRead.set(src, g.opRead.get(src).union(Set(ABSENT))) }, "restoreSource") } }
 
   // ================================================================ the next-state relation
   pure val BOOLS = Set(true, false)
@@ -848,6 +1028,7 @@ module storage {
     nondet p = PAGES.oneOf() nondet q = PAGES.oneOf() nondet dS = TEXTS.oneOf() nondet dD = TEXTS.oneOf() wOpTo(p, q, dS, dD),
     check, rename, saveFail, switchReq, switchFin, crash, windowCrash,
     launch,
+    nondet p = PAGES.oneOf() nondet ok = BOOLS.oneOf() any { pairRewrite(p, ok), restoreSource(p) },
     nondet ok = BOOLS.oneOf() any { dirSync(ok), deliverUp(ok) },
     nondet p = PAGES.oneOf() nondet v = TEXTS.union(Set(ABSENT)).oneOf() nondet dur = BOOLS.oneOf() extWriteD(p, v, dur),
     nondet keep = PAGES.powerset().oneOf() powerK(keep),
@@ -1228,10 +1409,16 @@ module storage {
   // s3.2 (Martin 2026-10-10, option 2), checked beside the guarantee, which they do not widen.
   // Order: while the backend runs, no save of a page starts before every page its rename's order puts first has
   //    published the operation's version or a later one, unless a Discard cancelled that dependency.
-  val orderHolds: bool = g.orderOk
+  val orderHolds: bool = g.orderOk and s.owners.size() <= 1
   // Resolves: while the backend runs, a renamed page keeps a file at its source or its destination (until another
   //    program or a later operation changes either). Cleared by down: across a crash, power cut or switch only A holds.
-  val renameResolves: bool = g.renamed.forall(r => s.disk.get(r._1) != ABSENT or s.disk.get(r._2) != ABSENT)
+  val renameResolves: bool = g.renamed.forall(r => s.disk.get(r._1) != ABSENT or s.disk.get(r._2) != ABSENT) and
+    s.pairs.foldl(true, (covered, pair) => covered and (
+      s.disk.get(pair.src) == pair.records.get(pair.src).base or s.disk.get(pair.dst) == pair.records.get(pair.dst).bytes or
+      (pair.records.get(pair.src).base != ABSENT and pair.records.get(pair.src).base != NONE)))
+  val draftOwner: bool = s.owners.size() <= 1
+  val retainedRecords: bool = s.pairs.foldl(true, (kept, pair) => kept and
+    (not(unresolved(pair)) or PAGES.forall(p => not(pairMember(pair, p)) or s.drafts.get(p).bytes != NONE)))
 
   // ---------------------------------------------------------------- TLC: bound and reachability witnesses
   val within: bool = g.vc <= VMAX and PAGES.forall(p => g.ext.get(p) <= EMAX) and s.up.length() <= QMAX

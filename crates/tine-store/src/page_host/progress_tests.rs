@@ -285,26 +285,42 @@ fn launch_exploding(p: &mut Timed) {
     assert!(p.host.worker.as_ref().unwrap().retry_copy);
 }
 
-/// RENAME-COST L2: an applied group operation (a.md → c.md, b.md a
-/// referrer) whose page b.md is edited: the refresh retires the operation
-/// vehicle after durable copies of a's and c's records. Polled to the first
-/// copy, a representation phase of the refresh's effect on b.md.
-fn absorbing(p: &mut Timed) {
+/// The applied group operation's three records (a.md's deletion, c.md
+/// taking its text, b.md a referrer): a rename's paired operation draft, or
+/// the same records with no move (the unpaired, legacy body).
+fn group(p: &mut Timed, paired: bool) {
     p.with_host(|h| {
-        assert_eq!(
-            h.rename_with(
-                "a.md",
-                "c.md",
-                &BTreeSet::from(["b.md".into()]),
-                |bytes, _, _| Ok(bytes.clone())
-            ),
-            Disposition::Pending
-        )
+        if paired {
+            assert_eq!(
+                h.rename_with(
+                    "a.md",
+                    "c.md",
+                    &BTreeSet::from(["b.md".into()]),
+                    |bytes, _, _| Ok(bytes.clone())
+                ),
+                Disposition::Pending
+            )
+        } else {
+            let effects = BTreeMap::from([
+                ("a.md".to_string(), (None, text("A"))),
+                ("b.md".to_string(), (text("B"), text("B"))),
+                ("c.md".to_string(), (text("A"), None)),
+            ]);
+            assert_eq!(h.apply(&effects, &[]), Disposition::Pending);
+        }
     });
     for _ in 0..4 {
         poll(p);
     }
     assert!(p.host.worker.is_none(), "L1: no explosion");
+}
+
+/// RENAME-COST L2: an applied unpaired group operation whose page b.md is
+/// edited: the refresh retires the operation vehicle after durable copies
+/// of a's and c's records. Polled to the first copy, a representation phase
+/// of the refresh's effect on b.md.
+fn absorbing(p: &mut Timed) {
+    group(p, false);
     p.with_host(|h| edit(h, "b.md", "edited b"));
     for _ in 0..16 {
         if p.host.worker.as_ref().is_some_and(|w| w.retry_copy) {
@@ -313,6 +329,92 @@ fn absorbing(p: &mut Timed) {
         poll(p);
     }
     panic!("the refresh never reached its copies");
+}
+
+/// The paired case: a rename's operation draft is immutable, so b.md's
+/// refresh is its own page draft and absorbs nothing. Polled to the
+/// refresh's own effect, before its first step.
+fn refreshing_paired(p: &mut Timed) {
+    group(p, true);
+    p.with_host(|h| edit(h, "b.md", "edited b"));
+    for _ in 0..16 {
+        let refresh = p
+            .host
+            .worker
+            .as_ref()
+            .filter(|w| w.refresh.as_deref() == Some("b.md"));
+        if let Some(worker) = refresh {
+            assert!(worker.remaining.is_empty(), "paired: no copy to absorb");
+            return;
+        }
+        poll(p);
+    }
+    panic!("the refresh never started");
+}
+
+/// REVIEW-F1 on a paired operation: the refresh's failure stays visible
+/// until its physical completion, and the operation draft keeps every
+/// record throughout.
+#[test]
+fn review_f1_paired_refresh_error_survives_until_physical_completion() {
+    let mut p = timed();
+    refreshing_paired(&mut p);
+    let op = p.host.fs.draft_files(true)[0].clone();
+    p.host.fs.inject(Phase::DraftSync, [Fault::Before; 3]);
+    for _ in 0..5 {
+        poll(&mut p);
+    }
+    assert!(p.host.worker.is_some());
+    assert!(p
+        .host
+        .events
+        .iter()
+        .any(|e| matches!(e, Event::DraftError { .. })));
+    assert!(p.notice("b.md").draft_error);
+    let scan = drafts::scan(p.host.fs.draft_files(true));
+    assert_eq!(scan.files.get(&op.0).map(Vec::len), Some(3), "kept whole");
+    time(&p, 100_000);
+    pump(&mut p);
+    assert!(p.host.worker.is_none());
+    assert!(!p.notice("b.md").draft_error);
+    kept_until_settled(&p, &op.0);
+}
+
+/// The paired operation draft is never split: it is whole, or gone because
+/// its pair settled (the source removed after every page published).
+fn kept_until_settled(p: &Timed, op: &str) {
+    let scan = drafts::scan(p.host.fs.draft_files(true));
+    match scan.files.get(op) {
+        Some(records) => assert_eq!(records.len(), 3, "kept whole"),
+        None => {
+            assert!(!p.host.fs.files.contains_key("a.md"), "settled");
+            assert!(scan.files.is_empty(), "every record published");
+        }
+    }
+}
+
+/// REVIEW-F1 on a paired operation: replaced refresh vehicles accumulate
+/// their failures, and the operation draft keeps every record.
+#[test]
+fn review_f1_paired_replaced_refresh_vehicles_accumulate_failures() {
+    let mut p = timed();
+    refreshing_paired(&mut p);
+    let op = p.host.fs.draft_files(true)[0].clone();
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 30]);
+    for n in 1..=30 {
+        time(&p, n * 30_000);
+        poll(&mut p);
+    }
+    assert!(p.host.worker.is_some());
+    assert!(p.notice("b.md").draft_error);
+    let scan = drafts::scan(p.host.fs.draft_files(true));
+    assert_eq!(scan.files.get(&op.0).map(Vec::len), Some(3), "kept whole");
+    p.host.fs.faults.clear();
+    time(&p, 1_000_000);
+    pump(&mut p);
+    assert!(p.host.worker.is_none());
+    assert!(!p.notice("b.md").draft_error);
+    kept_until_settled(&p, &op.0);
 }
 
 #[test]
@@ -1717,7 +1819,38 @@ fn a_window_move_keeps_the_debounce_and_a_submit_does_not() {
 
 #[test]
 fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
+    // The paired case: no removal copy is ever attempted (the operation
+    // draft is immutable while a's removal is owed); b's newest operation
+    // bytes recover through progress and a power cut all the same.
     let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    h.fs.external("b.md", text("foreign b"), true);
+    assert_eq!(h.observe("b.md"), Disposition::Applied);
+    assert_eq!(
+        send(&mut h, "a.md", RequestKind::Discard),
+        Disposition::Applied
+    );
+    h.receive("a.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
+    for n in 1..=30 {
+        time(&p, n * 30_000);
+        poll(&mut p);
+        assert!(!p
+            .host
+            .worker
+            .as_ref()
+            .is_some_and(|w| matches!(w.application, Some(Application::Removal))));
+    }
+    p.with_host(|h| restart(h, true, false));
+    assert_eq!(
+        p.host.pages.get("b.md").map(|p| p.buf.clone()),
+        Some(text("valuable operation b")),
+        "paired: the immutable operation draft keeps the sibling"
+    );
+
+    // The unpaired operation (the legacy body).
+    let mut h = super::lazy_unpaired_group();
     saved(&mut h, "c.md");
     h.fs.external("b.md", text("foreign b"), true);
     assert_eq!(h.observe("b.md"), Disposition::Applied);
@@ -1756,7 +1889,34 @@ fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
 /// so a close, switch or exit completes instead of waiting forever.
 #[test]
 fn rename_cost_a_failing_operation_page_does_not_block_a_stop() {
+    // The paired case: the stop completes too, and the operation draft,
+    // which still owes a's removal, stays whole for the next launch (c's
+    // published record with it); b's record is its exact draft.
     let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before; 200]);
+    pump(&mut p);
+    assert!(p.host.pages["b.md"].risk && !p.host.pages["b.md"].conflict);
+    assert!(p.host.op_waits("c.md"));
+    begin_stop(&mut p, false);
+    for n in 1..=20 {
+        time(&p, n * 60_000);
+        pump(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+    let scan = drafts::scan(p.host.fs.draft_files(true));
+    assert_eq!(scan.files.len(), 1, "the paired operation draft, whole");
+    assert!(scan.logical.contains_key("c.md") && scan.logical.contains_key("a.md"));
+    let (b, record) = (&p.host.pages["b.md"], &scan.logical["b.md"]);
+    assert_eq!(
+        (&record.bytes, &record.base, record.version),
+        (&b.buf, &b.base, b.version),
+        "the failing page keeps its exact draft"
+    );
+
+    // The unpaired operation (the legacy body).
+    let mut h = super::lazy_unpaired_group();
     saved(&mut h, "c.md");
     let mut p = Progress::new(h, ManualClock(Cell::new(0)));
     p.host.fs.inject(Phase::PageTemp, [Fault::Before; 200]);

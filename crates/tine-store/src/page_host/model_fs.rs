@@ -70,6 +70,10 @@ pub(super) struct ModelFs {
     pub(super) owed_identities: BTreeMap<String, Vec<(String, u64)>>,
     pub(super) replan_directories: bool,
     pub(super) publication_epochs: BTreeMap<String, u64>,
+    /// `HostIo::durable_page`: each page's (external-write epoch, bytes)
+    /// when this host's own publication of them became stable. Adapter
+    /// memory, kept past the save and lost at a crash.
+    pub(super) witnessed: BTreeMap<String, (u64, Text)>,
     /// System calls left before an injected `Fault::Cut` fails the next one.
     pub budget: Option<usize>,
     pub budget_kind: Option<std::io::ErrorKind>,
@@ -237,6 +241,7 @@ impl ModelFs {
         self.budget_kind = None;
         self.publications.clear();
         self.publication_epochs.clear();
+        self.witnessed.clear();
         self.owed.clear();
         self.owed_identities.clear();
         self.replan_directories = false;
@@ -751,10 +756,18 @@ impl HostIo for ModelFs {
             // already advanced stable in external().
             if fs.publications.get(page) == Some(&current) {
                 fs.record_mutation(&key);
-                set(&mut fs.stable, &key, current);
+                set(&mut fs.stable, &key, current.clone());
+                let epoch = fs.epochs.get(page).copied().unwrap_or(0);
+                fs.witnessed.insert(page.into(), (epoch, current));
             }
             Ok(Witness::Durable)
         })
+    }
+
+    fn durable_page(&mut self, page: &str) -> bool {
+        let current = self.files.get(&format!("graph/{page}")).cloned();
+        let epoch = self.epochs.get(page).copied().unwrap_or(0);
+        self.weak_graph || self.witnessed.get(page) == Some(&(epoch, current))
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {

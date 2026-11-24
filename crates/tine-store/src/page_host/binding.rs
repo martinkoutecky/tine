@@ -849,8 +849,23 @@ struct Launch {
     store: Arc<Store>,
     app_data: std::path::PathBuf,
     graph_id: String,
+    /// Whether this host owns its draft namespace (relaunches keep it).
+    drafts: DraftOwnership,
     mail: MailSink,
     kinds: KindsSink,
+}
+
+/// Whether a starting host owns its graph's device-local draft namespace.
+/// Its caller's owner claim answers it, once (the owner lock is the only
+/// serializer of the namespace): an `Unowned` host writes no draft and
+/// takes no paired destructive step, which fail typed (draft I/O stays
+/// down, and Retry cannot bring it up); its page saves are unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DraftOwnership {
+    /// The caller holds the graph's owner lock: drafts as usual.
+    Owned,
+    /// No lease (the lock call failed or is unsupported): no draft writes.
+    Unowned,
 }
 
 /// A host stopped for a restore (§7 step 4): the binding holds no host,

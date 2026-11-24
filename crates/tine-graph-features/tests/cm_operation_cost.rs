@@ -369,18 +369,23 @@ fn pin(op: &str, counts: [(&str, u64); 10], pinned: [u64; 10], bound: [u64; 10])
 const REFERRER_PINNED: [u64; 10] = [5, 1, 2, 1, 1, 3, 1, 2, 0, 0];
 const REFERRER_BOUND: [u64; 10] = [2, 1, 2, 1, 1, 1, 1, 1, 0, 0];
 
-/// Per namespace child moved. Lower bounds: two reads as a referrer; one
+/// Per namespace child moved. Lower bounds: two reads as a referrer plus the
+/// two receiver checks around the source's trash step (the durable pairing's
+/// live safety check: no external-writer generation proves the receiver's
+/// bytes stayed current, so they are read before the trash move and again
+/// after the source's durability steps); one
 /// write of the destination and one rename each for it and the source's
 /// trash step, with their syncs (file, directory, trash directory); one
 /// reference walk; one parse; one input check; one certificate check.
-/// Actual: the destination plus the source's custody marker (none on
+/// Actual: seven reads, a referrer's five plus those two receiver reads;
+/// the destination plus the source's custody marker (none on
 /// Windows), three renames, ten syncs (the recoverable move protocol,
 /// D-20261021-GQ3), one reference walk (the planner's proposal, carried
 /// into the move step: `MoveRewrite::Prepared` on `PagePlan::move_file`) and, as for a
 /// referrer, two certificate checks (the proposal's own, the store's at
 /// preflight reuse) and no in-transaction rewrite.
-const CHILD_PINNED: [u64; 10] = [5, 2, 10, 3, 1, 3, 1, 2, 0, 0];
-const CHILD_BOUND: [u64; 10] = [2, 1, 3, 2, 1, 1, 1, 1, 0, 0];
+const CHILD_PINNED: [u64; 10] = [7, 2, 10, 3, 1, 3, 1, 2, 0, 0];
+const CHILD_BOUND: [u64; 10] = [4, 1, 3, 2, 1, 1, 1, 1, 0, 0];
 
 #[test]
 fn a_rename_costs_a_bounded_constant_per_referrer() {
@@ -395,9 +400,12 @@ fn a_rename_costs_a_bounded_constant_per_referrer() {
     );
     // The moved source's own work, once: one walk (the planner's proposal,
     // carried into its move step) and the five reads and two certificate
-    // checks of a referrer.
+    // checks of a referrer. Reads: 16 before the durable pairing, plus its
+    // live safety check's two receiver reads for the one source removed
+    // (the receiver's exact certified bytes, read before the source's trash
+    // move and again after its durability steps): 18 (14 full, 4 store).
     assert!(
-        few.walks <= 3 && few.certificates <= 6 && few.reads() <= 16,
+        few.walks <= 3 && few.certificates <= 6 && few.reads() <= 18,
         "{few:?}"
     );
 }
@@ -512,8 +520,9 @@ fn a_namespace_rename_costs_a_bounded_constant_per_child() {
 /// where each deletion syncs the folder's three ancestors too). The trash
 /// sync is then the folder alone: one fsync, not four. Fixture note: the
 /// 10 above includes those 3 only because the fixture's first deletion
-/// creates the folder.
-const CHILD_STEADY_PINNED: [u64; 10] = [5, 2, 7, 3, 1, 3, 1, 2, 0, 0];
+/// creates the folder. Reads as [`CHILD_PINNED`]: a referrer's five plus the
+/// two receiver checks around the source's trash step.
+const CHILD_STEADY_PINNED: [u64; 10] = [7, 2, 7, 3, 1, 3, 1, 2, 0, 0];
 
 #[test]
 fn a_namespace_rename_in_a_settled_graph_syncs_the_trash_once_per_child() {

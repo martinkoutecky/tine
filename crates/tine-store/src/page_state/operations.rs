@@ -78,12 +78,13 @@ pub(super) fn op_rename(
     };
     let all3: BTreeSet<_> = named.union(refs).copied().collect();
     if !x.s.alive
+        || !can_draft(&x.s)
         || src == dst
         || !op_free(x, &all3)
         || !op_held(x, &all3.union(&BTreeSet::from([src])).copied().collect())
         || !refs.iter().all(|r| *r != src && *r != dst)
         || touches(
-            &x.s,
+            x,
             &refs.union(&BTreeSet::from([src, dst])).copied().collect(),
         )
         || (full && !op_clean(&x.s, src))
@@ -186,17 +187,21 @@ pub(super) fn op_rename(
     if full && op_cur(&x.s, dst) != ABSENT {
         g.bad.insert("rename-clobbered-target".into());
     }
+    if full {
+        install_pair(&mut s, dst, src, &all3);
+    }
     commit(x, s, g, if full { "opRename" } else { "opRenameRefs" })
 }
 /// Quint: opDelete
 pub(super) fn op_delete(x: &State, p: usize) -> Option<State> {
     let pg = &x.s.pages[p];
     if !x.s.alive
+        || !can_draft(&x.s)
         || !op_free(x, &BTreeSet::from([p]))
         || !op_held(x, &BTreeSet::from([p]))
         || !op_clean(&x.s, p)
         || op_cur(&x.s, p) == ABSENT
-        || touches(&x.s, &BTreeSet::from([p]))
+        || touches(x, &BTreeSet::from([p]))
     {
         return None;
     }
@@ -248,10 +253,11 @@ pub(super) fn op_apply(
         src == NONE
     };
     if !x.s.alive
+        || !can_draft(&x.s)
         || ps.is_empty()
         || !op_free(x, &ps)
         || !op_held(x, &ps)
-        || touches(&x.s, &ps)
+        || touches(x, &ps)
         || !ps
             .iter()
             .all(|p| op_clean(&x.s, *p) || x.config.mutant("MAC"))
@@ -279,6 +285,7 @@ pub(super) fn op_apply(
     }
     if mv {
         let (d, sr) = (dst as usize, src as usize);
+        install_pair(&mut s, d, sr, &ps);
         if !x.config.mutant("MAM") {
             s.gates.push(Gate {
                 dst: d,
@@ -325,6 +332,7 @@ pub(super) fn op_apply(
 /// Quint: flushDel
 pub(super) fn flush_del(x: &State, p: usize) -> Option<State> {
     let pg = &x.s.pages[p];
+    let pair = x.s.pairs.iter().rfind(|pair| pair.source(p));
     if !x.s.alive
         || x.s.job.on
         || !pg.held
@@ -332,12 +340,16 @@ pub(super) fn flush_del(x: &State, p: usize) -> Option<State> {
         || pg.buf != ABSENT
         || !dirty(pg)
         || (!x.config.mutant("MDF") && gated(x, p))
+        || pair.is_some_and(|pair| {
+            pair.phase != Phase::Armed || (!can_draft(&x.s) && !x.config.mutant("MUnownedDelete"))
+        })
     {
         return None;
     }
     let mut s = x.s.clone();
     let mut g = x.g.clone();
     started(&mut g, p);
+    g.order_ok &= pair.is_none() || can_draft(&x.s);
     s.job = Job {
         on: true,
         p,

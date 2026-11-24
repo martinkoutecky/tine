@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { createComputed, createRoot } from "solid-js";
+import { createComputed, createRoot, getOwner } from "solid-js";
 import { produce } from "solid-js/store";
 import { onBlockRawChanged, pageByName, setDoc, someBlockInTrees, writeRaw, writeWholePages } from "./model";
 import { ensurePageLoaded, loadFeed, resetStore, retireFeedPages } from "./workingSet";
@@ -61,5 +61,23 @@ it.each([8, 32])("GH #886: retiring a disjoint feed page does no work in the mai
     visits = 0;
     expect(retireFeedPages(["Day13"])).toEqual(["Day13"]);
     expect(visits).toBe(0);
+  } finally { dispose(); }
+});
+
+it("a tree scan over store-backed roots subscribes to the pages, not to each root", () => {
+  ensurePageLoaded({ name: "Wide", title: "Wide", kind: "page", pre_block: null,
+    blocks: Array.from({ length: 2000 }, (_, i) => ({ id: `w${i}`, raw: "body", collapsed: false, children: [] })) });
+  let sources = -1;
+  const dispose = createRoot(d => {
+    createComputed(() => {
+      someBlockInTrees(pageByName("Wide")!.roots, () => false);
+      // Solid keeps a computation's dependencies on its owner; a per-root walk under tracking adds two per root.
+      sources = ((getOwner() as unknown as { sources?: unknown[] | null }).sources ?? []).length;
+    });
+    return d;
+  });
+  try {
+    expect(sources).toBeGreaterThan(0);
+    expect(sources).toBeLessThan(20);
   } finally { dispose(); }
 });

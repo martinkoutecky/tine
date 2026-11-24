@@ -280,6 +280,7 @@ fn a_forwarded_echo_bills_as_an_observation_read() {
         &store,
         &temp.path().join("app"),
         "graph",
+        tine_store::DraftOwnership::Owned,
         |_, _| {},
         move |m| {
             let _ = sender.send(serde_json::to_value(m).unwrap());

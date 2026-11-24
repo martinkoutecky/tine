@@ -95,6 +95,7 @@ fn host_probe(root: &std::path::Path, store: tine_store::Store, view: tine_store
         &store,
         app_data.path(),
         "heap-probe",
+        tine_store::DraftOwnership::Owned,
         |_, _| {},
         move |mail| {
             let _ = send.send(serde_json::to_vec(&mail).unwrap());
