@@ -4,19 +4,13 @@
 // marks (`*`/`~`/`=`) wrap and double, including literal delimiter events with
 // Alt held (GH #83). Drives real keydown events, so it exercises Block.tsx's
 // keydown→wrapSelectionEdit→autocomplete path, not just the pure logic.
+// The preview serves the browser-mock bundle (scripts/lib/e2e-mock-preview.mjs builds it).
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+import { startMockPreview } from "./lib/e2e-mock-preview.mjs";
 
 const PORT = Number(process.env.E2E_PREVIEW_PORT || 5197);
-const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
-async function waitForServer(url, tries = 60) {
-  for (let i = 0; i < tries; i++) {
-    try { if ((await fetch(url)).ok) return; } catch {}
-    await sleep(250);
-  }
-  throw new Error("server did not start");
-}
+let server;
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -72,12 +66,12 @@ async function formatGesture(page, content, selStart, selEnd, key, direction = "
 }
 
 try {
-  await waitForServer(`http://localhost:${PORT}/`);
+  server = await startMockPreview({ port: PORT });
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto(`http://localhost:${PORT}/`);
+  await page.goto(server.url);
   await page.waitForSelector(".ls-block", { timeout: 5000 });
   // This journey exercises the classic editor's wrapping path.
   if (process.env.E2E_CLASSIC_PROFILE !== "0") {
@@ -144,10 +138,10 @@ try {
   console.log(errors.length ? "PAGE ERRORS:\n" + errors.join("\n") : "no page errors");
   console.log(failures ? `\n${failures} CHECK(S) FAILED` : "\nALL CHECKS PASSED");
   await browser.close();
-  server.kill("SIGKILL");
+  server?.close();
   process.exit(failures ? 1 : 0);
 } catch (e) {
   console.error(String(e));
-  server.kill("SIGKILL");
+  server?.close();
   process.exit(1);
 }

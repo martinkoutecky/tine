@@ -12,3 +12,19 @@ export async function waitDrawer(browser, side) {
   },
   side), { timeout: 8_000, timeoutMsg: `${side} drawer did not settle before native interaction` });
 }
+
+/** Since #1005 the desktop window can be 390 px wide, below the 640 px drawer
+ * breakpoint (Logseq's `sm`): an open left sidebar then becomes a modal drawer
+ * over the page, as in Logseq. Close it the way a user would (Escape). Call after
+ * narrowing the window; a few DOM polls, no graph IO. */
+export async function closeNarrowDrawer(browser) {
+  await browser.waitUntil(() => browser.execute(() => innerWidth < 640), { timeout: 5_000, timeoutMsg: "window did not narrow" });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const open = await browser.execute(() => Boolean(document.querySelector(".app-container")?.getAttribute("data-active-drawer")));
+  if (!open) return;
+  await browser.keys("Escape");
+  await browser.waitUntil(() => browser.execute(() =>
+    !document.querySelector(".app-container")?.getAttribute("data-active-drawer")
+    && document.querySelectorAll(".mobile-drawer-scrim").length === 0),
+  { timeout: 8_000, timeoutMsg: "narrow-window drawer did not close" });
+}

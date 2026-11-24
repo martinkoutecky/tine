@@ -1463,7 +1463,7 @@
       "stability": "stable"
     },
     "scripts/e2e-plugins.mjs": {
-      "setup": "Build npx vite build before the Vite preview journey. Requires network access to the signed community registry and the Dev Theme Colors package used by its install/uninstall fixture.",
+      "setup": "Serves the browser-mock bundle, which scripts/lib/e2e-mock-preview.mjs builds (npm run build:mock into artifacts/browser-mock/). Requires network access to the signed community registry and the Dev Theme Colors package used by its install/uninstall fixture.",
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Signed community plugin and theme metadata remains bound to the reviewed package identity, and executable plugins install disabled until explicitly enabled.", "blocking": true, "authority": "Tine signed plugin registry and capability-review contract" },
         { "class": "stateful-ux", "userOutcome": "Users can inspect safety evidence, install, enable, configure, and uninstall a community plugin or theme on desktop and compact settings layouts.", "blocking": true }

@@ -14,7 +14,7 @@ import { generateRealisticGraph } from "./generate-realistic-graph.mjs";
 const root = process.cwd();
 const app = path.resolve(process.env.TINE_APP || "target/debug/tine");
 const hold = process.env.E2E_HOLD_LOAD === "1";
-if (!hold && process.env.E2E_BASELINE !== "1") throw new Error("The journal merge gate requires E2E_HOLD_LOAD=1 and an app built with tine-store/test-faults");
+if (!hold && process.env.E2E_BASELINE !== "1") throw new Error("The journal merge gate requires E2E_HOLD_LOAD=1 and an app built with --features custom-protocol,tine-store/test-faults (TINE_APP); it is not a linux-release scenario");
 const out = path.resolve(process.env.E2E_ARTIFACT_DIR || "artifacts/journals-today/native");
 fs.mkdirSync(out, { recursive: true });
 const trial = fs.mkdtempSync(path.join(out, "trial-"));

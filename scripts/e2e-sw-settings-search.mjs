@@ -1,27 +1,21 @@
 // Built frontend, real Settings surface; mock graph backend (no native I/O).
-// Usage: node scripts/e2e-sw-settings-search.mjs
+// Usage: node scripts/e2e-sw-settings-search.mjs (scripts/lib/e2e-mock-preview.mjs builds the mock bundle).
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
 import assert from "node:assert/strict";
+import { startMockPreview } from "./lib/e2e-mock-preview.mjs";
 
 const out = "artifacts/sw-settings-search";
 mkdirSync(out, { recursive: true });
 const port = 20000 + Math.floor(Math.random() * 20000);
-const server = spawn("npx", ["vite", "preview", "--port", String(port), "--strictPort"], { stdio: "ignore", detached: true });
-let browser;
+let browser, server;
 try {
-  for (let attempt = 0; ; attempt++) {
-    try { if ((await fetch(`http://localhost:${port}/`)).ok) break; } catch {}
-    if (attempt === 80) throw new Error("Preview did not start");
-    await delay(250);
-  }
+  server = await startMockPreview({ port });
   browser = await chromium.launch({ args: ["--no-sandbox"] });
   for (const width of [1280, 390]) {
     for (const locale of ["en", "zh-CN"]) {
       const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: width === 390 });
-      await page.goto(`http://localhost:${port}/`);
+      await page.goto(server.url);
       await page.locator('button.icon-btn[title^="Settings"]').first().click();
       await page.locator(".settings-modal").waitFor();
       if (width === 390) {
@@ -58,5 +52,5 @@ try {
   }
 } finally {
   await browser?.close();
-  try { process.kill(-server.pid, "SIGTERM"); } catch {}
+  server?.close();
 }

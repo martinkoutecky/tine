@@ -1,12 +1,12 @@
 // GH #879 items 2–3. Run against the built app with its synthetic browser graph:
-// npm run build:mock && node scripts/e2e-code-edit-toolbar.mjs
+// node scripts/e2e-code-edit-toolbar.mjs (scripts/lib/e2e-mock-preview.mjs builds the mock bundle).
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { openJournals } from "./lib/e2e-navigation.mjs";
+import { startMockPreview } from "./lib/e2e-mock-preview.mjs";
 
 const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || "target/artifacts/og-codeblock-menu-879");
 fs.mkdirSync(artifacts, { recursive: true });
@@ -17,7 +17,7 @@ const env = { ...process.env, HOME: out, XDG_CONFIG_HOME: path.join(out, "config
   XDG_DATA_HOME: path.join(out, "data"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state") };
 for (const dir of ["config", "data", "cache", "state"]) fs.mkdirSync(path.join(out, dir));
 const port = Number(process.env.E2E_TOOLBAR_PORT || 5243);
-const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "preview", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], { env, stdio: "ignore" });
+let server;
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   workingDiff: true,
   journey: "Code copy controls remain usable while editing on desktop hover and touch focus, on a routed page and the journal, in both editors", results: [] };
@@ -34,10 +34,7 @@ async function openPage(name) {
   await page.locator(".switcher-row").filter({ hasText: name }).first().click();
 }
 try {
-  for (let i = 0; i < 80; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}`)).ok) break; } catch {}
-    await sleep(250);
-  }
+  server = await startMockPreview({ port, env });
   browser = await chromium.launch({ env });
   for (const engine of ["textarea", "cm6"]) for (const mobile of [false, true]) {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 780 } : { width: 1100, height: 850 },
@@ -115,5 +112,5 @@ try {
   throw error;
 } finally {
   await browser?.close();
-  server.kill();
+  server?.close();
 }

@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { closeNarrowDrawer } from "./lib/e2e-drawer.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -44,19 +45,6 @@ await sleep(2500);
 
 let browser;
 
-// Since #1005 the desktop window can be 390 px wide, below the 640 px drawer breakpoint (Logseq's `sm`): an open
-// left sidebar then becomes a modal drawer over the page, as in Logseq. Close it the way a user would.
-async function closeNarrowDrawer() {
-  await browser.waitUntil(() => browser.execute(() => innerWidth < 640), { timeout: 5_000, timeoutMsg: "window did not narrow" });
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  const open = await browser.execute(() => Boolean(document.querySelector(".app-container")?.getAttribute("data-active-drawer")));
-  if (!open) return;
-  await browser.keys("Escape");
-  await browser.waitUntil(() => browser.execute(() =>
-    !document.querySelector(".app-container")?.getAttribute("data-active-drawer")
-    && document.querySelectorAll(".mobile-drawer-scrim").length === 0),
-  { timeout: 8_000, timeoutMsg: "narrow-window drawer did not close" });
-}
 async function activePageAction() {
   return browser.execute(() => document.activeElement?.getAttribute("data-page-action-id") ?? null);
 }
@@ -224,7 +212,7 @@ try {
   }
 
   await browser.setWindowSize(360, 640);
-  await closeNarrowDrawer();
+  await closeNarrowDrawer(browser);
   await openTitleActions();
   const narrowGeometry = await browser.execute(() => {
     const menu = document.querySelector('.ctx-menu[role="menu"]')?.getBoundingClientRect();
