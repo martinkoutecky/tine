@@ -7,6 +7,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { closeNarrowDrawer } from "./lib/e2e-drawer.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "target/artifacts/fix-beta-menu-font-916"));
@@ -42,6 +43,9 @@ try {
   const faults = [];
   for (const [layout, width] of [["desktop", 1400], ["narrow-touch-styles", 600]]) {
     await browser.setWindowSize(width, 1000);
+    // 600 px is under the 640 px drawer breakpoint since #1005 (390 px minimum window): the open left sidebar
+    // becomes a modal drawer over the page title. Close it as a user would, then measure the narrow layout.
+    if (width < 640) await closeNarrowDrawer(browser);
     await browser.execute(touch => document.documentElement.toggleAttribute("data-touch-gestures", touch), width === 600);
     for (const kind of ["page", "block"]) {
       stage = `${layout} ${kind} menu and submenu`;

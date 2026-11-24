@@ -1,31 +1,14 @@
-// Render and exercise the signed community catalogue against the browser mock.
+// Render and exercise the signed community catalogue against the browser mock
+// (scripts/lib/e2e-mock-preview.mjs builds and serves the mock bundle).
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
+import { startMockPreview } from "./lib/e2e-mock-preview.mjs";
 
-const PORT = 5194;
-const server = spawn(
-  "./node_modules/.bin/vite",
-  ["preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"],
-  { stdio: "inherit" }
-);
-
-async function waitForServer(url) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      if ((await fetch(url)).ok) return;
-    } catch {
-      // Preview is still starting.
-    }
-    await sleep(250);
-  }
-  throw new Error("preview server did not start");
-}
-
+const PORT = Number(process.env.E2E_PREVIEW_PORT || 5194);
+let server;
 try {
-  const url = `http://127.0.0.1:${PORT}/`;
-  await waitForServer(url);
+  server = await startMockPreview({ port: PORT });
+  const url = server.url;
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: 2 });
   const pageErrors = [];
@@ -136,5 +119,5 @@ try {
   await browser.close();
   console.log("plugin catalogue E2E passed");
 } finally {
-  server.kill("SIGTERM");
+  server?.close();
 }

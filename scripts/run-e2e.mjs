@@ -125,7 +125,8 @@ const suites = {
     ["linux-inline-preedit", "scripts/e2e-linux-inline-preedit.mjs", { E2E_CLASSIC_PROFILE: "1" }, BY_NAME],
     ["reference-keys", "scripts/e2e-reference-keys.mjs", {}, BY_NAME],
     ["gh729-page-template", "scripts/e2e-gh729-page-template.mjs", {}, BY_NAME],
-    ["journals-today", "scripts/e2e-journals-today.mjs", {}, BY_NAME],
+    // scripts/e2e-journals-today.mjs is not a release scenario: it needs a tine-store/test-faults build and
+    // E2E_HOLD_LOAD=1 (its contract `setup`), which a release binary cannot give it. It runs on its own build.
     ["textarea-numbered-fence", "scripts/e2e-textarea-numbered-fence.mjs", {}, BY_NAME],
     ["ref-embed-actions", "scripts/e2e-ref-embed-actions.mjs", {}, BY_NAME],
     ["embed-find", "scripts/e2e-embed-find.mjs", {}, BY_NAME],
