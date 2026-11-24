@@ -1,9 +1,13 @@
 //! Tine's one reading of "what kind of entry does this graph-relative
-//! spelling name" ([`spelled_kind`]): fed the answers Windows gives, so Linux
-//! checks the decision the hosted Windows run depends on; counted, so its
-//! cost stays one probe on a clean path; and run over the memory and the
-//! disk source for the same spellings, which must answer alike.
-use super::{parent_spelling, spelled_kind, tine_names, EntryKind, FileSource, Files, MEMORY_ROOT};
+//! spelling name" ([`spelled_kind`] over a source's lookup): fed the answers
+//! Windows gives, so Linux checks the decision the hosted Windows run
+//! depends on; counted, so its cost stays one probe on a clean path and
+//! linear in the depth; and run over the memory and the disk source for the
+//! same spellings, which must answer alike.
+use super::{
+    locate_nearest, spelled_kind, spelled_path, tine_names, EntryKind, FileSource, Files,
+    MEMORY_ROOT,
+};
 use std::cell::{Cell, RefCell};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -12,6 +16,70 @@ use std::sync::Arc;
 thread_local! {
     /// How many probes the disk source made on this thread ([`super::disk_probe`]).
     pub(super) static DISK_PROBES: Cell<usize> = const { Cell::new(0) };
+    /// How many names a lookup visited on this thread: a memory walk's step,
+    /// or a name the disk wrote into a probed path.
+    pub(super) static NAME_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// A lookup's cost is linear in its spelling's depth on both sources, for a
+/// spelling that exists, one under a file halfway down, and one missing
+/// halfway down (the review's 65 → 4,224 visits at depth 128): at most one
+/// visit per name, and on disk one probe, plus one per missing ancestor
+/// when the platform answers `NotFound`. Run with `--nocapture` for the
+/// counts.
+#[test]
+fn a_lookup_visits_each_name_once() {
+    let mut wrong = Vec::new();
+    for depth in [1usize, 128, 512] {
+        let half = depth.div_ceil(2);
+        let spelling = vec!["n"; depth].join("/");
+        let upto = |names: usize| vec!["n"; names].join("/");
+        let temp = tempfile::tempdir().unwrap();
+        let (whole, under, missing) = (
+            temp.path().join("whole"),
+            temp.path().join("under"),
+            temp.path().join("missing"),
+        );
+        std::fs::create_dir_all(whole.join(&spelling)).unwrap();
+        std::fs::create_dir_all(under.join(upto(half - 1))).unwrap();
+        std::fs::write(under.join(upto(half)), "x").unwrap();
+        std::fs::create_dir_all(missing.join(upto(half - 1))).unwrap();
+        let memory_root = PathBuf::from(MEMORY_ROOT);
+        let held = |rel: String| (rel, super::Content::Bytes(Arc::default()), None);
+        let memory = |files: Vec<String>| {
+            FileSource::Memory(Arc::new(
+                Files::new(&memory_root, files.into_iter().map(held)).unwrap(),
+            ))
+        };
+        let below = |names: usize| {
+            if names == 0 {
+                "f".to_owned()
+            } else {
+                format!("{}/f", upto(names))
+            }
+        };
+        let cases = [
+            ("exists", whole, memory(vec![format!("{spelling}/f")])),
+            ("under a file", under, memory(vec![upto(half)])),
+            ("missing", missing, memory(vec![below(half - 1)])),
+        ];
+        for (case, root, held) in cases {
+            for (source, files, at) in [
+                ("disk", FileSource::Disk, root.as_path()),
+                ("memory", held, memory_root.as_path()),
+            ] {
+                let (visits, probes) = (NAME_VISITS.with(Cell::get), DISK_PROBES.with(Cell::get));
+                let answer = kind_name(&files.lstat_spelled(at, &spelling));
+                let visits = NAME_VISITS.with(Cell::get) - visits;
+                let probes = DISK_PROBES.with(Cell::get) - probes;
+                eprintln!("depth {depth}, {case}, {source}: {answer}, {visits} name visits, {probes} probes");
+                if visits > depth + 1 {
+                    wrong.push(format!("depth {depth}, {case}, {source}: {visits} visits"));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 fn kind_name(answer: &io::Result<EntryKind>) -> String {
@@ -37,18 +105,33 @@ fn answer(name: &str) -> io::Result<EntryKind> {
 
 /// The decision for `rel` given what a filesystem answers at each prefix
 /// (`at`, by clean names joined with `/`; an unlisted prefix is missing),
-/// and the prefixes probed, in order.
+/// and the prefixes probed, in order: the disk's nearest-first lookup over
+/// the one path built for `rel`, each probe a borrowed prefix of it.
 fn decide(rel: &str, at: &[(&str, &str)]) -> (String, Vec<String>) {
+    let root = Path::new("r");
+    let (path, names) = spelled_path(root, tine_names(rel).unwrap());
+    let start = path.as_os_str().as_encoded_bytes().as_ptr();
     let probed = RefCell::new(Vec::new());
-    let probe = |prefix: &str, _whole| {
-        let clean = tine_names(prefix).collect::<Vec<_>>().join("/");
+    let probe = |prefix: &Path| {
+        assert_eq!(
+            prefix.as_os_str().as_encoded_bytes().as_ptr(),
+            start,
+            "{rel}: borrowed"
+        );
+        let names = prefix.strip_prefix(root).unwrap().components();
+        let clean = names
+            .map(|name| name.as_os_str().to_str().unwrap())
+            .collect::<Vec<_>>();
+        let clean = clean.join("/");
         probed.borrow_mut().push(clean.clone());
         let found = at.iter().find(|(path, _)| *path == clean);
         answer(found.map_or("missing", |(_, kind)| kind))
     };
+    let whole = probe(&path);
+    let located = locate_nearest(&path, names, whole, probe);
     let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
     let as_directory = super::spelled_as_directory(rel);
-    let decided = spelled_kind(rel, as_directory, probe, is_dir, Path::new(rel));
+    let decided = spelled_kind(as_directory, located, is_dir, Path::new(rel));
     (kind_name(&decided), probed.into_inner())
 }
 
@@ -113,30 +196,47 @@ fn other_answers_are_the_filesystems() {
     }
 }
 
-/// Ancestors are borrowed prefixes of the spelling as Tine reads it (empty
-/// and `.` names dropped), never the platform's normalization of the joined
-/// path, and nothing is built to hold them.
+/// A probed path is the root's own spelling, then Tine's names (empty and
+/// `.` names dropped) after the platform separator, built once; never the
+/// platform's normalization of the joined spelling.
 #[test]
-fn ancestors_are_borrowed_prefixes_of_tines_names() {
-    let cases: [(&str, &[&str]); 7] = [
-        ("pages", &[]),
-        ("x/", &[]),
-        ("x/pages", &["x"]),
-        ("x//./pages", &["x"]),
-        ("a/b/c", &["a/b", "a"]),
-        ("a/./b//c/", &["a/./b", "a"]),
-        ("./a/b", &["./a"]),
+fn a_probed_path_is_the_roots_spelling_then_tines_names() {
+    let sep = std::path::MAIN_SEPARATOR_STR;
+    let cases: [(&str, &str, &[&str], usize); 6] = [
+        ("r", "pages", &["r", "pages"], 1),
+        ("r", "x/", &["r", "x"], 1),
+        ("r", "x//./pages", &["r", "x", "pages"], 2),
+        ("r", "a/./b//c/", &["r", "a", "b", "c"], 3),
+        ("r/", "./a/b", &["r", "a", "b"], 2),
+        ("", "a/b", &["a", "b"], 2),
     ];
-    for (rel, expected) in cases {
-        let mut ancestors = Vec::new();
-        let mut at = parent_spelling(rel);
-        while let Some(prefix) = at {
-            let start = prefix.as_ptr() as usize - rel.as_ptr() as usize;
-            assert_eq!(start, 0, "{rel}: {prefix} is a prefix of the spelling");
-            ancestors.push(prefix);
-            at = parent_spelling(prefix);
+    for (root, rel, expected, count) in cases {
+        let (path, names) = spelled_path(Path::new(root), tine_names(rel).unwrap());
+        let mut want = expected.join(sep);
+        if root == "r/" {
+            want = format!("r/{}", expected[1..].join(sep));
         }
-        assert_eq!(ancestors, expected, "{rel}");
+        assert_eq!(
+            (path.to_str().unwrap(), names),
+            (want.as_str(), count),
+            "{root} {rel}"
+        );
+    }
+}
+
+/// On Windows, a name holding `:` is refused before anything is probed: a
+/// drive-relative `C:` would be read against drive C's current directory,
+/// outside the graph, and `name:stream` as an alternate data stream.
+#[cfg(windows)]
+#[test]
+fn windows_refuses_a_name_with_a_colon_before_probing() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("x"), "x").unwrap();
+    for rel in ["x/C:", "x/C:notes/", "pages:stream", "a/b:c"] {
+        let before = DISK_PROBES.with(Cell::get);
+        let answer = FileSource::Disk.lstat_spelled(temp.path(), rel);
+        assert_eq!(kind_name(&answer), "InvalidInput", "{rel}");
+        assert_eq!(DISK_PROBES.with(Cell::get), before, "{rel}: nothing probed");
     }
 }
 

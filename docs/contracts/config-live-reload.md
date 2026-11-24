@@ -37,23 +37,43 @@ the oracle for behaviour; the mechanism here is develop's.
 
 The store watcher (`crates/tine-store/src/watch.rs`) marks a batch that names
 `logseq/config.edn` (case-insensitively) and reconciles it with configuration
-included; poll mode (every 3 s) always includes it. The file is re-read only
-when the read's outcome differs from the one served: its bytes (a `FileRev`
-byte-identity gate), or why there is no file to read (absent, under a `logseq`
-file, a directory), observed as the open's config read classifies it
-(`ConfigStamp`, `find_config`). So Logseq rewriting identical bytes, or
-Syncthing redelivering them, costs one read and publishes nothing, and removing
-a `logseq` file that blocked the read is noticed although neither side has a
-revision. A config seen
-mid-removal (metadata read, bytes already gone) is looked at again, so the
-removal is published as a removal, not a modification that hides it. A removal
-keeps the configuration read from the file, as Logseq's watcher does (it
-ignores the unlink: `watcher_handler.cljs` `handle-changed!`): an iCloud
-offload or a sync tool's delete-and-replace must not switch the graph to the
-defaults, whose `:file/name-format` is `:legacy`. Only a graph that never had a
-config.edn runs on the defaults; one whose config.edn is an undownloaded iCloud
-placeholder (`logseq/.config.edn.icloud`) opens read-only, its settings
-unknown. A real change reloads the live configuration and journal format,
+included; poll mode (every 3 s) always includes it.
+
+**One state rule.** The effective config is (settings, problem), and each read
+of `logseq/config.edn` finds one outcome: a text, absent (a dangling link
+included: the read follows links), or unreadable (under a `logseq` file, a
+directory there, bytes that cannot be read), classified by one function
+(`config_found`) for a graph open, a memory replace, a live reload and the
+watcher's observation of it (`ConfigStamp`). Settings change only on a text
+(it is parsed; a file over the read limit takes the reader's fail-closed
+verdict, §4). Absent and unreadable keep the settings in force: the last
+successful read, or the defaults if there never was one. The problem is the
+current outcome's alone: unreadable gives its problem, a text or absent gives
+none, except that an undownloaded iCloud placeholder
+(`logseq/.config.edn.icloud`) is a problem while no config text is in force,
+since its settings are unknown and the defaults would be taken. A fresh open
+applies the same rule with the defaults in force (`config_outcome`).
+
+| Sequence | Live reload (next poll, notify, or refresh) | Reopen |
+|---|---|---|
+| Opened blocked (a `logseq` file), then the file removed or replaced by a directory without config.edn | Editable on the defaults | Editable on the defaults |
+| Opened blocked, then repaired with a config.edn | Editable on its settings | Same |
+| A config read, then a directory or a `logseq` file takes its place | Read-only on the settings read | Read-only on the defaults |
+| …then that directory or file goes (absent) | Editable on the settings read | Editable on the defaults |
+| A config read, then removed (absent) | Editable on the settings read, as Logseq's watcher ignores the unlink (`watcher_handler.cljs` `handle-changed!`): an iCloud offload or a sync tool's delete-and-replace must not switch the graph to the defaults, whose `:file/name-format` is `:legacy` | Editable on the defaults; read-only if an iCloud placeholder stands in |
+| config.edn a link: dangling, then its target delivered | Editable on the defaults (or the settings in force), then on the target's settings | Same |
+| A config read, then it becomes unreadable (permission), then removed | Read-only on the settings read, then editable on them | Read-only, then editable, on the defaults |
+
+The file is re-read only when the observed outcome differs from the one
+served: the bytes (a `FileRev` byte-identity gate), absent, or the kind of
+failure. So Logseq rewriting identical bytes, or Syncthing redelivering them,
+costs one read and publishes nothing, while a `logseq` file that blocked the
+read and is then removed is noticed although neither side has a revision. The
+observation reads what the read reads (the followed path's metadata, then the
+bytes' hash), so delivering a dangling link's target is a change. A config
+seen mid-removal (metadata read, bytes already gone) is looked at again, so a
+replacement in flight reads as its result.
+A real change reloads the live configuration and journal format,
 and publishes an External change naming `logseq/config.edn`. The desktop
 shell turns that into `graph-config-changed` with the fresh `GraphMeta`.
 Both graph-open replies and live publications also carry the read problem from
@@ -62,9 +82,10 @@ graph root. One catalog notice and the page banners name config.edn, and editing
 affordances use that graph restriction in addition to each page's intrinsic Org
 round-trip restriction. Repeated unreadable publications do not add notices.
 Repairing the config clears the notice and the graph restriction without
-reopening (proof: `config_repair_tests.rs`, a `logseq` file removed or replaced
-by a directory with or without a config, on the next reload or a refresh, and
-in a memory graph); an unsafe Org page remains read-only. A problem-only transition
+reopening (proof: `config_repair_tests.rs`, each row of the table above on
+the next poll and on a refresh, on disk and in a memory graph; the link rows
+on disk only, as a memory graph holds no links); an unsafe Org page remains
+read-only. A problem-only transition
 fetches no loaded pages; build-key changes retain the reconciliation below.
 
 Own and outside config writes retain parsed pages, their observations, the
@@ -140,7 +161,7 @@ Session state remains outside the graph, with no additional persisted fields.
 | An edit would produce a config without a balanced root map | `InvalidData`; nothing is written | Same: never make a malformed file out of a good one |
 | A key's value has a shape Tine does not edit (`(…)`, reader tags, a collection where a scalar belongs) | `InvalidData`; nothing is written | Hand-edited or newer-Logseq config |
 | A rename finds config.edn malformed, or it becomes unreadable after the graph last loaded it | The rename proceeds; home and favorites are not updated; a value the step cannot edit, or a file it cannot read, is reported as `config_skipped` and the window toasts it | Sync delivery / external-editor race; a bad config must not block page work |
-| config.edn could not be read at open or on a live reload (not valid UTF-8, too large to parse, or inaccessible) | The graph runs on default settings and its editing UI is read-only: the unknown `:file/name-format` cannot safely name a page write. The transaction guard refuses with typed `Refusal::ConfigUnreadable`; a Settings config read failure carries the same internal `config-unreadable` family. The window shows `ui-failure-config-read`, never the raw read error, in the notice, page banner and Settings error. The cause remains available for diagnostics. The page host's own saves do not consult the transaction guard; this change preserves that policy. Fixing or replacing config.edn lifts the graph restriction and clears the notice through the watcher without a restart; intrinsic Org restrictions remain | Sync delivery; external editor; disk/permission error; an undownloaded or corrupted config |
+| config.edn could not be read at open or on a live reload (not valid UTF-8, too large to parse, or inaccessible) | The graph runs on the settings in force (the defaults at open; on a live reload, the last config read, §2) and its editing UI is read-only: the unknown `:file/name-format` cannot safely name a page write. The transaction guard refuses with typed `Refusal::ConfigUnreadable`; a Settings config read failure carries the same internal `config-unreadable` family. The window shows `ui-failure-config-read`, never the raw read error, in the notice, page banner and Settings error. The cause remains available for diagnostics. The page host's own saves do not consult the transaction guard; this change preserves that policy. Fixing or replacing config.edn lifts the graph restriction and clears the notice through the watcher without a restart; intrinsic Org restrictions remain | Sync delivery; external editor; disk/permission error; an undownloaded or corrupted config |
 | A rename's config.edn write fails after its page files were published (disk full, permission, a lost race) | The pages stay renamed and nothing is rolled back; config.edn keeps its old bytes. The app's rename returns the rename as done with the cause in `config_skipped`, so the window refreshes and toasts that the page was renamed but home and favorites may still name the old page; the CLI keeps the error and reports the rename as uncertain (`IncompleteRename`) | Disk error between the last page step and the config step |
 
 The shared EDN reader recovers local settings entry by entry in plain,
@@ -198,6 +219,11 @@ lists the favorite under its old name, as OG never follows title:: edits.
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_poll_watcher
 - crates/tine-store/tests/config_live_reload.rs::an_identical_config_rewrite_publishes_nothing
 - crates/tine-store/tests/config_live_reload.rs::settings_only_writes_keep_parsed_pages
+- crates/tine-store/src/store/config_repair_tests.rs::a_blocked_read_keeps_the_settings_on_refresh
+- crates/tine-store/src/store/config_repair_tests.rs::a_blocked_read_keeps_the_settings_on_the_next_poll
+- crates/tine-store/src/store/config_repair_tests.rs::a_blocked_read_keeps_the_settings_in_memory
+- crates/tine-store/src/store/config_repair_tests.rs::a_dangling_config_link_repairs_on_refresh_and_on_the_next_poll
+- crates/tine-store/src/store/config_repair_tests.rs::a_removed_unreadable_config_clears_its_problem
 - crates/tine-store/tests/config_live_reload.rs::outside_settings_keep_parsed_pages_but_build_config_reparses
 - crates/tine-store/tests/config_live_reload.rs::own_build_config_change_still_reparses_pages
 - crates/tine-store/tests/og_perf_publish.rs::creates_and_a_favourite_toggle_list_and_open_no_other_page

@@ -117,11 +117,13 @@ thread_local! {
 }
 
 pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
-    stamp_from_metadata(&path_metadata(path).ok()?)
+    stamp_from_metadata(&path_metadata(path, false).ok()?)
 }
 
-/// The metadata a stamp by path reads (`symlink_metadata`), counted.
-pub(super) fn path_metadata(path: &Path) -> std::io::Result<fs::Metadata> {
+/// The metadata a stamp by path reads, counted: `symlink_metadata`, or with
+/// `follow` the followed path's (the config's observation, which reads what
+/// the config read reads).
+pub(super) fn path_metadata(path: &Path, follow: bool) -> std::io::Result<fs::Metadata> {
     #[cfg(test)]
     STAMPS_BY_PATH.with(|count| count.set(count.get() + 1));
     #[cfg(feature = "test-faults")]
@@ -130,36 +132,40 @@ pub(super) fn path_metadata(path: &Path) -> std::io::Result<fs::Metadata> {
     } else {
         crate::cost_counters::asset_stamp_by_path();
     }
-    fs::symlink_metadata(path)
+    if follow {
+        fs::metadata(path)
+    } else {
+        fs::symlink_metadata(path)
+    }
 }
 
 /// What the config read finds, as the watcher observed it
-/// (`watch::config_stamp`): the whole outcome a reload compares, so a change
-/// between two reads with no revision (a `logseq` file blocking the read,
-/// then gone) is seen as one.
+/// (`watch::config_stamp`), by the read's own classification
+/// (`model::config_found`): the whole outcome a reload compares, so a change
+/// between two outcomes without a revision (a `logseq` file blocking the
+/// read, then gone) is seen as one.
 #[derive(Clone, Debug)]
 pub(crate) enum ConfigStamp {
-    /// A regular file there: its stamp, with the revision of the bytes read
-    /// (`None` when they could not be).
+    /// A file read through: its stamp, with the revision of its bytes.
     File(Stamp),
-    /// No regular file there: why, as the config read reports it
-    /// (`NotFound` when absent, `NotADirectory` under a file), or the kind of
-    /// entry there instead (`IsADirectory`, `Other` for a link or special
-    /// file).
-    NoFile(std::io::ErrorKind),
+    /// No file there, a dangling link included.
+    Absent,
+    /// The read fails, by its error's kind: under a file (`NotADirectory`),
+    /// a directory there (`IsADirectory`), bytes that cannot be read.
+    Unreadable(std::io::ErrorKind),
 }
 
 impl ConfigStamp {
     /// What a stamp observed by a file's own write (`Core::note_own`)
     /// says: a file, or none there.
     pub(crate) fn of_file(stamp: Option<Stamp>) -> Self {
-        stamp.map_or(Self::NoFile(std::io::ErrorKind::NotFound), Self::File)
+        stamp.map_or(Self::Absent, Self::File)
     }
 
     pub(crate) fn file(&self) -> Option<&Stamp> {
         match self {
             Self::File(stamp) => Some(stamp),
-            Self::NoFile(_) => None,
+            Self::Absent | Self::Unreadable(_) => None,
         }
     }
 
@@ -167,16 +173,15 @@ impl ConfigStamp {
         self.file().and_then(|stamp| stamp.rev.as_ref())
     }
 
-    /// Whether a config read would answer as it did at `other`: the same
-    /// revision, or the same reason there is no file to read. A file whose
-    /// bytes could not be hashed (it vanished mid-observation) compares as
-    /// an absent one, as a revision comparison alone did.
+    /// Whether a config read would find what it found at `other`: the same
+    /// revision, both absent, or the same kind of failure.
     pub(crate) fn same_read(&self, other: &Self) -> bool {
-        let blocked = |stamp: &Self| match stamp {
-            Self::NoFile(kind) if *kind != std::io::ErrorKind::NotFound => Some(*kind),
-            _ => None,
-        };
-        self.rev() == other.rev() && blocked(self) == blocked(other)
+        match (self, other) {
+            (Self::File(a), Self::File(b)) => a.rev == b.rev,
+            (Self::Absent, Self::Absent) => true,
+            (Self::Unreadable(a), Self::Unreadable(b)) => a == b,
+            _ => false,
+        }
     }
 }
 

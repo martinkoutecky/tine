@@ -201,7 +201,10 @@ fn a_config_change_applies() {
     let changes = apply(&mut files, &[("logseq/config.edn", None)]);
     view.replace_files(changes).unwrap();
     assert!(view.config().problem.is_none());
-    assert_opens_alike(&view, &files);
+    // A removal keeps the settings in force (contract config-live-reload §2):
+    // the page stays hidden here, while a reopen takes the defaults.
+    assert!(!format!("{:?}", view.inventory(crate::InventoryScope::All)).contains("Hidden"));
+    assert!(format!("{:?}", open(&files).inventory(crate::InventoryScope::All)).contains("Hidden"));
     // A config that is not EDN is read as an open reads it, too.
     let changes = apply(&mut files, &[("logseq/config.edn", Some("{:hidden [\n"))]);
     view.replace_files(changes).unwrap();

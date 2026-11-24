@@ -291,19 +291,16 @@ impl Core {
         if include_config {
             let mut current = config_stamp(&self.graph.root);
             let mut previous = self.config_stamp.lock().unwrap();
-            // A stamp without a hash means the file vanished (or failed to
-            // read) between its metadata and its bytes: a sync delivery or
-            // external editor removing it mid-cycle. Look again so a removal
-            // reads as one; otherwise it passed as a hashless "modification"
-            // and the later real removal compared hashless to absent, unseen.
-            if (current.file().is_none() && previous.file().is_some())
-                || current.file().is_some_and(|value| value.rev.is_none())
-            {
+            // A file that is gone, or vanished between its metadata and its
+            // bytes (a sync delivery or external editor replacing it
+            // mid-cycle), is looked at once more, so a replacement in
+            // flight reads as its result rather than as a removal.
+            if current.file().is_none() && previous.file().is_some() {
                 current = config_stamp(&self.graph.root);
             }
-            // Read-outcome gate: only a changed revision, or a changed reason
-            // there is no file to read (a `logseq` file blocking the read,
-            // then gone: both without a revision), needs a reload and
+            // Read-outcome gate: only a changed outcome (a revision, absent,
+            // or a kind of failure: a `logseq` file blocking the read, then
+            // gone, has no revision either side) needs a reload and
             // publication (build-key changes also discard parsed pages).
             let moved = !previous.same_read(&current);
             let key = || crate::store::checkpoint::config_key(&self.graph.current_config());

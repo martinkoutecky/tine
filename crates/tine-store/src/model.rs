@@ -23,8 +23,10 @@ pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
 pub(crate) mod asset_ref_index;
 mod calendar_days;
+mod config_read;
 pub(crate) mod file_source;
 pub(crate) mod fileless_names;
+pub(crate) use config_read::*;
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) mod index_oracle;
 #[cfg(test)]
@@ -157,99 +159,6 @@ impl std::fmt::Display for ParserPanicked {
 }
 
 impl std::error::Error for ParserPanicked {}
-
-/// A config read: the effective config, its read problem and its text.
-pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
-
-/// What a config read of `root`'s [`file_source::CONFIG_FILE`] through
-/// `source` found: the one classifier a graph open ([`read_config_in`]) and a
-/// live reload (`watch::Core::read_config`) share. A read error is read by
-/// Tine's names ([`FileSource::read_error`]): under a file is not absent.
-pub(crate) enum ConfigFound<'a> {
-    Text(std::borrow::Cow<'a, str>),
-    Absent,
-    Unreadable(io::Error),
-}
-
-pub(crate) fn find_config<'a>(source: &'a FileSource, root: &Path) -> ConfigFound<'a> {
-    let rel = file_source::CONFIG_FILE;
-    match read_parse_input_in(source, &root.join(rel)) {
-        Ok(text) => ConfigFound::Text(text),
-        Err(error) => match source.read_error(root, rel, error) {
-            error if error.kind() == io::ErrorKind::NotFound => ConfigFound::Absent,
-            error => ConfigFound::Unreadable(error),
-        },
-    }
-}
-
-/// The config read of what [`find_config`] found: the parsed text; an
-/// absent file is the defaults with [`missing_config_problem`]; another read
-/// error is the defaults with that error ([`config_of_read_error`]).
-pub(crate) fn config_read_of(source: &FileSource, root: &Path, found: ConfigFound) -> ConfigRead {
-    match found {
-        ConfigFound::Text(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
-        ConfigFound::Absent => (
-            Config::default(),
-            missing_config_problem(source, &root.join(file_source::CONFIG_FILE)),
-            None,
-        ),
-        ConfigFound::Unreadable(error) => {
-            let (config, problem) = config_of_read_error(error);
-            (config, problem, None)
-        }
-    }
-}
-
-/// The config an open of the graph at `root` reads through `source`
-/// ([`find_config`], [`config_read_of`]).
-pub(crate) fn read_config_in(source: &FileSource, root: &Path) -> ConfigRead {
-    config_read_of(source, root, find_config(source, root))
-}
-
-/// Why a graph with no `logseq/config.edn` must not take the defaults, if it
-/// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
-/// file exists but is not downloaded: its settings are unknown, so the graph
-/// opens read-only (`ConfigState::problem`) instead of writing under the
-/// default :legacy file names. A plainly absent config.edn is no problem
-/// (Logseq's defaults). Cost: one metadata call.
-pub(crate) fn missing_config_problem(
-    source: &FileSource,
-    config_path: &Path,
-) -> Option<crate::IoError> {
-    source
-        .lstat(&config_placeholder(config_path))
-        .is_ok()
-        .then(|| {
-            io::Error::other(
-                "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
-            )
-            .into()
-        })
-}
-
-/// Where iCloud keeps a not-yet-downloaded `config_path`
-/// (`logseq/.config.edn.icloud`): the second path a config read looks up.
-pub(crate) fn config_placeholder(config_path: &Path) -> PathBuf {
-    config_path.with_file_name(".config.edn.icloud")
-}
-
-/// The config a graph uses when its `config.edn` exists but could not be
-/// read, and the problem it reports: the one mapping graph open (desktop and
-/// browser) and live reload share. Bytes over the store's parse limit are over
-/// the EDN reader's limit too (both 64 MiB), so they take the reader's verdict
-/// for oversized input, which fails closed; any other read error keeps the
-/// defaults. Cost: one type check.
-pub(crate) fn config_of_read_error(error: io::Error) -> (Config, Option<crate::IoError>) {
-    let too_large = error
-        .get_ref()
-        .is_some_and(|inner| inner.is::<ParseInputTooLarge>());
-    let config = if too_large {
-        Config::over_read_limit()
-    } else {
-        Config::default()
-    };
-    (config, Some(error.into()))
-}
 
 /// A parse-input read of `path` from `source`: a disk read's buffer, or a memory
 /// file's text without a copy.
@@ -2733,7 +2642,7 @@ impl Graph {
     /// open then checks where links lead ([`validate_managed_dir`]); a memory
     /// graph has none. One `lstat` per directory, read by Tine's names on
     /// every platform ([`FileSource::lstat_spelled`]); a directory not found
-    /// adds one stat per ancestor up to the first that exists.
+    /// adds one stat per missing ancestor.
     pub(crate) fn check_layout(&self) -> io::Result<()> {
         let dirs = [
             (self.config.journals_dir.as_str(), "journals"),
@@ -2752,6 +2661,10 @@ impl Graph {
                     "is not a directory or is under a file"
                 }
                 Err(e) if e.kind() == io::ErrorKind::InvalidFilename => "has a name too long",
+                // Windows: a name with `:` ([`file_source::tine_names`]).
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
+                    "has a name with `:`, which Windows reads as a drive or a stream"
+                }
                 _ => continue,
             };
             return Err(io::Error::new(
