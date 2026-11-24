@@ -87,3 +87,52 @@ fn a_titleless_table_first_bullet_stays_a_block_and_the_page_keeps_saving() {
     store.close();
     fs::remove_dir_all(root).unwrap();
 }
+
+// CHARACTERIZATION: current behaviour, not a ruling (latent-disagreements core-2).
+// HARM: a page `pages/x.md` whose first bullet is `- title:: Foo` is named `x`
+// until its first save; that save promotes the bullet to the unbulleted page
+// header, the page is then named `Foo`, and `[[x]]` stops resolving to it.
+#[test]
+fn characterization_a_first_bullet_title_becomes_the_page_name_on_first_save() {
+    let _integration_guard = crate::integration_lock();
+    let root = crate::test_support::fresh_dir("tine-core2-title-bullet-");
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(root.join("journals")).unwrap();
+    fs::write(root.join("pages/x.md"), "- title:: Foo\n- body\n").unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let named = |name: &str| {
+        store
+            .page_named(name, PageKind::Page)
+            .unwrap()
+            .map(|read| read.id.as_str().to_string())
+    };
+    assert_eq!(named("x").as_deref(), Some("pages/x.md"));
+    assert_eq!(named("Foo"), None);
+    let host_writer = crate::test_host_writer::HostWriter::start(&store);
+    let id = PageId::from("pages/x.md");
+    let read = store.page(&id).unwrap();
+    let mut next = read.doc.clone();
+    let body = next
+        .blocks
+        .iter_mut()
+        .find(|block| block.raw == "body")
+        .expect("body block");
+    body.raw = "body edited".into();
+    let saved = host_writer.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(read.rev),
+        &next,
+    );
+    assert!(matches!(saved, Ok(_)), "save: {saved:?}");
+    assert_eq!(
+        fs::read_to_string(root.join("pages/x.md")).unwrap(),
+        "title:: Foo\n\n- body edited\n"
+    );
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    assert_eq!(named("x"), None);
+    assert_eq!(named("Foo").as_deref(), Some("pages/x.md"));
+    store.close();
+    fs::remove_dir_all(root).unwrap();
+}

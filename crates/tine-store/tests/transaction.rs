@@ -988,6 +988,39 @@ fn create_unique_refuses_an_indexed_page_twin() {
     assert!(f.bytes("pages/twin.org").is_none());
 }
 
+// CHARACTERIZATION: current behaviour, not a ruling (latent-disagreements store-3).
+// HARM: while an external `pages/Foo.markdown` (graph text, page `Foo`) is not
+// yet indexed, creating `pages/Foo.md` is not refused as a twin: two files on
+// disk claim the one page name `Foo`.
+#[test]
+fn characterization_an_unindexed_markdown_twin_passes_the_create_twin_guard() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    // Poll mode: the external file stays unindexed until the next 3 s tick
+    // (with test-faults, the watcher is joined so no tick can land at all).
+    let f = Fixture::with_watch(WatchMode::Poll, &[]);
+    #[cfg(feature = "test-faults")]
+    f.store.stop_watcher_for_tests();
+    // A cold name memo walks the disk and does find the twin (run: refused
+    // `Twin { existing: "pages/Foo.markdown" }`). The memo is warm once any
+    // lookup of `Foo` ran in this generation, here a read-only preflight of
+    // the same create before the external file lands.
+    // Page writes go through the page host, as the app's create does.
+    let (_app, host) = f.host();
+    let create = || {
+        let mut plan = f.store.page_plan(Some(crate::EditKind::ReplacePage));
+        plan.create(
+            &f.id(Area::Pages, "Foo.md"),
+            Content::Bytes(b"- proposed\n".to_vec()),
+        );
+        plan.plan()
+    };
+    create().unwrap();
+    f.put("pages/Foo.markdown", b"- external\n");
+    host.apply(create().unwrap()).unwrap();
+    assert_eq!(f.bytes("pages/Foo.md").unwrap(), b"- proposed\n");
+    assert_eq!(f.bytes("pages/Foo.markdown").unwrap(), b"- external\n");
+}
+
 #[test]
 fn unique_names_and_stream_limit() {
     let _integration_guard = crate::test_transactions::integration_lock();

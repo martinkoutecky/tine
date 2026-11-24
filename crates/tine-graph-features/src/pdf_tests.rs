@@ -760,3 +760,49 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// CHARACTERIZATION: current behaviour, not a ruling (latent-disagreements core-5).
+// HARM: for a mixed-case `Paper.Pdf` the viewer's preview keys its notes page as
+// `hls__Paper` while every native write keys it `hls__Paper.Pdf`, so "Notes"
+// opens an empty `hls__Paper` and the highlights saved here are not on it.
+#[test]
+fn characterization_mixed_case_pdf_suffix_writes_a_page_the_preview_does_not_open() {
+    let root = crate::test_support::fresh_dir("tine-pdf-mixed-case-");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let mark = c3u_highlight("6650abcd-0000-4000-8000-00000000c005", "noted");
+    write_highlights(&store, &host, "Paper.Pdf", "Paper", &[mark], &[]).unwrap();
+    let native = pdf::asset_key("Paper.Pdf");
+    let preview =
+        tine_core::pdf_key::asset_key("Paper.Pdf", tine_core::pdf_key::PdfSuffix::Preview);
+    assert_eq!(native, "Paper.Pdf");
+    assert_eq!(preview, "Paper");
+    assert!(root.join("assets/Paper.Pdf.edn").is_file());
+    assert!(!root.join("assets/Paper.edn").exists());
+    let mut pages: Vec<String> = std::fs::read_dir(root.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    pages.sort();
+    // The legacy file-name format encodes the stem's dot.
+    assert_eq!(pages, vec!["hls__Paper%2EPdf.md".to_string()]);
+    let named = |name: &str| {
+        store
+            .page_named(name, PageKind::Page)
+            .unwrap()
+            .map(|read| read.id.as_str().to_string())
+    };
+    assert_eq!(
+        named("hls__Paper.Pdf").as_deref(),
+        Some("pages/hls__Paper%2EPdf.md")
+    );
+    // The page the preview opens is a different, absent page.
+    let opened = pdf::hls_page_name(&preview);
+    assert_eq!(opened, "hls__Paper");
+    assert_eq!(named(&opened), None);
+    drop(host);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}

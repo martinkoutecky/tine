@@ -151,6 +151,32 @@ fn single_rename_preserves_complete_tag_targets_in_markdown_and_org() {
     assert_eq!(text_at(&root, "pages/r.org"), "* [[New]] and #foo+bar #foo🎉 #foo.bar #New. #New... #New, #New\n* =#foo.=\n#+BEGIN_SRC\n#foo.\n#+END_SRC\n");
 }
 
+// CHARACTERIZATION: current behaviour, not a ruling (latent-disagreements core-1).
+// HARM: renaming page `report` rewrites an Org link to the asset
+// `../assets/report.pdf` (which navigation opens as the asset, not the page)
+// to `../assets/Annual.pdf`, a file that does not exist: the link breaks on disk.
+#[test]
+fn characterization_rename_rewrites_an_org_file_link_to_a_same_stem_asset() {
+    let (_temp, root, store) = b2_graph(&[
+        ("pages/report.md", "- the page\n"),
+        ("pages/notes.org", "* see [[file:../assets/report.pdf]]\n"),
+    ]);
+    disk::create_dir_all(root.join("assets")).unwrap();
+    disk::write(root.join("assets/report.pdf"), b"%PDF-1.4\n").unwrap();
+    let report = hosted(&store, |host| {
+        rename_or_merge_page(&store, host, "report", "Annual", None, None, &[])
+    })
+    .unwrap();
+    assert_eq!(report.outcome, RenameOutcome::Renamed);
+    assert_eq!(text_at(&root, "pages/Annual.md"), "- the page\n");
+    assert_eq!(
+        text_at(&root, "pages/notes.org"),
+        "* see [[file:../assets/Annual.pdf]]\n"
+    );
+    assert!(root.join("assets/report.pdf").is_file());
+    assert!(!root.join("assets/Annual.pdf").exists());
+}
+
 fn hold_rename_input(host: &PageHost, store: &Store, id: &PageId, raw: &str) {
     let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
     let session = reloaded["session"].as_u64().unwrap();

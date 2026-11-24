@@ -2470,6 +2470,47 @@ fn a_write_by_an_id_on_two_pages_is_ambiguous_and_writes_nothing() {
     );
 }
 
+// CHARACTERIZATION: current behaviour, not a ruling (latent-disagreements feat-1).
+// HARM: with `id:: 6650ABCD-…` (upper case) on page c, `tine add` refuses a
+// valid `((6650abcd-…))` as broken-ref, and accepts a block carrying
+// `id:: 6650abcd-…`, so two pages now claim the id and every later write to it
+// is refused as ambiguous.
+#[test]
+fn characterization_add_misses_an_upper_case_id_and_writes_a_duplicate() {
+    const UPPER: &str = "6650ABCD-0000-4000-8000-000000000001";
+    const LOWER: &str = "6650abcd-0000-4000-8000-000000000001";
+    let c = format!("- upper\n  id:: {UPPER}\n");
+    let graph = Graph::seeded(Default::default(), &[("pages/c.md", c.as_str())]);
+    let slot = graph.slot();
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.add",
+        json!({"page": "d", "content": format!("- ref (({LOWER}))")}),
+    ));
+    assert_eq!(code, "refused", "{detail}");
+    assert_eq!(detail["reason"], "broken-ref", "{detail}");
+    let reply = verb(
+        &slot,
+        "block.add",
+        json!({"page": "d", "content": format!("- copy\n  id:: {LOWER}")}),
+    )
+    .unwrap();
+    assert_eq!(reply["page"], "pages/d.md");
+    let d = std::fs::read_to_string(graph.root.join("pages/d.md")).unwrap();
+    assert!(d.contains(&format!("id:: {LOWER}")), "{d}");
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/c.md")).unwrap(),
+        c
+    );
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": LOWER, "text": "which?" }),
+    ));
+    assert_eq!(code, "ambiguous", "{detail}");
+    assert_eq!(detail["candidates"].as_array().map(Vec::len), Some(2));
+}
+
 /// Review 5 R4: a write's request carries page text past the hello's 1 MiB
 /// cap (PROTOCOL §2.1).
 #[test]

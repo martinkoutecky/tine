@@ -676,6 +676,37 @@ mod tests {
         assert!(!source.exists());
         assert!(adopt_namespace(data.path(), "../escape", new, || {}).is_err());
     }
+
+    // CHARACTERIZATION: current behaviour, not a ruling (latent-disagreements store-4).
+    // HARM: a current namespace holding only a leftover `x.draft.tmp` (which the
+    // page host's draft listing skips, so it has nothing to recover and never
+    // removes it) refuses every adoption of the old graph's drafts with the
+    // "unsaved" message, and keeps refusing while the `.tmp` stays.
+    #[test]
+    fn characterization_a_leftover_draft_tmp_blocks_adoption_as_unsaved() {
+        let data = tempfile::tempdir().unwrap();
+        let old = Path::new("/old/notes");
+        let new = Path::new("/new/notes");
+        let id = crate::settings::host_graph_id(old);
+        let source = data.path().join("drafts-v2").join(&id);
+        let target = data
+            .path()
+            .join("drafts-v2")
+            .join(crate::settings::host_graph_id(new));
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("vehicle"), b"draft bytes").unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("x.draft.tmp"), b"half-written").unwrap();
+        assert!(!census_empty(&target).unwrap());
+        for _ in 0..2 {
+            assert_eq!(
+                adopt_namespace(data.path(), &id, new, || {}).unwrap_err(),
+                "draft-recovery-current-unsaved"
+            );
+        }
+        assert_eq!(fs::read(source.join("vehicle")).unwrap(), b"draft bytes");
+        assert!(target.join("x.draft.tmp").exists());
+    }
     #[test]
     fn old_graph_id_uses_the_same_owner_lock_as_the_host() {
         let data = tempfile::tempdir().unwrap();
