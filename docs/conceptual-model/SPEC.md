@@ -1,83 +1,36 @@
 # Tine conceptual model
 
-The supported native syntax and layout domain is frozen. The
-[rename and merge domain](../contracts/rename-merge-domain.md) specifies the
-current output rules and the complete named refusal ledger: first decoded-name
-owner supplies each active alias spelling; distinct unconsumable spellings
-remain interpreted native leftovers; the parser owns quoted-member status;
-target physical frames and every non-consumed original survive under legal
-name rendering. Complete native source drawer boundaries have their own narrow
-consumption exception. Active alias fields keep the selected declaration's
-ending; other inserted lines follow the survivor convention. Actual rebound
-title identity conflicts refuse before publication, including stationary
-namespaces. No further syntax widening is promised.
+## Part I — Core
 
-## 1. Prior decisions and user contract
+### 1. Prior decisions and scope
 
-This specification follows file-based identity, full alias groups, literal name
-queries, namespace closure, stored-query rewriting, deterministic physical
-claimants, fixed calendar days and source-day alias retention. Model-first
-development and explicit conditional guarantees are followed. Ordinary files
-remain Logseq Markdown or Org. No operation silently merges conflicting files.
+This is the provisional model under D-20261115-NIGHT. D-20261115-CMCUT/-CMCUT2 require a simple
+model with properties checked on actual output; D-20261115-HELP separates requests from interface
+helpers; D-20261115-CMGO fixes the approved operation scope. D-20261106-MF/-UA require a complete
+model and explicit universal hypotheses. D-20261112-CMSTOP freezes admitted syntax and layouts.
+The pending departures from CMGO are the P1/P2/P4 text boundary, alias-held refusal, Favorites
+first-name deduplication on merge, the separate views layer, the separate Settings/Day files chapters, and the O6 header-order/first-block boundaries. The maintainer confirmed these (D-20261116-CM536).
 
-Every calendar day is fixed, including a file-less day and an imported
-pages-directory date. Ordinary rename can respell the same day, but cannot
-change it into another day or an ordinary name. A non-date alias owned by a
-day remains editable. The separate move-contents command keeps the day's whole
-alias declaration and a destination stub on the day; it moves the notes.
+The core decides and protects the page files of a name rename or its selected merge. The views describe what is displayed: query evaluation, rows, presentation, the namespace tree, Linked References and graph links/neighbourhoods. The Settings and Day files chapters state the settings completion step and day opening/creation. Core imports neither views nor chapters; chapters may import core. Stored query/macro arguments remain typed core name sites without query evaluation.
+The declaration statements for Reading and views retain their original qualifications; GUARANTEES.md
+states the exact proof/adapter boundary.
 
-A name can be written in a page link. An ordinary name has its normalized
-ordinary key. Every accepted spelling of a calendar date names the same day,
-which is a journal identity. A file named by a date under `pages/` is that
-journal, at its existing path. A day need not have a file. An alias by itself
-does not create an additional empty page.
-
-A real file opens before an alias owner, even when empty. Without a real file,
-a name opens its least-path direct alias declarer, or itself as a virtual
-identity. Paths are graph-relative unsigned UTF-8 bytes. Physical claimants
-prefer the journals directory, then path bytes; direct alias declarers use
-path bytes across both directories. Losing claimants remain intact and are
-shown as conflicts, but contribute no meaning.
-
-Aliases connect names into undirected groups; they do not combine file text.
-A literal name query tests the named identity, rather than following opening.
-A name's Linked References list is exactly the list of the page that name
-opens. That list excludes that opening page's own source and the configured
-Favorites source. Different real members of one alias group can therefore
-have different lists and counts. A count is the size of its displayed list.
-
-A namespace mention references its nonempty namespace prefixes as well as
-its full spelling. Relative paths and URLs with an origin are not namespaces.
-A nonblank active file also supports its effective name's namespace parents.
-
-Ordinary renaming substitutes simultaneously, including children, aliases,
-covered occurrences, stored query arguments and the Favorites setting.
-For example, A → A/x moves an existing A/x child to A/x/x. The user can choose
-any offered safe destination option. A safe ordinary fresh rename with one
-option executes in one step, without a choice dialog. The timing of a reference
-preview is a UI question outside this specification. An unattended caller
-executes only a singleton safe option; cancel changes nothing.
-
-Merging keeps both bodies and protected header text. Its active aliases form
-one native declaration with the exact union of substituted parser-decoded names,
-each supplied by its first original spelling. Redundant recognized alias syntax,
-identical rendered duplicate tokens and independently owned source drawer
-boundaries have the narrow consumption rules in §5.2.
+Rename requests by name include a merge selected by the name dispatch. **Physical file merge is outside
+this model.** The code runs the same merge writer and the same content/save checks on it; it rewrites no
+outside reference or setting. This separate entry point is excluded by the prescribed core-budget cut.
+Editing a title or alias line is an ordinary edit, outside these rename requests. An explicit UI
+rename command is a request. The host owns flushing edits, locks, revisions, retries, atomic publication,
+autocommit and recents.
 
 ### Prior art
 
-At OG revision `6e7afa8eb040686ff057156ee877193b581dd369`,
-`deps/graph-parser/src/logseq/graph_parser/block.cljs:273–284` converts parsed
-page names to journal days; `extract.cljc:159–162` applies it to effective
-file-page names independently of directory. `date_time_util.cljs:15–41`
-supplies the configured title format and title/ISO/underscore fallbacks.
-Tine also accepts its configured filename format, per the retained date-list
-decision. This is a classification principle, not authority to merge files or
-move imports. OG's `src/main/frontend/db/model.cljs:161–184` selects the first
-eligible result of an unordered alias query; the deterministic Tine path order
-is Tine's decided rule.
+Reading follows the accepted round-15k model. OG revision
+`6e7afa8eb040686ff057156ee877193b581dd369`, `src/main/frontend/handler/page.cljs:385–642`, supplies
+prior art for direct lookup, merge confirmation, namespace rewriting and home settings, as inspected
+in the cited proposal/reviews. The model's laws are the rules below, not a promise to copy all OG behavior.
+CITATIONS.md records the local source evidence. No application source is inspected by this proof lane.
 
-## 2. Names, files and graph meaning
+### 2. Names, files and graph meaning
 
 ### 2.1 Representation and extraction
 
@@ -114,13 +67,10 @@ identifies the file's claim. It is not a theorem for all journal labels.
 | Supplied boundary | Required interpretation |
 |---|---|
 | ordinary `key`, `spell` | Configured ordinary normalization; ordinary representative spelling. Date parsing must factor through the literal key used by its adapter. No namespace-congruence law is assumed. |
-| `MemberNames.identifying`, `identifies` | Operation adapter supplies an accepted spelling for each physical claim and certifies that its normalized identity equals that claim. It need not equal the displayed label. Reading snapshots requires no such adapter. |
 | `Dates.parse`, `journalDay` | Accepted spellings return actual day values; filename extraction independently returns the day or no date. It must not substitute an ambiguous rendered title for the day. |
 | `stem`, `title`, `aliasDecl` | Decoded/configured effective names and native header aliases. Bare members are names. A wholly quoted alias value supplies no aliases. |
 | `outline`, `occ`, stored parser | Ordered blocks, typed occurrences and stored query arguments, including applicable header and preamble blocks. |
 | URL/nonblank/path conversion | URL-with-origin and nonblank tests; graph-relative unsigned UTF-8 bytes. |
-| query row/depth parser | Header, preamble and body classification and body ancestry from the same extraction. |
-| fixed text partition/classifier | Whole raw input split into legal name-edit, narrow alias-syntax/member and protected spans, independently of the chosen operation. |
 
 ### 2.2 Claimants, active files and page rows
 
@@ -165,6 +115,181 @@ connection. The page/name query remains a test of the date identity throughout.
 A block references a target when one of its namespace-closed occurrence names
 reaches the target in the active alias graph. Alias members share this relation.
 
+### 2.7 Outside moves and renames
+
+The reader accepts the new snapshot without rename history or refusal. Moving
+`journals/2026_11_02.md` to `pages/Work.md`, with no overriding date title,
+keeps the bytes at Work and leaves date references naming the date, normally
+virtual if no claimant or date alias remains. Renaming `pages/<date>.md` to a
+non-date name has the same result. Renaming a non-date file to a recognized
+date makes it the journal and ensure reuses it. An unchanged date title can
+continue to make a renamed pages-directory file a journal.
+
+There is no outside-rename guarantee that references follow the moved content.
+
+
+### 3. Operations
+
+- **O0 Source.** A is renamable if it is a page (it has a file, or is referenced, or is a namespace
+  parent) or an alias. Any other name is refused. A day is refused (O2).
+- **O1 Substitution.** One destination spelling D defines the whole map: A becomes D and `A/…` becomes
+  `D/…`, everywhere at once: file names and titles, aliases, every reference, names inside stored queries
+  and macros. The Settings chapter applies this same map to its named settings. D is the typed
+  name B, except in a merge, where D is the survivor's own name: its title if the title identifies the
+  page the file claims, otherwise its file-stem spelling if that does; if neither does, refused. A moved
+  file keeps its directory and extension; its leaf becomes the encoded new name.
+- **O2 Fixed sites.** Days, task markers and priorities are never respelled. A day cannot be the source
+  of a rename. A page whose name is spelled like a marker or priority can be renamed; marker and priority
+  sites keep the old name. The map is per site.
+- **O3 Outcomes.** Let the *holders* of B be the files other than the source's file that claim B (a
+  journal holds every accepted spelling of its day).
+  - *Several holders:* refused (contested).
+  - *One holder:* merge into it, after one confirm.
+  - *No holder,* and a page other than the source declares B as an alias, and the source's own file does
+    not claim B: refused, naming the page B opens. This holds when several pages declare B, and when the
+    source has no file.
+  - *No holder otherwise* (B is fresh, or differs from A only in what name comparison ignores, or is an
+    alias declared only by the source itself): rename in one step. A respelling moves the file. The
+    source's own declaration of B stays as it is (P1).
+  - *A source without a file* (reference-only or alias-only name): no file is ever created. No holder:
+    its references and alias declarations are rewritten. One holder: after the confirm, they are
+    repointed (a merge with nothing to move).
+  - The only answers are confirm and cancel. An answer where nothing was asked is refused.
+- **O4 Safety.** An outcome is available only if all hold; otherwise it is refused with the reason:
+  - no *touched* name newly lands on a *claimed* name other than the merge survivor. For the
+    source identity itself, claims made only by its own file do not count as capture: O3 permits
+    renaming it to its own alias. This exception does not apply to a child identity landing on an
+    alias that the source file declares. Touched names are
+    the source, every name under it (`A/…`) however it exists (a file, a reference, an alias that any
+    page declares), the aliases the source's file declares, and the images of all of these under O1; a
+    name is touched whether or not the request changes its spelling. A day under the source is not
+    touched: it stays (O2), and the rename proceeds. A name is claimed when a file claims it or a page
+    declares it as an alias; a name that is only referenced is free, here as in O3 (D-20261105-CM11);
+  - no touched name is contested, and the operation creates no new pair of files with one name
+    (unrelated existing twins do not block);
+  - the destination is not a claimed name under the source;
+  - a merge pair has one format and neither file has conflict markers, and an Org file that Tine cannot save unchanged is not touched;
+  - no title would name two pages at once. A title is one name site whose value may contain references.
+    Its new value starts with what O1 puts in place of the renamed part and keeps the rest of the old
+    title, with the references in that kept part respelled by O1 as anywhere else. The result must name
+    the page that O1 gives the old name (`Old/[[Old]]` under a case-only rename of `Old` to `old`
+    becomes `old/[[old]]`, the same page; under a rename to `New` it would read `New/[[New]]` where O1
+    says `New/[[Old]]`: refused). A reference that O1 would respell inside the replaced part: refused;
+  - every new file path is free, also against another file's folded spelling on a case-folding file
+    system (a move onto the file's own folded spelling is free);
+  - a moved file with conflict markers needs no rewrite (it moves verbatim).
+- **O5 No dialog.** A caller that cannot ask (command line, agents) gets the outcome only when there is
+  nothing to ask. Otherwise it is refused, also when it supplies the answer in advance.
+- **O6 Merge meaning.** The survivor keeps its name, path, header and blocks. Source header entries are
+  allocated in order:
+  - alias declarations that have members, of both files, become one declaration holding every member
+    once, survivor's first; a member that reads as the same name as one already kept is dropped. Where
+    in the header that declaration stands is the writer's. A declaration without members is other
+    header text;
+  - a property whose key neither the survivor nor an earlier joined entry has joins the survivor's
+    header and stays a property in its native form. Keys are compared as the parser reads them,
+    after O1/O7 transformations. A key is an observed field, including when it has no typed name site. Where
+    a joined entry stands is the writer's: the merged header holds the survivor's entries and the
+    joined ones, each exactly once, and their order is not promised;
+  - a source title, a clashing or repeated property and any other header text are the *leftover lines*,
+    in order.
+  If there are leftover lines, one leftover block follows the survivor's blocks, at the top level. Its
+  content is fixed: an empty first line (in Org, a headline with an empty title), then in Markdown the
+  leftover lines, in Org a line `#+BEGIN_QUOTE`, the leftover lines, and a line `#+END_QUOTE`. A
+  leftover line is the entry's own line without its structural prefix, whatever its native form (a
+  drawer entry too). A blank line and a bare bullet are not leftover lines. In the leftover the lines
+  are no longer page properties; the references inside them stay references, and a merge whose
+  leftover could not keep one (in Org, a property line inside the quote) is refused (`leftoverReference`). Then the
+  source's blocks, in order, at their depths. Blocks that hung under the source's header hang under
+  the leftover block; if there are such blocks and no leftover lines, the merge is refused. Text
+  before the first block of a file is read as that file's first block, at the top level, so a
+  merge keeps it like any other block, in its place before that file's other blocks.
+  (D-20261102-MC, D-20261109-AL.)
+- **O7 All or nothing, with named exceptions.** Either every site changes or nothing does, except the
+  following, after which the result is "done", each exception reported with its own location:
+  - a *referrer* file with unresolved conflict markers is skipped;
+  - a site that cannot spell the new name where it stands is left as it is. Whether it can is a
+    function of the site's kind and format and of the new name, given with the parser (examples: an
+    Org headline tag cannot hold a name with a space or a colon; a query or macro argument cannot hold
+    a name that would end the macro; a property key cannot hold a colon; a name split across lines
+    never can; a Markdown tag can, with its bracket wrapper). A site that can is rewritten;
+  - a property key is written in key spelling (lower-cased, whitespace hyphenated), reported when that
+    differs from the new name.
+
+### 4. Text properties, checked on the actual result
+
+The *observations* of a file are what the parser reports: its names; its alias members and how many
+alias declarations have members; its other header entries in order, each with key, value text and
+native form; its blocks in order, including nonblank text before the first outline marker as the first top-level block, each with its depth and its content
+exactly as the outline reader gives it (line endings normalised, structural prefix and indentation
+removed, everything else verbatim, including markup, code, comments and the framing lines of a quote);
+and the typed name sites inside all of these, each with its byte span in the file. A title is one site
+spanning its value; the references inside it are sites too, nested in it, and a nested site may have
+the same span as its title (a title that is exactly one reference). Two sites that are not nested have
+different spans. Every block is observed the
+same way: the leftover block has no special observation, the model computes its expected content as O6
+fixes it. A header entry's optional key is the parser-normalized property key, present even
+for built-in properties without a property-key site; non-property header text has no key. Where a
+property-key site exists, the observed key agrees with that site's name. The expected entry's key is
+`some` of the first property-key site's name after `siteResult` (O1/O2/O7, including key spelling,
+fixed/skipped/unspellable cases); without such a site the input key is unchanged. Actual keys come
+from reparsing the output. Key fields participate in P2's expected/observed comparison.
+
+- **P1 Outside a merge pair, only names change.** For every file that is not one of a merge pair: the
+  output equals the input except inside the spans of the name sites O1 rewrites there. A span is the
+  site's native extent on one line (the wrapper included, as in `#Old` becoming `#[[Two Words]]`); a
+  replacement contains no line break. A rewritten title is one span, with the references inside it. A
+  file with no rewritten site is byte-identical. No rename adds or removes a line.
+- **P2 Reads as intended.** The expected observations are computed from input observations alone
+  (O1 at every typed site; O2 fixed sites and O7 exceptions; O6 for a merge). The expected function
+  receives no output, writer or writer reports. Outside the merged survivor, observations and header
+  order are exact, with site coordinates erased. In a merged survivor the header is a permutation
+  of the survivor's entries plus the sequentially allocated joining entries: every occurrence is
+  kept exactly once, without an order promise. Non-header observations stay exact, including typed sites
+  inside the prescribed leftover block. A merge is refused before writing when reparsing that
+  input-derived leftover with the same reader would not retain its reference occurrences.
+- **P3 Stable.** Saving each changed file through Tine's save path with no edit leaves it byte-identical
+  and does not rename it.
+- **P4 Nothing lost in a merge.** After legal O1/O2/O7 transformations, every block and every
+  content-bearing header entry of both files occurs exactly once in the survivor, with its content
+  (an entry as an entry or as its leftover line). Blocks retain O6's order and depths. Source header
+  entries are allocated in source order; the only drops are duplicate alias members by Reading
+  identity and the syntax of combined alias declarations. P2 transfers these properties to the
+  actual output. Merged-file promises exclude parser-unreported bytes (blank lines, indentation,
+  bullets, line endings, header syntax and whether a header is before the first block or in it),
+  header-entry order. P1 continues to
+  protect every file outside the merge pair. P3 applies to every changed output.
+
+### 5. Guarantee and boundaries
+
+Whenever the decision function returns done, O0–O7 and P1–P4 hold for its actual page-file candidate,
+under the truthful parser/configuration/codec/save/host interpretation in GUARANTEES.md. Each exception
+has an input path, native byte span and site kind. Nested title/reference spans may coincide;
+independent sites and sibling nested references have different spans. Report identities include kind. The model checks distinct report locations; input/output native
+slices and complete title nesting are checked. Settings completion is specified in Part III; it cannot change this page outcome.
+
+This is a conditional acceptance guarantee. It proves that the candidate passing all checks has these
+properties. It does not prove a writer always produces an accepted candidate. A refused request changes
+nothing at the host publication boundary. The host must publish the exact checked bytes atomically.
+The syntax domain is frozen at 15k; `supported` is its truthful boundary, never a reason to omit ordinary
+required cases. The bounded reader fixtures are separate non-vacuity evidence, not the production domain.
+
+### Interface helpers outside the core
+
+
+The alias dialog: "merge into that page" is the request "rename A to that page's name" and its confirm;
+"use the name for this page" removes the alias declaration from every other page that declares it, an
+ordinary edit, and then renames. The day move and the contested-name helper as before. A helper adds no
+model outcome and promises no atomicity across its steps.
+
+
+## Part II — Views
+
+This layer has no incoming dependency from the core. Its rules apply to the
+core Reading snapshot, with the same query and presentation parameters as 15k.
+
+### 6.1 Linked References
+
 Panel self is the opening identity, using the same vertex-level function as
 navigation. The panel keeps deduplicated active blocks that reference the
 requested concept and whose actual source differs from panel self and the
@@ -173,9 +298,7 @@ group. Order is the active block order after deduplication. Counts use this list
 The Favorites setting follows renaming; exclusion uses the resulting setting
 and resulting graph, without assuming the old source or alias topology remains.
 
-## 3. Queries, links and presentation
-
-### 3.1 Raw queries and displayed rows
+### 6.2 Raw queries and displayed rows
 
 The page anchor universe is §2.2's pages; the block anchor universe is active
 blocks. A literal `name(s)` leaf tests the normalized identity s, without alias
@@ -195,7 +318,7 @@ not suffice. Header/preamble blocks are not body ancestors. Explicitly disabling
 the child filter is honored. Page rows are unaffected. Rendering views preserve
 the projected membership; raw hits and displayed rows need not be equal.
 
-### 3.2 Links, neighborhoods and namespaces
+### 6.3 Links, neighborhoods and namespaces
 
 A directed link has distinct resulting page endpoints, a source other than
 the configured Favorites page, and an active source block referencing the
@@ -203,13 +326,14 @@ target. Outgoing and incoming walks repeatedly add neighbors from the finite
 page universe. The both-direction view concatenates those walks. Every radius
 uses the actual recomputed directed relation.
 
-An immediate namespace parent uses the effective spelling's raw parent and
-looks up that full interpreted identity in the page universe. Children,
-full trees and the namespace-only tree derive from that lookup. Body parents
-and namespace parents are separate. Parent support may change when a merge
-makes an empty file nonblank. No fixed-parent-set assumption is imposed.
+### Namespace tree
 
-### 3.3 Actual changes
+A displayed tree parent is only the immediate namespace parent of the canonical spelling and only
+when that identity is present in the page universe. There is no alias or grandparent fallback.
+Children are the deduplicated pages with that parent; the global namespace tree includes rows with
+a parent or at least one child, excluding isolated pages. Namespace closure itself remains core.
+
+### 6.4 Actual changes
 
 Added members are after-members absent before; removed members are
 before-members absent after. Outside those two sets, membership is unchanged.
@@ -217,94 +341,27 @@ This applies to raw and displayed queries, references, panels, links and tree
 readings separately. It does not promise that arbitrary Boolean queries,
 namespace closure or alias components are transported unchanged by renaming.
 
-## 4. Operations
 
-### 4.1 Substitution, candidates and physical assembly
+## Part III — Chapters
 
-A request has an old spelling and a destination spelling. The spelling map is
-simultaneous namespace substitution using normalized identity equality and the
-shared URL/namespace test. It affects the entire operation, including stored
-queries. A source file is the unique physical source claimant eligible under
-§4.2; a file-less source supplies no content.
+These separately counted write rules import core. No core definition imports a chapter.
 
-The preferred literal candidate keeps the typed destination. It does not
-follow an alias to its owner. If a distinct stationary unique file claims that
-destination, it is the explicit content survivor. A physically journal-directory
-survivor is stationary independently of an ambiguous displayed label. A moving
-ordinary own-child is rewritten, not overwritten.
+### Settings (O8)
 
-Additional candidates select each distinct real member of the destination
-component by its actual identity and an identifying spelling. The operation
-adapter `MemberNames` certifies that spelling against the member's physical
-claim. Use the effective name when it identifies the claim; otherwise use the
-adapter's accepted spelling. The displayed label need not identify the member
-and is never reparsed as an unrelated ordinary destination. That one chosen
-spelling drives the whole substitution, including namespaces and stored queries.
-Every safe member choice is enumerated and offered, independently of whether
-its label identifies it. The adapter is an explicit naming boundary; it cannot
-be implemented by assuming a rendered-title parse round trip.
+After the files: Favorites entries follow O1; after a merge the list then keeps only
+  the first entry of each name. The Favorites-page setting follows. The home page follows a rename and
+  stays on a merge. The settings file is written in its own step after the pages, all of it or none; if
+  any of it cannot be written the result is "pages done, settings not updated". The text properties do not cover the settings file.
 
-For Foo → Shared with two journals declaring Shared and both displaying
-`11-02`, full identifying spellings `2026-11-02` and `2027-11-02` select their
-respective physical survivors. Both are offered when safe, alongside the typed
-Shared choice; unattended execution refuses the multiple choices. Typing
-`11-02` still cannot select either day. This does not choose a date-source policy.
-Exact duplicate serialized candidates are removed. Different output spellings
-can remain different candidates even when they name the same day.
 
-Execution merges only an actual source/survivor pair; otherwise it rewrites
-all physical files without changing file count. A content pair removes its
-source, keeps the survivor, and rewrites every other retained physical file.
-This retained-file map is the actual after-graph. All readings select its
-active files again. No hidden content union is performed on opening.
+`finishSettings` consumes the core's done page result, the previous settings record and the honest
+settings-write success function. It returns either the complete intended settings record and updated
+status, or the complete old record and pages-done/settings-not-updated status. There is no partial
+record. The exact source home identity stays on a merge; home descendants still follow the shared
+namespace substitution. The page decision has no settings argument or settings fields. Projecting
+away settings from the combined operation gives exactly that page result.
 
-### 4.2 Finite safety and the open date-source policy
-
-Every candidate passes one finite check:
-
-1. The source identity is in play.
-2. Demanded identity mappings are consistent: the root, every direct name/site,
-   extra/configured name and every fixed anchor agree on one image per input
-   identity. Namespace congruence and injectivity are not assumptions.
-3. Touched original and image identities have no unresolved physical conflicts.
-   Unrelated existing conflicts do not block an operation.
-4. A content pair has distinct files, equal formats, a unique destination
-   claimant and a stationary survivor.
-5. Two retained files cannot newly collide in normalized claim unless their
-   original claims were already equal.
-6. A moved non-root virtual page descendant cannot capture stationary content.
-7. Before and after physical paths are unique.
-
-Physical journal-directory files, task markers, priorities and every calendar
-day remain fixed anchors. Marker/priority spellings are not rewritten. A date
-source may be respelled as the same day; ordinary rename cannot change its day
-identity. Move contents is a separate operation with the stub and whole-alias
-retention contract described in the frozen domain.
-
-### 4.3 Choice, cancellation and preview
-
-The choice UI shows the destination component, real file identities, aliases,
-virtual versus alias-only names, conflicts and the selected physical claimant.
-For each safe candidate it shows the chosen destination, content pair, moves,
-changed aliases and stored arguments, and reference effects. The safe literal
-option and every safe distinct real-member option are offered, with no
-identifying-display-label condition; a preferred unsafe option is absent. The ordinary fresh
-singleton case needs no choice dialog. Unattended execution accepts exactly
-one safe option. Zero and multiple options refuse; cancel returns the original
-state, including the Favorites setting.
-
-Reference preview compares, for each old active block and actual output image,
-its closed raw names, interpreted target vertices, opening targets and active
-alias edges. Every changed reference membership answer has a preview row.
-Extra rows are permitted. Lost and newly active origins are listed separately.
-A changed answer can arise from an unedited link. Query-result preview timing
-and a general query-result-preview UI are not additional model obligations.
-
-The state operation returns the after-graph and the substituted Favorites
-setting together. The setting participates in the same name demands, as an
-extra/configured site. Subsequent panels and links read that resulting state.
-
-### 4.4 Ensure a journal
+### Day files
 
 To open/create day d, find physical claimants of `(journal,d)` using §2's exact
 identity and claimant order. If one exists, return the selected file and the
@@ -323,100 +380,3 @@ Thus a pages-directory file produced by Foo → an accepted date spelling is
 already the journal. Subsequent ensure reuses it. External tools can still add
 another claimant; discovery exposes a conflict and preserves both files.
 
-### 4.5 Outside moves and renames
-
-The reader accepts the new snapshot without rename history or refusal. Moving
-`journals/2026_11_02.md` to `pages/Work.md`, with no overriding date title,
-keeps the bytes at Work and leaves date references naming the date, normally
-virtual if no claimant or date alias remains. Renaming `pages/<date>.md` to a
-non-date name has the same result. Renaming a non-date file to a recognized
-date makes it the journal and ensure reuses it. An unchanged date title can
-continue to make a renamed pages-directory file a journal.
-
-There is no outside-rename guarantee that references follow the moved content.
-Move contents uses its own contract: the day keeps its aliases and a stub;
-the destination gets the notes. This does not change ordinary rename rules.
-
-## 5. Text realization and interoperability
-
-### 5.1 Native rewriting and merging
-
-Rewriting preserves directory and format, rebinds ordinary effective names,
-and preserves physical journal-directory names/paths. Unchanged literal-name
-keys retain paths. Aliases in every physical file, including inactive twins,
-and covered occurrence/query name spans use the chosen substitution. Fixed
-marker and priority spellings remain unchanged.
-
-A merge keeps the survivor's path, directory, format and effective-name key.
-Alias union is survivor-first after substitution, deduplicated by exact native
-decoded names. X and x remain distinct. Each member uses its first original
-owner's rendered spelling; distinct later spellings remain interpreted native
-block properties outside quotes. The result has one native
-alias field when members exist; other properties are not deduplicated.
-Markdown uses `alias::`; Org uses a native `#+alias:` directive or `:ALIAS:`
-drawer entry according to the selected field's container. Recognized native
-variants are classified by the parser. The native field parser and alias extractor
-must agree with the concrete serialized result.
-
-Every output block has valid origins, possibly multiple origins for a merged
-header; each input block/occurrence has an image. The layout is at most one
-combined header, target body blocks in order, at most one leftover source-header
-block, then source body blocks in order. Bodies remain separate. Source titles,
-clashing properties and unknown header text survive; native property remnants
-retain their property interpretation outside quotes, while directives that
-could become page metadata stay in the leftover quote;
-nonclashing properties join the target header. Equal non-alias properties
-remain protected with multiplicity. Stored queries follow the same origins
-and substitution. Namespace support comes from the actual merged text/name.
-
-General header parsing and property promotion are serializer boundaries. This
-model includes a bounded native alias serializer and concrete certificates,
-not a full production Markdown/Org property parser or format translator.
-
-### 5.2 Complete text with scoped approved consumption
-
-A fixed input partition accounts for every raw byte before a candidate is
-chosen. Legal editable spans render under substitution. Every other original
-span either has an original placement or is explicitly approved consumption.
-The original spans form a permutation, with multiplicity, of retained spans
-plus consumed spans. Input and rendered-output concatenations equal the complete
-physical file texts. Inserted serialization syntax is explicit.
-
-Consumption is confined to the actual merge pair. It permits only:
-
-- Redundant recognized alias declaration keys, separators and line endings,
-  with a retained native alias declaration witness.
-- A duplicate rendered alias-name token with a retained alias-member token
-  whose rendered bytes are identical.
-- Independently native-owned complete source Org drawer delimiters when all
-  intervening originals join the output header or independently satisfy the
-  alias exception. Target and retained day delimiters remain original.
-
-The bounded syntax classifier accepts native alias keys, comma separators and
-LF/CRLF/lone CR. Odd spacing, bracket wrappers, wholly quoted or unrecognized remainders,
-examples and non-alias properties are protected unless separately, explicitly
-classified as approved narrow alias syntax. They are not discarded with a
-whole second line. The concrete prototype keeps them protected.
-In a mixed alias list the parser can classify a quoted token as a complete
-member name, including its quotes. Its name bytes follow the ordinary member
-rules. The selected active field keeps its own terminator; other inserted
-lines use the survivor's convention. Every target physical drawer frame stays
-in order, with new non-alias entries in the last segment. Source marker
-validation uses exactly space, tab, form feed and Ctrl-Z indentation, ASCII
-case-insensitive spelling, one physical terminator, a terminated opening and
-an optionally EOF-terminated closing; it does not infer native ownership.
-
-The complete-text theorem states the retained-or-approved-consumed alternative.
-Protected byte multiplicities survive unchanged. The body law additionally
-protects block order and separation. Production partition legality and writer
-certificate construction remain explicit conformance boundaries; a Boolean
-candidate check alone proves neither.
-
-The proof ledger, hypotheses and exhaustive comparison are in
-[GUARANTEES.md](GUARANTEES.md). The source/statement inventory and measurement
-are evidence alongside the Lean development, not additional product rules.
-
-This is a pure graph/state specification. Publication, crash recovery, locks,
-revisions and synchronization use the host's audited storage path. No new
-persisted identity, hidden graph database, storage mode or non-Logseq format is
-authorized.

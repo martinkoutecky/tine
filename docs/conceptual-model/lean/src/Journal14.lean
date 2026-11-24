@@ -1,7 +1,4 @@
-/- Journal creation and outside renames read as independent snapshots. -/
-
-import DateProofs14
-
+import CutConsequences
 set_option linter.unusedSectionVars false
 namespace CM
 namespace Date13
@@ -15,8 +12,6 @@ structure EnsureResult where
   conflicts : Graph
   deriving DecidableEq, Repr
 
-/-- `fresh` is a proposed configured journal path/format, checked before use.
-An existing claimant is reused even if the graph contains other conflicts. -/
 def ensureJournal (G : Graph) (d : K) (fresh : File) : EnsureResult :=
   match openingFile P D G (.journal,d) with
   | some f => ⟨G,some f,false,claimants P D G (.journal,d)⟩
@@ -83,14 +78,6 @@ theorem ensure_any_claimant_reuses {G : Graph} {d : K} {f : File} (fresh : File)
     have hm : f ∈ claimants P D G (.journal,d) := by simp [claimants,hf,hc]
     rw [hn] at hm; contradiction
 
-/-- There is no history input and no eligibility check for reading a graph.
-The environment may supply any replacement snapshot, including outside moves. -/
-def outsideSnapshot (_before after : Graph) : Graph := after
-
-theorem outside_reads (before after : Graph) : outsideSnapshot before after = after := rfl
-
-theorem outside_content (before : Graph) (f : File) (path : String) (dir : Dir) :
-    ({f with path := path, dir := dir} : File).text = f.text := rfl
 
 end Date13
 end CM

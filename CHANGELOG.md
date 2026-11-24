@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
 ### Changed
+- The published conceptual model in `docs/conceptual-model/` is now the model Tine's rename and merge follow (model K, D-20261116-CM536): its rules, its proved guarantees with the assumptions they rest on, and the Lean proofs that build it.
 - Folder publications and the new quick-share format carry selected page sources and reduced reading settings for the browser core. Existing generation-1 links keep their pinned viewer (D-20261122-G1F, D-20261122-G2S).
 - Folder publications and generation-2 quick shares run queries in the reader, using the viewing day for relative dates. Re-sharing a generation-1 link creates a new link and preserves the original share (D-20261122-G2S, A-20261122-RS1).
 - Folder publications and generation-2 quick shares open their graph and run graph reads in a worker so the browser stays responsive. The reader shows an error if the graph engine fails (browser core slice 4b, D-20261121-ANS).

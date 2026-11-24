@@ -1,17 +1,10 @@
-/- Universal structural comparison via primitive reader inputs. Baselines are
-comparison data; no obsolete date policy is selectable by the current API. -/
-
-import DateOperationComparison14
-
+import DateViews
 set_option linter.unusedSectionVars false
 namespace CM
 namespace Date13
-open Params Consolidated13 QueryRename6
+open Params Consolidated13
 variable {K L : Type} [DecidableEq K] (P : Inputs K)
 
-/-- Every field is a primitive inventory row, name/path/leaf answer or finite
-selection. No complete reference/query/tree/panel result is a field. A baseline
-may supply the accepted r13 inputs or any other reader's inputs. -/
 structure ReaderInputs (K L : Type) where
   realRows : List (Page K)
   blocks : List BlockId
@@ -62,7 +55,6 @@ def ReaderInputs.namespaceTree (r : ReaderInputs K L) :=
   r.tree.filter (fun row => (r.treeParent row.1).isSome || !row.2.isEmpty)
 def ReaderInputs.opening (r : ReaderInputs K L) (s : String) := (r.direct s).getD (r.initial s)
 
-/-- Indexed row differences keep order and multiplicity in the comparison. -/
 def rowDifference {α : Type} (a b : List α) : Prop := ∃ i : Nat, a[i]? ≠ b[i]?
 def functionDifference {α β : Type} (a b : α → β) : Prop := ∃ x, a x ≠ b x
 
@@ -111,8 +103,6 @@ theorem inputs_eq_of_no_difference (a b : ReaderInputs K L) (h : ¬ primitiveDif
   cases a; cases b
   simp_all
 
-/-- All ordered output surfaces, including arbitrary Boolean queries, every
-neighborhood radius/direction, full and namespace trees, and navigation. -/
 structure ReaderAgreement (a b : ReaderInputs K L) : Prop where
   pages : a.pages = b.pages
   blocks : a.blocks = b.blocks
@@ -228,8 +218,6 @@ theorem reader_inputs_realize (D : Dates K) (Q : QParams K L) (R : QueryRowParse
     split <;> rfl
   exact ⟨hp,hr,hd,hlinked,hq,hl,hn,ht,hns,ho⟩
 
-/-- The baseline argument is arbitrary. In particular no graph-validity,
-unique-path, date-preservation, parser-equivalence or realization premise. -/
 theorem static_comparison_exhaustive_final (D : Dates K) (Q : QParams K L) (R : QueryRowParser)
     (config : Decided.Config) (favorites : Option String) (spell : K → String) (G : Graph)
     (baseline : ReaderInputs K L) :
@@ -237,8 +225,6 @@ theorem static_comparison_exhaustive_final (D : Dates K) (Q : QParams K L) (R : 
       ReaderAgreement (readerInputs P D Q R config favorites spell G) baseline :=
   structural_comparison_exhaustive _ _
 
-/-- Comparing projected rows directly to raw readings additionally identifies
-an excluded reference source or a header/immediate-parent-suppressed query row. -/
 theorem presented_comparison_exhaustive_final (r : ReaderInputs K L) (t : Page K)
     (a : Anchor) (q : Query L) (o : QueryPresentation) :
     (∃ b ∈ r.blocks.eraseDups.filter (fun b => r.references b t),r.sourceEligible t b = false) ∨

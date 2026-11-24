@@ -1047,7 +1047,7 @@ unrelated ordinary claimant, and every spelling excludes its own day. Proof:
 `crates/tine-store/tests/alias_groups.rs`.
 
 What a `[[name]]` link opens has one answerer, `WholeGraph::link_target`
-(`store/inventory.rs::link_target_in`; conceptual-model Q8, CM step 2). A name
+(`store/inventory.rs::link_target_in`; [conceptual model](conceptual-model/SPEC.md) §2.3, opening). A name
 first takes the opening claimant of that literal name. In particular an
 ordinary date-named file retains its own spelling (D-20261107-KD); another
 accepted spelling can still name the day's journal. Without a literal file,
@@ -1145,7 +1145,7 @@ flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
 
 Every page rename is planned as a `HostOp`, including one moved page.
-Merge realization (conceptual model §5.1–5.2) uses the original physical
+Merge realization ([conceptual model](conceptual-model/SPEC.md) O6 and P4) uses the original physical
 survivor and source bytes. Survivor header lines and both bodies retain their
 bytes and terminators outside legal name spans. Nonclashing source properties
 join the header; source titles, equal or differing property clashes, protected

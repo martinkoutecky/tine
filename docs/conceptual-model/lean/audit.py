@@ -6,9 +6,9 @@ rounds matched only \\w+, so dotted and primed names were collapsed or dropped) 
 2. Generates .lake/AuditAll.lean that imports every module and `#print axioms` for every named theorem
    (namespaces tracked from `namespace`/`end` lines), runs it with `lake env lean`, and requires each
    theorem's axioms to be a subset of {propext, Classical.choice, Quot.sound}.
-Headlines.lean additionally checks the raw dependency cone of the headline theorems during `lake build`.
+CutHeadlines.lean additionally checks the raw dependency cone of the headline theorems during `lake build`.
 """
-import os, re, resource, subprocess, sys
+import os, re, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -38,15 +38,34 @@ for f in sorted((ROOT / 'src').glob('*.lean')):
 names = sorted(set(names))
 # Every public headline and both current witness suites must be roots of the
 # checked cone, not merely covered by the separate theorem-axiom scan.
-cone_src = '\n'.join((ROOT / 'src' / f).read_text()
-                     for f in ('Headlines.lean', 'Fold5.lean', 'OwnerWitness5.lean', 'QueryWitness6.lean'))
-cone_roots = set(re.findall(r'``(CM\.(?:Headlines|Witnesses3|Witnesses4|Policy5|Witnesses5|Fold5|Owner5|OwnerWitness5|QueryRename6|QueryWitness6)\.\w+)', cone_src))
-required_roots = {n for n in names if n.startswith(('CM.Headlines.', 'CM.Witnesses3.', 'CM.Witnesses4.',
-                                                   'CM.Policy5.', 'CM.Witnesses5.', 'CM.Fold5.',
-                                                   'CM.Owner5.', 'CM.OwnerWitness5.', 'CM.QueryRename6.', 'CM.QueryWitness6.'))}
+cone_src = (ROOT / 'src' / 'CutHeadlines.lean').read_text()
+cone_roots = set(re.findall(r"``(CM[\w.']+)", cone_src))
+required_roots = set(names)
 if missing_roots := required_roots - cone_roots:
     sys.exit(f'missing headline cone roots: {sorted(missing_roots)}')
 print(f'CONE COVERAGE PASS: {len(required_roots)} headline/witness roots')
+# Three layers: core imports neither views nor chapters. Evidence comparators
+# are chapter-side roots, never a way for core to acquire an O8 dependency.
+view_modules = {'Pages','Query','Links','Decided','Consolidated13Static','Presentation13','DateViews','DateComparison13','Ref10'}
+chapter_modules = {'Journal14','CutSettings','CutSettingsExamples','CutRefactorProofs'}
+core_roots = {'CutConsequences','CutAliasProofs','CutTwins','CutConservation','CutSafetyProofs','CutPublish','CutSplice','CutDecision','CutRedundancy','CutNames','CutObserve','CutTypes','ReadingEffects','Date13'}
+all_imports = {p.stem: set(re.findall(r'^import (\w+)',p.read_text(),re.M)) for p in (ROOT / 'src').glob('*.lean')}
+def dependency_cone(roots):
+    reached, todo = set(), list(roots)
+    while todo:
+        m = todo.pop()
+        if m in reached: continue
+        reached.add(m)
+        todo.extend(all_imports.get(m,set()))
+    return reached
+reached = dependency_cone(core_roots)
+if reached & (view_modules | chapter_modules):
+    sys.exit(f'core imports views/chapters: {sorted(reached & (view_modules | chapter_modules))}')
+if not {'Journal14','CutSettings'} <= all_imports.keys():
+    sys.exit('a retained chapter is missing')
+if not {'Ref10','DateViews'} <= all_imports.keys():
+    sys.exit('a retained tree view is missing')
+print(f'LAYER SEPARATION PASS: {len(reached)} core modules, no views or chapters; both chapters present')
 # Shared-host resource bound: dependency width bounds the number of local module
 # compilers that Lake can have active, even though this Lake has no build -j flag.
 deps = {m: set(re.findall(r'^import (\w+)', (ROOT / 'src' / f'{m}.lean').read_text(), re.M)) & set(mods)
@@ -81,19 +100,10 @@ print(f'BUILD WIDTH PASS: {width} concurrent local module compilers at most')
 audit = ROOT / '.lake' / 'AuditAll.lean'
 audit.parent.mkdir(exist_ok=True)
 audit.write_text(''.join(f'import {m}\n' for m in mods) + ''.join(f'#print axioms {n}\n' for n in names))
-# The round-5 task caps non-Lean checks at 2 GiB but explicitly requires Lean
-# uncapped. Run this Python process with `ulimit -S -v 2097152`; restore only
-# the Lean child's soft address-space limit, leaving Python capped.
-def uncap_lean():
-    _, hard = resource.getrlimit(resource.RLIMIT_AS)
-    if hard != resource.RLIM_INFINITY:
-        raise RuntimeError('Lean requires an unlimited hard address-space limit')
-    resource.setrlimit(resource.RLIMIT_AS, (resource.RLIM_INFINITY, hard))
-
 p = subprocess.run(['lake', 'env', 'lean', '-j2', '-s8192', str(audit)], cwd=ROOT,
-                   env={**os.environ, 'LEAN_NUM_THREADS': '2'}, capture_output=True, text=True,
-                   preexec_fn=uncap_lean)
+                   env={**os.environ, 'LEAN_NUM_THREADS': '2'}, capture_output=True, text=True)
 out = p.stdout + p.stderr
+(ROOT / '.lake' / 'axioms.log').write_text(out)
 if p.returncode:
     sys.exit(out[-4000:])
 printed = {n: [a.strip() for a in axs.split(',') if a.strip()]
