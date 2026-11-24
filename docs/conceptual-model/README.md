@@ -120,7 +120,8 @@ Faithfulness is checked by the conformance tests below, not proved.
 
 ## Building the proofs
 
-Lean 4 `v4.31.0` (pinned in `lean/lean-toolchain`); no other dependency.
+Lean 4 `v4.31.0` (pinned in `lean/lean-toolchain`) and the local
+[listed-disk vocabulary](../model-base/lean/README.md).
 
 ```bash
 cd docs/conceptual-model/lean
@@ -128,7 +129,7 @@ lake build
 python3 audit.py
 ```
 
-`lake build` compiles all 151 modules. During the build, `CutHeadlines.lean`
+`lake build` compiles the conceptual model and the shared listed-disk module. During the build, `CutHeadlines.lean`
 walks the whole dependency cone of the listed theorems and fails on any unsafe
 constant or any axiom other than `propext`, `Classical.choice` and
 `Quot.sound` (so a `sorry` anywhere in the cone fails the build). It needs
@@ -136,7 +137,13 @@ about 3 GB of memory at peak (the Lake file runs Lean with `-j2`).
 `audit.py` then scans the sources for `sorry`, `admit`, `native_decide`,
 `axiom` and similar escapes, checks that every named theorem is a root of that
 cone, that the core imports no view or chapter, and prints the axioms of every
-named theorem, accepting only the same three.
+named theorem in both packages, accepting only the same three.
+
+`CutPatch` relates a successful page operation to a finite patch of changed listed entries and their
+origins. Replaying the patch yields the exact candidate image and preserves every path outside the
+effects. `ListedLayout` is the premise that connects an observed listing to K's paths and UTF-8 bytes.
+The listed image covers the modeled page files. Durable publication, physical alias resolution and
+concurrent edits belong to the storage composition.
 
 ## Executable checks
 

@@ -1,10 +1,27 @@
-import CutSettingsExamples
+import CutPatchWitnesses
 import DateComparison13
 import Lean
 open Lean Elab Command in
 run_cmd do
   let env ← getEnv
-  let mut pending : List Name := [``CM.Consolidated13.added_exact,
+  let mut pending : List Name := [``ListedDisk.Patch.replay_lookup,
+    ``CM.Cut.listedImage_layout,
+    ``CM.Cut.patchOf_effect,
+    ``CM.Cut.patchOf_replay,
+    ``CM.Cut.patchOf_frame,
+    ``CM.Cut.patchOf_replay_listed,
+    ``CM.Cut.patchOf_origin,
+    ``CM.Cut.patchOf_merge,
+    ``CM.Cut.patchOf_written_origin,
+    ``CM.Cut.patchOf_fileless_deletion_is_move,
+    ``CM.CutExamples.same_name_empty_patch,
+    ``CM.CutExamples.merge_removed_source_patch,
+    ``CM.CutExamples.respelling_only_patch,
+    ``CM.CutExamples.namespace_two_moves_and_rewrite_patch,
+    ``CM.CutExamples.fileless_reference_merge_patch,
+    ``CM.CutExamples.fileless_namespace_merge_moves_descendants,
+    ``CM.CutExamples.merge_unchanged_survivor_binding,
+    ``CM.Consolidated13.added_exact,
     ``CM.Consolidated13.changes_complete,
     ``CM.Consolidated13.removed_exact,
     ``CM.Cut.Refactor4.cancel_dominates_holder_dispatch,

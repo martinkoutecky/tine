@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Axiom audit (round 7: theorem names may contain dots and apostrophes; earlier
-rounds matched only \\w+, so dotted and primed names were collapsed or dropped) of every named theorem in src/ (run after `lake build`).
+rounds matched only \\w+, so dotted and primed names were collapsed or dropped) of every named theorem in the conceptual model and shared base (run after `lake build`).
 
 1. Source scan: no sorry/admit/native_decide/axiom/unsafe/implemented_by/extern/ofReduceBool/sorryAx in code.
 2. Generates .lake/AuditAll.lean that imports every module and `#print axioms` for every named theorem
@@ -12,10 +12,13 @@ import os, re, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+BASE_SRC = ROOT.parent.parent / 'model-base' / 'lean' / 'src'
 ALLOWED = {'propext', 'Classical.choice', 'Quot.sound'}
 FORBIDDEN = r'\b(sorry|admit|native_decide|axiom|unsafe|implemented_by|extern|ofReduceBool|sorryAx)\b'
 mods, names = [], []
-for f in sorted((ROOT / 'src').glob('*.lean')):
+local_sources = sorted((ROOT / 'src').glob('*.lean'))
+sources = local_sources + sorted(BASE_SRC.glob('*.lean'))
+for f in sources:
     src = f.read_text()
     code = re.sub(r'/-.*?-/', '', src, flags=re.S)
     code = re.sub(r'--[^\n]*', '', code)
@@ -36,10 +39,9 @@ for f in sorted((ROOT / 'src').glob('*.lean')):
             if 'private' not in line.split(m.group(1))[0]:
                 names.append('.'.join(stack + [m.group(1)]))
 names = sorted(set(names))
-# Every public headline and both current witness suites must be roots of the
-# checked cone, not merely covered by the separate theorem-axiom scan.
+# Every public theorem and named witness must be a root of the checked cone.
 cone_src = (ROOT / 'src' / 'CutHeadlines.lean').read_text()
-cone_roots = set(re.findall(r"``(CM[\w.']+)", cone_src))
+cone_roots = set(re.findall(r"``((?:CM|ListedDisk)[\w.']+)", cone_src))
 required_roots = set(names)
 if missing_roots := required_roots - cone_roots:
     sys.exit(f'missing headline cone roots: {sorted(missing_roots)}')
@@ -48,8 +50,8 @@ print(f'CONE COVERAGE PASS: {len(required_roots)} headline/witness roots')
 # are chapter-side roots, never a way for core to acquire an O8 dependency.
 view_modules = {'Pages','Query','Links','Decided','Consolidated13Static','Presentation13','DateViews','DateComparison13','Ref10'}
 chapter_modules = {'Journal14','CutSettings','CutSettingsExamples','CutRefactorProofs'}
-core_roots = {'CutConsequences','CutAliasProofs','CutTwins','CutConservation','CutSafetyProofs','CutPublish','CutSplice','CutDecision','CutRedundancy','CutNames','CutObserve','CutTypes','ReadingEffects','Date13'}
-all_imports = {p.stem: set(re.findall(r'^import (\w+)',p.read_text(),re.M)) for p in (ROOT / 'src').glob('*.lean')}
+core_roots = {'CutPatch','CutConsequences','CutAliasProofs','CutTwins','CutConservation','CutSafetyProofs','CutPublish','CutSplice','CutDecision','CutRedundancy','CutNames','CutObserve','CutTypes','ReadingEffects','Date13'}
+all_imports = {p.stem: set(re.findall(r'^import ([\w.]+)',p.read_text(),re.M)) for p in sources}
 def dependency_cone(roots):
     reached, todo = set(), list(roots)
     while todo:
@@ -66,12 +68,12 @@ if not {'Journal14','CutSettings'} <= all_imports.keys():
 if not {'Ref10','DateViews'} <= all_imports.keys():
     sys.exit('a retained tree view is missing')
 print(f'LAYER SEPARATION PASS: {len(reached)} core modules, no views or chapters; both chapters present')
-# Shared-host resource bound: dependency width bounds the number of local module
-# compilers that Lake can have active, even though this Lake has no build -j flag.
-deps = {m: set(re.findall(r'^import (\w+)', (ROOT / 'src' / f'{m}.lean').read_text(), re.M)) & set(mods)
-        for m in mods}
+# Shared-host resource bound for K's local module compilers. The shared base
+# has its own Lake target and is audited above.
+local_mods = {p.stem for p in local_sources}
+deps = {m: all_imports[m] & local_mods for m in local_mods}
 closure = {}
-for m in mods:
+for m in sorted(local_mods):
     reached, pending = set(deps[m]), list(deps[m])
     while pending:
         for d in deps[pending.pop()]:
@@ -91,9 +93,9 @@ def augment(m, seen):
             matched[d] = m
             return True
     return False
-for m in mods:
+for m in sorted(local_mods):
     augment(m, set())
-width = len(mods) - len(matched)
+width = len(local_mods) - len(matched)
 if width > 2:
     sys.exit(f'module dependency width {width} exceeds the shared-host limit of 2')
 print(f'BUILD WIDTH PASS: {width} concurrent local module compilers at most')

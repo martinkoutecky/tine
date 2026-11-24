@@ -1,0 +1,7 @@
+name = "tine_model_base"
+defaultTargets = ["ListedDisk"]
+
+[[lean_lib]]
+name = "ListedDisk"
+srcDir = "src"
+moreLeanArgs = ["-j2", "-s8192"]
