@@ -1148,8 +1148,9 @@ Every page rename is planned as a `HostOp`, including one moved page.
 Merge realization ([conceptual model](conceptual-model/SPEC.md) O6 and P4) uses the original physical
 survivor and source bytes. Survivor header lines and both bodies retain their
 bytes and terminators outside legal name spans. Nonclashing source properties
-join the header; source titles, equal or differing property clashes, protected
-header syntax and blank header lines remain in one leftover block between the bodies. A
+join the header; source titles, equal or differing property clashes and protected
+header syntax remain in one leftover block between the bodies. A blank header line is
+not a leftover line and is not carried over. A
 leftover keeps each moved header line's bytes together on one line, ended by
 that line's own terminator (else an inserted one). In Markdown, original
 outline prefixes and whitespace-only remainders go on the leftover's title
