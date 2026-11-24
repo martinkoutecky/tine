@@ -58,7 +58,7 @@
     "iOS": { "infoPlist": "Info.plist", "minimumSystemVersion": "15.4" },
     "windows": { "nsis": { "installerHooks": "tine-url-hooks.nsh" } },
     "android": {
-      "versionCode": 11002
+      "versionCode": 10002
     },
     "linux": {
       "deb": {
