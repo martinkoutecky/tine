@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use git2::{ErrorCode, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use tine_core::doc::{DocBlock, Document};
+use tine_core::model::Format;
 use tine_core::sync_diff::{diff_blocks, diff_blocks_trimmed, DiffRow, PersistedIds};
 
 use crate::seen::{SeenBlock, SeenChanges, SeenRemoved};
@@ -892,7 +893,7 @@ fn changes_in(
         return Ok(result);
     }
     let repo_path = prefix.join(path);
-    let org = path.ends_with(".org");
+    let org = Format::from_path(Path::new(path)) == Format::Org;
     let tip_blob = tip
         .map(|oid| blob_id(&repo, oid, &repo_path))
         .transpose()?

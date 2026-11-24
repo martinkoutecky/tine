@@ -34,7 +34,18 @@ fn publish(d: &mut Driver, p: usize) {
 fn whole_retirement_preserves_unpublished_siblings() {
     for profile in ["base", "R1", "weak", "all"] {
         let mut d = Driver::stepped(profile);
-        run(&mut d, &[("opRename", json!([0, 2, [1], [[1, 3]]]))]);
+        run(
+            &mut d,
+            &[(
+                "opApply",
+                json!([
+                    [[0, ABSENT], [1, 3], [2, 1]],
+                    [[0, 1], [1, 2], [2, ABSENT]],
+                    NONE,
+                    NONE
+                ]),
+            )],
+        );
         d.settle();
         publish(&mut d, 2);
         assert_eq!(
@@ -57,6 +68,27 @@ fn whole_retirement_preserves_unpublished_siblings() {
             }
             d.tick_draft();
         }
+    }
+}
+
+#[test]
+fn unresolved_pair_retains_published_member_and_reinstalls_order() {
+    for profile in ["base", "R1", "weak", "all"] {
+        let mut d = Driver::stepped(profile);
+        run(&mut d, &[("opRename", json!([0, 2, [1], [[1, 3]]]))]);
+        d.settle();
+        publish(&mut d, 2);
+        assert_eq!(d.host.begin_draft_retiring(&key(2)), Disposition::Waiting);
+        assert!(d.host.worker.is_none());
+        d.fault(false, false);
+        assert!(d.step("launch", &[]));
+        assert!(d.oracle.next("flushDel", &[json!(0)]).is_none());
+        assert_eq!(d.host.start_save(&key(0)), Disposition::Waiting);
+        d.compare("recovered source waits for its witnesses");
+        publish(&mut d, 2);
+        publish(&mut d, 1);
+        publish(&mut d, 0);
+        assert_eq!(label(&d.host.fs.physical().alpha(&key(2), false)), 1);
     }
 }
 

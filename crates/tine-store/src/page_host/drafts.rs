@@ -50,17 +50,224 @@ pub(super) fn encode(records: &[Record]) -> Vec<u8> {
     seal(DRAFT, &records)
 }
 
-pub(super) fn decode(bytes: &[u8]) -> Result<Vec<Record>, ()> {
-    let records: Vec<Record> = open(DRAFT, bytes)?;
-    let mut pages = BTreeSet::new();
-    if records.is_empty()
-        || records
-            .iter()
-            .any(|r| r.wseq == 0 || !pages.insert(&r.page))
-    {
+/// Zero-based `(receiver, source)` record indexes of a paired operation.
+pub(super) type Pairs = Vec<(u32, u32)>;
+
+/// The escape byte opening every extended draft body. A legacy body opens
+/// with its nonempty record vector's length, never zero, so an older reader
+/// decodes an extended body as an empty vector and rejects it.
+const ESCAPE: u8 = 0;
+const TAG_OPERATION: u8 = 0;
+const TAG_DECISION: u8 = 1;
+
+/// A durable choice on one paired endpoint, the receiver or the source
+/// (the design's tag 1 record).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Decision {
+    /// The operation's stable request id: its vehicle's filename UUID.
+    pub op: [u8; 16],
+    /// The chosen endpoint's (receiver's or source's) zero-based record
+    /// index in the operation draft.
+    pub member: u32,
+    pub wseq: u64,
+    pub choice: Choice,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Choice {
+    /// `0`: take disk (Use Disk). On the receiver it cancels the move, on
+    /// the source its removal.
+    TakeDisk,
+    /// `1`: reviewed text; `2`: superseding editor input. Decoded and
+    /// validated here, acted on by no code yet: an operation with one
+    /// blocks its destructive step.
+    Text {
+        superseding: bool,
+        version: u64,
+        base: Base,
+        bytes: Text,
+    },
+}
+
+/// One extended or legacy draft body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Body {
+    /// The legacy body: a nonempty record vector, recovered exactly as before.
+    Records(Vec<Record>),
+    /// Tag 0: a paired operation draft.
+    Operation { records: Vec<Record>, pairs: Pairs },
+    /// Tag 1: a decision record.
+    Decision(Decision),
+}
+
+fn seal_raw(magic: &[u8; 8], body: &[u8]) -> Vec<u8> {
+    let mut bytes = magic.to_vec();
+    bytes.push(2);
+    bytes.extend_from_slice(body);
+    let checksum = Sha256::digest(&bytes);
+    bytes.extend_from_slice(&checksum);
+    bytes
+}
+
+fn open_raw<'a>(magic: &[u8; 8], bytes: &'a [u8]) -> Result<&'a [u8], ()> {
+    if bytes.len() < 41 || bytes.get(..8) != Some(magic.as_slice()) || bytes[8] != 2 {
         return Err(());
     }
-    Ok(records)
+    let end = bytes.len() - 32;
+    if Sha256::digest(&bytes[..end]).as_slice() != &bytes[end..] {
+        return Err(());
+    }
+    Ok(&bytes[9..end])
+}
+
+fn take<'a, T: serde::de::DeserializeOwned>(rest: &mut &'a [u8]) -> Result<T, ()> {
+    let (value, tail) = postcard::take_from_bytes(rest).map_err(|_| ())?;
+    *rest = tail;
+    Ok(value)
+}
+
+fn push(body: &mut Vec<u8>, value: &impl Serialize) {
+    body.extend(postcard::to_stdvec(value).expect("app-data serialization"));
+}
+
+/// A paired operation draft: escape, tag 0, the ordered records, the pairs.
+pub(super) fn encode_operation(records: &[Record], pairs: &[(u32, u32)]) -> Vec<u8> {
+    let mut body = vec![ESCAPE, TAG_OPERATION];
+    push(&mut body, &records);
+    push(&mut body, &pairs);
+    seal_raw(DRAFT, &body)
+}
+
+/// A decision record: escape, tag 1, 16 raw UUID bytes, member, write
+/// sequence, one choice byte and the choice's payload.
+pub(super) fn encode_decision(decision: &Decision) -> Vec<u8> {
+    let mut body = vec![ESCAPE, TAG_DECISION];
+    body.extend_from_slice(&decision.op);
+    push(&mut body, &decision.member);
+    push(&mut body, &decision.wseq);
+    match &decision.choice {
+        Choice::TakeDisk => body.push(0),
+        Choice::Text {
+            superseding,
+            version,
+            base,
+            bytes,
+        } => {
+            body.push(if *superseding { 2 } else { 1 });
+            push(&mut body, version);
+            push(&mut body, base);
+            push(&mut body, bytes);
+        }
+    }
+    seal_raw(DRAFT, &body)
+}
+
+fn valid_records(records: &[Record]) -> bool {
+    let mut pages = BTreeSet::new();
+    !records.is_empty() && records.iter().all(|r| r.wseq != 0 && pages.insert(&r.page))
+}
+
+/// Bounds, disjointness, a known present source base with a deletion
+/// effect, and a present receiver proposal.
+fn valid_pairs(records: &[Record], pairs: &[(u32, u32)]) -> bool {
+    let mut seen = BTreeSet::new();
+    !pairs.is_empty()
+        && pairs.iter().all(|&(receiver, source)| {
+            let (Some(r), Some(s)) = (records.get(receiver as usize), records.get(source as usize))
+            else {
+                return false;
+            };
+            receiver != source
+                && seen.insert(receiver)
+                && seen.insert(source)
+                && r.bytes.is_some()
+                && s.bytes.is_none()
+                && matches!(&s.base, Base::Known(Some(_)))
+        })
+}
+
+/// The `(receiver, source)` record indexes of `moves`, when they form a
+/// valid pairing of `records` (else the operation keeps the legacy body).
+pub(super) fn pairing(records: &[Record], moves: &[(String, String)]) -> Option<Pairs> {
+    let index = |page: &str| {
+        let at = records.iter().position(|r| r.page == page)?;
+        u32::try_from(at).ok()
+    };
+    let pairs = moves
+        .iter()
+        .map(|(receiver, source)| Some((index(receiver)?, index(source)?)))
+        .collect::<Option<Pairs>>()?;
+    (valid_records(records) && valid_pairs(records, &pairs)).then_some(pairs)
+}
+
+/// The one decoder for every draft body. Extended bodies must be consumed
+/// exactly; anything else is unreadable.
+pub(super) fn decode_body(bytes: &[u8]) -> Result<Body, ()> {
+    let body = open_raw(DRAFT, bytes)?;
+    if body.first() != Some(&ESCAPE) {
+        let records: Vec<Record> = postcard::from_bytes(body).map_err(|_| ())?;
+        return valid_records(&records)
+            .then_some(Body::Records(records))
+            .ok_or(());
+    }
+    let mut rest = &body[1..];
+    let tag: u8 = *rest.first().ok_or(())?;
+    rest = &rest[1..];
+    let result = match tag {
+        TAG_OPERATION => {
+            let records: Vec<Record> = take(&mut rest)?;
+            let pairs: Pairs = take(&mut rest)?;
+            if !valid_records(&records) || !valid_pairs(&records, &pairs) {
+                return Err(());
+            }
+            Body::Operation { records, pairs }
+        }
+        TAG_DECISION => {
+            let op: [u8; 16] = rest.get(..16).ok_or(())?.try_into().map_err(|_| ())?;
+            rest = &rest[16..];
+            let member: u32 = take(&mut rest)?;
+            let wseq: u64 = take(&mut rest)?;
+            let choice = *rest.first().ok_or(())?;
+            rest = &rest[1..];
+            let choice = match choice {
+                0 => Choice::TakeDisk,
+                1 | 2 => Choice::Text {
+                    superseding: choice == 2,
+                    version: take(&mut rest)?,
+                    base: take(&mut rest)?,
+                    bytes: take(&mut rest)?,
+                },
+                _ => return Err(()),
+            };
+            if wseq == 0 {
+                return Err(());
+            }
+            Body::Decision(Decision {
+                op,
+                member,
+                wseq,
+                choice,
+            })
+        }
+        _ => return Err(()),
+    };
+    rest.is_empty().then_some(result).ok_or(())
+}
+
+/// A record vehicle's records (legacy or paired operation draft).
+pub(super) fn decode(bytes: &[u8]) -> Result<Vec<Record>, ()> {
+    match decode_body(bytes)? {
+        Body::Records(records) | Body::Operation { records, .. } => Ok(records),
+        Body::Decision(_) => Err(()),
+    }
+}
+
+/// A paired operation draft's pairs, or None for any other body.
+pub(super) fn pairs_of(bytes: &[u8]) -> Option<Pairs> {
+    match decode_body(bytes).ok()? {
+        Body::Operation { pairs, .. } => Some(pairs),
+        _ => None,
+    }
 }
 
 pub(super) fn encode_marker(marker: &Marker) -> Vec<u8> {
@@ -85,13 +292,70 @@ pub(super) struct Scan {
     pub unreadable: BTreeSet<String>,
     pub max_version: u64,
     pub max_wseq: u64,
+    /// Paired operation drafts' pairs, by vehicle name (a subset of `files`).
+    pub pairs: BTreeMap<String, Pairs>,
+    /// Readable decisions matching a readable paired operation, by name.
+    pub decisions: BTreeMap<String, Decision>,
+    /// Decision files that block their (readable, paired) operation's
+    /// destructive step: unreadable, mismatched, or a choice this code does
+    /// not act on. Kept in place, never quarantined: moving one away would
+    /// let the next launch replay the removal it may cancel.
+    pub blocking: BTreeMap<String, String>,
+    /// Readable decisions whose operation is durably absent: cleanup only.
+    pub stale_decisions: BTreeSet<String>,
+}
+
+/// `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft`: (op uuid, member).
+pub(super) fn decision_name(name: &str) -> Option<([u8; 16], u32)> {
+    let rest = name.strip_prefix("p-")?.strip_suffix(".draft")?;
+    let mut parts = rest.split('-');
+    let (hash, nonce, op, member) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    let hex = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit());
+    if parts.next().is_some() || !hex(hash, 32) || !hex(nonce, 16) || !hex(op, 32) {
+        return None;
+    }
+    if member.is_empty() || !member.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let op = uuid::Uuid::parse_str(op).ok()?.into_bytes();
+    Some((op, member.parse().ok()?))
+}
+
+/// The operation vehicle name of a request id.
+pub(super) fn op_vehicle(op: &[u8; 16]) -> String {
+    format!("op-{}.draft", uuid::Uuid::from_bytes(*op).simple())
+}
+
+/// The request id an operation vehicle's name carries.
+pub(super) fn op_id(name: &str) -> Option<[u8; 16]> {
+    let id = name.strip_prefix("op-")?.strip_suffix(".draft")?;
+    Some(uuid::Uuid::try_parse(id).ok()?.into_bytes())
+}
+
+/// A fresh decision vehicle name for `member` (endpoint `page`, the receiver
+/// or the source) of `op`.
+pub(super) fn decision_vehicle(page: &str, op: &[u8; 16], member: u32) -> String {
+    let page = page_name(page);
+    let stem = page.strip_suffix(".draft").unwrap();
+    format!(
+        "{stem}-{}-{member}.draft",
+        uuid::Uuid::from_bytes(*op).simple()
+    )
 }
 
 /// Files are the authority. Equal sequences may only be identical copies.
 pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
     let mut result = Scan::default();
     let mut sequences: BTreeMap<u64, (Record, BTreeSet<String>)> = BTreeMap::new();
+    let mut decisions = vec![];
     for (name, bytes) in files {
+        if let Some((op, member)) = decision_name(&name) {
+            decisions.push((name, op, member, decode_body(&bytes)));
+            continue;
+        }
+        if let Some(pairs) = pairs_of(&bytes).filter(|_| name.starts_with("op-")) {
+            result.pairs.insert(name.clone(), pairs);
+        }
         let Some(records) = vehicle(&name, &bytes) else {
             result.unreadable.insert(name);
             continue;
@@ -125,8 +389,59 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
     result
         .files
         .retain(|name, _| !result.unreadable.contains(name));
+    result
+        .pairs
+        .retain(|name, _| result.files.contains_key(name));
+    // Cross-check each decision with its operation: filename, id, member
+    // (a receiver's or a source's index, its page the name's hash) and
+    // sequence.
+    for (name, op, member, body) in decisions {
+        let vehicle = op_vehicle(&op);
+        let Some(pairs) = result.pairs.get(&vehicle) else {
+            match body {
+                // An operation durably absent leaves its decision as cleanup.
+                Ok(Body::Decision(_)) if !result.files.contains_key(&vehicle) => {
+                    result.stale_decisions.insert(name);
+                }
+                _ => {
+                    result.unreadable.insert(name);
+                }
+            }
+            continue;
+        };
+        let records = &result.files[&vehicle];
+        let endpoint = pairs
+            .iter()
+            .flat_map(|&(receiver, source)| [receiver, source])
+            .find(|&index| index == member)
+            .map(|index| &records[index as usize]);
+        let matches = |d: &Decision| {
+            d.op == op
+                && d.member == member
+                && endpoint.is_some_and(|r| name.starts_with(&page_prefix(&r.page)))
+        };
+        match body {
+            Ok(Body::Decision(d)) if matches(&d) => {
+                result.max_wseq = result.max_wseq.max(d.wseq);
+                if d.choice != Choice::TakeDisk {
+                    result.blocking.insert(name.clone(), vehicle);
+                }
+                result.decisions.insert(name, d);
+            }
+            _ => {
+                result.blocking.insert(name, vehicle);
+            }
+        }
+    }
     result.logical = logical(result.files.values());
     result
+}
+
+/// `p-<page-hash>-`: the start of every vehicle name for `page`.
+fn page_prefix(page: &str) -> String {
+    let digest = Sha256::digest(page.as_bytes());
+    let key: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
+    format!("p-{key}-")
 }
 
 /// One vehicle's records, or None when the file is unreadable by itself
@@ -156,10 +471,8 @@ pub(super) fn logical<'a>(
 }
 
 pub(super) fn page_name(page: &str) -> String {
-    let digest = Sha256::digest(page.as_bytes());
-    let key: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
     let random = uuid::Uuid::new_v4().simple().to_string();
-    format!("p-{key}-{}.draft", random.get(..16).unwrap())
+    format!("{}{}.draft", page_prefix(page), random.get(..16).unwrap())
 }
 
 pub(super) fn op_name() -> String {
@@ -196,6 +509,22 @@ impl Vehicle {
             stage: Stage::Temp,
             failures: 0,
             sync_failures: 0,
+        }
+    }
+
+    /// A paired operation draft (immutable once durable).
+    pub fn write_operation(name: String, records: &[Record], pairs: &[(u32, u32)]) -> Self {
+        Self {
+            bytes: Some(encode_operation(records, pairs)),
+            ..Self::write(name, &[])
+        }
+    }
+
+    /// A decision record, through the same guarded vehicle path.
+    pub fn write_decision(name: String, decision: &Decision) -> Self {
+        Self {
+            bytes: Some(encode_decision(decision)),
+            ..Self::write(name, &[])
         }
     }
 

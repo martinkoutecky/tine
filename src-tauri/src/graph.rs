@@ -475,6 +475,7 @@ fn start_host(
     window_label: &str,
     store: &Arc<Store>,
     root_key: &Path,
+    drafts: tine_store::DraftOwnership,
 ) -> Result<tine_store::PageHost, String> {
     // Settings and the launch checkpoint already live under app data; with
     // none there is no place for crash drafts (E-P2b-1).
@@ -486,6 +487,7 @@ fn start_host(
         store,
         &app_data,
         root_key,
+        drafts,
         crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
     )
 }
@@ -495,11 +497,14 @@ fn start_host(
 /// kinds sink (OG-RULES Rule 8). Every production host starts here: the
 /// graph-window binding (`start_host`) and the command-line owner
 /// (`owner::serve`). The owner lock (CLI PROTOCOL §3) admits one of them per
-/// graph across processes, so a graph's drafts have one driver.
+/// graph across processes, so a graph's drafts have one driver; a host
+/// whose claim holds no lock starts with drafts unowned
+/// (`owner::lease::draft_ownership`).
 pub(crate) fn launch_host(
     store: &Arc<Store>,
     app_data: &Path,
     root_key: &Path,
+    drafts: tine_store::DraftOwnership,
     mail: impl FnMut(tine_store::PageMail) + Send + 'static,
 ) -> Result<tine_store::PageHost, String> {
     let graph_id = crate::settings::host_graph_id(root_key);
@@ -507,6 +512,7 @@ pub(crate) fn launch_host(
         store,
         app_data,
         &graph_id,
+        drafts,
         crate::page_commands::log_edit_kinds,
         mail,
     )
@@ -704,7 +710,8 @@ fn load_graph_with_relocation(
             *slot.owner_failure.get_mut().unwrap() = failure;
             // On failure the dropped slot closes the Store, and the dropped
             // claim releases the lock.
-            let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
+            let drafts = crate::owner::lease::draft_ownership(claimed.as_ref());
+            let host = start_host(app, window_label, &slot.store, &slot.root_key, drafts)?;
             *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
             (slot, meta, claimed.map(Owner::Claimed))
         }

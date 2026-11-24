@@ -118,7 +118,8 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
     let slot = Arc::new(GraphSlot::new(store, root.clone()));
     let graph_id = crate::settings::host_graph_id(&root);
     // No window: no page mail to deliver.
-    let host = crate::graph::launch_host(&slot.store, &app_data, &root, |_mail| {})?;
+    let drafts = lease::draft_ownership(Some(&claimed));
+    let host = crate::graph::launch_host(&slot.store, &app_data, &root, drafts, |_mail| {})?;
     *slot.host.write().unwrap() = PageHostSlot::Running(host);
     let gate = Gate::new();
     let (stops, stopped) = mpsc::channel();

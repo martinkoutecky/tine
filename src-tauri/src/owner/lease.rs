@@ -255,6 +255,27 @@ pub(crate) fn claim_for_app(
     Ok(None)
 }
 
+/// The one answer to "does this host own the graph's draft namespace"
+/// (call 21): the owner lock is its only serializer. On desktop a host owns
+/// its drafts exactly when the claim holds the lock; with no lease (the lock
+/// call failed or is unsupported) it starts with drafts unowned: no draft
+/// writes and no paired destructive step, page saves unchanged. Every start
+/// (the window binding, `tine serve`) passes this answer, none recomputes it.
+#[cfg(desktop)]
+pub(crate) fn draft_ownership(claimed: Option<&Claimed>) -> tine_store::DraftOwnership {
+    match claimed {
+        Some(_) => tine_store::DraftOwnership::Owned,
+        None => tine_store::DraftOwnership::Unowned,
+    }
+}
+
+/// Mobile runs one app process per graph container and has no command-line
+/// owner, so the app is the only driver of its drafts and owns them.
+#[cfg(not(desktop))]
+pub(crate) fn draft_ownership(_claimed: Option<&Claimed>) -> tine_store::DraftOwnership {
+    tine_store::DraftOwnership::Owned
+}
+
 impl Claimed {
     /// Wrap a lock the handover took (`client::take_over`).
     #[cfg(desktop)]

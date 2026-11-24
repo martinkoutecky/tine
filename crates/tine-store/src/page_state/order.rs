@@ -18,17 +18,32 @@ pub(super) fn gated(x: &State, k: usize) -> bool {
     x.s.gates.iter().any(|gt| gates1(x, gt, k))
 }
 /// Quint: touches
-pub(super) fn touches(s: &Sys, ks: &BTreeSet<usize>) -> bool {
-    s.gates
+pub(super) fn touches(x: &State, ks: &BTreeSet<usize>) -> bool {
+    x.s.gates
         .iter()
         .any(|gt| ks.iter().any(|&k| gt.vers[k] != NONE))
+        || (!x.config.mutant("MForgetTouches") && ks.iter().any(|&k| retained(&x.s, k)))
 }
 /// Quint: partner (None for NONE)
-pub(super) fn partner(s: &Sys, k: usize) -> Option<usize> {
-    s.gates
+pub(super) fn partner(x: &State, k: usize) -> Option<usize> {
+    let s = &x.s;
+    s.pairs
         .iter()
-        .find(|gt| gt.dst == k && gt.open.contains(&k))
-        .map(|gt| gt.src)
+        .rfind(|pair| {
+            pair.dst == k
+                && pair.unresolved()
+                && matches!(pair.decision, Decision::None | Decision::Unreadable)
+                && (awaits(s, k)
+                    || !pair.certified(&s.disk, &s.stable, x.config.weak)
+                    || matches!(pair.phase, Phase::Held | Phase::Moved | Phase::Blocked))
+        })
+        .map(|pair| pair.src)
+        .or_else(|| {
+            s.gates
+                .iter()
+                .rfind(|gt| gt.dst == k && gt.open.contains(&k))
+                .map(|gt| gt.src)
+        })
 }
 /// Quint: discharge
 pub(super) fn discharge(s: &mut Sys, q: usize, ver: i64) {
@@ -41,9 +56,15 @@ pub(super) fn discharge(s: &mut Sys, q: usize, ver: i64) {
 }
 /// s3.2, in upDiscard: a Discard of a running rename's unwitnessed
 /// destination reverts its source while that still holds the deletion.
-pub(super) fn revert_partner(x: &State, s: &mut Sys, g: &mut Ghost, p: usize, v1: i64) {
-    let Some(src) = partner(s, p)
-        .filter(|&q| (s.pages[q].held || x.config.mutant("MRH")) && s.pages[q].buf == ABSENT)
+pub(super) fn revert_partner(
+    x: &State,
+    s: &mut Sys,
+    g: &mut Ghost,
+    source: Option<usize>,
+    v1: i64,
+) {
+    let Some(src) =
+        source.filter(|&q| (s.pages[q].held || x.config.mutant("MRH")) && s.pages[q].buf == ABSENT)
     else {
         return;
     };
@@ -98,11 +119,18 @@ pub(super) fn started(g: &mut Ghost, p: usize) {
 }
 /// Quint: orderHolds
 pub(super) fn order_holds(x: &State) -> bool {
-    x.g.order_ok
+    x.g.order_ok && x.s.owners.len() <= 1
 }
 /// Quint: renameResolves
 pub(super) fn rename_resolves(x: &State) -> bool {
     x.g.renamed
         .iter()
         .all(|r| x.s.disk[r.0] != ABSENT || x.s.disk[r.1] != ABSENT)
+        && x.s.pairs.iter().all(|pair| {
+            let preimage = pair.records[pair.src].base;
+            let image = pair.records[pair.dst].bytes;
+            x.s.disk[pair.src] == preimage
+                || x.s.disk[pair.dst] == image
+                || (preimage != ABSENT && preimage != NONE)
+        })
 }

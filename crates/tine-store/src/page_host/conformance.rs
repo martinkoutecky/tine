@@ -505,10 +505,109 @@ impl<F: ConformanceIo> Driver<F> {
                 json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
             })
             .collect();
+        let pairs = self.abstract_pairs();
         json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(false),
             "stable":disk(true),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
+            "pairs":pairs,"owners":if self.host.alive { vec![0] } else { vec![] },
+            "draftOK":true,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
+    }
+
+    fn abstract_pairs(&self) -> Vec<Value> {
+        use order::PairPhase;
+        let installing = self
+            .host
+            .worker
+            .as_ref()
+            .filter(|worker| worker.application.is_some() && worker.task.bytes.is_some())
+            .map(|worker| worker.task.name.as_str());
+        let files = self
+            .host
+            .fs
+            .draft_files(self.host.alive)
+            .into_iter()
+            .filter(|(name, _)| Some(name.as_str()) != installing)
+            .collect();
+        let scan = drafts::scan(files);
+        let mut pairs = Vec::new();
+        for (name, members) in &scan.pairs {
+            let records = &scan.files[name];
+            let id = drafts::op_id(name).expect("paired vehicle has an operation id");
+            for &(receiver, source) in members {
+                let dst = index(&records[receiver as usize].page);
+                let src = index(&records[source as usize].page);
+                let live = self
+                    .host
+                    .order
+                    .paired(name)
+                    .and_then(|op| op.pairs.iter().find(|pair| pair.member == receiver));
+                let took = |member| {
+                    scan.decisions.values().any(|d| {
+                        d.op == id && d.member == member && d.choice == drafts::Choice::TakeDisk
+                    })
+                };
+                let decision = if took(receiver) {
+                    "cancelled"
+                } else if took(source) {
+                    "sourceDisk"
+                } else if scan.blocking.values().any(|blocked| blocked == name) {
+                    "unreadable"
+                } else if live.is_some_and(|pair| pair.phase == PairPhase::Disarmed) {
+                    "disarmed"
+                } else {
+                    "none"
+                };
+                let phase = match live.map(|pair| pair.phase) {
+                    Some(PairPhase::Held { removed: false }) => "held",
+                    Some(PairPhase::Held { removed: true }) => "moved",
+                    Some(PairPhase::Settled) => "settled",
+                    Some(PairPhase::Disarmed) => "disarmed",
+                    Some(PairPhase::Cancelled) => "cancelled",
+                    Some(PairPhase::Blocked) => "blocked",
+                    Some(PairPhase::Restore) => "restore",
+                    Some(PairPhase::Retained) => "retained",
+                    Some(PairPhase::Armed) | None => match decision {
+                        // Down, a decided pair's phase is its decision
+                        // until launch recomputes it (model `down`).
+                        "cancelled" => "cancelled",
+                        "sourceDisk" => "sourceDisk",
+                        "unreadable" => "blocked",
+                        _ => "armed",
+                    },
+                };
+                let mut footprint =
+                    vec![json!({"bytes":NONE,"base":NONE,"ver":0}); self.windows.len()];
+                for record in records {
+                    footprint[index(&record.page)] = json!({
+                        "bytes":label(&record.bytes), "base":base(&record.base),
+                        "ver":self.record_versions[&record.wseq],
+                    });
+                }
+                pairs.push((records.iter().map(|record| record.wseq).min().unwrap(),
+                    json!({"dst":dst,"src":src,"records":footprint,"phase":phase,"decision":decision})));
+            }
+        }
+        // Like the logical draft records, a pending logical removal retains
+        // its input vehicle until the application terminal. The physical
+        // unlink can already be durable at an earlier worker turn.
+        if self.host.worker.as_ref().is_some_and(|worker| {
+            matches!(
+                worker.application,
+                Some(Application::Removal | Application::Retire)
+            )
+        }) {
+            for old in self.observed["s"]["pairs"].as_array().into_iter().flatten() {
+                if !pairs
+                    .iter()
+                    .any(|(_, new)| new["records"] == old["records"])
+                {
+                    pairs.push((u64::MAX, old.clone()));
+                }
+            }
+        }
+        pairs.sort_by_key(|(seq, _)| *seq);
+        pairs.into_iter().map(|(_, pair)| pair).collect()
     }
 
     fn trash_labels(&self, files: &BTreeMap<String, Arc<[u8]>>) -> Vec<BTreeSet<i64>> {

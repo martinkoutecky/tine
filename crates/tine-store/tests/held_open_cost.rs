@@ -59,6 +59,7 @@ impl Held {
             &store,
             &dir.path().join("app"),
             "cost",
+            tine_store::DraftOwnership::Owned,
             |_, _| {},
             move |m| {
                 let _ = sink.send(serde_json::to_value(m).unwrap());

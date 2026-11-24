@@ -144,6 +144,7 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64, u64) {
         &store,
         &dir.path().join("app"),
         "cost",
+        tine_store::DraftOwnership::Owned,
         |_, _| {},
         move |m| {
             let _ = sink.send(serde_json::to_value(m).unwrap());

@@ -81,6 +81,7 @@ pub(crate) fn save_guarded(
         store,
         app.path(),
         "l9",
+        tine_store::DraftOwnership::Owned,
         |_, _| {},
         move |mail| {
             tx.send(mail).unwrap();

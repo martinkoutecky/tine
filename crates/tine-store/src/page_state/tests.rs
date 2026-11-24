@@ -136,7 +136,7 @@ fn cancelling_discard_waits_for_a_locked_rename_source() {
     assert_eq!(closed.s.gates, x.s.gates);
     assert_eq!(closed.s.pages, x.s.pages);
     x = step(&x, Action::WDiscard(2)).unwrap();
-    assert_eq!(partner(&x.s, 2), Some(0));
+    assert_eq!(partner(&x, 2), Some(0));
     assert!(locked(&x, 0));
     assert!(step(&x, Action::DeliverUp(true)).is_none());
     assert!(step(&x, Action::DeliverUp(false)).is_none());
@@ -429,7 +429,7 @@ fn discard_after_destination_publication_keeps_the_source_deletion_and_order() {
     ] {
         x = step(&x, action).expect("model witness prefix is enabled");
     }
-    assert_eq!(partner(&x.s, 2), None);
+    assert_eq!(partner(&x, 2), None);
     let queued = step(&x, Action::WDiscard(2)).unwrap();
     let discarded = step(&queued, Action::DeliverUp(true)).unwrap();
     assert_eq!(discarded.s.pages[0], x.s.pages[0]);
@@ -493,8 +493,8 @@ fn cancelling_a_rename_keeps_an_absent_source_protected_with_or_without_its_draf
 
 #[test]
 fn cancelling_after_faulty_early_source_publication_respects_its_saved_promise() {
-    // MDF permits publishing the source before the destination. Cancel after
-    // that fault: restoring an already clean source must keep it clean, and an
+    // MDF permits starting the source save before the destination. Cancel
+    // after a faulty publication: restoring a clean source keeps it clean, and an
     // external replacement ends its saved promise even if ABSENT returns.
     for replaced in [false, true] {
         let mut x = init(config("base", "MDF"));
@@ -516,7 +516,15 @@ fn cancelling_after_faulty_early_source_publication_respects_its_saved_promise()
             Action::Rename,
             Action::DirSync(true),
         ] {
-            x = step(&x, action).expect("model witness prefix is enabled");
+            // Fault the independent receiver pre-check to reach the early
+            // publication whose saved promise this witness exercises.
+            if matches!(action, Action::Check) {
+                x.config.mutant = "MSkipPrecheck".into();
+                x = step(&x, action).expect("guard fault permits early publication");
+                x.config.mutant = "MDF".into();
+            } else {
+                x = step(&x, action).expect("model witness prefix is enabled");
+            }
         }
         assert!(!rename_resolves(&x));
         if replaced {
@@ -721,6 +729,10 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
         "call" => {
             let f = &e[1];
             let args = e[2].as_array().unwrap();
+            if f[0] == "id" && f[1] == "touches" {
+                let keys = serde_json::from_value(eval(&args[1], x)).unwrap();
+                return json!(order::touches(x, &keys));
+            }
             if f[0] == "id" && (f[1] == "Set" || f[1] == "Map" || f[1] == "List") {
                 let mut values: Vec<_> = args.iter().map(|e| eval(e, x)).collect();
                 if f[1] == "Set" {
@@ -882,6 +894,13 @@ pub(super) fn action(name: &str, args: &[Value]) -> Action {
         "windowCrash" => Action::WindowCrash,
         "power" => Action::Power(b(0), b(1)),
         "launch" => Action::Launch,
+        "launchWithClaim" => Action::LaunchWithClaim(b(0)),
+        "pairRewrite" => Action::PairRewrite(p(), b(1)),
+        "restoreSource" => Action::RestoreSource(p()),
+        "otherOwner" => Action::OtherOwner(b(0)),
+        "draftStore" => Action::DraftStore(b(0)),
+        "unreadableDecision" => Action::UnreadableDecision(p()),
+        "pairedDraftFailure" => Action::PairedDraftFailure(p()),
         _ => panic!("unknown action {name}"),
     }
 }
@@ -992,12 +1011,13 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
     assert_eq!(fixture["model_sha256"], MODEL_SHA);
     assert_eq!(
         fixture["scenario_sha256"],
-        "9200a28404f60177fa3dadda6e3b932f8a866c6bb7a2110854fcd7e181abe6b5"
+        "bf9605a64f6a0f1ea7b9d2984191a7865ba0997df25f6990ceaf1324ee8c4960"
     );
     let scenarios = fixture["scenarios"].as_object().unwrap();
-    assert_eq!(scenarios.len(), 194);
-    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 42);
+    assert_eq!(scenarios.len(), 206);
+    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 54);
     let mut comparisons = 0;
+    let mut differences = Vec::new();
     for oracle in fixture["oracles"].as_array().unwrap() {
         let profile = oracle["profile"].as_str().unwrap();
         let mutant = oracle["mutant"].as_str().unwrap();
@@ -1005,16 +1025,23 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
             let mut x = init(config(profile, mutant));
             let result = program(ops.as_array().unwrap(), &mut x);
             let status = result.err().unwrap_or("pass");
-            assert_eq!(
-                status,
-                oracle["outcomes"][name].as_str().unwrap(),
-                "{profile}/{mutant}/{name}: bad={:?}",
-                x.g.bad
-            );
+            let expected = oracle["outcomes"][name].as_str().unwrap();
+            if status != expected {
+                differences.push(format!(
+                    "{profile}/{mutant}/{name}: Rust {status}, Quint {expected}, bad={:?}",
+                    x.g.bad
+                ));
+            }
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 8148);
+    assert_eq!(comparisons, 11124);
+    assert!(
+        differences.is_empty(),
+        "{} differences\n{}",
+        differences.len(),
+        differences.join("\n")
+    );
 }
 
 #[test]
@@ -1043,7 +1070,18 @@ fn every_declared_mutant_is_caught() {
             }
             x = power(&x, false, true).unwrap();
         }
-        if mutant != "MRN5" && mutant != "MRH" {
+        if !matches!(
+            mutant,
+            "MRN5"
+                | "MRH"
+                | "MForgetChoice"
+                | "MForgetGates"
+                | "MNoResave"
+                | "MDropRetained"
+                | "MRejectRetainedSwitch"
+                | "MForgetTouches"
+                | "MKeepSettled"
+        ) {
             assert!(!checked(&x), "{mutant} failed only a scenario predicate");
         }
         eprintln!(
@@ -1060,7 +1098,7 @@ fn every_declared_mutant_is_caught() {
         );
         count += 1;
     }
-    assert_eq!(count, 38);
+    assert_eq!(count, 50);
 }
 
 fn replay_traces(fixture: &Value) -> (usize, usize) {

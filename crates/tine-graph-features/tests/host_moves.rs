@@ -139,6 +139,7 @@ fn a_non_page_rescue_is_published_by_the_host() {
         &f.store,
         &f._dir.path().join("app"),
         "test-graph",
+        tine_store::DraftOwnership::Owned,
         move |page, kinds| {
             sent.send((page.to_owned(), kinds.to_vec())).unwrap();
         },

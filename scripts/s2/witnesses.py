@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
-from generate import SHA, PROFILES, command, decode
+from generate import PACKED_APPLY, SHA, PROFILES, command, decode
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -249,6 +249,7 @@ WITNESSES["diagnostic-version-counter"] = {
 WITNESSES["diagnostic-queue-counter"] = {
     "profile": "base", "cycle": [("wOpen", [0]), ("windowCrash", [])],
     "steps": 2002, "actions": [], "predicate": "s.up.length() > QMAX", "guards": False,
+    "queue_chunks": True,
 }
 
 # Literal outer action guards from the frozen model, before each commit.
@@ -265,15 +266,15 @@ GUARDS = {
     "wClose": "s.alive and s.w.get(p).on and not(s.w.get(p).pend) and not(s.w.get(p).sent)",
     "wRecv": "s.alive and s.mb.get(p).on",
     "deliverUp": "s.alive and s.up.length() > 0 and (if (s.up.length() > 0) not(s.job.on and s.job.p == s.up.head().p) and (s.up.head().kind != \"op\" or not(s.job.on and s.job.p == s.up.head().q)) and (s.up.head().kind != \"discard\" or not(s.job.on and s.job.p == partner(s, s.up.head().p))) else false)",
-    "observe": "s.alive and s.pages.get(p).held and not(s.job.on and s.job.p == p) and table(s.pages.get(p), s.disk.get(p), g.vc + 1) != s.pages.get(p)",
+    "observe": "s.alive and s.pages.get(p).held and not(s.job.on and s.job.p == p) and (table(s.pages.get(p), s.disk.get(p), g.vc + 1) != s.pages.get(p) or resumePair(s, p) != s)",
     "flush": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf != ABSENT and dirty(s.pages.get(p)) and not(gated(s, p))",
     "check": "s.alive and s.job.on and s.job.phase == 1",
     "rename": "s.alive and s.job.on and s.job.phase == 2",
     "dirSync": "s.alive and s.job.on and s.job.phase == 3",
     "saveFail": "s.alive and s.job.on and s.job.phase <= 2",
-    "draftSync": "s.alive and s.drafts.get(p) != draftEntry(s.pages.get(p))",
+    "draftSync": "s.alive and canDraft(s) and s.drafts.get(p) != wantedDraft(s, p)",
     "switchReq": "s.alive and PAGES.exists(p => { val pg = s.pages.get(p) pg.held and dirty(pg) and not(pg.risk) })",
-    "switchFin": "s.alive and not(s.job.on) and s.up.length() == 0 and PAGES.forall(p => { val pg = s.pages.get(p) val a = s.w.get(p) not(a.pend) and not(a.sent) and (not(pg.held) or clean(pg) or pg.risk) and s.drafts.get(p) == draftEntry(pg) })",
+    "switchFin": "s.alive and not(s.job.on) and s.up.length() == 0 and PAGES.forall(p => { val pg = s.pages.get(p) val a = s.w.get(p) not(a.pend) and not(a.sent) and (not(pg.held) or clean(pg) or pg.risk) and s.drafts.get(p) == wantedDraft(s, p) })",
     "extWriteD": "v != s.disk.get(p) and (not(s.job.on and s.job.phase == 2 and s.job.p == p) or RACES.contains(\"R1\"))",
     "crash": "s.alive",
     "windowCrash": "s.alive",
@@ -285,8 +286,8 @@ GUARDS = {
 GUARDS.update({
     "load": "s.alive and not(s.pages.get(p).held)",
     "wOpTo": "s.alive and p != q and s.w.get(p).on and s.w.get(q).on and not(s.w.get(p).pend) and not(s.w.get(p).sent) and not(s.w.get(q).pend) and not(s.w.get(q).sent) and ds != s.w.get(p).text and dd != s.w.get(q).text",
-    "opDelete": "s.alive and opHeld(Set(p)) and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT and not(touches(s, Set(p)))",
-    "flushDel": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf == ABSENT and dirty(s.pages.get(p)) and not(gated(s, p))",
+    "opDelete": "s.alive and canDraft(s) and opHeld(Set(p)) and opFree(Set(p)) and opClean(s, p) and opCur(s, p) != ABSENT and not(touches(s, Set(p)))",
+    "flushDel": "s.alive and not(s.job.on) and s.pages.get(p).held and not(s.pages.get(p).conflict) and s.pages.get(p).buf == ABSENT and dirty(s.pages.get(p)) and not(gated(s, p)) and not(heldSource(s, p)) and (canDraft(s) or not(s.pairs.foldl(false, (found, pair) => found or sourcePair(pair, p))))",
 })
 # Short s3 witnesses exercise page-operation custody, historical exemptions,
 # trash durability, rollback and each operation guard in every role.
@@ -294,21 +295,24 @@ WITNESSES["observe-last-read-after-own-save"] = {
     "profile": "base", "actions": SAVED + [("extWriteD", [0, 1, 1]), ("observe", [0])],
     "predicate": "s.pages.get(0).buf == 1 and s.pages.get(0).obs == 1",
 }
-# s3.2: the source's deletion saves before the destination only after a relaunch (no order across a crash).
+# Relaunch reinstalls order before the source's deletion. Reopen after the
+# trash move to check exact re-save of the destination, referrer and source.
 WITNESSES["cli-rename-trash-and-launch"] = {
     "profile": "base", "actions": [("load",[0]),("load",[1]),("load",[2]),("opRenameRaw", [0,2,0,1,0,3,3,3]),
         ("crash",[]),("launch",[]),
-        ("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1]),("draftSync",[0]),
-        ("crash",[]),("launch",[]),("observe",[1]),("observe",[2]),
         ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
-        ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),("powerKBits",[0,0,0])],
+        ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),
+        ("flushDel",[0]),("check",[]),("rename",[]),("crash",[]),("launch",[]),
+        ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
+        ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),
+        ("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1]),("powerKBits",[0,0,0])],
     "predicate": "s.disk.get(2) == 1 and s.disk.get(1) == 3 and s.trash.get(0) == Set(1)",
 }
-# s3.2: the in-run order, with an Uncertain destination save and its retry's equal-bytes mismatch (neither is a
-# witness), then the destination's Published, the referrer's, and the source's deletion.
+# An Uncertain destination save is followed by an exact re-save and a
+# Published witness, then the referrer's publication and source deletion.
 WITNESSES["rename-order-gates"] = {
     "profile": "base", "actions": [("load",[0]),("load",[1]),("load",[2]),("opRenameRaw", [0,2,0,1,0,3,3,3]),
-        ("flush",[2]),("check",[]),("rename",[]),("dirSync",[0]),("flush",[2]),("check",[]),
+        ("flush",[2]),("check",[]),("rename",[]),("dirSync",[0]),
         ("flush",[2]),("check",[]),("rename",[]),("dirSync",[1]),
         ("flush",[1]),("check",[]),("rename",[]),("dirSync",[1]),("flushDel",[0]),("check",[]),("rename",[]),("dirSync",[1])],
     "predicate": "s.disk.get(0) == ABSENT and s.disk.get(2) == 1 and s.disk.get(1) == 3 and s.gates == List() and g.obl == Set() and orderHolds",
@@ -434,7 +438,7 @@ def guard_oracle():
     val full = opCur(sys, src) != ABSENT
     val named = if (full) Set(src, dst) else Set()
     val all3 = named.union(refs)
-    sys.alive and src != dst and opHeld(all3.union(Set(src))) and opFree(all3) and refs.forall(r => r != src and r != dst)
+    sys.alive and canDraft(sys) and src != dst and opHeld(all3.union(Set(src))) and opFree(all3) and refs.forall(r => r != src and r != dst)
       and (not(full) or opClean(sys, src))
       and (not(full) or (opCur(sys, dst) == ABSENT and opClean(sys, dst)))
       and refs.forall(r => opClean(sys, r)) and all3 != Set() and not(touches(sys, refs.union(Set(src, dst))))
@@ -447,10 +451,18 @@ def guard_oracle():
 
 
 def find(model_dir, quint, name, spec, reuse=False):
-    work = ROOT / "scratch/s3/witnesses"
+    if spec.get("queue_chunks"):
+        return queue_witness(model_dir, quint, name, spec, reuse)
+    work = ROOT / "target/s3/witnesses"
     work.mkdir(parents=True, exist_ok=True)
     model = (model_dir / "storage-s35.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
+    if queued := spec.get("queued_opens", 0):
+        start = "up: List(), gates: List(),\n      pairs: List(), owners: Set(0), draftOK: true"
+        assert model.count(start) == 1
+        pending = ", ".join(["staleOpen"] * queued)
+        model = model.replace("  action init = all {", '  pure val staleOpen = { ...up1("open", 0, 0, 0, NONE), cur: false }\n  action init = all {')
+        model = model.replace(start, f"up: List({pending})" + start[len("up: List()"):])
     pages = spec.get("pages", 3)
     if pages != 3:
         model = model.replace("pure val PAGES = Set(0, 1, 2)", "pure val PAGES = Set(" + ", ".join(map(str, range(pages))) + ")")
@@ -462,7 +474,7 @@ def find(model_dir, quint, name, spec, reuse=False):
     steps = spec.get("steps", len(actions))
     branches = []
     for i, (action, args) in enumerate(actions):
-        boolean = {"deliverUp": {0}, "dirSync": {0}, "extClaim": {1}, "extWriteD": {2}, "power": {0, 1}, "powerKBits": {0,1,2}, "opRenameRaw": {2,3,4}}
+        boolean = {"deliverUp": {0}, "dirSync": {0}, "extClaim": {1}, "extWriteD": {2}, "power": {0, 1}, "powerKBits": {0,1,2}, "opRenameRaw": {2,3,4}, "opApplyPacked": {0,1,2}}
         params = [str(bool(v)).lower() if j in boolean.get(action, set()) else str(v)
                   for j, v in enumerate(args)]
         call = action + ("(" + ", ".join(params) + ")" if args else "")
@@ -485,7 +497,8 @@ def find(model_dir, quint, name, spec, reuse=False):
   val witness = not(stage >= {steps + 1} and ({spec['predicate']}))
 '''
     path = work / f"{name}.qnt"
-    text = model.replace("  // @@SCENARIOS@@", guard_oracle() + driver)
+    packed = PACKED_APPLY if any(action == "opApplyPacked" for action, _ in actions) else ""
+    text = model.replace("  // @@SCENARIOS@@", guard_oracle() + packed + driver)
     itf = work / f"{name}.itf.json"
     log = work / f"{name}.log"
     if not (reuse and path.exists() and path.read_text() == text and itf.exists()
@@ -506,6 +519,27 @@ def find(model_dir, quint, name, spec, reuse=False):
                         "enabled": decode(states[i + 1]["actionEnabled"]) if i + 1 < len(states) and mutant == "none" else [],
                         "predicates": decode(states[i + 1]["predicateValues"]) if i + 1 < len(states) else None}
                        for i, s in enumerate(states[:-1])]}
+
+
+def queue_witness(model_dir, quint, name, spec, reuse):
+    # Each chunk ends after a window crash. Its successor starts with the
+    # very same stale opens and compares every state field at that boundary.
+    # Keep the original 2,002 actions and QMAX while bounding per-run memory.
+    states = []
+    chunk_size = 200
+    for start in range(0, spec["steps"], chunk_size):
+        stop = min(start + chunk_size, spec["steps"])
+        chunk = {**spec, "queue_chunks": False, "queued_opens": start // 2,
+                 "steps": stop - start, "predicate": spec["predicate"] if stop == spec["steps"] else "true"}
+        part = find(model_dir, quint, f"{name}-{start}", chunk, reuse)
+        chunk_states = part["states"]
+        if states:
+            assert states[-1]["state"] == chunk_states[0]["state"], (name, start)
+            states.extend(chunk_states[1:])
+        else:
+            states = chunk_states
+    assert len(states) == spec["steps"] + 1
+    return {**part, "name": name, "states": states}
 
 
 def delta(before, after, path=()):
@@ -560,8 +594,13 @@ def main():
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--quint", type=Path)
     ap.add_argument("--reuse", action="store_true", help="reuse only identical scratch models with successful witness logs")
+    ap.add_argument("--refresh-frozen", type=Path, nargs="+", help="re-evaluate the existing action schedules in these fixtures")
     args = ap.parse_args()
     quint = args.quint or args.model_dir.parent / "model/tools/node_modules/.bin/quint"
+    if args.refresh_frozen:
+        for path in args.refresh_frozen:
+            refresh_frozen(args.model_dir, quint, path, args.reuse)
+        return
     traces = [find(args.model_dir, quint, name, spec, args.reuse) for name, spec in WITNESSES.items()]
     path = ROOT / "crates/tine-store/tests/fixtures/s2/witnesses.json"
     choices = [{"name": c["name"], "args": c["args"]} for c in traces[0]["states"][0]["enabled"]]
@@ -569,6 +608,23 @@ def main():
     path.write_text(json.dumps({"model_sha256": SHA, "choices": choices,
                                "paths": paths, "actions": actions, "traces": traces}, separators=(",", ":")) + "\n")
     print(f"{len(traces)} witness traces, {sum(len(t['states']) for t in traces)} states, {path.stat().st_size} bytes")
+
+
+def refresh_frozen(model_dir, quint, path, reuse):
+    fixture = json.loads(path.read_text())
+    for trace in fixture["traces"]:
+        steps = [fixture["actions"][entry["a"]] if "a" in entry else entry["action"]
+                 for entry in trace["states"]]
+        assert steps[0]["name"] == "init"
+        spec = {"profile": trace["profile"], "pages": trace.get("pages", fixture["pages"]),
+                "actions": [(step["name"], step["args"]) for step in steps[1:]],
+                "predicate": "true", "guards": False}
+        result = find(model_dir, quint, trace["name"], spec, reuse)
+        trace["states"] = [{"action": entry["action"], "state": entry["state"]} for entry in result["states"]]
+    if "paths" in fixture:
+        fixture["paths"], fixture["actions"] = pack(fixture["traces"], min_states=0)
+    fixture["model_sha256"] = SHA
+    path.write_text(json.dumps(fixture, separators=(",", ":")) + "\n")
 
 
 if __name__ == "__main__":

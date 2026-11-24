@@ -623,25 +623,17 @@ fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
 /// RENAME-COST L1/L2: an applied operation is not exploded, so its pages
 /// save at once; a refresh that supersedes one page's record retires the
 /// vehicle after durable copies of the others' (a failed copy is retried).
-/// A refresh that fails keeps the vehicle whole.
+/// A refresh that fails keeps the vehicle whole. This is the unpaired
+/// operation's representation (no move: the legacy body); a rename's
+/// paired operation draft is immutable
+/// (`a_paired_operation_draft_stays_whole_through_a_refresh`).
 #[test]
 fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
     for refresh_fails in [false, true] {
         let mut h = host();
         h.fs.external("b.md", text("- [[A]] unrelated"), true);
         open(&mut h, "b.md");
-        assert_eq!(
-            h.rename(
-                "a.md",
-                "c.md",
-                &BTreeSet::new(),
-                "A",
-                "C",
-                tine_core::config::FileNameFormat::TripleLowbar
-            ),
-            Disposition::Pending
-        );
-        drain(&mut h);
+        unpaired_operation(&mut h, "- [[A]] unrelated", "- [[C]] unrelated");
         assert_eq!(h.pages["b.md"].buf, text("- [[C]] unrelated"));
         let files = h.fs.draft_files(true);
         assert!(files.len() == 1 && files[0].0.starts_with("op-"));
@@ -667,6 +659,73 @@ fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
         assert_eq!(scan.files.len(), 3);
         assert!(scan.files.keys().all(|name| name.starts_with("p-")));
         assert_eq!(scan.logical["b.md"].bytes, text("- [[C]] edited"));
+        saved(&mut h, "c.md");
+    }
+}
+
+/// An operation's three records without a move (the legacy operation body,
+/// which launch explodes and a refresh or removal absorbs): a.md's deletion,
+/// c.md taking a.md's text, and b.md's `new` over `old`.
+pub(super) fn unpaired_operation(h: &mut Host<ModelFs>, old: &str, new: &str) {
+    let effects = BTreeMap::from([
+        ("a.md".to_string(), (None, text("A"))),
+        ("b.md".to_string(), (text(new), text(old))),
+        ("c.md".to_string(), (text("A"), None)),
+    ]);
+    assert_eq!(h.apply(&effects, &[]), Disposition::Pending);
+    drain(h);
+    let files = h.fs.draft_files(true);
+    assert!(files.len() == 1 && drafts::pairs_of(&files[0].1).is_none());
+}
+
+/// The paired case of the refresh above: a rename's operation draft is
+/// immutable. The refresh is a newer page draft that wins for b's text; the
+/// operation draft keeps every record (a's source text included) whole, and
+/// a failed refresh keeps it whole too, with b's operation text logical.
+#[test]
+fn a_paired_operation_draft_stays_whole_through_a_refresh() {
+    for refresh_fails in [false, true] {
+        let mut h = host();
+        h.fs.external("b.md", text("- [[A]] unrelated"), true);
+        open(&mut h, "b.md");
+        assert_eq!(
+            h.rename(
+                "a.md",
+                "c.md",
+                &BTreeSet::new(),
+                "A",
+                "C",
+                tine_core::config::FileNameFormat::TripleLowbar
+            ),
+            Disposition::Pending
+        );
+        drain(&mut h);
+        assert_eq!(h.pages["b.md"].buf, text("- [[C]] unrelated"));
+        let files = h.fs.draft_files(true);
+        assert!(files.len() == 1 && drafts::pairs_of(&files[0].1).is_some());
+        let op = files[0].clone();
+        edit(&mut h, "b.md", "- [[C]] edited");
+        assert_eq!(h.begin_draft("b.md"), Disposition::Pending);
+        if refresh_fails {
+            h.fs.inject(Phase::DraftTemp, [Fault::Before]);
+        }
+        drain(&mut h);
+        let files = h.fs.draft_files(true);
+        assert!(files.contains(&op), "the operation draft stays whole");
+        let scan = drafts::scan(files.clone());
+        assert_eq!(scan.files[&op.0].len(), 3, "every record kept");
+        assert_eq!(scan.logical.len(), 3);
+        if refresh_fails {
+            assert_eq!(files.len(), 1);
+            assert_eq!(scan.logical["b.md"].bytes, text("- [[C]] unrelated"));
+            assert!(h
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::DraftError { .. })));
+        } else {
+            assert_eq!(files.len(), 2, "the operation and b's newer draft");
+            assert_eq!(scan.logical["b.md"].bytes, text("- [[C]] edited"));
+        }
         saved(&mut h, "c.md");
     }
 }
@@ -1334,11 +1393,24 @@ pub(super) fn lazy_operation_group() -> Host<ModelFs> {
     h
 }
 
+/// `lazy_operation_group`'s three records from an unpaired operation (no
+/// move: the legacy body, which a removal absorbs).
+pub(super) fn lazy_unpaired_group() -> Host<ModelFs> {
+    let mut h = host();
+    h.fs.external("b.md", text("valuable original b"), true);
+    open(&mut h, "b.md");
+    unpaired_operation(&mut h, "valuable original b", "valuable operation b");
+    h
+}
+
+/// The unpaired operation: a removal's first sibling copy fails, and the
+/// sibling's newest bytes still recover. The paired case has no copy to fail
+/// (`a_paired_removal_copies_nothing_and_keeps_the_sibling_after_crash`).
 #[test]
 fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
     for phase in [Phase::DraftTemp, Phase::DraftRename] {
         for power in [false, true] {
-            let mut h = lazy_operation_group();
+            let mut h = lazy_unpaired_group();
             saved(&mut h, "c.md");
             h.fs.external("b.md", text("foreign b"), true);
             assert_eq!(h.observe("b.md"), Disposition::Applied);
@@ -1365,9 +1437,56 @@ fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
     }
 }
 
+/// The paired case: a rename's operation draft is immutable while its pair
+/// is owed, so a's removal step copies nothing (the injected copy fault
+/// never fires) and absorbs nothing; every record stays, and b's newest
+/// operation bytes recover after a crash or power cut.
+#[test]
+fn a_paired_removal_copies_nothing_and_keeps_the_sibling_after_crash() {
+    for phase in [Phase::DraftTemp, Phase::DraftRename] {
+        for power in [false, true] {
+            let mut h = lazy_operation_group();
+            saved(&mut h, "c.md");
+            h.fs.external("b.md", text("foreign b"), true);
+            assert_eq!(h.observe("b.md"), Disposition::Applied);
+            assert!(h.pages["b.md"].conflict);
+            assert_eq!(
+                send(&mut h, "a.md", RequestKind::Discard),
+                Disposition::Applied
+            );
+            h.receive("a.md");
+            // Use Disk on the source decided its pair (`sourceDisk`, model
+            // `decideDisk`): a's removal is no longer owed, and its pair's
+            // records still stay with the pair.
+            assert!(!h.op_waits("a.md"), "the source's choice decided the pair");
+            let before = h.fs.draft_files(true);
+            assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Waiting);
+            assert!(h.worker.is_none(), "no copy, no absorb");
+            h.fs.inject(phase, [Fault::Before]);
+            drain(&mut h);
+            assert_eq!(h.fs.draft_files(true), before, "every record kept");
+            restart(&mut h, power, false);
+            assert_eq!(h.pages.get("b.md").map(|p| p.buf.clone()), Some(text("valuable operation b")),
+                "{phase:?}, power={power}: an acknowledged operation's newest sibling bytes must recover");
+        }
+    }
+}
+
+/// The unpaired operation's first sibling copy takes b's path lock first.
+/// A paired operation draft has no copy: its removal step does no I/O.
 #[test]
 fn rename_cost_removal_first_copy_requires_sibling_path_lock() {
     let mut h = lazy_operation_group();
+    saved(&mut h, "c.md");
+    assert_eq!(
+        send(&mut h, "a.md", RequestKind::Discard),
+        Disposition::Applied
+    );
+    h.held = Some(BTreeSet::from(["a.md".into()]));
+    let calls = h.fs.calls.len();
+    assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Waiting);
+    assert_eq!(h.fs.calls.len(), calls, "paired: no copy, no I/O");
+    let mut h = lazy_unpaired_group();
     saved(&mut h, "c.md");
     assert_eq!(
         send(&mut h, "a.md", RequestKind::Discard),
@@ -1480,10 +1599,14 @@ fn rename_cost_an_op_absorbing_an_older_op_keeps_published_bytes_at_every_cut() 
             completed |= h.worker.is_none();
             if h.worker.is_none() {
                 // `live_op`: outside a running worker a page has at most one
-                // operation vehicle (op2 absorbed op1 before it finished).
+                // unpaired operation vehicle (op2 absorbed any unpaired one).
+                // A paired one is never absorbed: it leaves whole, once its
+                // pair settled (items 2 and call 20).
                 for (page, names) in &h.vehicles_of {
-                    let ops = names.iter().filter(|n| n.starts_with("op-")).count();
-                    assert!(ops <= 1, "{page} in {ops} operation vehicles");
+                    let ops = (names.iter())
+                        .filter(|n| n.starts_with("op-") && h.order.paired(n).is_none())
+                        .count();
+                    assert!(ops <= 1, "{page} in {ops} unpaired operation vehicles");
                 }
             }
             restart(&mut h, power, false);

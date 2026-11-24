@@ -96,11 +96,26 @@ impl Driver {
                 self.register_versions(&name, &args, inc);
                 if let Some(pages) = retired {
                     assert_eq!(name, "draftSync");
+                    let terminal = self.abstract_state();
+                    let removed_pairs: Vec<_> = self.observed["s"]["pairs"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|old| !terminal["pairs"].as_array().unwrap().contains(old))
+                        .map(|pair| pair["src"].clone())
+                        .collect();
+                    if let [src] = removed_pairs.as_slice() {
+                        self.finish_projection(
+                            "pairRewrite",
+                            &[src.clone(), json!(true)],
+                            terminal,
+                        );
+                        return;
+                    }
                     // This terminal is atomic physically. Its virtual cuts
                     // remove exactly one record at a time; all other fields
                     // already have their observed terminal values. Check each
                     // against an enabled model step, including its ghosts.
-                    let terminal = self.abstract_state();
                     let mut projected = terminal.clone();
                     projected["drafts"] = self.observed["s"]["drafts"].clone();
                     for page in pages {
@@ -1282,7 +1297,20 @@ fn r1_every_constituent_cut_of_a_deletion_refines_the_oracle() {
 #[test]
 fn a_crash_during_a_removal_copy_leaves_the_removal_unapplied() {
     let mut d = Driver::stepped("base");
-    run(&mut d, &[("opRename", json!([0, 2, [1], [[1, 3]]]))]);
+    // The removal-copy protocol operates on an unpaired vehicle. An
+    // unresolved pair keeps its original vehicle intact.
+    run(
+        &mut d,
+        &[(
+            "opApply",
+            json!([
+                [[0, ABSENT], [1, 3], [2, 1]],
+                [[0, 1], [1, 2], [2, ABSENT]],
+                NONE,
+                NONE
+            ]),
+        )],
+    );
     d.settle();
     assert!(d.attempt("flush", &[json!(2)]));
     while d.host.job.as_ref().unwrap().phase == SavePhase::Temp {
