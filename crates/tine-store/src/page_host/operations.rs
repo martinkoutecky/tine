@@ -315,7 +315,8 @@ impl<F: HostIo> Host<F> {
         Ok(Some(Arc::from(
             tine_core::refs::rename_rewrite(
                 text,
-                key.ends_with(".org"),
+                tine_core::model::Format::from_path(std::path::Path::new(key))
+                    == tine_core::model::Format::Org,
                 &[(from.into(), to.into())],
                 format,
             )

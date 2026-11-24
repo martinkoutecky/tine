@@ -1,6 +1,6 @@
 import propertyName from "../crates/tine-core/src/page_icon_property.txt?raw";
 import { parserReady } from "./render/parse";
-import { parse_inline_json } from "./render/wasm/lsdoc_wasm";
+import { page_file_format, parse_inline_json } from "./render/wasm/lsdoc_wasm";
 import type { Inline } from "./render/ast";
 import { mediaKind } from "./media";
 
@@ -14,7 +14,7 @@ export const PAGE_ICON_PROPERTY = PAGE_ICON_PROPERTIES[0];
  * nodes for images, so use the same image extension policy as inline media. */
 export function pageIconImageLink(value: string, pagePath: string): Extract<Inline, { k: "link" }> | null {
   if ((!value.startsWith("!") && !value.startsWith("[[")) || !parserReady()) return null;
-  const org = pagePath.toLowerCase().endsWith(".org");
+  const org = page_file_format(pagePath) === "org";
   const nodes = JSON.parse(parse_inline_json(value, org)) as Inline[] | null;
   if (!nodes || nodes.length !== 1) return null;
   const node = nodes[0];
@@ -30,7 +30,7 @@ export function pageIconImageLink(value: string, pagePath: string): Extract<Inli
  * this boundary. Unknown physical owners cannot authorize a relative image. */
 export function pageIconAsset(value: string, pagePath: string, node = pageIconImageLink(value, pagePath)): string | null {
   if (!node || !pagePath) return null;
-  const org = pagePath.toLowerCase().endsWith(".org");
+  const org = page_file_format(pagePath) === "org";
   const url = node.url;
   if (url.type !== "search" && !(org && (url.type === "file" || url.type === "page_ref"))) return null;
   let path = org && url.type === "file" && url.v.startsWith("file:") ? url.v.slice(5) : url.v;
