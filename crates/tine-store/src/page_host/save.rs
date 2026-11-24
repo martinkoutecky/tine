@@ -298,6 +298,16 @@ impl<F: HostIo> Host<F> {
                         Ok(None) => self.twin_or_marker(&mut job, &mut cause),
                     }
                 }
+                // A page an order waits for whose path already holds this
+                // save's exact state (a record reinstalled at relaunch after
+                // its rename or trash step, its directory sync unknown): the
+                // ordinary save of the same state re-witnesses durability
+                // before the order moves on. A deletion moves nothing then;
+                // its post-check still guards the pair.
+                Ok(bytes) if bytes == job.bytes && self.order.awaits(&key) => {
+                    job.base = Base::Known(bytes);
+                    self.twin_or_marker(&mut job, &mut cause)
+                }
                 Ok(bytes) => {
                     if self.allocator_busy() {
                         self.job = Some(job);
@@ -513,6 +523,11 @@ impl<F: HostIo> Host<F> {
                     self.post_check(&key);
                 } else {
                     self.receiver_seen(&key, &job.bytes);
+                    // A paired source that published newer text: its removal
+                    // is superseded, and its operation stops blocking.
+                    if let Some(name) = self.order.disarm(&key) {
+                        self.repair_op(&name);
+                    }
                 }
                 self.order.published(&key, job.version);
                 crate::bench_events::emit(|| Ev::Published {

@@ -1307,6 +1307,10 @@ from the scanned drafts before any recovered save or choice.
   nonempty record-vector body) recovers exactly as before, exploded and with
   no order. An older Tine reads a paired body as an empty vector and
   quarantines it, so it never replays a paired source as a lone deletion.
+- A recovered page an order waits for whose file already holds its exact
+  record (it published, or its trash step ran, before the process died) is
+  saved again with the same state, which re-witnesses its file and directory
+  durability. It is not refused as an outside change, and the order moves on.
 - A source is removed only after two receiver checks under both path locks:
   the receiver's disk bytes equal the certified receiver image immediately
   before the trash step, and again after the source's trash, trash sync and
@@ -1314,7 +1318,8 @@ from the scanned drafts before any recovered save or choice.
   a failed second check keeps the operation draft, which holds the source's
   text as its base, so the text is never only in trash. An exact receiver
   observed later resumes the pair. Guarded restoration of a moved source is
-  not implemented: the draft keeps custody until it is.
+  not implemented: the draft keeps custody until it is. A source that
+  publishes newer text of its own supersedes its removal and disarms the pair.
 - **Use Disk on a pair's unwitnessed receiver** (a conflict's Use Disk, or the
   host-level Discard of a recovered receiver) first writes a decision record
   `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft` (escape, tag `1`, the
@@ -1323,7 +1328,8 @@ from the scanned drafts before any recovered save or choice.
   Only once it is durable does the receiver take its disk state, the source
   revert to its disk bytes and the request answer; a write that fails refuses
   the Discard `DraftFailed`, and one that may have reached the disk still
-  disarms the pair. A durable cancellation disarms that pair across every
+  disarms the pair. This also resolves a held or blocked pair at once, with
+  no relaunch: its pages stop waiting. A durable cancellation disarms that pair across every
   later launch: neither its receiver's nor its source's operation record is
   recovered. Sibling pairs continue; referrers keep today's cancellation
   behaviour (their rewrites still publish).
@@ -1332,13 +1338,16 @@ from the scanned drafts before any recovered save or choice.
   operation blocks that operation's source removals and raises a draft error;
   it stays in place, never quarantined. A malformed paired operation draft is
   quarantined intact like any unreadable vehicle. A launch whose draft
-  directory sync fails blocks every source removal until a launch succeeds.
+  directory sync fails blocks every source removal until a successful draft
+  store Retry or a later launch; the Retry re-arms them in place.
 - Retirement: the paired draft retires whole once each pair is settled or
   cancelled and no page is at risk: superseded page drafts first, then the
   operation draft, then its decisions. A decision left by a crash after its
   operation is durably absent is removed at launch.
 - No chaining: an operation over any page of a running order, or of a paired
-  operation draft not yet retired, waits until that order ends. A deletion answers `Waiting`. A rename waits up to
+  operation draft with a pair still unresolved (armed, held or blocked),
+  waits until that order ends or the pair resolves. A settled, cancelled or
+  disarmed pair releases its pages before its draft retires. A deletion answers `Waiting`. A rename waits up to
   `OPERATION_WAIT` (10 s) and is then refused `Busy`, changing nothing.
   Feature writers run as host operations too. Admission holds no caller-side
   reservation: it compares the planned bytes and context under the path locks.
@@ -2767,7 +2776,7 @@ referrer, the destination page and the source's custody marker (16 before
 RO3 (a), which stopped syncing the trashed source's data). The probe counts 20: one more is the
 host launch's draft sync, and four are the fresh graph's first deletion creating the trash chain
 and the custody directory (each created directory's parent sync, counted since 2026-10-21). On
-Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files and 204/4,041 bytes and counts 17 syncs
+Windows the custody marker is not written, so a rename writes 3 files and 204/4,041 bytes and counts 17 syncs
 (measured with markers forced off on Linux; the counter counts each sync call, and Windows'
 directory syncs are no-ops). The
 referrer's old and new payloads are each written once into the operation

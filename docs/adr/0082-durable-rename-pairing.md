@@ -69,8 +69,21 @@ Use Disk decision is one 62-byte private file and two publication syncs.
 - Downgrading Tine with a paired draft pending quarantines it: the recovered
   rename's text stays in the quarantine directory and on disk at the source,
   and the rename has to be retried.
-- An operation over a page of an unretired paired draft waits for it
-  (no chaining), slightly longer than for the in-memory order alone.
+- An operation over a page of a paired draft waits while one of its pairs is
+  unresolved (no chaining). A pair resolved by Use Disk, a successful draft
+  store Retry, newer source text or its settlement releases its pages at
+  once, before its draft retires.
+- A recovered receiver whose file already holds its record is saved again
+  with the same bytes, which re-witnesses its durability before the source's
+  removal may follow.
+- A settled pair's records can still be reinstalled by a relaunch while its
+  operation draft remains on disk (a sibling pair unresolved, a crash between
+  the second check and the draft's unlink, or a failed unlink). An outside
+  change to that receiver after settlement then shows as a conflict. Closing
+  this needs a durable settlement record, a draft format change left open.
+- The Quint storage models do not yet describe the durable pairing; the
+  conformance suite that replays them fails on the reinstalled order until
+  they do.
 - Not yet covered (follow-up): restoring a source that was already moved when
   its receiver diverged (the draft keeps the text meanwhile), reviewed-text
   and superseding decisions, and the recovery panel for an occupied source.

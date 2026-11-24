@@ -443,6 +443,20 @@ impl<F: HostIo> Host<F> {
         skipped
     }
 
+    /// A successful Retry made the draft store durable again: pairs the
+    /// down store blocked resume, and their sources may save.
+    pub(super) fn unblock_pairs(&mut self) {
+        for name in self.order.unblock_store() {
+            self.repair_op(&name);
+            let sources: Vec<PageKey> = (self.order.paired(&name))
+                .map(|op| op.pairs.iter().map(|p| p.source.clone()).collect())
+                .unwrap_or_default();
+            for source in sources {
+                self.mark(&source);
+            }
+        }
+    }
+
     /// Launch: each recovered paired operation's order over its recovered
     /// pages, receivers first, sources last, as while Tine ran.
     pub(super) fn install_recovered_gates(&mut self) {

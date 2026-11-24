@@ -1010,14 +1010,15 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         let mut keys = BTreeSet::from([request.page.clone()]);
-        // A Discard of a running rename's destination reverts its source too.
+        // A Discard of a running rename's destination reverts its source too,
+        // as does a Use Disk that cancels a durable pair.
         if let (RequestKind::Discard, Some(src)) =
-            (&request.kind, self.order.partner(&request.page))
+            (&request.kind, self.order.reverts(&request.page))
         {
-            if self.busy(src) {
+            if self.busy(&src) {
                 return Disposition::Waiting;
             }
-            keys.insert(src.clone());
+            keys.insert(src);
         }
         if let RequestKind::Move { receiver, .. } = &request.kind {
             if self.busy(receiver) || self.worker.is_some() {
@@ -1413,6 +1414,7 @@ impl<F: HostIo> Host<F> {
             let _ = self.fs.quarantine(name);
         }
         self.sync_drafts();
+        self.unblock_pairs();
         Ok(self.tidy_drafts(vec![]))
     }
 
