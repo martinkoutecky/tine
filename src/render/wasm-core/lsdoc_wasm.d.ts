@@ -286,6 +286,16 @@ export function last_panic(): string;
  */
 export function linkable_property_names(value: string, is_org: boolean): string[];
 
+/**
+ * The one owner of "which local target does this destination name". A parser
+ * link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
+ * plain text destination) and `full` text; the answer is the `LocalTarget`
+ * JSON, or `null` for an unknown origin or Url tag. O(destination bytes), no
+ * parse or filesystem I/O. Plain arguments, not JSON: both modules have a
+ * size ceiling.
+ */
+export function local_target_json(url_type: string, v: string | null | undefined, protocol: string | null | undefined, link: string | null | undefined, full: string, origin: string): string;
+
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
@@ -599,6 +609,7 @@ export interface InitOutput {
     readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly last_panic: () => [number, number];
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
+    readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];

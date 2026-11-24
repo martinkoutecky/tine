@@ -1082,13 +1082,47 @@ pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
 /// Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
 pub fn asset_rel_path(url: &str) -> Option<String> {
-    tine_core::asset_path::asset_rel_path(url)
+    tine_core::local_target::asset_rel_path(url)
 }
 
 /// PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
 pub fn pdf_asset_file(path: &str) -> String {
-    tine_core::asset_path::pdf_asset_file(path)
+    tine_core::local_target::pdf_asset_file(path)
+}
+
+/// The one owner of "which local target does this destination name". A parser
+/// link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
+/// plain text destination) and `full` text; the answer is the `LocalTarget`
+/// JSON, or `null` for an unknown origin or Url tag. O(destination bytes), no
+/// parse or filesystem I/O. Plain arguments, not JSON: both modules have a
+/// size ceiling.
+#[wasm_bindgen]
+pub fn local_target_json(
+    url_type: &str,
+    v: Option<String>,
+    protocol: Option<String>,
+    link: Option<String>,
+    full: &str,
+    origin: &str,
+) -> String {
+    use lsdoc::ast::Url;
+    use tine_core::local_target::{local_target, Destination, Origin};
+    let Some(origin) = Origin::parse(origin) else {
+        return "null".into();
+    };
+    let v = v.unwrap_or_default();
+    let url = match url_type {
+        "" => return local_target(Destination::Text(&v), origin).to_json(),
+        "page_ref" => Url::PageRef { v },
+        "block_ref" => Url::BlockRef { v },
+        "search" => Url::Search { v },
+        "file" => Url::File { v },
+        "embed_data" => Url::EmbedData { v },
+        "complex" => Url::Complex { protocol, link },
+        _ => return "null".into(),
+    };
+    local_target(Destination::Link { url: &url, full }, origin).to_json()
 }
 
 /// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.

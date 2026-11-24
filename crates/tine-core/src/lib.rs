@@ -3,7 +3,6 @@
 //! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
-pub mod asset_path;
 pub mod asset_refs;
 pub mod block_id;
 pub mod clock;
@@ -22,6 +21,7 @@ pub use tine_outline::outline as outline_kernel;
 pub mod graph_paths;
 pub mod html_sanitize;
 pub mod latency;
+pub mod local_target;
 pub use tine_outline::logbook;
 pub mod media_mime;
 pub mod model;

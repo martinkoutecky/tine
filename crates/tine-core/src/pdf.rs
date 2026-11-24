@@ -515,7 +515,7 @@ pub fn merge_hls_page_for_format(
     removed: &HashSet<String>,
     format: Format,
 ) -> Document {
-    let asset_path = crate::asset_path::pdf_asset_pointer(pdf_filename);
+    let asset_path = crate::local_target::pdf_asset_pointer(pdf_filename);
     let pointers = match format {
         Format::Md => vec![
             format!("file:: [{label}]({asset_path})"),
@@ -542,7 +542,7 @@ pub fn merge_hls_page_for_format(
                     _ => continue,
                 };
                 let matches = if index == 1 {
-                    crate::asset_path::pdf_asset_file(&property.value) == pdf_filename
+                    crate::local_target::pdf_asset_file(&property.value) == pdf_filename
                 } else {
                     use lsdoc::ast::{Inline, Url};
                     tine_outline::lsdoc_block_parse::parse_inline_bounded(
@@ -552,7 +552,7 @@ pub fn merge_hls_page_for_format(
                     .is_some_and(|nodes| {
                         matches!(nodes.as_slice(),
                         [Inline::Link { url: Url::Search { v } | Url::File { v }, .. }]
-                            if crate::asset_path::pdf_asset_file(v) == pdf_filename)
+                            if crate::local_target::pdf_asset_file(v) == pdf_filename)
                     })
                 };
                 if matches {
@@ -900,7 +900,7 @@ mod tests {
                 assert_eq!(regions.page_properties().count(), 2);
                 for property in regions.page_properties() {
                     if property.key.eq_ignore_ascii_case("file-path") {
-                        if crate::asset_path::pdf_asset_file(&property.value) != file {
+                        if crate::local_target::pdf_asset_file(&property.value) != file {
                             failures.push(format!("{format:?} file-path: {file}"));
                         }
                     } else if property.key.eq_ignore_ascii_case("file") {
@@ -917,7 +917,7 @@ mod tests {
                         else {
                             panic!("{serialized}")
                         };
-                        if crate::asset_path::pdf_asset_file(v) != file {
+                        if crate::local_target::pdf_asset_file(v) != file {
                             failures.push(format!("{format:?} file: {file}"));
                         }
                     }

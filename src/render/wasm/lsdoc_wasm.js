@@ -486,6 +486,46 @@ function __tine_raw_linkable_property_names(value, is_org) {
 }
 
 /**
+ * The one owner of "which local target does this destination name". A parser
+ * link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
+ * plain text destination) and `full` text; the answer is the `LocalTarget`
+ * JSON, or `null` for an unknown origin or Url tag. O(destination bytes), no
+ * parse or filesystem I/O. Plain arguments, not JSON: both modules have a
+ * size ceiling.
+ * @param {string} url_type
+ * @param {string | null | undefined} v
+ * @param {string | null | undefined} protocol
+ * @param {string | null | undefined} link
+ * @param {string} full
+ * @param {string} origin
+ * @returns {string}
+ */
+function __tine_raw_local_target_json(url_type, v, protocol, link, full, origin) {
+    let deferred7_0;
+    let deferred7_1;
+    try {
+        const ptr0 = passStringToWasm0(url_type, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(v) ? 0 : passStringToWasm0(v, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(protocol) ? 0 : passStringToWasm0(protocol, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(link) ? 0 : passStringToWasm0(link, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(full, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passStringToWasm0(origin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len5 = WASM_VECTOR_LEN;
+        const ret = wasm.local_target_json(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5);
+        deferred7_0 = ret[0];
+        deferred7_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
+    }
+}
+
+/**
  * @param {string} raw
  * @param {boolean} is_org
  * @param {string} old_raw
@@ -1839,6 +1879,7 @@ export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine
 export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
 export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
+export const local_target_json = __tineGuard("local_target_json", __tine_raw_local_target_json);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
 export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
