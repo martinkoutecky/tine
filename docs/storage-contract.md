@@ -16,10 +16,13 @@ stem is cut so the temporary fits whenever the name does) is written and
 fsynced, the caller's final guard runs, the file is renamed into place
 (no-clobber for a create) and its directory is fsynced: one temporary file,
 two fsyncs and one rename per write, whether the source is bytes or a
-byte-capped stream. Restore's directory-handle copy and a streamed create's
-stage use the fixed form `.tine-{kind}-{unique}.tmp` instead. The watchers read
-both forms through one parser (`parse_temp_name`) and skip them: the rename onto
-the real name is the change.
+byte-capped open file (on Windows a graph folder's rename is write-through and
+its directory is not flushed). Restore's directory-handle copy and a streamed
+create's stage use the fixed form `.tine-{kind}-{unique}.tmp` instead (matched
+by its `.tine-` prefix and `.tmp` suffix alone). The watchers read the first
+form through one parser (`parse_temp_name`), the second through
+`is_fixed_temp_name`, and skip both: the rename onto the real name is the
+change.
 
 Live conflict review uses the revision the editor loaded or last proved
 published as its disk ancestor. A host acknowledgment takes custody of input;

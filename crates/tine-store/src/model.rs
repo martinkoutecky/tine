@@ -4836,10 +4836,10 @@ pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(test)]
     write_target::assert_checked_target(dst);
     use crate::atomic_file::{Mode, PreparedWrite, Source};
-    let mut input = fs::File::open(src)?;
+    let input = fs::File::open(src)?;
     PreparedWrite::prepare(
         dst,
-        Source::Capped(&mut input, u64::MAX),
+        Source::File(&input, u64::MAX),
         Mode::Default,
         ".restore",
     )?
@@ -4860,7 +4860,7 @@ pub(crate) fn atomic_copy_file_new(
     use crate::atomic_file::{Mode, PreparedWrite, Source};
     PreparedWrite::prepare(
         dst,
-        Source::Capped(input, max_bytes),
+        Source::File(input, max_bytes),
         Mode::Default,
         ".capture",
     )?

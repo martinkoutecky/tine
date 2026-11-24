@@ -278,9 +278,12 @@ pub(crate) fn native_path(path: &Path) -> Vec<u16> {
 pub(crate) enum Source<'a> {
     /// The whole payload.
     Bytes(&'a [u8]),
-    /// A stream copied in, refused once it passes the byte cap (a capture
-    /// source is read through its open handle, never reopened by path).
-    Capped(&'a mut dyn io::Read, u64),
+    /// An open file copied in, refused once it passes the byte cap
+    /// (`u64::MAX`: no cap). A capture source is read through its open
+    /// handle, never reopened by path. The concrete `&File` (not `dyn Read`)
+    /// keeps std's file-to-file copy fast path (`copy_file_range` on Linux):
+    /// a few syscalls per copy instead of one read and one write per 8 KiB.
+    File(&'a fs::File, u64),
 }
 
 /// The temporary's file mode at creation.
@@ -335,7 +338,7 @@ impl PreparedWrite {
                 file.write_all(bytes).map_err(at("write temporary file"))?;
                 bytes.len() as u64
             }
-            Source::Capped(input, max_bytes) => {
+            Source::File(input, max_bytes) => {
                 let mut limited = io::Read::take(input, max_bytes.saturating_add(1));
                 let copied =
                     io::copy(&mut limited, &mut file).map_err(at("write temporary file"))?;
@@ -926,6 +929,85 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
             assert_eq!(entries(root.path()), ["source.bin"]);
+        }
+
+        /// This thread's read and write syscall counts (`/proc/thread-self/io`),
+        /// so a parallel test's I/O cannot leak into the window. Linux only.
+        fn thread_syscalls() -> (u64, u64) {
+            let io = fs::read_to_string("/proc/thread-self/io").unwrap();
+            let field = |name: &str| -> u64 {
+                io.lines()
+                    .find_map(|line| line.strip_prefix(name))
+                    .and_then(|rest| rest.trim().parse().ok())
+                    .unwrap()
+            };
+            (field("syscr:"), field("syscw:"))
+        }
+
+        /// A file-backed copy keeps std's file-to-file fast path: an 8 MiB
+        /// import costs a handful of read and write syscalls, not one per
+        /// 8 KiB buffer (2,048 here), in the unlimited, the at-cap and the
+        /// over-cap forms; the cap still leaves nothing past it. Linux only (a
+        /// runtime check, so it adds no platform arm to I-16's census).
+        #[test]
+        fn a_streamed_copy_keeps_the_file_to_file_fast_path() {
+            if !cfg!(target_os = "linux") {
+                return;
+            }
+            const LEN: usize = 8 << 20;
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source.bin");
+            let payload: Vec<u8> = (0..LEN).map(|i| (i % 251) as u8).collect();
+            fs::write(&source, &payload).unwrap();
+            crate::model::checked_write_target(root.path(), root.path(), "fixture", None).unwrap();
+            let len = LEN as u64;
+            let copies: [(&str, Box<dyn Fn(&Path) -> io::Result<()>>); 3] = [
+                (
+                    "atomic_copy_new",
+                    Box::new(|p| crate::model::atomic_copy_new(&source, p)),
+                ),
+                (
+                    "atomic_copy_file_new at cap",
+                    Box::new(|p| {
+                        crate::model::atomic_copy_file_new(&mut fs::File::open(&source)?, p, len)
+                    }),
+                ),
+                (
+                    "atomic_copy_file_new over cap",
+                    Box::new(|p| {
+                        crate::model::atomic_copy_file_new(
+                            &mut fs::File::open(&source)?,
+                            p,
+                            len - 1,
+                        )
+                    }),
+                ),
+            ];
+            for (index, (name, copy)) in copies.iter().enumerate() {
+                let target = root.path().join(format!("copy-{index}.bin"));
+                let (reads, writes) = thread_syscalls();
+                let started = std::time::Instant::now();
+                let result = copy(&target);
+                let elapsed = started.elapsed();
+                let (reads_after, writes_after) = thread_syscalls();
+                let syscalls = (reads_after - reads, writes_after - writes);
+                eprintln!("{name}: {syscalls:?} read/write syscalls, {elapsed:?}");
+                assert!(
+                    syscalls.0 + syscalls.1 < 64,
+                    "{name}: {syscalls:?} read/write syscalls for {LEN} bytes"
+                );
+                if name.ends_with("over cap") {
+                    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+                    assert!(!target.exists(), "{name}: nothing past the cap");
+                } else {
+                    result.unwrap();
+                    assert!(fs::read(&target).unwrap() == payload, "{name}: bytes");
+                }
+            }
+            assert_eq!(
+                entries(root.path()),
+                ["copy-0.bin", "copy-1.bin", "source.bin"]
+            );
         }
 
         /// The recipe stays single: outside restore's capability-handle
