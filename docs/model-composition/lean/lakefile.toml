@@ -16,5 +16,6 @@ path = "../../storage-model/lean"
 [[lean_lib]]
 name = "ModelComposition"
 srcDir = "src"
-roots = ["CompositionCodec", "CompositionAdmission", "CompositionWitnesses"]
+roots = ["CompositionCodec", "CompositionAdmission", "CompositionWitnesses",
+  "CompositionBatchCodec", "CompositionBatchAdmission", "CompositionBatchWitnesses"]
 moreLeanArgs = ["-j2", "-s8192"]
