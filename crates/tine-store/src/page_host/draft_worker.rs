@@ -109,16 +109,23 @@ impl<F: HostIo> Host<F> {
                 if previous.is_none() {
                     return Disposition::Disabled;
                 }
-                // A settled paired operation leaves through its own whole
-                // retirement only (the settlement rewrite), never split.
+                // A paired operation's records leave only through its
+                // settlement: the whole draft once nothing is owed, else a
+                // rewrite without the resolved pair whose source is `key`.
                 let ops: Vec<String> = (host.vehicles_of.get(key).into_iter().flatten())
                     .filter(|name| name.starts_with("op-"))
                     .cloned()
                     .collect();
                 for op in &ops {
-                    if host.retire_whole(op) {
+                    if host.retire_whole(op) || host.rewrite_pair(op, key) {
                         return Disposition::Pending;
                     }
+                }
+                // The model's `retained`: a member of a paired draft that
+                // still owes a pair keeps its draft, never retired alone;
+                // it may go once that pair settles.
+                if host.pair_retains(key) {
+                    return Disposition::Waiting;
                 }
                 let op = host.live_op(key);
                 // L2 (RENAME-COST): this page's record leaves with its
@@ -191,7 +198,7 @@ impl<F: HostIo> Host<F> {
         // A paired operation's decisions leave after it: one left behind by
         // a crash once the operation is durably absent is cleanup only.
         let decisions = self.order.paired(op).map(|p| p.decisions.clone());
-        tasks.extend(decisions.into_iter().flatten().map(Vehicle::remove));
+        tasks.extend((decisions.into_iter().flatten()).map(|(name, _)| Vehicle::remove(name)));
         let task = tasks.pop_front().unwrap();
         self.worker = Some(DraftWorker {
             effect: op.into(),
@@ -209,6 +216,174 @@ impl<F: HostIo> Host<F> {
             recover_notice: true,
             rename: false,
         });
+        true
+    }
+
+    /// The resolved pair of paired operation `op` whose source is `key`
+    /// that a settlement rewrite may drop now (its index in the pairing),
+    /// the model's `pairRewrite` target: the operation keeps another pair,
+    /// every decision of it is one this code acts on, and neither endpoint
+    /// still owes the publication of its record (that record is then the
+    /// only copy of the page's text, so the host keeps it; the model drops
+    /// an endpoint's record whatever its page holds).
+    pub(super) fn rewrite_target(&self, op: &str, key: &str) -> Option<usize> {
+        let paired = self.order.paired(op)?;
+        let live = self.live_ops.get(op)?;
+        if paired.unreadable || paired.pairs.len() < 2 || !self.drafts.contains_key(op) {
+            return None;
+        }
+        let at = (paired.pairs.iter()).rposition(|p| p.source == key && !p.phase.unresolved())?;
+        let pair = &paired.pairs[at];
+        let owed = live.owed.contains(&pair.receiver) || live.owed.contains(&pair.source);
+        (!owed).then_some(at)
+    }
+
+    /// `key` is the source of a resolved pair a settlement rewrite drops
+    /// now: a draft candidate although its operation still waits. Only once
+    /// no page of the operation owes its publication: while the operation
+    /// is still being saved its pairs settle in turn and the draft retires
+    /// whole, so a rewrite per settled pair would only add writes (PC-3).
+    pub(super) fn rewritable(&self, key: &str) -> bool {
+        let names = self.vehicles_of.get(key).into_iter().flatten();
+        names.filter(|name| name.starts_with("op-")).any(|name| {
+            self.live_ops.get(name).is_some_and(|op| op.owed.is_empty())
+                && self.rewrite_target(name, key).is_some()
+        })
+    }
+
+    /// The settlement rewrite (the model's `pairRewrite`): replace paired
+    /// operation draft `op` by a fresh one without the resolved pair whose
+    /// source is `key` and that pair's endpoint records, keeping every other
+    /// pair, its decisions (rewritten for the new draft's request id and
+    /// member indexes) and the shared referrer records. The new draft and
+    /// those decisions are written first (fresh no-replace names, temp,
+    /// fsync, rename, private-directory sync); `op` and its decisions are
+    /// unlinked only after, so a failure or crash before that unlink leaves
+    /// `op` byte-identical, and launch ignores the uncommitted copy
+    /// (`drafts::Scan::rewrites`). The operation's pages are the worker's
+    /// until it ends. False, with nothing done, when no pair may go.
+    fn rewrite_pair(&mut self, op: &str, key: &str) -> bool {
+        #[cfg(test)]
+        if self.test.single_page_drafts {
+            return false;
+        }
+        let Some(at) = self.rewrite_target(op, key) else {
+            return false;
+        };
+        let paired = &self.order.paired(op).unwrap();
+        let target = &paired.pairs[at];
+        let dropped = [target.member, target.source_member];
+        let records = &self.drafts[op];
+        let mut index = BTreeMap::new();
+        let mut kept = vec![];
+        for (i, record) in records.iter().enumerate() {
+            let i = i as u32;
+            if !dropped.contains(&i) {
+                index.insert(i, kept.len() as u32);
+                kept.push(record.clone());
+            }
+        }
+        let pairs: drafts::Pairs = (paired.pairs.iter().enumerate())
+            .filter(|(i, _)| *i != at)
+            .map(|(_, p)| (index[&p.member], index[&p.source_member]))
+            .collect();
+        let id = uuid::Uuid::new_v4().into_bytes();
+        let new = drafts::op_vehicle(&id);
+        let mut tasks = VecDeque::from([Vehicle::write_operation(new.clone(), &kept, &pairs)]);
+        let mut decisions = BTreeMap::new();
+        for decision in paired.decisions.values() {
+            // `rewrite_target` admits only decisions this code acts on.
+            let Some(d) = decision else {
+                return false;
+            };
+            if dropped.contains(&d.member) {
+                continue;
+            }
+            let Some(&member) = index.get(&d.member) else {
+                return false;
+            };
+            let moved = drafts::Decision {
+                op: id,
+                member,
+                wseq: d.wseq,
+                choice: d.choice.clone(),
+            };
+            let file = drafts::decision_vehicle(&records[d.member as usize].page, &id, member);
+            tasks.push_back(Vehicle::write_decision(file.clone(), &moved));
+            decisions.insert(file, Some(moved));
+        }
+        tasks.push_back(Vehicle::remove(op.into()));
+        tasks.extend(paired.decisions.keys().cloned().map(Vehicle::remove));
+        let pages: BTreeSet<PageKey> = self.live_ops[op].versions.keys().cloned().collect();
+        let before = (pages.iter())
+            .filter_map(|page| Some((page.clone(), self.durable.get(page)?.clone())))
+            .collect();
+        let task = tasks.pop_front().unwrap();
+        self.worker = Some(DraftWorker {
+            effect: op.into(),
+            refresh: None,
+            pages,
+            before,
+            records: vehicle_records(&task),
+            task,
+            application: Some(Application::Rewrite(Box::new(Rewrite {
+                old: op.into(),
+                new,
+                id,
+                records: kept,
+                pairs,
+                decisions,
+                written: vec![],
+                failed: false,
+            }))),
+            remaining: tasks,
+            allocator: false,
+            retry_copy: false,
+            tidied: false,
+            failures: 0,
+            recover_notice: true,
+            rename: false,
+        });
+        true
+    }
+
+    /// A settlement rewrite's vehicle reached its terminal: record what it
+    /// made durable, abort on a failed write (unlinking what it wrote, so
+    /// the original stays the operation), and move the surviving pairs to
+    /// the new draft once every write is durable, before the original's
+    /// unlink. Then the next vehicle, or the application terminal.
+    fn rewrite_step(&mut self, worker: &mut DraftWorker) -> bool {
+        let Some(Application::Rewrite(rewrite)) = &mut worker.application else {
+            return false;
+        };
+        if worker.task.bytes.is_some() && !rewrite.failed {
+            if worker.task.stage == Stage::Present {
+                rewrite.written.push(worker.task.name.clone());
+            } else {
+                rewrite.failed = true;
+                worker.remaining = (rewrite.written.iter().rev().cloned())
+                    .map(Vehicle::remove)
+                    .collect();
+            }
+        }
+        let Some(next) = worker.remaining.pop_front() else {
+            return false;
+        };
+        if !rewrite.failed && next.bytes.is_none() && next.name == rewrite.old {
+            self.order.rewrite(
+                &rewrite.old,
+                rewrite.new.clone(),
+                rewrite.id,
+                &rewrite.records,
+                &rewrite.pairs,
+                std::mem::take(&mut rewrite.decisions),
+            );
+            let new = rewrite.new.clone();
+            self.repair_op(&new);
+        }
+        worker.records = vehicle_records(&next);
+        worker.retry_copy = false;
+        worker.task = next;
         true
     }
 
@@ -365,6 +540,12 @@ impl<F: HostIo> Host<F> {
             self.worker = Some(worker);
             return Disposition::Pending;
         }
+        // A settlement rewrite runs its own vehicle sequence; with none
+        // left, its application terminal follows below.
+        if self.rewrite_step(&mut worker) {
+            self.worker = Some(worker);
+            return Disposition::Pending;
+        }
         if worker.retry_copy && worker.task.stage == Stage::Absent && worker.task.bytes.is_some() {
             worker.task =
                 Vehicle::write(drafts::page_name(&worker.records[0].page), &worker.records);
@@ -376,7 +557,7 @@ impl<F: HostIo> Host<F> {
         // owes its other pages (RENAME-COST L2).
         let removal = matches!(
             worker.application,
-            Some(Application::Removal | Application::Retire)
+            Some(Application::Removal | Application::Retire | Application::Rewrite(_))
         );
         if (removal || worker.task.bytes.is_none()) && !worker.remaining.is_empty() {
             let task = worker.remaining.pop_front().unwrap();
@@ -456,6 +637,10 @@ impl<F: HostIo> Host<F> {
             }
             #[cfg(not(test))]
             Application::Removal | Application::Retire => {}
+            // Committed at the original's durable unlink: the surviving
+            // pairs moved before it (`rewrite_step`), the retired pair left
+            // with it. A failed rewrite changed nothing.
+            Application::Rewrite(_) => {}
             Application::Operation {
                 pages,
                 records,

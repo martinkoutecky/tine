@@ -323,12 +323,24 @@ impl<F: ConformanceIo> Driver<F> {
             if name == "pairRewrite" {
                 let before = self.untouched();
                 let src = args[0].as_u64().unwrap() as usize;
-                let disposition = self.host.begin_draft_retiring(&key(src));
-                assert_ne!(
-                    disposition,
-                    Disposition::Pending,
-                    "host begins retirement of a pair the oracle retains"
-                );
+                // The host's retirement entry first refreshes a page that
+                // owes its own draft (the model's separate `draftSync`), so
+                // there the refusal is that no pair of it may leave.
+                let refresh = self.host.pages.get(&key(src)).is_some_and(|p| p.risk)
+                    && self.oracle.next("draftSync", &[json!(src)]).is_some();
+                if refresh {
+                    assert!(
+                        !self.host.rewritable(&key(src)),
+                        "host offers a rewrite of a pair the oracle retains"
+                    );
+                } else {
+                    let disposition = self.host.begin_draft_retiring(&key(src));
+                    assert_ne!(
+                        disposition,
+                        Disposition::Pending,
+                        "host begins retirement of a pair the oracle retains"
+                    );
+                }
                 self.assert_untouched(&before, name);
             } else if apply {
                 let before = self.untouched();

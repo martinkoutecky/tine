@@ -35,7 +35,7 @@ impl<F: HostIo> Host<F> {
         if self.busy(key) {
             return Disposition::Waiting;
         }
-        let Some(page) = self.pages.get(key) else {
+        let Some(page) = self.pages.get(key).cloned() else {
             return Disposition::Disabled;
         };
         if page.clean() || page.conflict {
@@ -57,6 +57,13 @@ impl<F: HostIo> Host<F> {
                     return Disposition::Disabled
                 }
                 _ => {}
+            }
+        } else if self.order.supersedes(key).is_some() {
+            // Newer text on a source its pair may still remove: the
+            // superseding choice is durable before that text can publish
+            // over the removal, or the save waits for draft I/O.
+            if self.fs.draft_status().unavailable.is_some() || !self.write_superseding(key, &page) {
+                return Disposition::Disabled;
             }
         }
         let bench = crate::bench_events::save_begin(page.version, || self.fs.spelling(key));
@@ -563,10 +570,21 @@ impl<F: HostIo> Host<F> {
                 } else {
                     self.receiver_seen(&key, &job.bytes);
                     // A paired source that published newer text: its removal
-                    // is superseded, and its operation stops blocking. A
+                    // is superseded, and its operation stops blocking; with
+                    // the original text anchored nowhere else (not this
+                    // text, no certified receiver) the pair retains it. A
                     // restored preimage cancels its pair.
-                    if let Some(name) = self.order.disarm(&key) {
-                        self.repair_op(&name);
+                    if let Some((_, receiver, image, preimage)) = self.order.disarming(&key) {
+                        let certified = match self.fs.read_page(&receiver) {
+                            Ok(bytes) => {
+                                Self::receiver_certified(&mut self.fs, &receiver, &bytes, &image)
+                            }
+                            Err(_) => false,
+                        };
+                        let anchored = job.bytes == preimage || certified;
+                        if let Some(name) = self.order.disarm(&key, anchored) {
+                            self.repair_op(&name);
+                        }
                     }
                     for name in self.order.restored(&key, &job.bytes) {
                         self.repair_op(&name);

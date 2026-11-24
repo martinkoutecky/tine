@@ -92,6 +92,7 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
         &[
             "draft_worker.rs::begin_draft_retiring",
             "draft_worker.rs::retire_whole",
+            "draft_worker.rs::rewrite_pair",
             "draft_worker.rs::install_operation",
             "draft_worker.rs::advance_draft",
             "mod.rs::stop",
@@ -102,8 +103,10 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
     ),
     (
         "application",
-        &["draft_worker.rs::advance_draft"],
-        "the overlay ends when its application is consumed, which marks the worker's pages",
+        &["draft_worker.rs::advance_draft", "draft_worker.rs::rewrite_step"],
+        "the overlay ends when its application is consumed, which marks the worker's pages; a \
+         settlement rewrite's step updates only its own bookkeeping (written drafts, failure), \
+         and its swap of the operation in Order marks through repair_op",
     ),
     ("before", &[], "fixed at installation"),
     (

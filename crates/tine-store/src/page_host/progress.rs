@@ -609,7 +609,13 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         let draft = host.draft_of(key);
         let differs = match host.pages.get(key).filter(|page| page.risk) {
             Some(page) => !draft.is_some_and(|r| r.holds(page)),
-            None => draft.is_some() && !host.pair_retains(key) && (stopping || !host.op_waits(key)),
+            // A resolved pair's source is a candidate for its settlement
+            // rewrite while its operation still waits for a sibling.
+            None => {
+                draft.is_some()
+                    && (host.rewritable(key)
+                        || !host.pair_retains(key) && (stopping || !host.op_waits(key)))
+            }
         };
         if differs {
             drafted.insert(key.into());
@@ -954,8 +960,8 @@ impl Reference {
                 Some(page) => !self.logical.get(*key).is_some_and(|r| r.holds(page)),
                 None => {
                     self.logical.contains_key(*key)
-                        && !host.pair_retains(key)
-                        && (p.stopping.is_some() || !op_waits(key))
+                        && (host.rewritable(key)
+                            || !host.pair_retains(key) && (p.stopping.is_some() || !op_waits(key)))
                 }
             };
             candidates.filter(differs).cloned().collect()

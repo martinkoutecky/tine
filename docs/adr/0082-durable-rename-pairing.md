@@ -76,7 +76,13 @@ path, and two receiver reads per removed source. The 1- and 60-block fixtures
 write 305 and 4,142 bytes (300 and 4,137 before), the 60-block source 1,900. A
 Use Disk decision is one 62-byte private file and two publication syncs,
 plus up to two page reads on a paired endpoint (the other endpoint's bytes);
-a launch reads each decided pair's two pages once. The durability witness is
+a launch reads each decided pair's two pages once. A settlement rewrite
+writes the operation draft less the settled pair's two records and index
+pair (2 pairs, 1,000-byte texts, one referrer: 6,132 bytes before, 4,098
+written; 5 pairs: 12,234 before, 10,200 written), plus one copy per
+surviving decision: one new file per vehicle (file and directory sync) and
+one unlink plus directory sync per old vehicle, no graph read, IPC or
+render. The durability witness is
 memory only: a file stamp per own publication, kept only for receivers of
 unresolved pairs.
 
@@ -97,15 +103,32 @@ unresolved pairs.
 - A settled pair's records can still be reinstalled by a relaunch while its
   operation draft remains on disk (a sibling pair unresolved, a page at risk,
   a crash between the second check and the draft's unlink, or a failed
-  unlink); the relaunch re-witnesses the exact state. The settlement rewrite
-  that drops just that pair from its draft (same format) is chosen but not
-  implemented: today the pair leaves only with the whole draft. An outside
-  change to that receiver after settlement then shows as a conflict.
+  unlink); the relaunch re-witnesses the exact state. A settled or cancelled
+  pair whose sibling is still unresolved leaves by a settlement rewrite: the
+  operation draft without that pair and its exclusive records (shared
+  referrer records kept) under a fresh operation name, the surviving
+  decisions copied to it, then the old draft and its decisions unlinked. The
+  no-replace publication forbids rewriting in place, so the commit point is
+  the old draft's durable unlink; until then launch ignores a paired draft
+  whose records are a strict subset of another's, and a failed rewrite
+  leaves the old draft byte-identical. A rewrite runs only once no page of
+  the operation owes its publication (stricter than the model, which may
+  rewrite at any settlement): a rename that completes in one pass retires its
+  draft whole with no rewrite, as before; the last pair still retires the
+  whole draft.
 - The Quint storage models (s3.5 to s3.7) describe the durable pairing, and
   the conformance suite replays them on the host in all four profiles.
 - A matching receiver another program wrote holds its pair until the host
   observes its own durable publication there, where the model would certify
   a durable outside write too: stricter, never weaker.
+- Newer text on a held source writes a superseding decision (choice 2,
+  with its version, base and text) before that text publishes; while draft
+  I/O is down or that write fails the save waits. With the receiver
+  certified, or the text equal to the preimage, the pair is disarmed; else it
+  is retained: the operation draft keeps the preimage, the removal stays
+  disarmed across relaunch, siblings continue, and the whole draft never
+  retires while the pair is retained.
 - Not yet covered (follow-up): the window's restoration entry and the
-  recovery panel for an occupied source, reviewed-text and superseding
-  decisions, and the settlement rewrite above.
+  recovery panel for an occupied source, reviewed-text decisions and
+  superseding input on a receiver (both still block), and a rewrite into a
+  legacy single-page body when one pair remains.

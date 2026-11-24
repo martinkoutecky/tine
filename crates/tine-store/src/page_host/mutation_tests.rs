@@ -1031,3 +1031,117 @@ fn ro3a_power_cut_loses_only_unflushed_external_trash_data() {
         }
     }
 }
+
+/// A settlement rewrite commits at its original's unlink: while both paired
+/// drafts are on disk the subset copy is ignored (cleanup only, its decisions
+/// stale), and once the original is gone the copy is the operation. A
+/// superseding decision is acted on for a source member only.
+#[test]
+fn an_uncommitted_settlement_rewrite_is_ignored_until_its_original_leaves() {
+    let rec = |page: &str, wseq: u64, base: Option<&str>, bytes: Option<&str>| Record {
+        page: page.into(),
+        wseq,
+        version: wseq,
+        base: Base::Known(base.map(|b| Arc::from(b.as_bytes()))),
+        bytes: bytes.map(|b| Arc::from(b.as_bytes())),
+    };
+    // Two moves a -> c, b -> d over the shared referrer r.
+    let records = vec![
+        rec("a.md", 1, Some("A"), None),
+        rec("b.md", 2, Some("B"), None),
+        rec("c.md", 3, None, Some("A")),
+        rec("d.md", 4, None, Some("B")),
+        rec("r.md", 5, Some("R"), Some("R2")),
+    ];
+    let old_id = [1u8; 16];
+    let new_id = [2u8; 16];
+    let old = drafts::op_vehicle(&old_id);
+    let new = drafts::op_vehicle(&new_id);
+    let full = drafts::encode_operation(&records, &[(2, 0), (3, 1)]);
+    let kept = vec![records[1].clone(), records[3].clone(), records[4].clone()];
+    let rewritten = drafts::encode_operation(&kept, &[(1, 0)]);
+    let decision = |op: [u8; 16], member: u32, superseding: bool| drafts::Decision {
+        op,
+        member,
+        wseq: 9,
+        choice: if superseding {
+            drafts::Choice::Text {
+                superseding: true,
+                version: 7,
+                base: Base::Known(None),
+                bytes: text("B2"),
+            }
+        } else {
+            drafts::Choice::TakeDisk
+        },
+    };
+    let moved = drafts::decision_vehicle("b.md", &new_id, 0);
+    let moved_bytes = drafts::encode_decision(&decision(new_id, 0, true));
+    let both = drafts::scan(vec![
+        (old.clone(), full.clone()),
+        (new.clone(), rewritten.clone()),
+        (moved.clone(), moved_bytes.clone()),
+    ]);
+    assert_eq!(both.pairs.keys().collect::<Vec<_>>(), vec![&old]);
+    assert!(both.rewrites.contains(&new) && !both.files.contains_key(&new));
+    assert!(both.stale_decisions.contains(&moved));
+    assert_eq!(
+        both.logical["a.md"], records[0],
+        "the original keeps a's record"
+    );
+    let committed = drafts::scan(vec![(new.clone(), rewritten), (moved.clone(), moved_bytes)]);
+    assert_eq!(committed.pairs[&new], vec![(1, 0)]);
+    assert!(committed.rewrites.is_empty() && committed.blocking.is_empty());
+    assert!(committed.decisions[&moved].choice.superseding());
+    assert!(!committed.logical.contains_key("a.md"));
+    // Superseding input on a receiver is not acted on: it blocks.
+    let on_receiver = drafts::decision_vehicle("c.md", &old_id, 2);
+    let blocked = drafts::scan(vec![
+        (old.clone(), full),
+        (
+            on_receiver.clone(),
+            drafts::encode_decision(&decision(old_id, 2, true)),
+        ),
+    ]);
+    assert_eq!(blocked.blocking.get(&on_receiver), Some(&old));
+}
+
+/// Unit cost of a settlement rewrite: the new operation draft is the old one
+/// less the settled pair's two records and its index pair. Fixture: 9-byte
+/// page names, 1,000-byte texts, one referrer.
+#[test]
+fn a_settlement_rewrite_writes_the_operation_less_its_settled_pair() {
+    let body = |c: u8| Some(Arc::from(vec![c; 1000].as_slice()));
+    let operation = |n: usize| {
+        let mut records = Vec::new();
+        for i in 0..n {
+            let source = |page: String| Record {
+                page,
+                wseq: 1,
+                version: 1,
+                base: Base::Known(body(b'a')),
+                bytes: None,
+            };
+            let receiver = |page: String| Record {
+                page,
+                wseq: 1,
+                version: 1,
+                base: Base::Known(None),
+                bytes: body(b'a'),
+            };
+            records.push(source(format!("src-{i}.md")));
+            records.push(receiver(format!("dst-{i}.md")));
+        }
+        records.push(Record {
+            page: "page-x.md".into(),
+            wseq: 1,
+            version: 1,
+            base: Base::Known(body(b'b')),
+            bytes: body(b'c'),
+        });
+        let pairs: Vec<_> = (0..n as u32).map(|i| (2 * i + 1, 2 * i)).collect();
+        drafts::encode_operation(&records, &pairs).len()
+    };
+    assert_eq!((operation(2), operation(1)), (6132, 4098));
+    assert_eq!((operation(5), operation(4)), (12234, 10200));
+}

@@ -547,11 +547,17 @@ impl<F: ConformanceIo> Driver<F> {
             for &(receiver, source) in members {
                 let dst = index(&records[receiver as usize].page);
                 let src = index(&records[source as usize].page);
-                let live = self
-                    .host
-                    .order
-                    .paired(name)
-                    .and_then(|op| op.pairs.iter().find(|pair| pair.member == receiver));
+                // By endpoints: a settlement rewrite moves the surviving
+                // pairs to its new draft before the original leaves.
+                let (dst_key, src_key) = (
+                    &records[receiver as usize].page,
+                    &records[source as usize].page,
+                );
+                let same =
+                    |pair: &&order::Pair| pair.receiver == *dst_key && pair.source == *src_key;
+                let live = (self.host.order.paired(name))
+                    .and_then(|op| op.pairs.iter().find(same))
+                    .or_else(|| self.host.order.live_pair(dst_key, src_key));
                 let took = |member| {
                     scan.decisions.values().any(|d| {
                         d.op == id && d.member == member && d.choice == drafts::Choice::TakeDisk
@@ -563,7 +569,16 @@ impl<F: ConformanceIo> Driver<F> {
                     "sourceDisk"
                 } else if scan.blocking.values().any(|blocked| blocked == name) {
                     "unreadable"
-                } else if live.is_some_and(|pair| pair.phase == PairPhase::Disarmed) {
+                } else if scan
+                    .decisions
+                    .values()
+                    .any(|d| d.op == id && d.member == source && d.choice.superseding())
+                    && live.is_none_or(|pair| {
+                        // Durable before the newer text's save; the model's
+                        // decision is taken when that text publishes.
+                        !matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. })
+                    })
+                {
                     "disarmed"
                 } else {
                     "none"
@@ -583,6 +598,7 @@ impl<F: ConformanceIo> Driver<F> {
                         "cancelled" => "cancelled",
                         "sourceDisk" => "sourceDisk",
                         "unreadable" => "blocked",
+                        "disarmed" => "disarmed",
                         _ => "armed",
                     },
                 };
@@ -607,7 +623,7 @@ impl<F: ConformanceIo> Driver<F> {
         if self.host.worker.as_ref().is_some_and(|worker| {
             matches!(
                 worker.application,
-                Some(Application::Removal | Application::Retire)
+                Some(Application::Removal | Application::Retire | Application::Rewrite(_))
             )
         }) {
             for old in self.observed["s"]["pairs"].as_array().into_iter().flatten() {
@@ -1285,7 +1301,7 @@ fn run(d: &mut Driver, actions: &[(&str, Value)]) {
 pub(super) fn applies_next(worker: &DraftWorker) -> bool {
     let removal = matches!(
         worker.application,
-        Some(Application::Removal | Application::Retire)
+        Some(Application::Removal | Application::Retire | Application::Rewrite(_))
     );
     let retry = worker.retry_copy && worker.task.stage == Stage::Absent;
     worker.application.is_some()

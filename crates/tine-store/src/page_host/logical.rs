@@ -186,6 +186,16 @@ impl<F: HostIo> Host<F> {
                 self.mark(&page);
             }
         }
+        // A resolved pair's source may now be its settlement rewrite's
+        // draft candidate (`rewritable`), the operation still waiting.
+        let resolved: Vec<PageKey> = (self.order.paired(name).into_iter())
+            .flat_map(|op| op.pairs.iter())
+            .filter(|p| !p.phase.unresolved())
+            .map(|p| p.source.clone())
+            .collect();
+        for source in resolved {
+            self.mark(&source);
+        }
     }
 
     /// RENAME-COST L1: keep the owed sets of `key`'s operation vehicles in
@@ -199,6 +209,7 @@ impl<F: HostIo> Host<F> {
                 continue;
             };
             let settled = !op.waits();
+            let idle = op.owed.is_empty();
             if owes(self.pages.get(key), op.versions[key]) {
                 op.owed.insert(key.into());
             } else {
@@ -208,6 +219,17 @@ impl<F: HostIo> Host<F> {
                 let pages: Vec<PageKey> = op.versions.keys().cloned().collect();
                 for page in pages {
                     self.mark(&page);
+                }
+            } else if idle != op.owed.is_empty() {
+                // Its resolved pairs' sources: rewrite candidates only
+                // while nothing of the operation is owed (`rewritable`).
+                let resolved: Vec<PageKey> = (self.order.paired(&name).into_iter())
+                    .flat_map(|op| op.pairs.iter())
+                    .filter(|p| !p.phase.unresolved())
+                    .map(|p| p.source.clone())
+                    .collect();
+                for source in resolved {
+                    self.mark(&source);
                 }
             }
         }
@@ -423,12 +445,20 @@ impl<F: HostIo> Host<F> {
             self.order
                 .adopt(name.clone(), order::PairedOp::new(id, records, pairs));
         }
-        // A receiver's decision outranks its source's own Use Disk.
+        // A receiver's decision outranks its source's own Use Disk and its
+        // superseding input.
         for (decision, d) in &scan.decisions {
+            let name = drafts::op_vehicle(&d.op);
             if d.choice == drafts::Choice::TakeDisk {
+                self.order
+                    .decide(&name, d.member, None, Some((decision.clone(), d.clone())));
+            }
+        }
+        for (decision, d) in &scan.decisions {
+            if d.choice.superseding() {
                 let name = drafts::op_vehicle(&d.op);
                 self.order
-                    .decide(&name, d.member, None, Some(decision.clone()));
+                    .decide_superseded(&name, d.member, (decision.clone(), d.clone()));
             }
         }
         // Where each decided pair's original text stands now: one read of
@@ -466,7 +496,9 @@ impl<F: HostIo> Host<F> {
             for pair in &op.pairs {
                 let keys = match pair.choice {
                     order::PairChoice::None => vec![],
-                    order::PairChoice::SourceDisk => vec![&pair.source],
+                    order::PairChoice::SourceDisk | order::PairChoice::Superseded => {
+                        vec![&pair.source]
+                    }
                     order::PairChoice::ReceiverDisk => vec![&pair.receiver, &pair.source],
                 };
                 for key in keys {
