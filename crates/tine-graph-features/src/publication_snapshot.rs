@@ -635,56 +635,9 @@ mod tests {
         assert_eq!(targets, expected);
     }
 
-    #[test]
-    fn share_preparation_parses_each_selected_source_once() {
-        use tine_store::cost_counters;
-
-        let body = "- selected body with [[Ref]]\n".repeat(60);
-        let (graph, _) = WholeGraph::from_files(
-            (0..200)
-                .map(|i| (format!("pages/Page {i:03}.md"), body.as_bytes().to_vec()))
-                .collect(),
-            Vec::new(),
-            false,
-        )
-        .unwrap();
-        let selected = graph.corpus(None, true);
-        let mut samples = Vec::new();
-        for _ in 0..3 {
-            cost_counters::reset();
-            let started = std::time::Instant::now();
-            crate::build_graph::with_build_graph_text(
-                &graph,
-                &selected.pages,
-                "did not build",
-                |built, corpus, files| {
-                    let home = HomePage::new(built, &corpus.pages, "Home").unwrap();
-                    snapshot(
-                        &graph,
-                        &corpus,
-                        files,
-                        "Home",
-                        "",
-                        "Home",
-                        Some(home.source(&corpus.pages, None)?),
-                        true,
-                        &mut Vec::new(),
-                    )
-                },
-            )
-            .unwrap();
-            let counts = cost_counters::snapshot();
-            let sample = (
-                counts.full_reads,
-                counts.preamble_reads,
-                counts.parses,
-                counts.corpus,
-            );
-            eprintln!("share writer: 200 pages, 12000 selected blocks, full reads/preambles/parses/corpora={sample:?}, elapsed={:?}", started.elapsed());
-            samples.push(sample);
-        }
-        assert_eq!(samples, [(201, 201, 201, 1); 3]);
-    }
+    // `share_preparation_parses_each_selected_source_once` reads the
+    // process-global cost counters: it lives in `tests/share_cost.rs`, through
+    // `quick_share::prepare`, under the exclusive integration lock.
 
     #[test]
     fn snapshot_keeps_reachable_macros_and_drops_shadowed_builtins() {

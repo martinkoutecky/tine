@@ -51,40 +51,5 @@ pub fn check_blocks<'a>(documents: impl IntoIterator<Item = &'a Document>) -> io
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tine_store::{cost_counters, WholeGraph};
-
-    #[test]
-    fn accepted_share_parses_each_source_once() {
-        let files = vec![
-            ("pages/Public.md".to_owned(), b"- text\n".repeat(10_000)),
-            ("pages/Other.org".to_owned(), b"* text\n".repeat(10_000)),
-        ];
-        cost_counters::reset();
-        let started = std::time::Instant::now();
-        check_sizes(
-            "Share",
-            "",
-            files.iter().map(|(path, text)| (path.len(), text.len())),
-        )
-        .unwrap();
-        let (graph, _) = WholeGraph::from_files(files, Vec::new(), false).unwrap();
-        check_blocks(
-            graph
-                .corpus(None, false)
-                .pages
-                .iter()
-                .map(|p| p.document.as_ref()),
-        )
-        .unwrap();
-        let count = cost_counters::snapshot();
-        eprintln!(
-            "share_open sources=2 blocks=20000 outline_parses={} elapsed={:?}",
-            count.parses,
-            started.elapsed()
-        );
-        assert_eq!((count.parses, count.full_reads, count.corpus), (2, 2, 1));
-    }
-}
+// The cost test (each accepted source parsed once) reads the process-global
+// cost counters: it lives in `tests/share_cost.rs` under the exclusive lock.

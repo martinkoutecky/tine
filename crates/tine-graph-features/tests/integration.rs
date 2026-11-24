@@ -321,6 +321,9 @@ mod publication_sources;
 #[path = "quick_share.rs"]
 mod quick_share;
 
+#[path = "share_cost.rs"]
+mod share_cost;
+
 #[path = "share_selector.rs"]
 mod share_selector;
 
