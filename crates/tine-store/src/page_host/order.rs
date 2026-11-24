@@ -74,6 +74,10 @@ impl Gates {
         }
     }
 
+    pub fn moves(&self) -> &[(PageKey, PageKey)] {
+        &self.moves
+    }
+
     fn receiver(&self, key: &str) -> bool {
         self.moves.iter().any(|(dst, _)| dst == key)
     }
@@ -90,11 +94,98 @@ impl Gates {
     }
 }
 
+/// Where one durable pair's source removal stands (the design's "may Tine
+/// remove this source now, and what is left owed"). Only `Order` answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PairPhase {
+    /// Owed: the source may be removed once its receiver is exact.
+    Armed,
+    /// A receiver check failed: no removal until the receiver is exact
+    /// again; `removed` when the source's removal already published.
+    Held { removed: bool },
+    /// The exact receiver was checked after the source's durability steps.
+    Settled,
+    /// A durable Use Disk on the receiver disarmed the source for good.
+    Cancelled,
+    /// A decision this code cannot act on (unreadable, or a choice of a
+    /// later slice): the destructive step stays blocked; nothing settles.
+    Blocked,
+}
+
+/// One durable pair: its receiver's certified image (the receiver record's
+/// proposal, the exact bytes the planner certified carry the source).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Pair {
+    pub member: u32,
+    pub receiver: PageKey,
+    pub source: PageKey,
+    pub image: Text,
+    pub phase: PairPhase,
+}
+
+/// A paired operation whose durable draft is on disk: its pairs, every
+/// page it names, and the decision records that retire after it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PairedOp {
+    pub id: [u8; 16],
+    pub pairs: Vec<Pair>,
+    pub pages: BTreeSet<PageKey>,
+    pub decisions: BTreeSet<String>,
+}
+
+impl PairedOp {
+    /// The pairing of a paired draft's records.
+    pub fn new(id: [u8; 16], records: &[Record], pairs: &[(u32, u32)]) -> Self {
+        Self {
+            id,
+            pairs: pairs
+                .iter()
+                .map(|&(receiver, source)| Pair {
+                    member: receiver,
+                    receiver: records[receiver as usize].page.clone(),
+                    source: records[source as usize].page.clone(),
+                    image: records[receiver as usize].bytes.clone(),
+                    phase: PairPhase::Armed,
+                })
+                .collect(),
+            pages: records.iter().map(|r| r.page.clone()).collect(),
+            decisions: BTreeSet::new(),
+        }
+    }
+
+    /// Its draft must stay whole: something is owed, or a cancelled pair's
+    /// records would replay as a lone deletion if split into page drafts.
+    pub fn immutable(&self) -> bool {
+        self.owes() || self.pairs.iter().any(|p| p.phase == PairPhase::Cancelled)
+    }
+
+    /// Something is still owed: a pair neither settled nor cancelled.
+    fn owes(&self) -> bool {
+        self.pairs
+            .iter()
+            .any(|p| !matches!(p.phase, PairPhase::Settled | PairPhase::Cancelled))
+    }
+}
+
+/// What a source's save may do about its removal (`Order::removal`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Removal {
+    /// Not a paired source: the ordinary save and its base guard.
+    Ordinary,
+    /// Remove only after checking `receiver` holds exactly `image`.
+    Checked { receiver: PageKey, image: Text },
+    /// No removal now (held, blocked or cancelled).
+    Refused,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Order {
     replies: BTreeMap<ReplyId, Slot>,
     next: u64,
     gates: Vec<Gates>,
+    /// Durable paired operations, by operation vehicle name, from admission
+    /// or launch until their vehicle is durably gone.
+    paired: BTreeMap<String, PairedOp>,
     /// Applied moves' receivers, by source, until the source's actual
     /// eviction. Separate from disk ordering: cleanup can outlive its witnesses.
     release_receivers: BTreeMap<PageKey, PageKey>,
@@ -230,10 +321,170 @@ impl Order {
     }
 
     /// D4 with no chaining: an operation over any page of a running order,
-    /// witnessed or discarded ones included, waits until that order ends.
+    /// witnessed or discarded ones included, waits until that order ends;
+    /// over any page of a durable paired operation, until its draft retires.
     pub fn touches(&self, keys: &BTreeSet<PageKey>) -> bool {
-        keys.iter()
-            .any(|key| self.gates.iter().any(|g| g.versions.contains_key(key)))
+        keys.iter().any(|key| {
+            self.gates.iter().any(|g| g.versions.contains_key(key))
+                || self
+                    .paired
+                    .values()
+                    .any(|op| op.immutable() && op.pages.contains(key))
+        })
+    }
+
+    fn pairs(&self) -> impl Iterator<Item = (&String, &Pair)> {
+        self.paired
+            .iter()
+            .flat_map(|(name, op)| op.pairs.iter().map(move |p| (name, p)))
+    }
+
+    fn pair_mut(&mut self, source: &str) -> Option<&mut Pair> {
+        self.paired
+            .values_mut()
+            .flat_map(|op| op.pairs.iter_mut())
+            .find(|p| p.source == source)
+    }
+
+    /// Adopt a durable paired operation (admission's terminal, or launch).
+    pub fn adopt(&mut self, name: String, op: PairedOp) {
+        self.paired.insert(name, op);
+    }
+
+    /// Its operation vehicle is durably gone: nothing more is owed.
+    pub fn forget(&mut self, name: &str) {
+        self.paired.remove(name);
+    }
+
+    pub fn paired(&self, name: &str) -> Option<&PairedOp> {
+        self.paired.get(name)
+    }
+
+    /// The operation still owes a source settlement: its draft retires
+    /// only once every pair is settled or cancelled.
+    pub fn holds(&self, name: &str) -> bool {
+        self.paired.get(name).is_some_and(PairedOp::owes)
+    }
+
+    /// The paired operation (vehicle name, member, id) whose armed pair has
+    /// `receiver` as its receiver: a Use Disk there must be durable first.
+    pub fn armed_receiver(&self, receiver: &str) -> Option<(String, u32, [u8; 16])> {
+        self.paired.iter().find_map(|(name, op)| {
+            op.pairs
+                .iter()
+                .find(|p| p.receiver == receiver && p.phase == PairPhase::Armed)
+                .map(|p| (name.clone(), p.member, op.id))
+        })
+    }
+
+    /// A decision on `member` of `name` is (or may be) durable: the pair
+    /// is cancelled, permanently. Sibling pairs keep their state.
+    pub fn cancel(&mut self, name: &str, member: u32, decision: Option<String>) {
+        if let Some(op) = self.paired.get_mut(name) {
+            if let Some(pair) = op.pairs.iter_mut().find(|p| p.member == member) {
+                pair.phase = PairPhase::Cancelled;
+            }
+            op.decisions.extend(decision);
+        }
+    }
+
+    /// A decision this code does not act on: block the operation's
+    /// destructive step.
+    pub fn block(&mut self, name: &str, decision: String) {
+        debug_assert!(self.paired.contains_key(name));
+        if let Some(op) = self.paired.get_mut(name) {
+            for pair in &mut op.pairs {
+                if pair.phase != PairPhase::Cancelled {
+                    pair.phase = PairPhase::Blocked;
+                }
+            }
+            op.decisions.insert(decision);
+        }
+    }
+
+    /// Block every adopted operation (a down draft store).
+    pub fn block_all(&mut self) {
+        for op in self.paired.values_mut() {
+            for pair in &mut op.pairs {
+                if pair.phase != PairPhase::Cancelled {
+                    pair.phase = PairPhase::Blocked;
+                }
+            }
+        }
+    }
+
+    /// Launch: the order of each adopted operation over its held pages,
+    /// with its uncancelled moves (none when every pair was cancelled).
+    pub fn recovered_gates(&self, pages: &BTreeMap<PageKey, Page>) -> Vec<Gates> {
+        self.paired
+            .values()
+            .filter_map(|op| {
+                let moves: Vec<_> = (op.pairs.iter())
+                    .filter(|p| p.phase != PairPhase::Cancelled)
+                    .filter(|p| pages.contains_key(&p.receiver) || pages.contains_key(&p.source))
+                    .map(|p| (p.receiver.clone(), p.source.clone()))
+                    .collect();
+                let versions: BTreeMap<PageKey, u64> = (op.pages.iter())
+                    .filter_map(|key| Some((key.clone(), pages.get(key)?.version)))
+                    .collect();
+                (!moves.is_empty() && !versions.is_empty()).then(|| Gates::new(moves, versions))
+            })
+            .collect()
+    }
+
+    /// What `source`'s removal may do now.
+    pub fn removal(&self, source: &str) -> Removal {
+        match self.pairs().find(|(_, p)| p.source == source) {
+            None => Removal::Ordinary,
+            Some((_, p)) if p.phase == PairPhase::Armed => Removal::Checked {
+                receiver: p.receiver.clone(),
+                image: p.image.clone(),
+            },
+            // Settled: the source is gone and its receiver was exact.
+            Some((_, p)) if p.phase == PairPhase::Settled => Removal::Ordinary,
+            Some(_) => Removal::Refused,
+        }
+    }
+
+    /// A receiver check failed around `source`'s removal: hold the pair.
+    /// Its operation (vehicle name) keeps its draft. Returns that name.
+    pub fn hold(&mut self, source: &str, removed: bool) -> Option<String> {
+        let name = self.pairs().find(|(_, p)| p.source == source)?.0.clone();
+        let pair = self.pair_mut(source)?;
+        if matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. }) {
+            pair.phase = PairPhase::Held { removed };
+        }
+        Some(name)
+    }
+
+    /// The exact receiver was checked after `source`'s durability steps.
+    pub fn settle(&mut self, source: &str) -> Option<String> {
+        let name = self.pairs().find(|(_, p)| p.source == source)?.0.clone();
+        let pair = self.pair_mut(source)?;
+        if matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. }) {
+            pair.phase = PairPhase::Settled;
+        }
+        Some(name)
+    }
+
+    /// `receiver`'s disk bytes were read as `bytes`: a held pair whose
+    /// receiver is exact again re-arms (or settles, its source already
+    /// removed). Returns the operations whose state changed.
+    pub fn receiver_read(&mut self, receiver: &str, bytes: &Text) -> Vec<String> {
+        let mut changed = vec![];
+        for (name, op) in &mut self.paired {
+            for pair in &mut op.pairs {
+                if pair.receiver == receiver && pair.image == *bytes {
+                    match pair.phase {
+                        PairPhase::Held { removed: true } => pair.phase = PairPhase::Settled,
+                        PairPhase::Held { removed: false } => pair.phase = PairPhase::Armed,
+                        _ => continue,
+                    }
+                    changed.push(name.clone());
+                }
+            }
+        }
+        changed
     }
 
     /// The page whose disk bytes a Discard of `key` also reads: a running
@@ -317,6 +568,8 @@ impl Order {
     /// stopped or relaunched host.
     pub fn stop(&mut self) {
         self.gates.clear();
+        // Launch reinstalls every durable pairing from the draft store.
+        self.paired.clear();
         self.release_receivers.clear();
         self.publication_pending.clear();
         self.publication_versions.clear();
@@ -346,6 +599,20 @@ impl<F: HostIo> Host<F> {
         let (Ok(bytes), None | Some(Ok(_))) = reads.clone() else {
             return self.refused(request, key, Refusal::ReadFailed);
         };
+        // Use Disk on a durable pair's unwitnessed receiver cancels that
+        // pair: the decision is durable before the choice takes effect or is
+        // acknowledged, so no relaunch replays the removal it cancelled.
+        let durable = self
+            .order
+            .armed_receiver(key)
+            .filter(|_| self.order.partner(key).is_some());
+        if let Some((name, member, id)) = durable {
+            let written = self.write_decision(key, &name, member, id);
+            self.repair_op(&name);
+            if !written {
+                return self.refused(request, key, Refusal::DraftFailed);
+            }
+        }
         self.take_disk(key, page, bytes);
         // The discarded page first: a waiting caller hears the page the user
         // discarded, not the source it reverts.
@@ -355,6 +622,45 @@ impl<F: HostIo> Host<F> {
             self.take_disk(&src, self.pages[&src].clone(), bytes);
         }
         self.answer(request, key, false);
+    }
+
+    /// Write a Use Disk decision on `member` (receiver `key`) of paired
+    /// operation `name` through the guarded vehicle path (fresh no-replace
+    /// name, temp, fsync, rename, private-directory sync). True when it is
+    /// durable. Any write that may have reached the disk disarms the pair
+    /// in `Order`: a removal is never the result of an uncertain choice.
+    fn write_decision(&mut self, key: &str, name: &str, member: u32, id: [u8; 16]) -> bool {
+        self.wseq = self.wseq.checked_add(1).expect("draft sequence exhausted");
+        let decision = drafts::Decision {
+            op: id,
+            member,
+            wseq: self.wseq,
+            choice: drafts::Choice::TakeDisk,
+        };
+        let file = drafts::decision_vehicle(key, &id, member);
+        let mut vehicle = Vehicle::write_decision(file.clone(), &decision);
+        // Bounded: temp, rename, up to three syncs, cleanup unlink and sync.
+        for _ in 0..8 {
+            if matches!(vehicle.stage, Stage::Present | Stage::Absent) {
+                break;
+            }
+            vehicle.advance(&mut self.fs);
+        }
+        self.sync_drafts();
+        let durable = vehicle.stage == Stage::Present;
+        // Absent is durably absent; any other stage may leave it on disk.
+        if vehicle.stage != Stage::Absent {
+            self.order.cancel(name, member, Some(file));
+        }
+        if !durable {
+            self.events.push(Event::DraftError {
+                effect: name.into(),
+                pages: BTreeSet::from([key.into()]),
+                refresh: None,
+                failures: vehicle.failures,
+            });
+        }
+        durable
     }
 
     fn take_disk(&mut self, key: &str, page: Page, bytes: Text) {

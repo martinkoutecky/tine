@@ -52,7 +52,7 @@ mod writer_census_tests;
 use drafts::{Record, Stage, Vehicle};
 use io::{ErrorKind, HostIo, IoFailure, Witness};
 use logical::LiveOp;
-use order::{Gates, OperationReply, Reply, ReplyId};
+use order::{Gates, OperationReply, Removal, Reply, ReplyId};
 use save::SaveJob;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1178,6 +1178,7 @@ impl<F: HostIo> Host<F> {
         }
         let again = self.pages[key].obs.as_ref() == Some(&bytes);
         self.set_page(key, Some(page));
+        self.receiver_seen(key, &bytes);
         if again {
             self.events.push(Event::Observed {
                 page: key.into(),
@@ -1257,7 +1258,9 @@ impl<F: HostIo> Host<F> {
             page.is_none_or(|p| p.clean() || p.risk)
                 && match page.filter(|p| p.risk) {
                     Some(p) => drafts.get(key).is_some_and(|r| r.holds(p)),
-                    None => !drafts.contains_key(key),
+                    // A paired draft still owing a settlement keeps its
+                    // records for the next launch, which reinstalls it.
+                    None => !drafts.contains_key(key) || self.pair_retains(key),
                 }
         })
     }
@@ -1333,8 +1336,17 @@ impl<F: HostIo> Host<F> {
             self.settle(&key);
         }
         self.fs.graph_launch(&self.keys.iter().cloned().collect());
+        // The pairing's one answerer (`Order`) is installed from the scan
+        // before any recovered work is dispatched or choice offered. A pair
+        // a durable Use Disk cancelled recovers neither its receiver's nor
+        // its source's operation record: both keep their disk state, newer
+        // page drafts still win.
+        let skipped = self.adopt_pairing(&scan);
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {
+                if skipped.contains(key) {
+                    continue;
+                }
                 host.storage_diag
                     .drafts_recovered
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1353,6 +1365,7 @@ impl<F: HostIo> Host<F> {
                 );
             }
         });
+        self.install_recovered_gates();
         // Make every readable recovered entry durable before retirement.
         // This is essential for process-crash survivors not previously
         // directory synced. When that fails, the recovered buffers stay held
@@ -1360,6 +1373,9 @@ impl<F: HostIo> Host<F> {
         let synced = matches!(self.fs.draft_sync(), Ok(Witness::Durable));
         if !synced {
             self.fs.drafts_unsynced();
+            // A down draft store pauses paired recovery: no source removal
+            // until a launch can make the pairing durable again.
+            self.order.block_all();
         }
         self.drafts = drafts::scan(self.fs.draft_files(true)).files;
         self.index_drafts();
@@ -1372,7 +1388,7 @@ impl<F: HostIo> Host<F> {
         self.fs.draft_changes();
         self.alive = true;
         if synced {
-            self.tidy_drafts()
+            self.tidy_drafts(scan.stale_decisions.iter().cloned().collect())
         } else {
             Disposition::Applied
         }
@@ -1397,17 +1413,18 @@ impl<F: HostIo> Host<F> {
             let _ = self.fs.quarantine(name);
         }
         self.sync_drafts();
-        Ok(self.tidy_drafts())
+        Ok(self.tidy_drafts(vec![]))
     }
 
     /// Launch's representation cleanup over the durable index (§4):
     /// explode operation vehicles into page copies and retire superseded
     /// vehicles. Only once the census is durable (M2).
-    fn tidy_drafts(&mut self) -> Disposition {
+    fn tidy_drafts(&mut self, stale: Vec<String>) -> Disposition {
         let logical = drafts::logical(self.drafts.values());
         let mut tasks = VecDeque::new();
         for (name, records) in &self.drafts {
-            if name.starts_with("op-") {
+            // A paired operation draft is immutable: never exploded.
+            if name.starts_with("op-") && self.order.paired(name).is_none() {
                 let mut superseded = vec![];
                 for record in records {
                     let copy = drafts::page_name(&record.page);
@@ -1427,6 +1444,7 @@ impl<F: HostIo> Host<F> {
                     .map(Vehicle::remove),
             );
         }
+        tasks.extend(stale.into_iter().map(Vehicle::remove));
         let Some(task) = tasks.pop_front() else {
             return Disposition::Applied;
         };

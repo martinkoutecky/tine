@@ -1291,14 +1291,54 @@ has published durably (directory sync) at the operation's version, and the
 deletion waits for every other page (`page_host/order.rs`). Scenario: a disk
 error (a full disk, an I/O error) keeps failing the destination's save; the
 old file and every `[[Old]]` link keep resolving, and the rename finishes
-once the write succeeds. The order is memory only:
+once the write succeeds. The pairing survives relaunch (ADR 0082,
+REG-RENAME-CANCEL-RELAUNCH): an operation with moves writes a **paired
+operation draft**, the ordinary `TINEDRF2` envelope whose body is an escape byte
+`0x00`, tag `0`, the ordered records and the zero-based `(receiver, source)`
+record index pairs. The page host's `Order` is the one answerer of "may this
+source be removed now, and what is still owed": it adopts the pairing at the
+draft's durable terminal, and `Host::launch` reinstalls it, with the same order,
+from the scanned drafts before any recovered save or choice.
 - A stop saves nothing gated; the operation's draft carries those pages.
-- A launch completes the rename from its drafts, with no order. Across a
-  crash only no loss and completion hold. Accepted effect: a crash while the
-  destination's write is also failing can leave the page with no file until
-  the write succeeds; its bytes are in the trash or the drafts.
-- No chaining: an operation over any page of a running order waits until
-  that order ends. A deletion answers `Waiting`. A rename waits up to
+- A launch completes the rename from its drafts in the same order (receivers,
+  then referrers, then source removals). The paired draft is immutable: launch
+  does not explode it into page drafts, and a newer page draft supersedes a
+  member's editor text without splitting it. A legacy operation draft (the
+  nonempty record-vector body) recovers exactly as before, exploded and with
+  no order. An older Tine reads a paired body as an empty vector and
+  quarantines it, so it never replays a paired source as a lone deletion.
+- A source is removed only after two receiver checks under both path locks:
+  the receiver's disk bytes equal the certified receiver image immediately
+  before the trash step, and again after the source's trash, trash sync and
+  directory sync. A failed first check holds the removal (the source stays);
+  a failed second check keeps the operation draft, which holds the source's
+  text as its base, so the text is never only in trash. An exact receiver
+  observed later resumes the pair. Guarded restoration of a moved source is
+  not implemented: the draft keeps custody until it is.
+- **Use Disk on a pair's unwitnessed receiver** (a conflict's Use Disk, or the
+  host-level Discard of a recovered receiver) first writes a decision record
+  `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft` (escape, tag `1`, the
+  16-byte request id, the receiver's member index, a new write sequence, choice
+  `0`), through the draft vehicle path (temp, fsync, rename, directory sync).
+  Only once it is durable does the receiver take its disk state, the source
+  revert to its disk bytes and the request answer; a write that fails refuses
+  the Discard `DraftFailed`, and one that may have reached the disk still
+  disarms the pair. A durable cancellation disarms that pair across every
+  later launch: neither its receiver's nor its source's operation record is
+  recovered. Sibling pairs continue; referrers keep today's cancellation
+  behaviour (their rewrites still publish).
+- A decision this code does not act on (reviewed text `1`, superseding input
+  `2`) or an unreadable or mismatched decision naming a readable paired
+  operation blocks that operation's source removals and raises a draft error;
+  it stays in place, never quarantined. A malformed paired operation draft is
+  quarantined intact like any unreadable vehicle. A launch whose draft
+  directory sync fails blocks every source removal until a launch succeeds.
+- Retirement: the paired draft retires whole once each pair is settled or
+  cancelled and no page is at risk: superseded page drafts first, then the
+  operation draft, then its decisions. A decision left by a crash after its
+  operation is durably absent is removed at launch.
+- No chaining: an operation over any page of a running order, or of a paired
+  operation draft not yet retired, waits until that order ends. A deletion answers `Waiting`. A rename waits up to
   `OPERATION_WAIT` (10 s) and is then refused `Busy`, changing nothing.
   Feature writers run as host operations too. Admission holds no caller-side
   reservation: it compares the planned bytes and context under the path locks.
@@ -2719,12 +2759,15 @@ pages once; it still reloads only clean rewritten pages and discards moved pages
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2;
 re-measured after RENAME-COST 2026-10-11): the 1-/60-block referrer fixtures
-write 4 files and 300/4,137 bytes with 15 syncs for the rename itself: the operation draft, the
+write 4 files and 305/4,142 bytes with 15 syncs for the rename itself (the paired operation
+draft adds 5 bytes: escape, tag, pair count and two indexes; a 60-block source writes
+1,900 bytes), with no added sync, launch read or listing; the two receiver checks add
+two receiver reads per removed source: the operation draft, the
 referrer, the destination page and the source's custody marker (16 before
 RO3 (a), which stopped syncing the trashed source's data). The probe counts 20: one more is the
 host launch's draft sync, and four are the fresh graph's first deletion creating the trash chain
 and the custody directory (each created directory's parent sync, counted since 2026-10-21). On
-Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files and 199/4,036 bytes and counts 17 syncs
+Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files and 204/4,041 bytes and counts 17 syncs
 (measured with markers forced off on Linux; the counter counts each sync call, and Windows'
 directory syncs are no-ops). The
 referrer's old and new payloads are each written once into the operation

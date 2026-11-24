@@ -18,6 +18,17 @@ pub(super) struct LiveOp {
     /// Pages held at risk, without a conflict, at their record's version:
     /// the operation's saves still to publish.
     pub(super) owed: BTreeSet<PageKey>,
+    /// A paired operation whose `Order` still owes a source settlement:
+    /// its vehicle neither retires nor splits (`Order::holds`).
+    pub(super) held: bool,
+}
+
+impl LiveOp {
+    /// Its pages keep their records in it: a publication or a pair's
+    /// settlement is still owed.
+    pub(super) fn waits(&self) -> bool {
+        !self.owed.is_empty() || self.held
+    }
 }
 
 /// A host's test-only schedule knobs.
@@ -125,6 +136,8 @@ impl<F: HostIo> Host<F> {
         let records = self.drafts.get(name).filter(|_| name.starts_with("op-"));
         let Some(records) = records else {
             self.live_ops.remove(name);
+            // Its vehicle is durably gone: the pairing owes nothing more.
+            self.order.forget(name);
             return;
         };
         let versions: BTreeMap<PageKey, u64> = records
@@ -137,7 +150,31 @@ impl<F: HostIo> Host<F> {
             .filter(|(key, version)| owes(self.pages.get(*key), **version))
             .map(|(key, _)| key.clone())
             .collect();
-        self.live_ops.insert(name.into(), LiveOp { versions, owed });
+        let held = self.order.holds(name);
+        self.live_ops.insert(
+            name.into(),
+            LiveOp {
+                versions,
+                owed,
+                held,
+            },
+        );
+    }
+
+    /// `Order` changed paired operation `name`: refresh its entry, marking
+    /// its pages when whether it waits changed (their draft candidacy).
+    pub(super) fn repair_op(&mut self, name: &str) {
+        let before = self.live_ops.get(name).map(LiveOp::waits);
+        self.index_op(name);
+        let after = self.live_ops.get(name).map(LiveOp::waits);
+        if before != after {
+            let pages: Vec<PageKey> = (self.live_ops.get(name))
+                .map(|op| op.versions.keys().cloned().collect())
+                .unwrap_or_default();
+            for page in pages {
+                self.mark(&page);
+            }
+        }
     }
 
     /// RENAME-COST L1: keep the owed sets of `key`'s operation vehicles in
@@ -150,13 +187,13 @@ impl<F: HostIo> Host<F> {
             let Some(op) = self.live_ops.get_mut(&name) else {
                 continue;
             };
-            let settled = op.owed.is_empty();
+            let settled = !op.waits();
             if owes(self.pages.get(key), op.versions[key]) {
                 op.owed.insert(key.into());
             } else {
                 op.owed.remove(key);
             }
-            if settled != op.owed.is_empty() {
+            if settled != !op.waits() {
                 let pages: Vec<PageKey> = op.versions.keys().cloned().collect();
                 for page in pages {
                     self.mark(&page);
@@ -182,7 +219,17 @@ impl<F: HostIo> Host<F> {
         let names = self.vehicles_of.get(key).into_iter().flatten();
         names
             .filter_map(|n| self.live_ops.get(n))
-            .any(|op| !op.owed.is_empty())
+            .any(LiveOp::waits)
+    }
+
+    /// `key`'s records stay in a paired operation draft that still owes a
+    /// settlement: no stop or retirement removes them alone.
+    pub(super) fn pair_retains(&self, key: &str) -> bool {
+        let names = self.vehicles_of.get(key).into_iter().flatten();
+        names
+            .filter(|n| self.order.paired(n).is_some())
+            .filter_map(|n| self.live_ops.get(n))
+            .any(LiveOp::waits)
     }
 
     /// Recompute `page`'s highest-sequence record from its vehicles.
@@ -343,5 +390,64 @@ impl<F: HostIo> Host<F> {
             }
         }
         keys
+    }
+
+    /// Launch: adopt every readable paired operation into `Order` with its
+    /// decisions. Returns the keys whose logical record is a cancelled
+    /// pair's operation record (not recovered).
+    pub(super) fn adopt_pairing(&mut self, scan: &drafts::Scan) -> BTreeSet<PageKey> {
+        let mut skipped = BTreeSet::new();
+        for (name, pairs) in &scan.pairs {
+            let Some(id) = drafts::op_id(name) else {
+                continue;
+            };
+            let records = &scan.files[name];
+            self.order
+                .adopt(name.clone(), order::PairedOp::new(id, records, pairs));
+        }
+        for (decision, d) in &scan.decisions {
+            if d.choice == drafts::Choice::TakeDisk {
+                let name = drafts::op_vehicle(&d.op);
+                self.order.cancel(&name, d.member, Some(decision.clone()));
+            }
+        }
+        for (decision, name) in &scan.blocking {
+            self.order.block(name, decision.clone());
+            // The existing draft error: the decision stays in place and
+            // the operation's destructive step waits for it.
+            let pages = self.order.paired(name).map(|op| op.pages.clone());
+            self.events.push(Event::DraftError {
+                effect: decision.clone(),
+                pages: pages.unwrap_or_default(),
+                refresh: None,
+                failures: 1,
+            });
+        }
+        for (name, records) in &scan.files {
+            let Some(op) = self.order.paired(name) else {
+                continue;
+            };
+            for pair in op
+                .pairs
+                .iter()
+                .filter(|p| p.phase == order::PairPhase::Cancelled)
+            {
+                for key in [&pair.receiver, &pair.source] {
+                    let own = records.iter().find(|r| &r.page == key).map(|r| r.wseq);
+                    if scan.logical.get(key).map(|r| r.wseq) == own {
+                        skipped.insert(key.clone());
+                    }
+                }
+            }
+        }
+        skipped
+    }
+
+    /// Launch: each recovered paired operation's order over its recovered
+    /// pages, receivers first, sources last, as while Tine ran.
+    pub(super) fn install_recovered_gates(&mut self) {
+        for gates in self.order.recovered_gates(&self.pages) {
+            self.order.install(Some(gates));
+        }
     }
 }

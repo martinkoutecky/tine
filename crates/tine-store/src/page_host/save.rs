@@ -45,6 +45,10 @@ impl<F: HostIo> Host<F> {
         if self.order.gated(key) {
             return Disposition::Waiting;
         }
+        // A durable pair's held, blocked or cancelled source removal.
+        if page.buf.is_none() && self.order.removal(key) == Removal::Refused {
+            return Disposition::Disabled;
+        }
         let bench = crate::bench_events::save_begin(page.version, || self.fs.spelling(key));
         self.job = Some(SaveJob {
             page: key.into(),
@@ -87,11 +91,125 @@ impl<F: HostIo> Host<F> {
         {
             return Disposition::Waiting;
         }
-        let keys = BTreeSet::from([job.page.clone()]);
+        let mut keys = BTreeSet::from([job.page.clone()]);
+        // A paired source's removal also reads its receiver: both path locks,
+        // in the usual order.
+        if let Some(receiver) = self.checked_receiver(job) {
+            keys.insert(receiver);
+        }
         if self.lacks_locks(&keys) {
             return Disposition::Waiting;
         }
         self.with_locks(&keys, |host| host.advance_save_locked())
+    }
+
+    /// The receiver a deletion job checks around its trash step.
+    fn checked_receiver(&self, job: &SaveJob) -> Option<PageKey> {
+        if job.bytes.is_some() {
+            return None;
+        }
+        match self.order.removal(&job.page) {
+            Removal::Checked { receiver, .. } => Some(receiver),
+            _ => None,
+        }
+    }
+
+    /// The pair's receiver check: `None` when `key` is no checked source or
+    /// its receiver's live disk bytes are exactly the certified image; else
+    /// the receiver and the bytes it has.
+    fn receiver_diverged(&mut self, key: &str) -> Result<Option<(PageKey, Text)>, IoFailure> {
+        let Removal::Checked { receiver, image } = self.order.removal(key) else {
+            return Ok(None);
+        };
+        let bytes = self.fs.read_page(&receiver)?;
+        Ok((bytes != image).then_some((receiver, bytes)))
+    }
+
+    /// Surface a diverged receiver as its ordinary read (a held page with
+    /// unsaved text conflicts, as for any outside change).
+    fn receiver_differs(&mut self, receiver: &str, bytes: Text) {
+        if self.pages.contains_key(receiver) {
+            self.adopt_read(receiver, bytes);
+        }
+    }
+
+    /// A creation's twin check before the rename (STEP3 §3.2): a twin fails
+    /// the save, as any failure before the rename. Scenario:
+    /// Syncthing/Dropbox delivers `c.org` while the user creates `c.md`; two
+    /// files would claim one page (contract rows `disk_twin::Twin` and
+    /// `check_page_claim::Twin`).
+    fn twin_or_marker(
+        &mut self,
+        job: &mut SaveJob,
+        cause: &mut Option<IoFailure>,
+    ) -> Option<Outcome> {
+        let key = job.page.clone();
+        match self.creation_twin(job) {
+            Ok(None) => {
+                job.phase = if job.bytes.is_none() {
+                    SavePhase::Marker
+                } else {
+                    SavePhase::Rename
+                };
+                None
+            }
+            Ok(Some(existing)) => {
+                self.events.push(Event::Twin {
+                    page: key,
+                    existing,
+                    version: job.version,
+                    saved: false,
+                });
+                Some(Outcome::Failed)
+            }
+            Err(e) => {
+                *cause = Some(e);
+                Some(Outcome::Failed)
+            }
+        }
+    }
+
+    /// The second receiver check, after the source's trash, trash sync and
+    /// source-directory sync: the exact receiver settles the pair; anything
+    /// else (a receiver replaced meanwhile, or an unreadable one) holds it,
+    /// and the operation draft keeps the source's text as custody.
+    fn post_check(&mut self, key: &str) {
+        match self.receiver_diverged(key) {
+            Ok(None) => {
+                if let Some(name) = self.order.settle(key) {
+                    self.repair_op(&name);
+                }
+            }
+            Ok(Some((receiver, bytes))) => {
+                if !self.allocator_busy() {
+                    self.receiver_differs(&receiver, bytes);
+                }
+                self.hold_pair(key, true);
+            }
+            Err(_) => self.hold_pair(key, true),
+        }
+    }
+
+    /// `receiver`'s disk bytes are known to be `bytes`: a held pair whose
+    /// receiver is exact again resumes.
+    pub(super) fn receiver_seen(&mut self, receiver: &str, bytes: &Text) {
+        for name in self.order.receiver_read(receiver, bytes) {
+            self.repair_op(&name);
+            let sources: Vec<PageKey> = (self.order.paired(&name))
+                .map(|op| op.pairs.iter().map(|p| p.source.clone()).collect())
+                .unwrap_or_default();
+            for source in sources {
+                self.mark(&source);
+            }
+        }
+    }
+
+    /// A failed receiver check holds the pair (its draft stays custody).
+    fn hold_pair(&mut self, key: &str, removed: bool) {
+        if let Some(name) = self.order.hold(key, removed) {
+            self.repair_op(&name);
+            self.mark(key);
+        }
     }
 
     /// `advance_save` with the model's ghost external-write epoch, which a
@@ -155,33 +273,29 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Check => match self.fs.read_page(&key) {
                 Ok(bytes) if job.base == Base::Known(bytes.clone()) => {
-                    // A creation's twin check before the rename (STEP3 §3.2):
-                    // a twin fails the save, as any failure before the rename.
-                    // Scenario: Syncthing/Dropbox delivers `c.org` while the
-                    // user creates `c.md`; two files would claim one page
-                    // (contract rows `disk_twin::Twin` and `check_page_claim::Twin`).
-                    match self.creation_twin(&job) {
-                        Ok(None) => {
-                            job.phase = if job.bytes.is_none() {
-                                SavePhase::Marker
-                            } else {
-                                SavePhase::Rename
-                            };
-                            None
-                        }
-                        Ok(Some(existing)) => {
-                            self.events.push(Event::Twin {
-                                page: key.clone(),
-                                existing,
-                                version: job.version,
-                                saved: false,
-                            });
-                            Some(Outcome::Failed)
+                    // The first receiver check, immediately before the trash
+                    // step: the exact certified receiver, or no removal.
+                    let checked = if job.bytes.is_none() {
+                        self.receiver_diverged(&key)
+                    } else {
+                        Ok(None)
+                    };
+                    match checked {
+                        Ok(Some((receiver, bytes))) => {
+                            if self.allocator_busy() {
+                                self.job = Some(job);
+                                return Disposition::Waiting;
+                            }
+                            self.receiver_differs(&receiver, bytes);
+                            self.hold_pair(&key, false);
+                            self.fs.page_finish(&key);
+                            return Disposition::Applied;
                         }
                         Err(e) => {
                             cause = Some(e);
                             Some(Outcome::Failed)
                         }
+                        Ok(None) => self.twin_or_marker(&mut job, &mut cause),
                     }
                 }
                 Ok(bytes) => {
@@ -395,6 +509,11 @@ impl<F: HostIo> Host<F> {
                 page.base = Base::Known(job.bytes.clone());
                 page.typed = false;
                 page.risk = false;
+                if job.bytes.is_none() {
+                    self.post_check(&key);
+                } else {
+                    self.receiver_seen(&key, &job.bytes);
+                }
                 self.order.published(&key, job.version);
                 crate::bench_events::emit(|| Ev::Published {
                     key: job.bench,

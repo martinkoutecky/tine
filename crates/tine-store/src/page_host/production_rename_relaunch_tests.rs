@@ -1,0 +1,579 @@
+//! A rename's pairing survives relaunch (regression `rename-cancel-relaunch`):
+//! a rename A to C over the referrer B is admitted and its paired operation
+//! draft is durable; the process dies before C (the receiver) publishes; a
+//! cold relaunch reinstalls the pairing from the draft store before any save.
+//! Use Disk on C then cancels the pair durably: A stays on disk, and no
+//! later launch replays A's removal. The production host is synchronous:
+//! dropping it without a stop is a process death (it writes nothing it is
+//! not stepped through), so every cut below is "stop stepping here".
+use super::*;
+
+const OLD: &str = "- old\n";
+const REF: &str = "- see [[A]]\n";
+const REWRITTEN: &str = "- see [[C]]\n";
+const KEYS: [&str; 4] = ["a.md", "b.md", "c.md", "d.md"];
+
+fn bytes(text: &str) -> Text {
+    Some(Arc::from(text.as_bytes()))
+}
+
+/// A cold relaunch on the same app data, with every key this file uses.
+fn reopen(f: Fixture) -> Fixture {
+    let Fixture {
+        graph,
+        app,
+        trash,
+        host,
+        root,
+    } = f;
+    drop(host);
+    let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
+    let locks = KEYS
+        .into_iter()
+        .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+        .collect();
+    let mut host = shared_counters(Host::new(io, locks));
+    host.stop();
+    assert!(matches!(
+        host.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
+    let mut f = Fixture {
+        graph,
+        app,
+        trash,
+        host,
+        root,
+    };
+    f.drain();
+    f
+}
+
+fn fixture() -> Fixture {
+    let mut f = Fixture::new();
+    f.host
+        .register("d.md".into(), "d.md", Arc::new(Mutex::new(())));
+    fs::write(f.graph.join("a.md"), OLD).unwrap();
+    fs::write(f.graph.join("b.md"), REF).unwrap();
+    f
+}
+
+fn admit_rename(f: &mut Fixture) {
+    assert_eq!(
+        f.host.rename(
+            "a.md",
+            "c.md",
+            &BTreeSet::from(["b.md".into()]),
+            "A",
+            "C",
+            tine_core::config::FileNameFormat::TripleLowbar
+        ),
+        Disposition::Pending
+    );
+}
+
+/// The admitted rename, durable and applied in memory, then a process death
+/// before any page saved, then a cold relaunch.
+fn relaunched_after_a_crash_before_the_receiver_published() -> Fixture {
+    let mut f = fixture();
+    admit_rename(&mut f);
+    f.drain();
+    assert_eq!(f.host.pages["c.md"].buf.as_deref(), Some(OLD.as_bytes()));
+    assert!(!f.graph.join("c.md").exists(), "C is not published");
+    let f = reopen(f);
+    assert_eq!(f.host.pages["a.md"].buf, None, "A's removal is recovered");
+    assert_eq!(f.host.pages["c.md"].buf.as_deref(), Some(OLD.as_bytes()));
+    assert_eq!(
+        f.host.pages["b.md"].buf.as_deref(),
+        Some(REWRITTEN.as_bytes())
+    );
+    assert_eq!(
+        f.host.fs.draft_files(true).len(),
+        1,
+        "the paired operation draft is immutable: launch does not explode it"
+    );
+    f
+}
+
+fn on_disk(f: &Fixture, key: &str) -> Option<String> {
+    fs::read_to_string(f.graph.join(key)).ok()
+}
+
+fn trashed(f: &Fixture) -> Vec<String> {
+    let mut texts: Vec<String> = fs::read_dir(&f.trash)
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    texts.sort();
+    texts
+}
+
+/// The draft steps the progress loop runs for settled pages.
+fn retire_drafts(f: &mut Fixture) {
+    for _ in 0..4 {
+        for key in KEYS {
+            if f.host.begin_draft_retiring(key) == Disposition::Pending {
+                f.drain();
+            }
+        }
+    }
+}
+
+fn pending_drafts(f: &Fixture) -> usize {
+    f.host.fs.draft_files(true).len()
+}
+
+/// Some draft file still holds `text` (custody of the source's text).
+fn drafted(f: &Fixture, text: &str) -> bool {
+    f.host
+        .fs
+        .draft_files(true)
+        .iter()
+        .any(|(_, b)| b.windows(text.len()).any(|w| w == text.as_bytes()))
+}
+
+/// Save every held page that will save, receivers first, until none does.
+fn settle_all(f: &mut Fixture) {
+    for _ in 0..4 {
+        for key in ["c.md", "d.md", "b.md", "a.md"] {
+            if f.host.start_save(key) == Disposition::Pending {
+                for _ in 0..15 {
+                    f.host.advance_save();
+                    if f.host.job.is_none() {
+                        break;
+                    }
+                }
+                assert!(f.host.job.is_none(), "{key}: save did not finish");
+            }
+        }
+    }
+    retire_drafts(f);
+}
+
+fn refused_draft(f: &Fixture, key: &str) -> bool {
+    f.host.events.iter().any(
+        |e| matches!(e, Event::Refused { page, reason: Refusal::DraftFailed, .. } if page == key),
+    )
+}
+
+/// Formerly the characterization "a discard of a recovered destination
+/// leaves the source only in trash" (HARM: A and C both gone, A's text only
+/// in `logseq/.tine-trash/pages`). The host-level Discard of the recovered,
+/// absent C is a durable Use Disk: A's removal is cancelled, A keeps its
+/// disk file, B still publishes its rewrite (today's cancellation
+/// behaviour), and a second relaunch revives nothing.
+#[test]
+fn a_discard_of_a_recovered_receiver_keeps_the_source_across_relaunches() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    f.send("c.md", RequestKind::Discard);
+    assert!(f.host.pages["c.md"].clean(), "C took its disk state");
+    assert_eq!(f.host.pages["c.md"].buf, None, "C: no file");
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(OLD.as_bytes()),
+        "A's removal is reverted"
+    );
+    assert_eq!(pending_drafts(&f), 2, "the operation and its decision");
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled);
+    assert_eq!(f.host.start_save("c.md"), Disposition::Disabled);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    retire_drafts(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "A stays");
+    assert_eq!(on_disk(&f, "c.md"), None, "C was never written");
+    assert_eq!(on_disk(&f, "b.md").as_deref(), Some(REWRITTEN));
+    assert!(trashed(&f).is_empty(), "nothing went to trash");
+    assert_eq!(pending_drafts(&f), 0, "the operation retired whole");
+    // A second relaunch after the choice: nothing to revive.
+    let mut f = reopen(f);
+    assert!(f.host.pages.is_empty());
+    settle_all(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert!(trashed(&f).is_empty());
+}
+
+/// Formerly the characterization "a take disk on a recovered destination
+/// conflicted by sync leaves the source only in trash". After the relaunch
+/// A's removal waits for C's witness (the recovered order), so it cannot
+/// publish while C is conflicted; Use Disk on C then cancels the pair.
+#[test]
+fn a_take_disk_on_a_recovered_receiver_conflicted_by_sync_keeps_the_source() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    fs::write(f.graph.join("c.md"), "- synced\n").unwrap();
+    assert_eq!(f.host.observe("c.md"), Disposition::Applied);
+    assert!(
+        f.host.pages["c.md"].conflict,
+        "C conflicts with the delivery"
+    );
+    assert_eq!(f.host.start_save("c.md"), Disposition::Disabled);
+    assert_eq!(
+        f.host.start_save("a.md"),
+        Disposition::Waiting,
+        "A's removal waits for C after the relaunch"
+    );
+    f.send("c.md", RequestKind::Discard);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    retire_drafts(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "A stays");
+    assert_eq!(on_disk(&f, "c.md").as_deref(), Some("- synced\n"));
+    assert_eq!(on_disk(&f, "b.md").as_deref(), Some(REWRITTEN));
+    assert!(trashed(&f).is_empty(), "nothing went to trash");
+    assert_eq!(pending_drafts(&f), 0);
+    let mut f = reopen(f);
+    settle_all(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert_eq!(on_disk(&f, "c.md").as_deref(), Some("- synced\n"));
+    assert!(trashed(&f).is_empty());
+}
+
+/// A crash right after the acknowledged Use Disk, before any cleanup: the
+/// durable decision cancels the pair at the next launch, which recovers
+/// neither C's nor A's operation record.
+#[test]
+fn a_durable_use_disk_is_not_replayed_as_a_removal_after_a_crash() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    f.send("c.md", RequestKind::Discard);
+    let mut f = reopen(f);
+    assert!(!f.host.pages.contains_key("a.md"), "A is not recovered");
+    assert!(!f.host.pages.contains_key("c.md"), "C is not recovered");
+    assert_eq!(
+        f.host.pages["b.md"].buf.as_deref(),
+        Some(REWRITTEN.as_bytes())
+    );
+    settle_all(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert_eq!(on_disk(&f, "c.md"), None);
+    assert_eq!(on_disk(&f, "b.md").as_deref(), Some(REWRITTEN));
+    assert!(trashed(&f).is_empty());
+    assert_eq!(pending_drafts(&f), 0, "the decision retired after it");
+    let mut f = reopen(f);
+    assert!(f.host.pages.is_empty());
+    settle_all(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+}
+
+/// With no interference, launch finishes the rename: C, then B, then A's
+/// removal after both receiver checks; the operation draft retires whole.
+#[test]
+fn a_recovered_rename_finishes_in_order_after_relaunch() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Waiting);
+    assert_eq!(f.host.start_save("b.md"), Disposition::Waiting);
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Waiting);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    retire_drafts(&mut f);
+    assert_eq!(on_disk(&f, "a.md"), None);
+    assert_eq!(on_disk(&f, "c.md").as_deref(), Some(OLD));
+    assert_eq!(on_disk(&f, "b.md").as_deref(), Some(REWRITTEN));
+    assert_eq!(trashed(&f), vec![OLD.to_string()]);
+    assert_eq!(pending_drafts(&f), 0);
+}
+
+/// The first receiver check: C replaced by an outside writer after its
+/// publication and before A's trash step. A's removal is held, A stays.
+#[test]
+fn a_receiver_replaced_before_the_trash_step_holds_the_removal() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    fs::write(f.graph.join("c.md"), "- other\n").unwrap();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    for _ in 0..15 {
+        f.host.advance_save();
+        if f.host.job.is_none() {
+            break;
+        }
+    }
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "A stays");
+    assert!(trashed(&f).is_empty());
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled, "held");
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD), "the operation draft is retained");
+    // The receiver exact again re-arms the pair; the removal then finishes.
+    fs::write(f.graph.join("c.md"), OLD).unwrap();
+    assert_eq!(f.host.observe("c.md"), Disposition::Applied);
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    retire_drafts(&mut f);
+    assert_eq!(trashed(&f), vec![OLD.to_string()]);
+    assert_eq!(pending_drafts(&f), 0);
+}
+
+/// The second receiver check: C replaced between A's trash move and the
+/// end of A's durability steps. The pair stays pending and its draft keeps
+/// A's text, also across a relaunch.
+#[test]
+fn a_receiver_replaced_between_the_checks_retains_the_source_text() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    while f.graph.join("a.md").exists() {
+        f.host.advance_save();
+        assert!(f.host.job.is_some());
+    }
+    fs::write(f.graph.join("c.md"), "- other\n").unwrap();
+    for _ in 0..15 {
+        f.host.advance_save();
+        if f.host.job.is_none() {
+            break;
+        }
+    }
+    assert_eq!(trashed(&f), vec![OLD.to_string()]);
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD), "the draft keeps A's text as custody");
+    let mut f = reopen(f);
+    settle_all(&mut f);
+    assert!(drafted(&f, OLD), "and keeps it after a relaunch");
+    assert_eq!(on_disk(&f, "c.md").as_deref(), Some("- other\n"));
+}
+
+/// Two pairs in one operation (A to C, B to D): Use Disk on C after a
+/// relaunch cancels that pair only; B's removal still finishes.
+#[test]
+fn a_cancelled_pair_leaves_its_sibling_pair_able_to_finish() {
+    let mut f = fixture();
+    let effects = BTreeMap::from([
+        ("a.md".into(), (None, bytes(OLD))),
+        ("c.md".into(), (bytes(OLD), None)),
+        ("b.md".into(), (None, bytes(REF))),
+        ("d.md".into(), (bytes(REF), None)),
+    ]);
+    let moves = [
+        ("c.md".to_string(), "a.md".to_string()),
+        ("d.md".into(), "b.md".into()),
+    ];
+    assert_eq!(f.host.apply(&effects, &moves), Disposition::Pending);
+    f.drain();
+    let mut f = reopen(f);
+    f.send("c.md", RequestKind::Discard);
+    assert_eq!(f.host.pages["a.md"].buf.as_deref(), Some(OLD.as_bytes()));
+    settle_all(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "A stays");
+    assert_eq!(on_disk(&f, "c.md"), None);
+    assert_eq!(on_disk(&f, "b.md"), None, "B moved");
+    assert_eq!(on_disk(&f, "d.md").as_deref(), Some(REF));
+    assert_eq!(trashed(&f), vec![REF.to_string()]);
+    assert_eq!(pending_drafts(&f), 0);
+}
+
+/// A legacy operation draft (the nonempty-vector body) recovers exactly as
+/// before: exploded into page drafts, with no recovered order.
+#[test]
+fn a_legacy_operation_draft_recovers_as_before() {
+    let mut f = fixture();
+    let records = vec![
+        Record {
+            page: "a.md".into(),
+            wseq: 1,
+            version: 1,
+            base: Base::Known(bytes(OLD)),
+            bytes: None,
+        },
+        Record {
+            page: "c.md".into(),
+            wseq: 2,
+            version: 2,
+            base: Base::Known(None),
+            bytes: bytes(OLD),
+        },
+    ];
+    let mut vehicle = Vehicle::write(drafts::op_name(), &records);
+    while !matches!(vehicle.stage, Stage::Present | Stage::Absent) {
+        vehicle.advance(&mut f.host.fs);
+    }
+    assert_eq!(vehicle.stage, Stage::Present);
+    let mut f = reopen(f);
+    assert_eq!(f.host.pages["a.md"].buf, None);
+    assert_eq!(
+        f.host.start_save("a.md"),
+        Disposition::Pending,
+        "no recovered order gates a legacy draft"
+    );
+    let names: Vec<_> = f
+        .host
+        .fs
+        .draft_files(true)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert!(names.iter().all(|n| n.starts_with("p-")), "{names:?}");
+}
+
+/// An unreadable decision matching the operation blocks its destructive
+/// step, stays in place (never quarantined), and surfaces a draft error.
+#[test]
+fn an_unreadable_decision_blocks_the_removal_and_stays_in_place() {
+    let f = relaunched_after_a_crash_before_the_receiver_published();
+    let op = f.host.fs.draft_files(true)[0].0.clone();
+    let id = drafts::op_id(&op).unwrap();
+    let name = drafts::decision_vehicle("c.md", &id, 2);
+    let mut f = f;
+    let mut vehicle = Vehicle::write(name.clone(), &[]);
+    vehicle.bytes = Some(b"TINEDRF2\x02 not a decision, nor a checksum".to_vec());
+    while !matches!(vehicle.stage, Stage::Present | Stage::Absent) {
+        vehicle.advance(&mut f.host.fs);
+    }
+    let mut f = reopen(f);
+    assert!(f
+        .host
+        .events
+        .iter()
+        .any(|e| matches!(e, Event::DraftError { effect, .. } if *effect == name)));
+    assert_eq!(
+        f.save("c.md"),
+        Outcome::Published,
+        "the receiver still saves"
+    );
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Disabled, "blocked");
+    retire_drafts(&mut f);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    let names: Vec<_> = f
+        .host
+        .fs
+        .draft_files(true)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert!(names.contains(&name) && names.contains(&op), "{names:?}");
+}
+
+/// A decision that cannot be written refuses the Use Disk: nothing is
+/// acknowledged, and A's removal still waits for C.
+#[test]
+fn a_failed_decision_write_refuses_the_use_disk() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    f.host
+        .fs
+        .faults
+        .insert(Phase::DraftTemp, [io::ErrorKind::Other].into());
+    f.send("c.md", RequestKind::Discard);
+    assert!(refused_draft(&f, "c.md"));
+    assert_eq!(f.host.pages["c.md"].buf.as_deref(), Some(OLD.as_bytes()));
+    assert_eq!(f.host.pages["a.md"].buf, None);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Waiting);
+    f.host.fs.faults.clear();
+    f.send("c.md", RequestKind::Discard);
+    assert_eq!(f.host.pages["a.md"].buf.as_deref(), Some(OLD.as_bytes()));
+}
+
+/// One primitive step of the whole rename, from admission through cleanup:
+/// a draft phase, a save phase, a save start (receivers first) or a draft
+/// retirement. False once nothing is left to do.
+fn step(f: &mut Fixture) -> bool {
+    if f.host.worker.is_some() {
+        f.host.advance_draft();
+        return true;
+    }
+    if f.host.job.is_some() {
+        f.host.advance_save();
+        return true;
+    }
+    for key in ["c.md", "b.md", "a.md"] {
+        if f.host.start_save(key) == Disposition::Pending {
+            return true;
+        }
+    }
+    for key in ["a.md", "b.md", "c.md"] {
+        if f.host.begin_draft_retiring(key) == Disposition::Pending {
+            return true;
+        }
+    }
+    false
+}
+
+/// The end states a rename may reach: not done, or done.
+fn untouched_or_renamed(f: &Fixture, cut: usize) {
+    let state = (on_disk(f, "a.md"), on_disk(f, "c.md"), on_disk(f, "b.md"));
+    let untouched = (Some(OLD.into()), None, Some(REF.into()));
+    let renamed = (None, Some(OLD.into()), Some(REWRITTEN.into()));
+    assert!(
+        state == untouched || state == renamed,
+        "cut {cut}: {state:?}"
+    );
+    if state == renamed {
+        assert_eq!(trashed(f), vec![OLD.to_string()], "cut {cut}");
+    } else {
+        assert!(trashed(f).is_empty(), "cut {cut}");
+    }
+    assert_eq!(pending_drafts(f), 0, "cut {cut}");
+}
+
+/// A process death at every step of the rename (draft temp, rename and
+/// directory sync; receiver and referrer temp, guard, rename and directory
+/// sync; source guard and receiver check, marker, trash move, trash sync,
+/// source-directory sync and second check; each cleanup unlink and sync),
+/// then a cold relaunch that runs to completion: the rename is either not
+/// done or done, A's text is never only in trash, and nothing is left.
+#[test]
+fn a_rename_cut_at_every_step_ends_untouched_or_renamed() {
+    let mut total = 0;
+    {
+        let mut f = fixture();
+        admit_rename(&mut f);
+        while step(&mut f) {
+            total += 1;
+            assert!(total < 200);
+        }
+        untouched_or_renamed(&f, total);
+    }
+    assert!(total > 20, "{total} steps");
+    for cut in 0..total {
+        let mut f = fixture();
+        admit_rename(&mut f);
+        for _ in 0..cut {
+            step(&mut f);
+        }
+        let mut f = reopen(f);
+        // A's text is somewhere active or in the paired draft at the cut.
+        assert!(
+            on_disk(&f, "a.md").as_deref() == Some(OLD)
+                || on_disk(&f, "c.md").as_deref() == Some(OLD)
+                || drafted(&f, OLD),
+            "cut {cut}"
+        );
+        let mut steps = 0;
+        while step(&mut f) {
+            steps += 1;
+            assert!(steps < 200, "cut {cut}: recovery did not settle");
+        }
+        untouched_or_renamed(&f, cut);
+    }
+}
+
+/// The same cuts with the user's Use Disk on the recovered receiver right
+/// after the relaunch: A is never removed.
+#[test]
+fn a_use_disk_after_a_cut_never_removes_the_source() {
+    let mut total = 0;
+    {
+        let mut f = fixture();
+        admit_rename(&mut f);
+        while step(&mut f) {
+            total += 1;
+        }
+    }
+    for cut in 0..total {
+        let mut f = fixture();
+        admit_rename(&mut f);
+        for _ in 0..cut {
+            step(&mut f);
+        }
+        let mut f = reopen(f);
+        let receiver_pending = f
+            .host
+            .pages
+            .get("c.md")
+            .is_some_and(|p| p.risk && !f.graph.join("c.md").exists());
+        if !receiver_pending {
+            continue;
+        }
+        f.send("c.md", RequestKind::Discard);
+        let mut f = reopen(f);
+        while step(&mut f) {}
+        assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "cut {cut}");
+        assert!(trashed(&f).is_empty(), "cut {cut}");
+        assert_eq!(pending_drafts(&f), 0, "cut {cut}");
+    }
+}

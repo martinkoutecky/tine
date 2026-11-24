@@ -183,10 +183,17 @@ fn rename_publication_parses_only_changed_documents() {
 fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
     let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    for (blocks, bytes) in [(1, 300), (60, 4137)] {
+    // The paired operation draft adds 5 bytes to each (escape, tag, pair
+    // count, two indexes): 300/4,137 before. The 60-block source case grows
+    // with its payload in the source base, the receiver draft and the page.
+    for (source_blocks, blocks, bytes) in [(1, 1, 305), (1, 60, 4142), (60, 1, 1900)] {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("pages")).unwrap();
-        fs::write(root.path().join("pages/Target.md"), "- target\n").unwrap();
+        fs::write(
+            root.path().join("pages/Target.md"),
+            "- target\n".repeat(source_blocks),
+        )
+        .unwrap();
         fs::write(
             root.path().join("pages/Ref.md"),
             "- links [[Target]] 0\n".repeat(blocks),
@@ -230,7 +237,7 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         );
         // The documented unit-cost values are pinned to this actual write path.
         let contract = include_str!("../../../docs/storage-contract.md");
-        assert!(contract.contains("300/4,137 bytes"));
+        assert!(contract.contains("305/4,142 bytes"));
         store.close();
     }
 }

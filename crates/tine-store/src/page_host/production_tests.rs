@@ -16,6 +16,8 @@ mod guard_tests;
 mod production_crash_tests;
 #[path = "production_move_crash_tests.rs"]
 mod production_move_crash_tests;
+#[path = "production_rename_relaunch_tests.rs"]
+mod production_rename_relaunch_tests;
 #[path = "storage_acceptance_tests.rs"]
 mod storage_acceptance_tests;
 
