@@ -40,16 +40,22 @@ function contentVersion(n: object, raw: string): number {
   return next;
 }
 
+/** Geometry before the list has measured its width and font: no estimate. */
+const UNMEASURED = { estimate: () => 0, version: () => 0 };
+
 /** One pass per structure/font/width change, then one raw-change listener per
  * window (BIGLOAD-090b): an edit adjusts one height contribution and one
  * version, so work scales with the edited text, never the number of rows.
  * The listener goes with this memo's owner, so stale geometry stops updating.
- * No document writes. */
+ * Until width and font are known (`undefined`: the list has not mounted) there
+ * is no pass at all, so a list's first pass uses its real font and never
+ * evicts the shared text widths (bigLoad, 2026-11-24). No document writes. */
 export function createOutlineWindowGeometry(
-  model: ReturnType<typeof createOutlineWindowModel>, width: () => number, font: () => string,
+  model: ReturnType<typeof createOutlineWindowModel>, width: () => number | undefined, font: () => string | undefined,
 ) {
   return createMemo(() => {
     const current = model(), w = width(), f = font();
+    if (w === undefined || f === undefined) return UNMEASURED;
     const rowOf = new Map<string, number>();
     const heights: number[] = [];
     const height = (i: number, raw: string) => current.rows[i].visible ? estimateRowHeight(raw, w - current.rows[i].depth * 20, f) : 0;

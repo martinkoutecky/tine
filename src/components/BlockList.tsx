@@ -171,8 +171,10 @@ export function blockListProps(idsOf: () => readonly string[], render?: (id: str
 
 function WindowedList(props: { groups: readonly WindowGroup[]; render: (id: string) => JSX.Element }): JSX.Element {
   let container!: HTMLDivElement;
-  const [width, setWidth] = createSignal(900);
-  const [font, setFont] = createSignal("16px sans-serif");
+  // Unknown until mount (below, before the first paint): windows estimate no
+  // geometry with a placeholder font, which would also evict the text widths.
+  const [width, setWidth] = createSignal<number>();
+  const [font, setFont] = createSignal<string>();
   const observe = (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => observeViewportWindow(host, callback);
   onMount(() => {
     const update = () => batch(() => { setWidth(container.clientWidth || 900); setFont(getComputedStyle(container).font || "16px sans-serif"); });
@@ -186,7 +188,7 @@ function WindowedList(props: { groups: readonly WindowGroup[]; render: (id: stri
   }</For></div>;
 }
 
-function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number; font: string; observe: (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => () => void; render: (id: string) => JSX.Element }): JSX.Element {
+function BlockWindow(props: { ids: () => readonly string[]; first: boolean; width: number | undefined; font: string | undefined; observe: (host: HTMLElement, callback: (entry: IntersectionObserverEntry) => void) => () => void; render: (id: string) => JSX.Element }): JSX.Element {
   const surface = useContext(SurfaceContext);
   const collapseSurface = useContext(CollapseSurfaceContext);
   const folds = () => {

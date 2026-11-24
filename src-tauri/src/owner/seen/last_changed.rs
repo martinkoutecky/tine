@@ -56,7 +56,7 @@ impl Cache {
             let (doc, dates, at_head) = match derive_page_dates(
                 &repo,
                 &prefix.join(path),
-                path.ends_with(".org"),
+                Format::from_path(Path::new(path)) == Format::Org,
                 tip,
                 current,
             ) {
@@ -93,7 +93,7 @@ impl Cache {
             return Ok(entry.result.clone());
         };
         if entry.working != current {
-            let org = path.ends_with(".org");
+            let org = Format::from_path(Path::new(path)) == Format::Org;
             let mut doc = parse(current, org);
             normalize(&mut doc.roots, org);
             let working = align(&head.roots, &doc.roots, &mut PersistedIds::new());

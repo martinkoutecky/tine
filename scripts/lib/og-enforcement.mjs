@@ -195,3 +195,24 @@ export function readWriterSiteCounts(root) {
   const current = Object.fromEntries(currentFiles(root).map((file) => [file, writerSiteCounts(fs.readFileSync(path.join(root, file), "utf8"))]));
   return { current, baseline };
 }
+
+// "is this graph file Org or Markdown" has one answerer,
+// `Format::from_path` (crates/tine-outline/src/page_format.rs); TypeScript asks it
+// through the wasm `page_file_format` (`formatOfFile`) or reads a page DTO's
+// `format`. A production `ends_with(".org")`, `endsWith(".org")` or `\.org$`
+// regex is a second copy of that rule. Other spellings (`extension() ==
+// Some("org")`) are out of this guard's reach.
+const orgExtensionPattern = /\bends_?with\(\s*["']\.org["']\s*\)|\\\.org\$/gi;
+export function orgExtensionSites(source) {
+  return [...productionSource(source).matchAll(orgExtensionPattern)].length;
+}
+
+export function checkOrgExtensionSites(current) {
+  const failures = Object.entries(current).filter(([, count]) => count > 0).map(([file, count]) => `${file}: ${count}`);
+  if (failures.length) throw new Error(`A graph file's format is Format::from_path's answer (TypeScript: formatOfFile or the page DTO's format), never a copy of its extension rule:\n${failures.join("\n")}`);
+}
+
+export function readOrgExtensionSites(root) {
+  return Object.fromEntries(currentFiles(root).filter((file) => file.endsWith(".rs") || file.endsWith(".ts") || file.endsWith(".tsx"))
+    .map((file) => [file, orgExtensionSites(fs.readFileSync(path.join(root, file), "utf8"))]));
+}

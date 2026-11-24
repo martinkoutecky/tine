@@ -7,6 +7,7 @@ import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, hides, isProperti
 import { commentEditorHide } from "../editor/commentProperties";
 import { blockRegions } from "../render/parse";
 import { utf8ByteLength } from "../render/spans";
+import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { journalTitle, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -17,11 +18,11 @@ export function emptyPage(name: string, kind: "journal" | "page", format?: Forma
     ...(format ? { format } : {}) };
 }
 
-/** The format of the graph text file `path` names, by extension, as the store
- * reads and serializes it (`tine_core::model::Format::from_path`): `.org` is
- * Org, anything else (`.md`, `.markdown`) Markdown. */
+/** The format of the graph text file `path` names: the store's `Format::from_path`
+ * through wasm, never a copy of its rule. Needs the parser loaded:
+ * the main window binds the host and renames only after `initParser()`. O(path). */
 export function formatOfFile(path: string): Format {
-  return /\.org$/i.test(path) ? "org" : "md";
+  return page_file_format(path) as Format;
 }
 
 /** `dto` held in the format of the file it is written to (ORG-CREATED-FORMAT):

@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use git2::{Delta, FileMode, ObjectType, Oid};
+use tine_core::model::Format;
 use tine_store::{
     ApplyRefusal, Content, EditKind, FileId, FileRev, HostEffect, HostOp, Input, PageId, TrashIf,
     TxOutcome, Why,
@@ -1214,7 +1215,7 @@ fn page_input(path: &str, bytes: &[u8]) -> Result<(), PullOutcome> {
     if !tine_store::parse_input_depth_within_limit(text) {
         return Err(bad("the outline nests over 128 levels"));
     }
-    if path.to_ascii_lowercase().ends_with(".org")
+    if Format::from_path(Path::new(path)) == Format::Org
         && !tine_core::org::headline_levels_within_limit(text, 128)
     {
         return Err(bad("the Org headlines nest over 128 levels"));

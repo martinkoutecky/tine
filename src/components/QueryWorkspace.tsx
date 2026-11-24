@@ -59,7 +59,7 @@ import { QueryResultSections, type ResultFamily } from "./QueryResultSections";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
-import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
+import { createPage, CreatePageRefusal, formatOfFile, queryWorkspacePage } from "../document";
 import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
 import { searchResultsOpenInThisTab } from "../navSettings";
 import { steppedResultIndex } from "../resultNavigation";
@@ -264,7 +264,7 @@ export async function materializeQueryWorkspace(
     if (serialized.kind === "stale") return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     if (!isCurrent()) return superseded();
     const { query, properties } = serialized.value;
-    const page = queryWorkspacePage(name, query, properties, /\.org$/i.test(resolved.id) ? "org" : "md");
+    const page = queryWorkspacePage(name, query, properties, formatOfFile(resolved.id));
     const saved = await writeOwned(owner, deps.createPage(page, binding.backendGeneration));
     if (saved.kind === "stale") return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     const rev = saved.value;

@@ -403,19 +403,30 @@ fn seen_forget_page_drops_only_that_page_and_writes_nothing_otherwise() {
     assert!(forget_page(&f.root.join("app-data"), &f.root, Some("p"), None).is_err());
 }
 
+/// An upper-case `.ORG` page is Org, as the store reads it.
+#[test]
+fn seen_reads_an_upper_case_org_extension_as_org() {
+    let f = Fixture::new();
+    seen_org_properties(&f, "pages/Notes.ORG");
+}
+
+fn seen_org_properties(f: &Fixture, path: &str) {
+    let base = "* heading\n:PROPERTIES:\n:id: stable\n:END:\n";
+    f.commit(path, Some(base), "Me");
+    f.start();
+    let fold = "* heading\n:PROPERTIES:\n:id: stable\n:collapsed: true\n:END:\n";
+    f.commit(path, Some(fold), "Agent");
+    let read = |text: &str| changes(&f.data, &f.root, "org", path, text, "").unwrap();
+    assert!(read(fold).blocks.is_empty());
+    let changed = "* heading\n:PROPERTIES:\n:id: stable\n:status: done\n:END:\n";
+    f.commit(path, Some(changed), "Agent");
+    assert_eq!(read(changed).blocks.len(), 1);
+}
+
 #[test]
 fn seen_org_properties_and_literal_fold_text() {
     let f = Fixture::new();
-    let base = "* heading\n:PROPERTIES:\n:id: stable\n:END:\n";
-    f.commit("pages/p.org", Some(base), "Me");
-    f.start();
-    let fold = "* heading\n:PROPERTIES:\n:id: stable\n:collapsed: true\n:END:\n";
-    f.commit("pages/p.org", Some(fold), "Agent");
-    let read = |text: &str| changes(&f.data, &f.root, "org", "pages/p.org", text, "").unwrap();
-    assert!(read(fold).blocks.is_empty());
-    let changed = "* heading\n:PROPERTIES:\n:id: stable\n:status: done\n:END:\n";
-    f.commit("pages/p.org", Some(changed), "Agent");
-    assert_eq!(read(changed).blocks.len(), 1);
+    seen_org_properties(&f, "pages/p.org");
     let literal_before = "- ```\n  collapsed:: false\n  ```\n  id:: literal\n";
     f.commit("pages/p.md", Some(literal_before), "Me");
     mark(&f.data, &f.root, Some(("p", "pages/p.md"))).unwrap();
