@@ -186,6 +186,60 @@ page deletion is fully modelled (the deletion path writes the absent value throu
 and the proof covers it). What the abstract model takes as given is unchanged: the filesystem assumptions
 above, finding every referrer and computing its rewrite, and the one-designated-move shape of `opApply`.
 
+## Durable recovery for paired operations
+
+`PairedRecovery` starts at a durable admission of one Stage 6 batch with
+disjoint source and receiver slots. The admitted plan supplies the exact
+source preimages and the exact receiver images. Process stops and launches
+discard the driver's observations and permits. A power cut can select an old
+or new graph entry and trash image independently. The admitted draft and
+acknowledged choices survive these cuts.
+
+Receivers are witnessed before the remaining non-source effects. The source
+preflight requires settled dependencies, exact durable receiver bytes and the
+declared source base. The trash move changes one source path. Its post-check
+witnesses the exact receiver again after the source and trash barriers. An
+outside replacement can intervene between these steps. The source
+guard-to-syscall race can be enabled independently. Trash custody records the
+bytes actually moved.
+
+Use Disk on the receiver permanently disarms its paired removal. A reviewed
+receiver permits removal only if its selected result is the exact admitted
+image and the pair has never been disarmed. A resolved divergent referrer can
+release the dependency and contributes a Conflict outcome. If a disarmed
+source is known to have moved, a guarded create can restore its preimage at a
+free source path when the receiver diverges. An occupied source path leaves
+the original bytes in the recoverable draft. Evidence of the move can itself
+be uncertain after a cut. The retained draft also covers that case.
+
+`renameResolves_reachable` gives exact coverage for every undeleted pair
+whose operation record is retained. This includes terminal conflicts that
+still owe custody. `retirement_witness` requires each released pair to have a
+durably observed original source, a certified receiver, or an explicit
+deletion. That observation is the pair's settlement boundary for later
+outside writes. `cancellation_survives` and `orderHolds_reachable` cover
+relaunch and `stable_trash_survives` covers witnessed trash custody.
+
+One operation has at most one terminal disposition. Applied witnesses every
+planned effect. Cancelled requires every pair to have been abandoned by
+receiver Use Disk before a durable trash move or explicit source deletion,
+with the remaining rewrites witnessed and custody settled. A resolved
+divergence that meets neither rule is Conflict. Unresolved effects stay
+pending. The model observes one terminal retirement event and permits a
+terminal Conflict to retain recoverable custody. It uses a history value for
+a retired disposition and leaves post-retirement queries by operation ID
+outside the protocol.
+
+`PairedRecoveryProgress` constructs a finite successful replay queue when
+each live entry at a written slot is still the before-image or already the
+exact after-image, and there are no superseding choices. Fair service of that
+queue reaches Applied with the exact durable written footprint. Concurrent
+writers can replace a previously witnessed file before private retirement.
+The stronger simultaneous end-state equality uses the quiet replay premise.
+General progress from pending conflicts and native filesystem conformance are
+separate obligations. The guarantee assumes a durable private store and
+ordinary per-file durability. Weak providers retain best-effort behavior.
+
 ## The trust gaps
 
 The real window has a bounded native conformance harness in
