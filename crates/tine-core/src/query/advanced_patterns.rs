@@ -549,9 +549,9 @@ fn lower_declaration(
         .collect::<std::collections::HashSet<_>>();
     let (mut lowered_attributes, mut attribute_patterns) =
         lower_attribute_patterns(block_groups, &taken, Some(find), &inputs);
-    // Docs example 14: both alternatives bind the SAME date variable. Move
-    // its predicates into each branch before OR, retaining existential
-    // semantics when a block has both dates (one outside, one inside).
+    // Docs example 14 and GH #1017: every alternative binds the SAME date
+    // variable. Move its predicates into each branch before OR, retaining
+    // existential semantics when a block has two dates (one outside, one inside).
     let (date_or, date_or_patterns) =
         lower_date_disjunctions(block_groups, &taken, Some(find), &inputs);
     lowered_attributes.extend(date_or);

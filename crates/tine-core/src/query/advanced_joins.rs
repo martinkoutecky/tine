@@ -164,48 +164,78 @@ pub(super) fn lower_date_disjunctions(
         .enumerate()
         .filter(|(i, _)| !taken.contains(i))
     {
-        let Some([head, first, second]) = list(group) else {
+        let Some([head, rest @ ..]) = list(group) else {
             continue;
         };
-        if head.symbol() != Some("or") {
+        let (join, branches) = match (head.symbol(), rest) {
+            (Some("or"), branches) => (None, branches),
+            (Some("or-join"), [join, branches @ ..]) => match vector(join) {
+                Some(join) => (Some(join), branches),
+                None => continue,
+            },
+            _ => continue,
+        };
+        // DataScript refuses an `or` whose branches bind different variables.
+        if branches.len() < 2 || (join.is_none() && !same_variables(branches)) {
             continue;
         }
-        let mut branches = Vec::new();
-        let mut date_var = None;
-        for branch in [first, second] {
-            let Some((subject, key, Some(object))) = triple(branch) else {
-                break;
-            };
-            let Some(var) = variable(object) else {
-                break;
-            };
-            if subject != find
-                || inputs.contains_key(var)
-                || !matches!(key, "block/scheduled" | "block/deadline")
-            {
-                break;
-            }
-            if date_var.is_some_and(|v| v != var) {
-                break;
-            }
-            date_var = Some(var);
-            branches.push(branch);
-        }
-        if branches.len() != 2 {
+        let Some(alternatives) = branches
+            .iter()
+            .map(branch_alternatives)
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let alternatives = alternatives.into_iter().flatten().collect::<Vec<_>>();
+        let dates = alternatives
+            .iter()
+            .flatten()
+            .filter_map(|clause| match triple(clause)? {
+                (_, "block/scheduled" | "block/deadline" | "block/journal-day", Some(object)) => {
+                    variable(object)
+                }
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let Some(&var) = dates.first().filter(|_| dates.len() == 1) else {
+            continue;
+        };
+        let mut joined = std::collections::BTreeSet::new();
+        join.unwrap_or_default()
+            .iter()
+            .for_each(|v| variables(v, &mut joined));
+        let join_ok = join.is_none_or(|join| {
+            join.len() == 2 && joined == std::collections::BTreeSet::from([find, var])
+        });
+        if inputs.contains_key(var) || !join_ok {
             continue;
         }
-        let var = date_var.unwrap();
+        // Branch-local variables (the journal page) join nothing outside.
+        let mut local = std::collections::BTreeSet::new();
+        variables(group, &mut local);
+        if local.iter().any(|&other| {
+            other != find
+                && other != var
+                && groups_use(groups, other) != advanced_var_uses(group, other)
+        }) {
+            continue;
+        }
         let predicates = groups
             .iter()
             .enumerate()
             .filter(|(i, g)| *i != index && !taken.contains(i) && advanced_var_uses(g, var) > 0)
             .collect::<Vec<_>>();
-        if groups_use(groups, var) != 2 + predicates.len() {
+        if groups_use(groups, var) != advanced_var_uses(group, var) + predicates.len() {
             continue;
         }
+        // Each alternative goes through the one lowerer of its shape, with the
+        // predicates that follow the group, so a block is listed when SOME
+        // branch's date passes them (DataScript's existential `or-join`).
         let mut filters = Vec::new();
-        for branch in branches {
-            let local = std::iter::once(branch)
+        for clauses in &alternatives {
+            let local = clauses
+                .iter()
+                .copied()
                 .chain(predicates.iter().map(|(_, g)| **g))
                 .collect::<Vec<_>>();
             let (parts, used) =
@@ -215,12 +245,56 @@ pub(super) fn lower_date_disjunctions(
             }
             filters.push(Filter::and(parts.into_values().map(|(f, _)| f).collect()));
         }
-        if filters.len() == 2 {
+        if filters.len() == alternatives.len() {
             lowered.insert(index, (Filter::or(filters), "scheduled-or-deadline"));
             consumed.extend(predicates.into_iter().map(|(i, _)| i));
         }
     }
     (lowered, consumed)
+}
+
+/// A date branch as conjunctions of clauses: its `and`s opened and at most one
+/// inner `or` (GH #1017's `:block/page` or `:block/ref-pages`) expanded.
+fn branch_alternatives(branch: &Edn) -> Option<Vec<Vec<&Edn>>> {
+    let mut alternatives = vec![Vec::new()];
+    for clause in flatten_single_branch_groups(std::slice::from_ref(branch)) {
+        match list(clause) {
+            Some([head, options @ ..]) if head.symbol() == Some("or") => {
+                if alternatives.len() > 1 || options.len() < 2 || !same_variables(options) {
+                    return None;
+                }
+                let before = alternatives.pop()?;
+                for option in options {
+                    let mut clauses = before.clone();
+                    clauses.extend(flatten_single_branch_groups(std::slice::from_ref(option)));
+                    alternatives.push(clauses);
+                }
+            }
+            _ => alternatives
+                .iter_mut()
+                .for_each(|clauses| clauses.push(clause)),
+        }
+    }
+    Some(alternatives)
+}
+
+fn same_variables(branches: &[Edn]) -> bool {
+    let mut sets = branches.iter().map(|branch| {
+        let mut set = std::collections::BTreeSet::new();
+        variables(branch, &mut set);
+        set
+    });
+    let first = sets.next();
+    sets.all(|set| Some(set) == first)
+}
+
+fn variables<'a>(value: &'a Edn, out: &mut std::collections::BTreeSet<&'a str>) {
+    match value {
+        Edn::Vec(items) | Edn::List(items) | Edn::Set(items) => {
+            items.iter().for_each(|item| variables(item, out))
+        }
+        _ => out.extend(variable(value)),
+    }
 }
 
 /// Lower the exact DataScript relationship Logseq uses to connect the typed

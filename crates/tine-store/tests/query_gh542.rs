@@ -555,3 +555,197 @@ fn gh690_referenced_journals_follow_title_format_before_safe_defaults() {
         ]
     );
 }
+
+/// GH #1017: the reporter's "Incoming and overdue" `:where`.
+const GH1017_WHERE: &str = r#"[?h :block/marker ?m]
+    [(contains? #{"LATER" "TODO"} ?m)]
+    (or-join [?h ?d]
+      (and
+        (or [?h :block/page ?p] [?h :block/ref-pages ?p])
+        [?p :block/journal? true]
+        [?p :block/journal-day ?d])
+      [?h :block/scheduled ?d]
+      [?h :block/deadline ?d])
+    [(< ?d ?next)]"#;
+
+/// One open task per branch of GH1017_WHERE, plus tasks it must not list.
+/// Dates are relative to today, so `:7d-after` puts the window end at +7.
+fn gh1017_graph(name: &str, config: Option<&str>) -> Graph {
+    let today = tine_core::date::JournalDate::today();
+    let day = |offset| today.add_days(offset);
+    let stamp = |offset: i64| {
+        let d = day(offset);
+        let weekday =
+            ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][d.to_days().rem_euclid(7) as usize];
+        format!("<{:04}-{:02}-{:02} {weekday}>", d.year, d.month, d.day)
+    };
+    let tasks = format!(
+        "- TODO refs a near journal [[{near}]]\n\
+         - TODO refs a far journal [[{far}]]\n\
+         - TODO refs an ordinary page [[Ordinary]]\n\
+         - TODO scheduled soon\n  SCHEDULED: {soon}\n\
+         - LATER deadline overdue\n  DEADLINE: {past}\n\
+         - TODO scheduled far\n  SCHEDULED: {later}\n\
+         - TODO scheduled far but refs a near journal [[{near}]]\n  SCHEDULED: {later}\n\
+         - TODO scheduled and deadline soon\n  SCHEDULED: {soon}\n  DEADLINE: {past}\n\
+         - DONE closed and scheduled soon\n  SCHEDULED: {soon}\n\
+         - NOW doing and scheduled soon\n  SCHEDULED: {soon}\n",
+        near = day(2).title(),
+        far = day(20).title(),
+        soon = stamp(1),
+        past = stamp(-5),
+        later = stamp(30),
+    );
+    let past_journal = format!("journals/{}.md", day(-3).file_stem());
+    let later_journal = format!("journals/{}.md", day(10).file_stem());
+    let mut pages = vec![
+        ("pages/Tasks.md", tasks.as_str()),
+        (
+            past_journal.as_str(),
+            "- TODO on a past journal\n- DONE closed on a past journal\n",
+        ),
+        (later_journal.as_str(), "- TODO on a later journal\n"),
+    ];
+    if let Some(config) = config {
+        pages.push(("logseq/config.edn", config));
+    }
+    open(name, &pages)
+}
+
+fn gh1017_expected() -> Vec<String> {
+    let near = tine_core::date::JournalDate::today().add_days(2).title();
+    let mut expected = vec![
+        format!("TODO refs a near journal [[{near}]]"),
+        "TODO scheduled soon".to_owned(),
+        "LATER deadline overdue".to_owned(),
+        format!("TODO scheduled far but refs a near journal [[{near}]]"),
+        "TODO scheduled and deadline soon".to_owned(),
+        "TODO on a past journal".to_owned(),
+    ];
+    expected.sort();
+    expected
+}
+
+#[test]
+fn gh1017_reporter_or_join_over_dates_lists_each_branch_once() {
+    let _integration_guard = crate::integration_lock();
+    let graph = gh1017_graph("gh1017", None);
+    let query = format!(
+        "{{:title \"Incoming and overdue\" :query [:find (pull ?h [*]) :in $ ?next :where {GH1017_WHERE}] :inputs [:7d-after] :collapsed? false}}"
+    );
+    let (raws, result) = answer(&graph, &query);
+    assert!(result.supported, "{:?}", result.ignored);
+    assert!(result.ignored.is_empty(), "{:?}", result.ignored);
+    assert_eq!(raws, gh1017_expected());
+
+    // The same three branches under `or` with each in its own order.
+    let reordered = GH1017_WHERE.replace(
+        "(or-join [?h ?d]\n      (and\n        (or [?h :block/page ?p] [?h :block/ref-pages ?p])\n        [?p :block/journal? true]\n        [?p :block/journal-day ?d])\n      [?h :block/scheduled ?d]\n      [?h :block/deadline ?d])",
+        "(or-join [?d ?h] [?h :block/deadline ?d] [?h :block/scheduled ?d] (and (or [?h :block/ref-pages ?p] [?h :block/page ?p]) [?p :block/journal-day ?d] [?p :block/journal? true]))",
+    );
+    assert_ne!(reordered, GH1017_WHERE);
+    let (raws, result) = answer(
+        &graph,
+        &format!(
+            "{{:query [:find (pull ?h [*]) :in $ ?next :where {reordered}] :inputs [:7d-after]}}"
+        ),
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(raws, gh1017_expected());
+
+    // Today's two-branch `or` still runs.
+    let (raws, result) = answer(
+        &graph,
+        r#"{:query [:find (pull ?h [*]) :in $ ?next :where [?h :block/marker ?m]
+            [(contains? #{"LATER" "TODO"} ?m)]
+            (or [?h :block/scheduled ?d] [?h :block/deadline ?d]) [(< ?d ?next)]]
+            :inputs [:7d-after]}"#,
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(
+        raws,
+        sorted(&[
+            "LATER deadline overdue",
+            "TODO scheduled and deadline soon",
+            "TODO scheduled soon"
+        ])
+    );
+
+    // Three date branches under plain `or` (all bind only ?h and ?d).
+    let (raws, result) = answer(
+        &graph,
+        r#"{:query [:find (pull ?h [*]) :in $ ?next :where [?h :block/marker "TODO"]
+            (or [?h :block/scheduled ?d] [?h :block/deadline ?d] [?h :block/scheduled ?d])
+            [(< ?d ?next)]] :inputs [:7d-after]}"#,
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(
+        raws,
+        sorted(&["TODO scheduled and deadline soon", "TODO scheduled soon"])
+    );
+
+    // Outside the model: still refused whole.
+    for unsupported in [
+        // The join variables are not the block and the date.
+        r#"(or-join [?h] [?h :block/scheduled ?d] [?h :block/deadline ?d]) [(< ?d ?next)]"#,
+        // A plain `or` whose branches bind different variables: DataScript
+        // rejects it ("All clauses in 'or' must use same set of free vars").
+        r#"(or [?h :block/scheduled ?d] (and [?h :block/page ?p] [?p :block/journal-day ?d])) [(< ?d ?next)]"#,
+        // The page is joined outside the group.
+        r#"(or (and [?h :block/page ?p] [?p :block/journal-day ?d]) (and [?h :block/ref-pages ?p] [?p :block/journal-day ?d])) [?p :block/name "x"] [(< ?d ?next)]"#,
+        // A branch binds another date variable.
+        r#"(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/deadline ?e]) [(< ?d ?next)]"#,
+        // A branch is not a date shape.
+        r#"(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/marker ?d]) [(< ?d ?next)]"#,
+    ] {
+        let (raws, result) = answer(
+            &graph,
+            &format!("{{:query [:find (pull ?h [*]) :in $ ?next :where {unsupported}] :inputs [:7d-after]}}"),
+        );
+        assert!(!result.supported, "{unsupported}");
+        assert!(raws.is_empty(), "{unsupported}");
+    }
+
+    // The reporter's comment-1 workaround on the same data: it lists the
+    // scheduled and deadline tasks, so "all empty" was not a lowering bug.
+    for (attribute, expected) in [
+        (
+            "scheduled",
+            sorted(&["TODO scheduled soon", "TODO scheduled and deadline soon"]),
+        ),
+        (
+            "deadline",
+            sorted(&["LATER deadline overdue", "TODO scheduled and deadline soon"]),
+        ),
+    ] {
+        let (raws, result) = answer(
+            &graph,
+            &format!(
+                "{{:query [:find (pull ?h [*]) :in $ ?next :where [?h :block/marker ?m] [(contains? #{{\"LATER\" \"TODO\"}} ?m)] [?h :block/{attribute} ?d] [(< ?d ?next)]] :inputs [:7d-after] :collapsed? false}}"
+            ),
+        );
+        assert!(result.supported, "{:?}", result.ignored);
+        assert_eq!(raws, expected, "{attribute}");
+    }
+}
+
+/// The reporter's surface: the entry read from `logseq/config.edn`
+/// `:default-queries :journals`, its macro body run as the journal does.
+#[test]
+fn gh1017_config_default_query_runs_through_the_journal_config_path() {
+    let _integration_guard = crate::integration_lock();
+    let config = format!(
+        "{{:default-queries\n {{:journals\n  [{{:title \"Incoming and overdue\"\n    :query [:find (pull ?h [*])\n            :in $ ?next\n            :where\n            {GH1017_WHERE}]\n    :inputs [:7d-after]\n    :collapsed? false}}]}}}}"
+    );
+    let graph = gh1017_graph("gh1017-config", Some(&config));
+    let state = graph._store.config();
+    let [entry] = &state.config.default_journal_queries[..] else {
+        panic!("{:?}", state.config.default_journal_queries)
+    };
+    assert_eq!(entry.title.as_deref(), Some("Incoming and overdue"));
+    assert!(entry.error.is_none(), "{:?}", entry.error);
+    let source = entry.body.strip_prefix("query ").expect("macro body");
+    let (raws, result) = answer(&graph, source);
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(raws, gh1017_expected());
+}
