@@ -64,6 +64,40 @@ async function mountEmbed() {
   return { root, dispose, row };
 }
 
+/** The rows, by text, under `scope` (the embedded copies have their own ids). */
+const rowsByText = (scope: Element, text: string) => [...scope.querySelectorAll<HTMLElement>(".ls-block")]
+  .filter((r) => !r.classList.contains("block-embed-host") && r.querySelector(":scope > .block-main .block-content")?.textContent?.trim() === text);
+const marks = (row: Element) => [
+  row.querySelector(":scope > .block-main > .block-controls .bullet"),
+  row.querySelector(":scope > .block-children-container > .block-children"),
+];
+
+// A host whose own children hold a page embed and an embed with text, embedding a
+// block whose children hold a page embed and another whole-block embed.
+async function mountNested() {
+  const target = leaf("target", "Embedded root\nid:: target", [leaf("kid", "Embedded child")]);
+  const outer = leaf("outer", "Outer root\nid:: outer", [leaf("o-page", "{{embed [[P]]}}"), leaf("o-block", "{{embed ((target))}}")]);
+  const source = page("Source", [outer, target]);
+  const p = page("P", [leaf("p-root", "P root", [leaf("p-kid", "P child")])]);
+  loadFeed([page("A", [leaf("host", "{{embed ((outer))}}", [
+    leaf("h-page", "{{embed [[P]]}}"),
+    leaf("h-text", "Text {{embed ((target))}}"),
+  ])]), source, p]);
+  const dto = (b: BlockDto) => ({ page: "Source", kind: "page" as const, blocks: [b] });
+  vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) =>
+    ids.map((id) => (id === "target" ? dto(target) : id === "outer" ? dto(outer) : null)));
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name) => (/^p$/i.test(name) ? p : source) as never);
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <For each={pageByName("A")?.roots}>{(id) => <Block id={id} />}</For>, root);
+  const host = () => root.querySelector<HTMLElement>(":scope > .block-embed-host")!;
+  await vi.waitFor(() => {
+    expect(rowsByText(root, "P root")).toHaveLength(2);
+    expect(rowsByText(root, "Embedded root")).toHaveLength(2);
+  });
+  return { root, dispose, host };
+}
+
 describe("a block embed's look (GH #1002, #992)", () => {
   it("the embed accent rules select the embedded root's bullet and guide, and nothing below them", async () => {
     const selectors = selectorsDeclaring(/--tine-embed-accent/).filter((s) => s.includes(".block-embed-host"));
@@ -92,5 +126,35 @@ describe("a block embed's look (GH #1002, #992)", () => {
       expect(padding).toEqual([".page-section", ".comment-surface > .page-section"]);
       expect(appCss).toMatch(/\.comment-surface > \.page-section \{ padding-bottom: 0; \}/);
     } finally { dispose(); }
+  });
+
+  it("only the host's own embed roots take the accent: not embeds in its own children, not a nested page embed's roots", async () => {
+    const selectors = selectorsDeclaring(/--tine-embed-accent/).filter((s) => s.includes(".block-embed-host"));
+    const { root, dispose, host } = await mountNested();
+    try {
+      const embed = host().querySelector(":scope > .block-main .embed-block")!;
+      const own = host().querySelector(":scope > .block-children-container")!;
+      const [outerRoot] = rowsByText(embed, "Outer root");
+      // A whole-block embed inside the embedded content is a host itself.
+      const nestedRoot = rowsByText(embed, "Embedded root")[0];
+      expect(nestedRoot.closest(".block-embed-host")).not.toBe(host());
+      expect(rowsByText(embed, "P root")).toHaveLength(1);
+      expect(rowsByText(own, "P root")).toHaveLength(1);
+      expect(rowsByText(own, "Embedded root")).toHaveLength(1);
+      const painted = new Set(selectors.flatMap((s) => [...root.querySelectorAll(s)]));
+      expect([...painted]).toEqual(expect.arrayContaining([...marks(outerRoot), ...marks(nestedRoot)]));
+      expect(painted.size).toBe(4);
+    } finally { dispose(); }
+  });
+
+  it("the accent rules weigh one class, after the ordinary bullet and guide, so a mode's rule on a mark wins", () => {
+    const selectors = selectorsDeclaring(/--tine-embed-accent/).filter((s) => s.includes(".block-embed-host"));
+    // Outside `:where(...)` each rule names one class: Document mode (`.document-mode
+    // .block-children`) and Bullet Threading (`.plugin-thread-lines > ... > .block-children`,
+    // its focused bullet) weigh more and answer which marks show.
+    expect(selectors.map((s) => s.replace(/^:where\([^{}]*\)\s*/, ""))).toEqual([".bullet", "> .block-children"]);
+    const at = (s: string) => appCss.indexOf(s);
+    expect(at(".bullet {")).toBeLessThan(at(selectors[0]));
+    expect(at(".block-children {")).toBeLessThan(at(selectors[1]));
   });
 });
