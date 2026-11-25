@@ -71,6 +71,8 @@ mod pdf_crop_rollback;
 mod platform;
 mod plugins;
 mod portable;
+#[cfg(desktop)]
+mod probe_1043;
 #[path = "commands/query_export.rs"]
 mod query_export;
 #[path = "commands/query_ir.rs"]
@@ -827,7 +829,16 @@ pub fn run() {
         // frontend's post-install `relaunch()`. Inert until a signed release with
         // a `latest.json` exists — the frontend catches any check() error and
         // falls back to opening the releases page (see src/update.ts).
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    // PROBE (tine#1043): bracket the window-state restore when TINE_PROBE_1043 is set.
+    #[cfg(desktop)]
+    let builder = if probe_1043::enabled() {
+        builder.plugin(probe_1043::plugin("tine-probe-1043-built", "built"))
+    } else {
+        builder
+    };
+    #[cfg(desktop)]
+    let builder = builder
         // Remember window size/position/maximized across launches (Wayland
         // compositors don't restore this per-app). Exclude FULLSCREEN so it
         // doesn't conflict with focus mode, which is intentionally not persisted.
@@ -844,6 +855,12 @@ pub fn run() {
                 })
                 .build(),
         );
+    #[cfg(desktop)]
+    let builder = if probe_1043::enabled() {
+        builder.plugin(probe_1043::plugin("tine-probe-1043-restored", "restored"))
+    } else {
+        builder
+    };
 
     // Desktop system tray (GH #625). Mobile has no tray and no state for it.
     #[cfg(desktop)]
@@ -890,6 +907,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .on_page_load(workspace_windows::page_load)
         .on_window_event(|window, event| {
+            #[cfg(desktop)]
+            probe_1043::window_event(window, event);
             workspace_windows::window_event(window, event);
             #[cfg(desktop)]
             tray::window_event(window, event);
@@ -977,6 +996,8 @@ pub fn run() {
             if let Some(config) = &main_window {
                 workspace_windows::create_main(app, config, start_hidden);
             }
+            #[cfg(desktop)]
+            probe_1043::watch_shown(app.handle());
             // After main: the first window the process creates is the one a
             // WebDriver session attaches to (GH og-catfix; the order main,
             // capture, about is what every native journey assumes).

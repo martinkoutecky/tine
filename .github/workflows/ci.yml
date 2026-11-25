@@ -29,6 +29,7 @@ on:
           - android
           - performance
           - multiwindow
+          - window-size-probe
           - macos
           - linux
       purpose:
@@ -867,4 +868,42 @@ jobs:
         with:
           name: multiwindow-${{ matrix.os }}
           path: test-results/hosted-multiwindow
+          if-no-files-found: warn
+
+  # PROBE (tine#1043, probe branch only): does the main window's saved height
+  # drift across five native close/reopen cycles, frameless and native frame?
+  # scripts/hosted-window-size-probe.mjs reports and always exits 0.
+  window-size-probe:
+    name: Probe / window size across restarts
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'window-size-probe'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - run: cargo build --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Five launches per frame mode
+        run: node scripts/hosted-window-size-probe.mjs
+      - name: Upload evidence (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-size-probe-${{ matrix.os }}
+          path: test-results/hosted-window-size-probe
           if-no-files-found: warn
