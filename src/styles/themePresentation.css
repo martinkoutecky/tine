@@ -3,10 +3,10 @@
  * (src/themeGallery.ts); selectors, measurements, responsive behavior and
  * content stay under Tine's control. Kept out of app.css (og size ratchet).
  *
- * The title row's two wrappers are layout-neutral by default, so pages without
- * a presentation keep og's row exactly; only the editorial today header uses them. */
-.page-title-main,
-.page-title-actions {
+ * The title wrapper is layout-neutral by default, so pages without a presentation
+ * keep og's row exactly; only the editorial today header uses it. The actions are
+ * always one group (app.css, GH #1025). */
+.page-title-main {
   display: contents;
 }
 
@@ -54,15 +54,8 @@ html[data-theme-journal-header="editorial"] .page-title-row.journal-today .journ
 }
 
 html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   justify-content: center;
   margin-top: 9px;
-}
-
-html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-carry-actions {
-  margin-left: 0;
 }
 
 .today-task-summary {

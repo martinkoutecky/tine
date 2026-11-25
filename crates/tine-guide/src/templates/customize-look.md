@@ -33,7 +33,7 @@ icon:: 🎨
     | `--tine-highlight-bg` | Background of `^^highlighted^^` text | The theme's highlight color |
     | `--tine-comment-highlight-bg` | Background of the commented passage, including its active highlight | 14% accent, or 30% for the active wide-margin passage |
     | `--tine-comment-card-bg` | Background of comment cards and passage groups | 6% accent; authored cards use 7% author tint, resolved cards the secondary background |
-    | `--tine-author-gutter` | Width of the strip at the end of every block that holds the author chip and the thread line, while **Author marks** is **Thread** (section 5): a length in px | 96px (64px on a phone) |
+    | `--tine-author-gutter` | Width of the strip at the end of every block that holds the author chip and the thread line, while **Author marks** is **Thread** (section 5): a length in px | 68px |
     | `--tine-author-icon-size` | Turns an author's chip into an icon this wide (up to 16px), the name staying in the tooltip; set on that author's chip together with a `background-image` (section 5) | Unset: the chip keeps its name |
     | `--tine-missing-page-color` | Color of a link to a page that does not exist yet | A dimmed tint of the link color |
     | `--tine-external-link-underline` | The line under a link to a web address or file | `1px solid` (use `none` to remove it) |
@@ -115,16 +115,15 @@ icon:: 🎨
     | `.ls-block.author-tinted` | A block by another author that draws the author mark: not a comment, and none while author marks are switched off (**Show/Hide author marks**) |
     | `--author-color` | That author's color. Override it on the block and on its chip: `.ls-block[data-author="Claude" i], .ls-block[data-author="Claude" i] .author-chip { --author-color: #d97757; }` |
     | `.author-run-continued`, `.author-run-continues` | The block drawn right above (below) this one is by the same author. A run continues from a parent into its first child, and out of the last child to the next block; a folded block ends where it is drawn. A block you wrote, a comment or an embed ends a run |
-  - A thread instead of a tint: every block keeps a strip at its end, the same width on every block, and a line runs down it beside one author chip at the start of each run. A long name is cut to the strip, with the full name in the tooltip. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. The strip's width is `--tine-author-gutter` (96px, or 64px on a phone, unless you set it on `:root`); on a phone the 44px fold button stays at the very end, right of the strip, and while author marks are hidden (**Show/Hide author marks**) no row keeps a strip (Tine puts the class `tine-author-marks-off` on the window then, which the paste below reads). To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
+  - A thread instead of a tint: every block keeps a strip at its end, the same width on every block, and a line runs down it beside one author chip at the start of each run. A long name is cut to the strip, with the full name in the tooltip. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. The strip's width is `--tine-author-gutter` (64px unless you set it on `:root`); on a phone the 44px fold button stays at the very end, right of the strip, and while author marks are hidden (**Show/Hide author marks**) no row keeps a strip (Tine puts the class `tine-author-marks-off` on the window then, which the paste below reads). To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
   - ```css
     :root {
-      --author-thread-gutter: var(--tine-author-gutter, 96px);
+      --author-thread-gutter: var(--tine-author-gutter, 68px);
       --author-thread-clear: 0px;
       --author-thread-reserve: calc(var(--author-thread-gutter) + var(--author-thread-clear));
     }
     @media (max-width: 640px) and (pointer: coarse) {
       :root {
-        --author-thread-gutter: var(--tine-author-gutter, 64px);
         --author-thread-clear: 44px;
       }
     }

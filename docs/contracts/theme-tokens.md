@@ -45,7 +45,7 @@ entry and a row here (the guard fails otherwise).
 | `--tine-highlight-bg` | Background of `^^highlighted^^` text | `var(--mark-bg)`, i.e. `--ls-page-mark-bg-color` |
 | `--tine-comment-highlight-bg` | Background of a comment's quoted passage in the source text, including the active passage | `color-mix(in srgb, var(--accent) 14%, transparent)`; active wide-margin passage: 30% |
 | `--tine-comment-card-bg` | Background of comment cards and passage groups | `color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent))`; authored card: 7% `var(--author-color)` instead; resolved card: `var(--bg-secondary)` |
-| `--tine-author-gutter` | Width of the strip at the end of every outline row that holds the thread look's line and author chip (section 8): a length in px (an `em` would be read at the row and at the chip, which have different font sizes). Set it on `:root` | 96px; 64px on a phone (narrow, coarse pointer) |
+| `--tine-author-gutter` | Width of the strip at the end of every outline row that holds the thread look's line and author chip (section 8): a length in px (an `em` would be read at the row and at the chip, which have different font sizes). Set it on `:root` | 68px |
 | `--tine-author-icon-size` | Turns the chip into an icon of this width, at most the chip's 16px height; set it together with a `background-image` on the same chip (section 8) | Unset: the chip keeps its name |
 | `--tine-missing-page-color` | Color of a `[[link]]` to a page that does not exist yet | A link-colored tint pulled toward `var(--text-secondary)` (`color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))`) |
 | `--tine-external-link-underline` | The line under a link to a web address or file (`border-bottom` shorthand; `none` removes it) | `1px solid`, in the text color (OG's `.external-link`) |
@@ -329,7 +329,7 @@ While **Show/Hide author marks** is off nothing is reserved (the window carries 
 class `html.tine-author-marks-off`, which a stylesheet that draws the thread itself
 reads, as the Guide's example does). Logical properties
 throughout: a mirrored layout draws the thread on the left. At 390px (phone) the
-gutter is 64px plus the 44px fold area, so every row gives up 108px at its end.
+gutter is 68px plus the 44px fold area, so every row gives up 112px at its end.
 
 **Icons.** Set `--tine-author-icon-size` and a `background-image` on the chip
 (in practice `.author-chip[data-author="..." i]`) and it becomes that image, the

@@ -384,16 +384,26 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-title);
 }
 .workspace-switcher-btn:disabled { opacity: .55; cursor: default; }
+/* The toolbar's workspace glyph (ToolbarActionIcon), grey like the other toolbar icons (GH #1024); the
+   sidebar's labelled switcher fills it with the link colour. */
 .workspace-switcher-mark {
   display: grid;
   place-items: center;
-  width: 17px;
-  height: 17px;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 1.7px solid currentColor;
   border-radius: 4px;
-  background: var(--link-color);
-  color: var(--bg-primary);
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 700;
+}
+.workspace-switcher-btn .workspace-switcher-mark {
+  width: 17px;
+  height: 17px;
+  border: 0;
+  background: var(--link-color);
+  color: var(--bg-primary);
 }
 .workspace-switcher-name {
   overflow: hidden;
@@ -402,10 +412,6 @@ html[data-system-insets="native-viewport"] {
   font-size: 12px;
 }
 .workspace-switcher-caret { opacity: .7; }
-.workspace-switcher-compact .workspace-switcher-btn {
-  gap: 3px;
-  padding-inline: 5px;
-}
 .workspace-quick-menu,
 .workspace-menu {
   position: absolute;
@@ -1458,6 +1464,28 @@ html[data-system-insets="native-viewport"] {
   initial-value: 0;
 }
 
+/* The title's actions are one group: on the title's row when it fits, else together on the next row (GH #1025).
+   One rule says when they show: on a device with hover, while the pointer or focus is in the title row; without
+   hover, always. Each action takes that answer as its --reveal (which does not inherit); a state that must stay
+   in view (a starred page, a shown table, an open menu) sets --reveal: 1 below. */
+.page-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.page-title-actions:has(> .page-carry-actions) { margin-inline-start: auto; }
+.page-title-actions > :is(.page-carry-actions, .tag-table-toggle, .page-actions-trigger, .page-share-btn, .fav-star) {
+  --reveal: var(--title-actions-shown, 0);
+}
+.page-title-row:hover .page-title-actions,
+.page-title-row:focus-within .page-title-actions {
+  --title-actions-shown: 1;
+}
+@media (hover: none), (pointer: coarse) {
+  .page-title-actions { --title-actions-shown: 1; }
+}
+
 .fav-star {
   background: none;
   border: none;
@@ -1474,12 +1502,8 @@ html[data-system-insets="native-viewport"] {
   height: 18px;
 }
 
-.page-title-row:hover .fav-star,
-.fav-star.active {
-  --reveal: 1;
-}
 
-/* The title's Share button: the star's hover pair, visible without hover on coarse pointers. */
+/* The title's Share button: the star's hover pair. */
 .page-share-btn {
   background: none;
   border: none;
@@ -1495,10 +1519,6 @@ html[data-system-insets="native-viewport"] {
   width: 18px;
   height: 18px;
 }
-.page-title-row:hover .page-share-btn,
-.page-share-btn:focus-visible {
-  --reveal: 1;
-}
 .page-share-btn:hover,
 .page-share-btn:focus-visible {
   color: var(--text-primary);
@@ -1508,7 +1528,6 @@ html[data-system-insets="native-viewport"] {
     min-width: 36px;
     min-height: 36px;
     justify-content: center;
-    --reveal: 1;
   }
 }
 
@@ -1531,11 +1550,6 @@ html[data-system-insets="native-viewport"] {
   -webkit-user-select: none;
   user-select: none;
 }
-.page-title-row:hover .page-actions-trigger,
-.page-actions-trigger:focus-visible,
-.page-actions-trigger[aria-expanded="true"] {
-  --reveal: 1;
-}
 .page-actions-trigger:hover,
 .page-actions-trigger:focus-visible {
   color: var(--text-primary);
@@ -1544,7 +1558,6 @@ html[data-system-insets="native-viewport"] {
   .page-actions-trigger {
     min-width: 36px;
     min-height: 36px;
-    --reveal: 1;
   }
 }
 .tag-table-toggle {
@@ -1560,8 +1573,9 @@ html[data-system-insets="native-viewport"] {
   -webkit-user-select: none;
   user-select: none;
 }
-.page-title-row:hover .tag-table-toggle,
-.tag-table-toggle.active {
+.fav-star.active,
+.tag-table-toggle.active,
+.page-actions-trigger[aria-expanded="true"] {
   --reveal: 1;
 }
 .tag-table-toggle:hover,
@@ -2592,7 +2606,7 @@ html[data-system-insets="native-viewport"] {
 .sync-merge-preblock select {
   margin: 0 4px;
 }
-/* Carry-over action buttons, right-aligned next to a journal title. Like the other
+/* Carry-over action buttons next to a journal title (their group is right-aligned). Like the other
    title-row hover reveals (star, share, actions, tag table) they fade in 0.1s through
    --reveal (see @property --reveal above), never through a transition on `opacity`. */
 .page-carry-actions {
@@ -2601,7 +2615,6 @@ html[data-system-insets="native-viewport"] {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-inline-start: auto;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -2615,15 +2628,6 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   opacity: 1;
   transition: opacity 0.12s, color 0.12s, border-color 0.12s;
-}
-.page-title-row:hover .page-carry-actions,
-.page-title-row:focus-within .page-carry-actions {
-  --reveal: 1;
-}
-@media (hover: none) {
-  .page-carry-actions {
-    --reveal: 1;
-  }
 }
 .carry-btn:hover {
   color: var(--link-color, var(--text-primary));

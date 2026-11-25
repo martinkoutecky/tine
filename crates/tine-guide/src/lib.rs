@@ -1247,6 +1247,14 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn touch_screens_show_every_page_title_button() {
+        // GH #1025: no hover on a phone, so the title's buttons are always there, as one group, menu last.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("**A page title's buttons always show on a touch screen.**"));
+        assert!(mobile.contains("together on the next line under a long title, with **⋯** last"));
+    }
+
+    #[test]
     fn a_capture_finished_after_a_graph_switch_is_documented() {
         // og H1b: kept in the graph it was started in, never the new one.
         let mobile = include_str!("templates/platforms-and-mobile.md");

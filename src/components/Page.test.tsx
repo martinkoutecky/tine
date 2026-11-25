@@ -1764,6 +1764,10 @@ describe("page actions entry point", () => {
       expect(trigger?.getAttribute("aria-label")).toBe("Page actions");
       expect(trigger?.getAttribute("aria-haspopup")).toBe("menu");
       expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+      // GH #1025: the title's actions are one group and the menu is its last button, after Share and the star.
+      const group = root.querySelector<HTMLElement>(".page-title-actions")!;
+      expect(group.lastElementChild).toBe(trigger);
+      expect([...group.children].map(el => el.className)).toEqual(["page-share-btn", "fav-star", "page-actions-trigger"]);
       trigger!.click();
       await tick();
       expect(trigger?.getAttribute("aria-expanded")).toBe("true");
