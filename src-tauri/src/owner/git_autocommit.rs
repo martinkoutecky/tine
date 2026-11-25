@@ -495,12 +495,18 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
     };
     // A copied index can already contain a temp or one of Tine's own files
     // staged by another git program, or tracked from before they were left
-    // out. Removing them here untracks them without touching disk.
+    // out (a released build committed Tine's temps). Removing them here
+    // untracks them without touching disk: Tine scratch never belongs in the
+    // resulting index (review of 5582895519, RN3).
     let left_out: Vec<Vec<u8>> = index
         .iter()
         .filter(|e| {
-            under(&e.path, prefix)
-                && (syncthing_temp(&e.path[graph_start..]) || tine_own(&e.path[graph_start..]))
+            under(&e.path, prefix) && {
+                let in_graph = &e.path[graph_start..];
+                syncthing_temp(in_graph)
+                    || tine_own(in_graph)
+                    || std::str::from_utf8(in_graph).is_ok_and(tine_temp)
+            }
         })
         .map(|e| e.path)
         .collect();

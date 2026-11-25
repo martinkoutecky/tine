@@ -356,19 +356,15 @@ fn collect_with_revs(root: &Path, config: &tine_core::Config) -> HashMap<PathBuf
     files
 }
 
-/// Tine's own temp beside graph text: a [`crate::atomic_file::temp_path`] temp
-/// of a graph-text name (any tag) or of a fixed-form temp, or a fixed-form
-/// temp itself (a streamed transaction's stage, restore's copy). Its content
-/// reaches the graph only through a rename that is reported itself.
+/// Tine scratch ([`crate::atomic_file::is_temp_name`], the one answer): a
+/// temp of any of its writers, this version's or a shipped one's. Its content
+/// reaches the graph only through a rename that is reported itself (the
+/// target's own event: a page is reread, `config.edn` and `custom.css` raise
+/// their flags, anything else takes the full diff), so the temp is no change.
 fn atomic_temp(path: &Path) -> bool {
-    use crate::atomic_file::{is_fixed_temp_name, parse_temp_name};
-    let Some(name) = path.file_name().and_then(|part| part.to_str()) else {
-        return false;
-    };
-    is_fixed_temp_name(name)
-        || parse_temp_name(name).is_some_and(|(target, _)| {
-            is_fixed_temp_name(target) || crate::file_kind::is_graph_text_path(Path::new(target))
-        })
+    path.file_name()
+        .and_then(|part| part.to_str())
+        .is_some_and(crate::atomic_file::is_temp_name)
 }
 
 /// The exact graph-text paths an event names, or `None` when it needs the
@@ -2368,33 +2364,41 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// The temp names the graph-text watcher skips: every tag of a graph-text
-    /// target, a fixed-form temp and a temp of one; not another program's
-    /// `.tmp`, and not a temp of a non-graph-text name.
+    /// The graph watcher's exact-event route, through `incremental_paths`: a
+    /// name in the one scratch set (every current and shipped tag, of a page
+    /// or any other name, the fixed forms and a temp of one) is no change; a
+    /// user's file that only looks alike, or another program's `.tmp`, is an
+    /// ordinary file and takes the full diff (reviews of 6fb074e9f and
+    /// 5582895519).
     #[test]
     fn atomic_temp_recognises_every_tine_temp_beside_graph_text() {
+        use notify::event::{CreateKind, EventKind};
         let pages = Path::new("/g/pages");
-        for name in crate::atomic_file::tine_temp_names("A.md") {
-            assert!(atomic_temp(&pages.join(&name)), "{name}");
+        let route = |name: &str| {
+            incremental_paths(&notify::Event {
+                kind: EventKind::Create(CreateKind::File),
+                paths: vec![pages.join(name)],
+                attrs: Default::default(),
+            })
+        };
+        let mut tine = crate::atomic_file::tine_temp_names("A.md");
+        tine.extend(crate::atomic_file::tine_temp_names("x.png"));
+        tine.extend(crate::atomic_file::tine_temp_names("config.edn"));
+        for name in &tine {
+            assert!(atomic_temp(&pages.join(name)), "{name}");
+            assert_eq!(route(name), Some(Vec::new()), "{name}");
         }
-        assert!(atomic_temp(Path::new("/g/pages/.tine-restore-12-3.tmp")));
-        for foreign in ["/g/pages/A.md.tmp", "/g/pages/.A.md.tmp", "/g/pages/A.md"] {
-            assert!(!atomic_temp(Path::new(foreign)), "{foreign}");
+        let mut user: Vec<&str> = crate::atomic_file::TEMP_LOOK_ALIKES.to_vec();
+        user.extend([
+            "A.md.tmp",
+            ".A.md.tmp",
+            ".A.md.1.2.backup.tmp",
+            ".A.md.1.2new.tmp",
+        ]);
+        for name in user {
+            assert!(!atomic_temp(&pages.join(name)), "{name}");
+            assert_eq!(route(name), None, "{name}");
         }
-        // A user's file that only looks like a temp is graph text's business
-        // (review of 6fb074e9f): `.a.md.…` look-alikes of a page temp too.
-        for foreign in crate::atomic_file::TEMP_LOOK_ALIKES {
-            assert!(!atomic_temp(&pages.join(foreign)), "{foreign}");
-        }
-        for foreign in [".A.md.1.2.backup.tmp", ".A.md.1.2..tmp", ".A.md.1.2new.tmp"] {
-            assert!(!atomic_temp(&pages.join(foreign)), "{foreign}");
-        }
-        let asset = crate::atomic_file::temp_path(
-            Path::new("/g/pages/x.png"),
-            4,
-            crate::atomic_file::TempTag::Replace,
-        );
-        assert!(!atomic_temp(&asset));
     }
 
     #[test]

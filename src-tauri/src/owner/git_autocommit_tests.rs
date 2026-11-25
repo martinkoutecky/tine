@@ -1532,7 +1532,12 @@ fn a_users_file_that_looks_like_a_temp_is_committed() {
         "assets/.tine-.tmp",
         "pages/.a.md.1.2new.tmp",
         "assets/.tine-tx-1.tmp",
-        "assets/.a.png.1.2.import.tmp",
+        // Numbers no writer formats (review of 5582895519, B2).
+        "assets/.report.01.2.new.tmp",
+        "assets/.report.4294967296.2.private.tmp",
+        "assets/.report.1.18446744073709551616.restore.tmp",
+        "assets/.tine-restore-01-2.tmp",
+        "assets/.tine-tx-1-18446744073709551616.tmp",
     ];
     const TINE: &[&str] = &[
         "pages/.a.md.4242.17.tmp",
@@ -1543,6 +1548,11 @@ fn a_users_file_that_looks_like_a_temp_is_committed() {
         "assets/.tine-tx-1759000000000-1.tmp",
         "assets/.tine-restore-4242-3.tmp",
         "assets/..tine-tx-1759000000000-1.tmp.4242.22.capture.tmp",
+        // Shapes shipped releases wrote (review of 5582895519, B1).
+        "assets/.scan.pdf.123.7.import.tmp",
+        "logseq/.config.edn.123.7.stage.tmp",
+        "logseq/.config.edn.123.7.publish.tmp",
+        "pages/.Page.md.123.7.projection.tmp",
     ];
     let f = fixture(&[
         ("pages/a.md", "- a\n"),
@@ -1573,6 +1583,48 @@ fn a_users_file_that_looks_like_a_temp_is_committed() {
     assert_eq!(at_head(&f.repo, "assets/.tine-deleted.tmp"), None);
     for path in TINE {
         assert_eq!(at_head(&f.repo, path), None, "{path}");
+    }
+}
+
+/// Review of 5582895519, RN3: a temp a released build committed is no part
+/// of the next tip, whether the user removed the leftover or not, beside a
+/// real edit or alone, as the other left-out entries are.
+#[test]
+fn a_committed_tine_temp_leaves_the_tip_at_the_next_autocommit() {
+    const COMMITTED: &[&str] = &[
+        "pages/.a.md.4242.17.tmp",
+        "pages/.a.md.4242.18.new.tmp",
+        "assets/.a.png.4242.21.capture.tmp",
+        "assets/.tine-tx-1759000000000-1.tmp",
+        "assets/.tine-restore-4242-3.tmp",
+        "assets/..tine-tx-1759000000000-1.tmp.4242.22.capture.tmp",
+        "assets/.scan.pdf.123.7.import.tmp",
+        "pages/.Page.md.123.7.projection.tmp",
+    ];
+    for edit in [true, false] {
+        let mut files: Vec<(&str, &str)> = vec![("pages/a.md", "- a\n")];
+        files.extend(COMMITTED.iter().map(|path| (*path, "half a save")));
+        let f = fixture(&files);
+        for path in COMMITTED {
+            assert!(at_head(&f.repo, path).is_some(), "fixture: {path}");
+        }
+        // The user deletes half of the leftovers; the rest stay on disk.
+        for path in COMMITTED.iter().step_by(2) {
+            fs::remove_file(f.work.join(path)).unwrap();
+        }
+        if edit {
+            write(&f.work, "pages/a.md", "- edited\n");
+        }
+        commit_now(&f.work, MESSAGE).unwrap();
+        for path in COMMITTED {
+            assert_eq!(at_head(&f.repo, path), None, "edit {edit}: {path}");
+        }
+        let page = if edit { "- edited\n" } else { "- a\n" };
+        assert_eq!(at_head(&f.repo, "pages/a.md").as_deref(), Some(page));
+        // A second autocommit finds nothing left to do.
+        let tip = f.repo.head().unwrap().target();
+        commit_now(&f.work, MESSAGE).unwrap();
+        assert_eq!(f.repo.head().unwrap().target(), tip, "edit {edit}");
     }
 }
 
