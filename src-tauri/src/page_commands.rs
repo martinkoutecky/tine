@@ -261,8 +261,8 @@ pub(crate) struct PublishedNeed {
 const PAGE_WAIT_BOUND: Duration = Duration::from_secs(5);
 
 /// For the window `session` (F1): witnessed own revisions once every need is published;
-/// `{ refused: keys }` on a terminal notice for those needed keys; false (a refusal
-/// naming no key) when the session is no longer current or the host is down; null at
+/// `{ refused: files }` on a terminal notice for needed keys, naming their current
+/// files; false (a refusal naming none) when the session is no longer current or the host is down; null at
 /// `bound_ms` (at most 5 s), never success there (S1).
 #[tauri::command]
 pub(crate) async fn page_wait(

@@ -1648,8 +1648,10 @@ any version the host took from this window that has not published. That last
 is the client's one publication-debt predicate (`HostClient.owes`): a taken
 version no true `page_wait` answer has discharged. Only true discharges it.
 A refusal under a terminal notice (conflict, failed save, failed index
-publication) answers `{refused: keys}`, the needed keys whose own state
-refused, and only those; a refused graph switch names them (tine#1041). It
+publication) answers `{refused: files}`: the current graph-relative files of
+the needed keys whose own state refused, and only those, as the host spells
+them now (a key is opaque and is never shown). A refused graph switch names
+them (tine#1041). It
 keeps the page while the notice stands. Any other refusal answers false (a
 failed call, a stale session, a host that ended); it keeps the page and asks
 again after a pause. A new session

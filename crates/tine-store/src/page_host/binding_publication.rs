@@ -45,9 +45,9 @@ fn published(state: &State<ProductionIo, SystemClock>, pages: &Needs) -> Option<
 enum Barrier {
     /// Published, once these witnesses hold.
     Check(Witnesses, Vec<PublishedRevision>),
-    /// The needed keys that cannot publish without the user; none when the
-    /// session is not current or the host is down.
-    Refused(Vec<PageKey>),
+    /// The files of the needed keys that cannot publish without the user;
+    /// none when the session is not current or the host is down.
+    Refused(Vec<String>),
     Pending,
 }
 
@@ -124,16 +124,19 @@ impl PageHost {
     /// call's whole length is not promised to be `bound`.
     /// On success, also returns the actual indexed own revision/version for each
     /// need that has one, captured with the publication check. On `Refused`,
-    /// also returns the needed keys whose own state refused (the third part):
-    /// none for a session that is not current, a host that is down or a
-    /// driver that ended. O(needs) retained output; no filesystem reads beyond
-    /// an explicitly requested block witness.
+    /// also returns the files of the needed keys whose own state refused
+    /// (the third part): each key's current spelling, read from the host's
+    /// table in the step that refused, sorted and without duplicates (a key
+    /// is opaque and need not be its file's path). None for a session that
+    /// is not current, a host that is down or a driver that ended. O(needs)
+    /// retained output; no filesystem reads beyond an explicitly requested
+    /// block witness.
     pub fn wait_published(
         &self,
         session: u64,
         needs: &Needs,
         bound: std::time::Duration,
-    ) -> (PageOperation, Vec<PublishedRevision>, Vec<PageKey>) {
+    ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
         let deadline = tine_core::clock::Instant::now() + bound;
         // After a witness that did not hold, the next ask waits for a step.
         let mut again = false;
@@ -161,16 +164,16 @@ impl PageHost {
                         return Wait::Ready(Barrier::Check(witnesses, revisions));
                     }
                     let progress = &state.progress;
-                    let stuck: Vec<PageKey> = (needs.iter())
+                    let stuck: BTreeSet<String> = (needs.iter())
                         .filter(|(key, ..)| {
                             progress.host.logical(key).conflict()
                                 || progress.notice(key).save_error
                                 || state.book.index_error(key)
                         })
-                        .map(|(key, ..)| key.clone())
+                        .map(|(key, ..)| progress.host.fs.spelling(key))
                         .collect();
                     if !stuck.is_empty() {
-                        return Wait::Ready(Barrier::Refused(stuck));
+                        return Wait::Ready(Barrier::Refused(stuck.into_iter().collect()));
                     }
                 }
                 if now >= deadline {

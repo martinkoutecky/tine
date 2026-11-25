@@ -585,8 +585,8 @@ export class HostClient {
   }
 
   /** True once every need published under this session: asks again while each
-   * bounded host wait passes. Otherwise the needed keys the host refused for (a
-   * terminal notice), or none: a refusal naming no key, a failed call, a new
+   * bounded host wait passes. Otherwise the files the host refused for (a
+   * terminal notice), or none: a refusal naming no file, a failed call, a new
    * session or the client's retirement (which settles a pending wait at once,
    * R3). A true answer, whoever asked it (a close, a barrier, the data
    * revision), discharges the publication debt it covers (J6). */

@@ -1,5 +1,5 @@
 // tine#1041: the switch barrier (`flushAllUnsettled`) says what it refused for.
-// A refused publication wait names its stuck keys and the barrier carries them
+// A refused publication wait names its stuck files and the barrier carries them
 // unchanged; every other failure carries its reason, and the boolean every
 // other caller reads (`flushAll`) is the same as before.
 import { afterEach, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ it("a draft only the host holds, which never publishes: the barrier names its ke
   await bindTestHost();
   vi.spyOn(backend(), "pageOwed").mockResolvedValue([{ key: KEY, version: 2 }]);
   const wait = vi.spyOn(backend(), "pageWait").mockResolvedValue({ refused: [KEY] });
-  expect(await flushAllUnsettled()).toEqual({ kind: "stuck", keys: [KEY] });
+  expect(await flushAllUnsettled()).toEqual({ kind: "stuck", files: [KEY] });
   expect(wait.mock.calls[0]?.[1]).toEqual([{ key: KEY, version: 2 }]);
   expect(await flushAll()).toBe(false);
   // The rows this fix does not change: the panel and the badge still do not list it.
@@ -31,7 +31,7 @@ it("a draft only the host holds, which never publishes: the barrier names its ke
   expect(pendingConflictCount()).toBe(0);
 });
 
-it("a window page whose save keeps failing (tine#1033's shape): the barrier names that page's key", async () => {
+it("a window page whose save keeps failing (tine#1033's shape): the barrier names that page's file", async () => {
   loadRoutedPage(dto("Failing"));
   await bindTestHost();
   const submit = vi.spyOn(backend(), "pageSubmit");
@@ -42,7 +42,7 @@ it("a window page whose save keeps failing (tine#1033's shape): the barrier name
   vi.spyOn(backend(), "pageOwed").mockResolvedValue([{ key: "pages/Failing.md", version: 2 }]);
   vi.spyOn(backend(), "pageWait").mockImplementation(async (_session, needs) =>
     ({ refused: needs.filter((need) => need.key === "pages/Failing.md").map((need) => need.key) }));
-  expect(await flushAllUnsettled()).toEqual({ kind: "stuck", keys: ["pages/Failing.md"] });
+  expect(await flushAllUnsettled()).toEqual({ kind: "stuck", files: ["pages/Failing.md"] });
 });
 
 it.each([

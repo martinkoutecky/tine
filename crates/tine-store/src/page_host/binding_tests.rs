@@ -2459,12 +2459,12 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     live.host.stop();
 }
 
-/// tine#1041: a refused wait names the needed keys its own tests matched,
-/// and only those. In one batch `pages/A.md` publishes and `pages/Z.md` is
+/// tine#1041: a refused wait names the files of the needed keys its own
+/// tests matched, and only those. In one batch `pages/A.md` publishes and `pages/Z.md` is
 /// conflicted: the refusal carries `Z` alone, so the window's switch refusal
 /// names and opens `Z`, never `A`.
 #[test]
-fn wait_published_refusal_names_only_the_keys_that_refused() {
+fn wait_published_refusal_names_only_the_pages_that_refused() {
     let live = Live::new(&[("pages/A.md", "- a\n"), ("pages/Z.md", "- z\n")]);
     live.submits_wait();
     let (a, page) = live.open("pages/A.md");
@@ -2478,8 +2478,12 @@ fn wait_published_refusal_names_only_the_keys_that_refused() {
     assert_eq!(
         live.host
             .wait_published(live.host.session(), &needs, Duration::from_secs(20)),
-        (PageOperation::Refused, vec![], vec![z.clone()]),
-        "the refusal names the conflicted key only"
+        (
+            PageOperation::Refused,
+            vec![],
+            vec!["pages/Z.md".to_string()]
+        ),
+        "the refusal names the conflicted page only"
     );
     live.until_published(&[(a.clone(), va, None)]);
     assert_eq!(live.disk(&a), "- a two\n");
@@ -2501,7 +2505,11 @@ fn wait_published_refusal_names_a_page_whose_save_keeps_failing() {
             &[(key.clone(), version, None)],
             Duration::from_secs(20)
         ),
-        (PageOperation::Refused, vec![], vec![key.clone()]),
+        (
+            PageOperation::Refused,
+            vec![],
+            vec!["pages/a.md".to_string()]
+        ),
     );
     live.host.stop();
 }
@@ -2530,7 +2538,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     assert_eq!(
         ended.host.wait_published(session, &needs, bound),
         (PageOperation::Refused, vec![], vec![]),
-        "an ended driver publishes nothing, and its refusal names no key"
+        "an ended driver publishes nothing, and its refusal names no file"
     );
 
     let down = Live::new(&[("pages/a.md", "- one\n")]);
@@ -2543,7 +2551,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     assert_eq!(
         down.host.wait_published(session, &needs, bound),
         (PageOperation::Refused, vec![], vec![]),
-        "a host that is down publishes nothing, and its refusal names no key"
+        "a host that is down publishes nothing, and its refusal names no file"
     );
     down.host.stop();
 

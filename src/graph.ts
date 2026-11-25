@@ -11,7 +11,7 @@ import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
-import { dismissToast, pushToast, pushToastUnique } from "./toasts";
+import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
 import { bindHost, resetStore, flushAllUnsettled, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -399,18 +399,16 @@ export async function loadGraphPath(
 }
 
 /** A switch refused by its barrier (tine#1041). Pages the host would not
- * publish are named as the host spells their keys (a path; an opaque key, which
- * holds NUL, by its spelling before the NUL), the first three and then a count.
- * The notice has no action. Every other reason (no answer, still busy, unbound,
- * the CSS editor) keeps the fixed text. */
+ * publish are named by the files the host gave, as given: the first three and
+ * then a count. The notice has no action. Every other reason (no answer, still
+ * busy, unbound, the CSS editor) keeps the fixed text. */
 function switchRefused(reason: Unsettled | null): void {
   if (reason?.kind !== "stuck") {
     pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
     return;
   }
-  const shown = reason.keys.slice(0, 3).map((key) => key.split("\0")[0]);
-  // One toast per refusal text: a repeated attempt replaces it rather than stacking.
-  pushToastUnique(msg("graph-switch-refused-pages", { pages: shown.join(", "), more: reason.keys.length - shown.length }), "error");
+  const shown = reason.files.slice(0, 3);
+  pushToast(msg("graph-switch-refused-pages", { pages: shown.join(", "), more: reason.files.length - shown.length }), "error");
 }
 
 /** Crash-draft storage the new host could not use (STEP3 §4): saves keep

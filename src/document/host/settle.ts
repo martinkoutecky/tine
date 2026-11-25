@@ -16,13 +16,13 @@ export interface SettleOptions {
 
 export type SettleScope = readonly string[] | "all";
 
-/** Why a barrier failed: the host refused to publish these keys (each needs the
+/** Why a barrier failed: the host refused to publish these files (each needs the
  * user: a conflict, a save or index publication that keeps failing); it gave no
- * answer (a debt query, a failed wait call, a refusal naming no key); work kept
+ * answer (a debt query, a failed wait call, a refusal naming no file); work kept
  * arriving for every round; or the window has no binding (a retired client, or
  * edits typed before any client bound). */
 export type Unsettled =
-  | { kind: "stuck"; keys: readonly string[] }
+  | { kind: "stuck"; files: readonly string[] }
   | { kind: "no-answer" }
   | { kind: "busy" }
   | { kind: "unbound" };
@@ -78,7 +78,7 @@ async function rounds(client: HostClient, scope: SettleScope, options: SettleOpt
     if (needs.length) {
       await client.saveNow(needs.map((need) => need.key));
       const published = await client.publication(needs);
-      if (published !== true) return published.length ? { kind: "stuck", keys: published } : client.retired ? UNBOUND : NO_ANSWER;
+      if (published !== true) return published.length ? { kind: "stuck", files: published } : client.retired ? UNBOUND : NO_ANSWER;
     }
     const after = await client.owed(paths);
     if (!after) return NO_ANSWER;
