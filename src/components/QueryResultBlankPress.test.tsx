@@ -2,9 +2,9 @@
 // padding, the gap below a result, the gap between two page groups) bubbled to
 // the query host's own mousedown handler, which opened the HOST in the editor
 // with the caret at its end; the page then scrolled to that caret, far below the
-// result that was clicked. Blank space among the live result rows belongs to the
-// row drawn there, or to nobody, never to the host; the query's own text in the
-// results (the empty message) still opens it.
+// result that was clicked. A plain press inside the results belongs to the row
+// drawn there, or to nobody, never to the block that holds the query; its header
+// still opens it.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -92,12 +92,13 @@ describe("blank space inside a query's results (GH #1000)", () => {
     } finally { dispose(); }
   });
 
-  it("a press on the query's own empty-result text still edits the query", async () => {
+  it("a press on the empty-result text in the results does not open the query either", async () => {
     vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult([]));
     const { root, dispose } = mountHost();
     try {
       press(await find(root, '[data-block-id="query"] .query-empty'));
-      await vi.waitFor(() => expect(editingId()).toBe("query"));
+      await Promise.resolve();
+      expect(editingId()).toBeNull();
     } finally { dispose(); }
   });
 

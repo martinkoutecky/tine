@@ -18,7 +18,7 @@ import { markerLabelClickable } from "../editor/repeat";
 import { logbookInfo, type LogbookInfo } from "../logbook";
 import { annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
-import { forbidsEditEntry } from "../editor/editTargets";
+import { forbidsEditEntry, pressBelongsToQueryResults } from "../editor/editTargets";
 import { blockBackgroundColor } from "../blockColors";
 import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
 import { isQuarantined, parseBlock, parserReady, soleBlockMacro } from "../render/parse";
@@ -128,7 +128,7 @@ function RenderedContent(props: {
   const onMouseDown = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (readOnly()) return; // read-only org page — never enter the editor
-    if (forbidsEditEntry(e)) return;
+    if (forbidsEditEntry(e) || pressBelongsToQueryResults(e)) return;
     e.stopPropagation(); // keep the row wrapper from arming a second gesture
     beginEditGesture(
       e,

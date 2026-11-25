@@ -116,7 +116,7 @@ import { childrenSheetConfig } from "../sheet/childrenSheet";
 import { SheetCellContext } from "../sheet/context";
 import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
 import { cellBlockId, cellOwner, cellSurfaceKey, selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
-import { forbidsEditEntry } from "../editor/editTargets";
+import { forbidsEditEntry, pressBelongsToQueryResults } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
@@ -389,7 +389,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             // click-or-drag gesture as block content, with an end-of-block caret
             // (the row padding has no text to map). Read-only org pages don't edit.
             if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
-            if (!editing() && !readOnly() && !forbidsEditEntry(e))
+            if (!editing() && !readOnly() && !forbidsEditEntry(e) && !pressBelongsToQueryResults(e))
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >

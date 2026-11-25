@@ -1,3 +1,4 @@
+import { BLOCK_SURFACE_ATTR } from "../contextMenuPolicy";
 import { isHTMLElementNode } from "../windowRealm";
 // Interactive targets that must NOT enter edit on mousedown (mirrors OG's
 // target-forbidden-edit?). Their own handlers run on click, so entering edit
@@ -66,20 +67,6 @@ function pressIsOnHorizontalScrollbar(node: HTMLElement, e: MouseEvent): boolean
   return y >= node.clientTop + node.clientHeight && y < bottom && x >= node.clientLeft && x < right;
 }
 
-// GH #1000: blank space among a query's live result rows (a row's padding, the
-// area left of its bullet, the gap between rows or page groups) belongs to
-// the row there or to nobody, as blank space inside an embed does. Entering
-// the host there put the caret at the end of the query's text and scrolled the
-// page to it. The query's own text in the results (the empty message, a
-// summary, a table cell) still enters the host. Logseq enters the host from
-// such blank space too; Tine keeps one rule for nested live blocks.
-function pressIsBlankAmongQueryResultRows(target: Element | null, host: Element): boolean {
-  const box = target?.matches?.(".query-results-region")
-    ? target
-    : target?.closest?.(".query-results-region .live-ref-group");
-  return !!box && host.contains(box);
-}
-
 export function forbidsEditEntry(e: MouseEvent): boolean {
   const target = e.target as Element | null;
   const host = e.currentTarget as Element;
@@ -94,7 +81,23 @@ export function forbidsEditEntry(e: MouseEvent): boolean {
     if (isHTMLElementNode(node) && pressIsOnHorizontalScrollbar(node, e)) return true;
     if (node === host) break;
   }
-  if (pressIsBlankAmongQueryResultRows(target, host)) return true;
   const hit = target?.closest?.(FORBID_EDIT_SELECTOR);
   return !!hit && host.contains(hit);
+}
+
+// GH #1000: a plain press inside a query's results does not start the edit
+// gesture of the block that holds the query. The results draw other blocks, so
+// a press there is theirs or nobody's (the marker GH #726 set for the context
+// menu, and the rule `.embed-block` has above). Opening the query there replaced
+// the results with its editor and the page jumped. Asked only by the two places
+// that start an outline block's edit gesture; every other caller of
+// `forbidsEditEntry` (sheet cells, opening text, reference rows, the fence
+// switch) keeps its own gesture. A Shift-press still extends the outline
+// selection. The region must lie inside the handler's element: a result row is
+// inside the region, so its own handlers are not refused. Logseq opens the
+// query from such a press.
+export function pressBelongsToQueryResults(e: MouseEvent): boolean {
+  if (e.shiftKey) return false;
+  const region = (e.target as Element | null)?.closest?.(`[${BLOCK_SURFACE_ATTR}]`);
+  return !!region && (e.currentTarget as Element).contains(region);
 }
