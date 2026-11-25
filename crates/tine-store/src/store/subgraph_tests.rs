@@ -613,15 +613,15 @@ fn layouts_open_or_refuse_alike() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// A pages directory configured 256 names deep, none or half of them
-/// present (a partial sync), opens on both sources, as a missing directory
-/// does. Run with `--nocapture` for the disk open's time.
+/// A pages directory configured 256 names deep, none, half or all but the
+/// last of them present (a partial sync), opens on both sources, as a missing
+/// directory does. Run with `--nocapture` for the disk open's time.
 #[test]
 fn a_deep_missing_pages_directory_opens() {
     let depth = 256;
     let spelling = vec!["n"; depth].join("/");
     let mut wrong = Vec::new();
-    for present in [0, depth / 2] {
+    for present in [0, depth / 2, depth - 1] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         std::fs::create_dir_all(root.join("journals")).unwrap();

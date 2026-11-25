@@ -20,24 +20,24 @@ thread_local! {
     /// or a name the disk wrote into a probed path.
     pub(super) static NAME_VISITS: Cell<usize> = const { Cell::new(0) };
     /// How many path components below the graph root the disk source
-    /// submitted to the filesystem on this thread: a whole path's names, or
-    /// the one name of a step relative to a directory handle.
+    /// submitted to the filesystem on this thread: each probed path's names
+    /// (what an SMB open carries, whatever API sends it).
     pub(super) static COMPONENTS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// A missing suffix costs a linear number of components submitted to the
-/// filesystem, not one full prefix per missing name: the review's cases
-/// (depth 128 and 256 with the first name absent, 8,256 and 32,896
-/// components; half the names present, 6,240 and 24,768) and depths 1 and
-/// 512. The bound is 3 per name: the whole path once (`depth`), then at most
-/// two per existing prefix (its probe and the opening of its directory) and
-/// one for the first missing name. Run with `--nocapture` for the counts.
+/// A missing suffix costs ⌈log₂ d⌉ + 2 probes at most and so at most
+/// d·(⌈log₂ d⌉ + 2) components submitted for depth d, not one full prefix
+/// per missing name: the review's cases (depth 128 and 256 with the first
+/// name absent, 8,256 and 32,896 components; half the names present, 6,240
+/// and 24,768; only the leaf absent at depth 256, 32,896) and depths 1 and
+/// 512. Run with `--nocapture` for the counts.
 #[test]
-fn a_missing_suffix_costs_linear_components() {
+fn a_missing_suffix_costs_logarithmic_probes() {
     let mut wrong = Vec::new();
     for depth in [1usize, 128, 256, 512] {
         let spelling = vec!["n"; depth].join("/");
-        let mut present = vec![0, depth / 2];
+        let bound = depth.next_power_of_two().trailing_zeros() as usize + 2;
+        let mut present = vec![0, depth / 2, depth - 1];
         present.dedup();
         for present in present {
             let temp = tempfile::tempdir().unwrap();
@@ -54,9 +54,10 @@ fn a_missing_suffix_costs_linear_components() {
                 "depth {depth}, {present} present, disk: {answer}, {probes} probes, \
                  {components} components, {took:?}"
             );
-            if answer != "NotFound" || components > 3 * depth {
+            if answer != "NotFound" || probes > bound || components > depth * bound {
                 wrong.push(format!(
-                    "depth {depth}, {present} present: {answer}, {components} components"
+                    "depth {depth}, {present} present: {answer}, {probes} probes, \
+                     {components} components"
                 ));
             }
         }
@@ -67,11 +68,11 @@ fn a_missing_suffix_costs_linear_components() {
 /// A lookup's cost is linear in its spelling's depth on both sources, for a
 /// spelling that exists, one under a file halfway down, and one missing
 /// halfway down (the review's 65 → 4,224 visits at depth 128): at most one
-/// visit per name built into the probed path, and on disk one probe, plus
-/// one step per existing prefix and one for the first missing name when
-/// the platform answers `NotFound` (components submitted:
-/// [`a_missing_suffix_costs_linear_components`]). Run with `--nocapture` for the
-/// counts.
+/// visit per name built into the probed path (a prefix probed after a
+/// `NotFound` is borrowed from it, never built again), and on disk one
+/// probe, plus a binary search when the platform answers `NotFound`
+/// (probes and components: [`a_missing_suffix_costs_logarithmic_probes`]).
+/// Run with `--nocapture` for the counts.
 #[test]
 fn a_lookup_visits_each_name_once() {
     let mut wrong = Vec::new();
@@ -151,31 +152,39 @@ fn answer(name: &str) -> io::Result<EntryKind> {
 /// The decision for `rel` given what a filesystem answers at each prefix
 /// (`at`, by clean names joined with `/`; an unlisted prefix is missing),
 /// and the prefixes probed, in order: the disk's lookup of the one path
-/// built for `rel`, then its walk down from the root, each step one name
-/// below the prefix the step before found.
+/// built for `rel`, then its binary search over that path's prefixes, each
+/// probe a borrowed prefix of it holding the asked number of names.
 fn decide(rel: &str, at: &[(&str, &str)]) -> (String, Vec<String>) {
     let root = Path::new("r");
-    let spelled = tine_names(rel).unwrap();
-    let (path, names) = spelled_path(root, spelled.clone());
+    let (path, names) = spelled_path(root, tine_names(rel).unwrap());
+    let start = path.as_os_str().as_encoded_bytes().as_ptr();
     let probed = RefCell::new(Vec::new());
-    let probe = |clean: String| {
+    let probe = |prefix: &Path| {
+        assert_eq!(
+            prefix.as_os_str().as_encoded_bytes().as_ptr(),
+            start,
+            "{rel}: borrowed"
+        );
+        let names = prefix.strip_prefix(root).unwrap().components();
+        let clean = names
+            .map(|name| name.as_os_str().to_str().unwrap())
+            .collect::<Vec<_>>();
+        let clean = clean.join("/");
         probed.borrow_mut().push(clean.clone());
         let found = at.iter().find(|(path, _)| *path == clean);
         answer(found.map_or("missing", |(_, kind)| kind))
     };
-    let whole = path.strip_prefix(root).unwrap().components();
-    let whole = whole.map(|name| name.as_os_str().to_str().unwrap());
-    let whole = probe(whole.collect::<Vec<_>>().join("/"));
-    let mut below = String::new();
-    let step = |name: &str| {
-        if !below.is_empty() {
-            below.push('/');
-        }
-        below.push_str(name);
-        probe(below.clone())
+    let whole = probe(&path);
+    let prefix = |depth: usize| {
+        let prefix = path.ancestors().nth(names - depth).unwrap();
+        assert_eq!(
+            prefix.strip_prefix(root).unwrap().components().count(),
+            depth
+        );
+        probe(prefix)
     };
     let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
-    let located = locate_deepest(spelled, names, whole, is_dir, step);
+    let located = locate_deepest(names, whole, is_dir, prefix);
     let as_directory = super::spelled_as_directory(rel);
     let decided = spelled_kind(as_directory, located, is_dir, Path::new(rel));
     (kind_name(&decided), probed.into_inner())
@@ -186,7 +195,7 @@ fn decide(rel: &str, at: &[(&str, &str)]) -> (String, Vec<String>) {
 #[test]
 fn windows_answers_read_as_tine_reads_them() {
     // Under a file: ERROR_PATH_NOT_FOUND, read as NotFound; the file is
-    // the first step down from the root, so one more probe.
+    // the search's one prefix, so one more probe.
     for rel in ["x/pages", "x/j"] {
         let (kind, probed) = decide(rel, &[("x", "file")]);
         assert_eq!((kind.as_str(), probed.len()), ("NotADirectory", 2), "{rel}");
@@ -203,9 +212,10 @@ fn windows_answers_read_as_tine_reads_them() {
 }
 
 /// Every other answer is the filesystem's, and prefixes are probed only
-/// after a `NotFound`, top down from the root, up to the first that is
-/// missing or not a directory, never the whole path again (principle 2:
-/// nothing more on a clean path).
+/// after a `NotFound`, by a binary search for the deepest that exists
+/// (halving between the root and the whole path, stopping at one that is
+/// not a directory), never the whole path again (principle 2: nothing more
+/// on a clean path).
 #[test]
 fn other_answers_are_the_filesystems() {
     // (spelling, what is there, expected, prefixes probed)
@@ -227,7 +237,30 @@ fn other_answers_are_the_filesystems() {
             "a/x/b/p",
             &[("a", "dir"), ("a/x", "file")],
             "NotADirectory",
-            &["a/x/b/p", "a", "a/x"],
+            &["a/x/b/p", "a/x"],
+        ),
+        (
+            "a/b/c/d/p",
+            &[
+                ("a", "dir"),
+                ("a/b", "dir"),
+                ("a/b/c", "dir"),
+                ("a/b/c/d", "dir"),
+            ],
+            "NotFound",
+            &["a/b/c/d/p", "a/b", "a/b/c", "a/b/c/d"],
+        ),
+        (
+            "x/b/c/d/p",
+            &[("x", "file")],
+            "NotADirectory",
+            &["x/b/c/d/p", "x/b", "x"],
+        ),
+        (
+            "a/b/x/c/d/p",
+            &[("a", "dir"), ("a/b", "dir"), ("a/b/x", "file")],
+            "NotADirectory",
+            &["a/b/x/c/d/p", "a/b/x"],
         ),
         ("x/p", &[("x", "other")], "NotADirectory", &["x/p", "x"]),
         ("a/p", &[("a", "denied")], "NotFound", &["a/p", "a"]),
@@ -235,7 +268,7 @@ fn other_answers_are_the_filesystems() {
             "a/b/c/p",
             &[("a", "dir"), ("a/b", "denied")],
             "NotFound",
-            &["a/b/c/p", "a", "a/b"],
+            &["a/b/c/p", "a/b"],
         ),
         ("p", &[], "NotFound", &["p"]),
         ("a/p", &[("a/p", "denied")], "PermissionDenied", &["a/p"]),
@@ -300,8 +333,8 @@ fn windows_refuses_a_name_with_a_colon_before_probing() {
 
 /// On this platform's disk, the configured spellings of the six cases read
 /// as not a directory, a missing directory stays missing, and the probe
-/// count is one on a clean path and, after a `NotFound`, one per prefix
-/// walked down from the root up to the first missing name.
+/// count is one on a clean path and, after a `NotFound`, one more per
+/// prefix the binary search asks.
 #[test]
 fn the_disk_reads_configured_spellings_by_tines_names() {
     let temp = tempfile::tempdir().unwrap();

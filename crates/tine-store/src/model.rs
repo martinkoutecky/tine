@@ -2710,7 +2710,7 @@ impl Graph {
     /// open then checks where links lead ([`validate_managed_dir`]); a memory
     /// graph has none. One `lstat` per directory, read by Tine's names on
     /// every platform ([`FileSource::lstat_spelled`]); a directory not found
-    /// adds one walk down its existing prefixes, one name per step.
+    /// adds a binary search of its prefixes, ⌈log₂ depth⌉ stats at most.
     pub(crate) fn check_layout(&self) -> io::Result<()> {
         let dirs = [
             (self.config.journals_dir.as_str(), "journals"),

@@ -223,56 +223,59 @@ fn spelled_path<'a>(root: &Path, names: impl Iterator<Item = &'a str>) -> (PathB
     (PathBuf::from(path), count)
 }
 
-/// The disk's lookup of a spelling's `names` (`count` of them): `whole` is
-/// the answer for the whole path ([`spelled_path`]); only after its
-/// `NotFound`, `step` is asked for each name but the last, top down from the
-/// root, each relative to the directory the step before found
-/// ([`DiskWalk::step`]), until one is missing or not a directory. A path's
-/// prefixes exist top down (a missing or non-directory name ends every
-/// longer prefix), so the first such step is the deepest existing prefix.
-/// The root is only the walk's start, never asked; a step that answers
-/// another error settles nothing (taken as a directory, so the spelling
-/// stays not found). Cost: one answer, plus one step per existing prefix
-/// and one for the first missing name, each a single name; no allocation
-/// here (the disk walk reuses one name buffer).
-fn locate_deepest<'a, T>(
-    names: impl Iterator<Item = &'a str>,
-    count: usize,
+/// The disk's lookup of a spelling's `names` names below the graph root:
+/// `whole` is the answer for the whole path ([`spelled_path`]); only after
+/// its `NotFound`, a binary search for the deepest existing prefix, asking
+/// `prefix` for the answer at a depth (the whole path's first that many
+/// names). A prefix of an existing path exists, so existence is monotone in
+/// the depth: the root (depth 0) is taken to exist and is never asked, the
+/// whole path does not. A prefix that is not a directory ends the search
+/// (nothing exists below it); one that answers another error settles nothing
+/// (the spelling stays not found). Cost: at most ⌈log₂ names⌉ + 1 probes,
+/// each of at most `names` components, whatever the platform sends a path
+/// as (an SMB open carries the whole share-relative path); no allocation.
+fn locate_deepest<T>(
+    names: usize,
     whole: io::Result<T>,
     is_dir: impl Fn(&T) -> bool,
-    mut step: impl FnMut(&'a str) -> io::Result<T>,
+    mut prefix: impl FnMut(usize) -> io::Result<T>,
 ) -> io::Result<Located<T>> {
     match whole {
         Ok(at) => {
             return Ok(Located {
-                depth: count,
-                names: count,
+                depth: names,
+                names,
                 at: Some(at),
             })
         }
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         Err(_) => {}
     }
-    let (mut depth, mut at) = (0, None);
-    for name in names.take(count.saturating_sub(1)) {
-        match step(name) {
+    // `low` exists (`at` is its answer; `None` for the root), `high` does not.
+    let (mut low, mut high, mut at) = (0, names, None);
+    while high - low > 1 {
+        let depth = low + (high - low) / 2;
+        match prefix(depth) {
             Ok(found) => {
                 let deeper = is_dir(&found);
-                (depth, at) = (depth + 1, Some(found));
+                (low, at) = (depth, Some(found));
                 if !deeper {
                     break;
                 }
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => high = depth,
             Err(_) => {
-                (depth, at) = (depth + 1, None);
-                break;
+                return Ok(Located {
+                    depth,
+                    names,
+                    at: None,
+                })
             }
         }
     }
     Ok(Located {
-        depth,
-        names: count,
+        depth: low,
+        names,
         at,
     })
 }
@@ -712,21 +715,25 @@ impl FileSource {
     /// ([`Files::node`]), or on disk [`locate_deepest`] over the path built
     /// once ([`spelled_path`]): one `lstat` of it (a `stat` when spelled as a
     /// directory, so `pages/` through a link still opens), and only after a
-    /// `NotFound` a walk down from the root ([`DiskWalk`]), one name per step,
-    /// to the deepest existing prefix: linear in the depth.
+    /// `NotFound` a binary search over its prefixes (borrowed, `Path::parent`)
+    /// for the deepest that exists: O(d log d) components for depth d.
     pub(crate) fn lstat_spelled(&self, root: &Path, rel: &str) -> io::Result<EntryKind> {
         if let FileSource::Memory(_) = self {
             return self.lstat(&root.join(rel));
         }
         let as_directory = spelled_as_directory(rel);
-        let spelled = tine_names(rel)?;
-        let (path, names) = spelled_path(root, spelled.clone());
+        let (path, names) = spelled_path(root, tine_names(rel)?);
         #[cfg(test)]
         names_tests::COMPONENTS.with(|count| count.set(count.get() + names));
         let whole = disk_kind(&path, as_directory);
         let is_dir = |kind: &EntryKind| matches!(kind, EntryKind::Dir);
-        let mut walk = DiskWalk::new(root);
-        let located = locate_deepest(spelled, names, whole, is_dir, |name| walk.step(name));
+        let located = locate_deepest(names, whole, is_dir, |depth| {
+            let prefix = (path.ancestors().nth(names - depth))
+                .expect("a prefix of the path built from the names");
+            #[cfg(test)]
+            names_tests::COMPONENTS.with(|count| count.set(count.get() + depth));
+            disk_kind(prefix, true)
+        });
         spelled_kind(as_directory, located, is_dir, &path)
     }
 
@@ -905,10 +912,6 @@ impl Graph {
         super::read_parse_input_in(&self.source, path)
     }
 }
-
-#[path = "file_source_walk.rs"]
-mod walk;
-use walk::DiskWalk;
 
 #[cfg(test)]
 #[path = "file_source_names_tests.rs"]
