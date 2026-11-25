@@ -50,7 +50,7 @@ mod tests;
 mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
-use io::{ErrorKind, HostIo, IoFailure, Witness};
+use io::{ErrorKind, HostIo, IoFailure, SourceWitness, Witness, WitnessStep};
 use logical::LiveOp;
 use order::{Gates, OperationReply, Removal, Reply, ReplyId};
 use save::SaveJob;
@@ -1356,12 +1356,12 @@ impl<F: HostIo> Host<F> {
         for key in self.custody.keys().cloned().collect::<Vec<_>>() {
             self.settle(&key);
         }
-        self.fs.graph_launch(&self.keys.iter().cloned().collect());
         // The pairing's one answerer (`Order`) is installed from the scan
         // before any recovered work is dispatched or choice offered. A pair
         // a durable Use Disk cancelled recovers neither its receiver's nor
         // its source's operation record: both keep their disk state, newer
-        // page drafts still win.
+        // page drafts still win. It runs the graph's launch directory pass
+        // (`HostIo::graph_launch`), which also witnesses decided sources.
         let skipped = self.adopt_pairing(&scan);
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {

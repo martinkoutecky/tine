@@ -1726,6 +1726,16 @@
       "nonRequirements": ["Exact toast placement, pixels, DOM nesting, or certification outside Linux WebKitGTK (the disk error is a read-only pages folder and the crash is SIGKILL)."],
       "stability":"burn-in"
     },
+    "scripts/e2e-launch-custody.mjs": {
+      "setup": "Per scenario a synthetic graph holding pages/Source.md and its own scratch XDG profile, the account-home shim, native Linux WebKitGTK at 1920x1080. A first app launch creates the graph's draft namespace; the store's ignored setup test (launch_custody_journey_setup, the app host's production IO) then leaves in it a rename of Source to Receiver interrupted before Receiver published, recovered, Receiver published with its own text, decided by Use Disk on Source, and interrupted again before the decision retired.",
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "At the next launch Source keeps its text on disk and shows it, Receiver shows its own text, and the pair is released: neither page shows a conflict surface, the pair's own drafts are gone and no draft names Source.", "blocking": true, "authority": "docs/storage-contract.md, superseding custody: launch release of a decided pair" },
+        { "class": "exact-safety-interoperability", "userOutcome": "With Receiver unreadable at that launch, the pair stays held: a draft keeps Source's original text, and Source still shows its text, takes an edit and saves it to its file.", "blocking": true, "authority": "docs/storage-contract.md, superseding custody: a failed launch witness keeps the pair retained" }
+      ],
+      "acceptableVariations": ["Launch, retirement and save timing within the host's progress loop, and how the unreadable page is reported, may vary."],
+      "nonRequirements": ["Reaching the decided state through the UI (two crashes inside millisecond windows), exact toast or panel wording, pixels, DOM nesting, or certification outside Linux (the unreadable receiver is chmod 000)."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"},
     "scripts/e2e-gh524-new-page-sidebar.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A brand-new fileless page opened in the right sidebar through a link or page menu offers an editable first bullet; typing creates the page file and a dragged subtree moves from its source into the new page. Search-created pages remain editable there too (GH #524).","blocking":true}],

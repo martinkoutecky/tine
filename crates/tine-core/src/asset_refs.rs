@@ -24,6 +24,22 @@ pub use crate::local_target::percent_decode;
 use tine_outline::editor_text::{is_js_whitespace, js_trim};
 use tine_outline::page_filename::decode_escapes_keeping_malformed as lenient_decode;
 
+#[cfg(test)]
+thread_local! {
+    /// Bytes the prefilter's closer searches were handed (a cost test's count).
+    pub(crate) static PREFILTER_SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Block parses the `file-path` read made (a cost test's count).
+    pub(crate) static PROPERTY_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds `n` to a cost test's count; compiled out of every other build.
+macro_rules! count {
+    ($counter:ident, $n:expr) => {
+        #[cfg(test)]
+        $counter.with(|c| c.set(c.get() + $n));
+    };
+}
+
 /// Asset liveness combines parser-accepted targets with conservative plaintext
 /// mentions. The latter may retain extra files (including literal code), but
 /// cannot shorten or replace an accepted target. Parsing is skipped entirely
@@ -97,8 +113,7 @@ pub fn collect_live_asset_refs(text: &str, into: &mut HashSet<String>) {
 pub(crate) fn may_have_dotted_destination(text: &str) -> bool {
     fn until<'a>(tail: &'a [u8], close: &[u8]) -> &'a [u8] {
         let line = &tail[..memchr::memchr(b'\n', tail).unwrap_or(tail.len())];
-        #[cfg(test)]
-        PREFILTER_SEARCHED.with(|n| n.set(n.get() + line.len()));
+        count!(PREFILTER_SEARCHED, line.len());
         &line[..memchr::memmem::find(line, close).unwrap_or(line.len())]
     }
     fn web(dest: &[u8]) -> bool {
@@ -146,12 +161,6 @@ pub(crate) fn may_have_dotted_destination(text: &str) -> bool {
         }
     }
     false
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Bytes the prefilter's closer searches were handed (the cost test's count).
-    pub(crate) static PREFILTER_SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The key liveness compares a directory entry by: the file-name fold
@@ -599,6 +608,7 @@ fn widen_text(text: &str, property: bool, into: &mut HashSet<String>) {
     // `assets` folder. Every such property in either format is a pointer.
     if property {
         for org in [false, true] {
+            count!(PROPERTY_PARSES, 1);
             let regions = crate::block_regions::parse_document(text, org);
             for p in &regions.properties {
                 if p.key.eq_ignore_ascii_case("file-path") {
