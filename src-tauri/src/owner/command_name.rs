@@ -58,7 +58,7 @@ mod tests {
         for odd in [
             "",
             "/",
-            "Tine Beta",
+            "two words",
             "/opt/t/tine's",
             "ti\"ne",
             "tine\tb",
