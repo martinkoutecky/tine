@@ -3,6 +3,8 @@ export interface AppIdentity {
   productName: string;
   androidApplicationId: string;
   deployName: string;
+  /** The command, icon and man-page name inside the .deb, .rpm and AppImage. */
+  linuxBinaryName: string;
   iconDirectory: string;
   ios: {
     displayName: string;
@@ -30,5 +32,4 @@ export function iosIdentity(identity?: AppIdentity): AppIdentity["ios"] & {
   shareExtensionIdentifier: string;
   iconDirectory: string;
 };
-export function linuxPackageName(identity: Pick<AppIdentity, "productName">): string;
 export function deriveIdentityFiles(root: string, ship: string): Record<string, string>;

@@ -11,13 +11,13 @@ updates, and Beta never installs stable releases (both notifier and installer
 validate through `checkedBetaUpdate` in `src/update.ts`); Beta publication is a
 prerelease and never becomes GitHub's `latest` release.
 
-The Linux `.deb` and `.rpm` are the exception to "installs next to": both
-identities' packages install the same paths (`/usr/bin/tine`, the icons, the man
-pages), so they cannot be installed together. Each package names the other
-(`tine`, `tine-beta`) in `Conflicts` and `Replaces` (`.rpm`: `Conflicts` and
-`Obsoletes`), so installing one removes the other instead of failing; the lists
-are derived from the switch. User data is per identifier and is not touched.
-The AppImage and the Flatpak install beside either.
+On Linux the `.deb`, `.rpm` and AppImage name their command, icons and man
+pages after the identity's `linuxBinaryName` (`tine`, `tine-beta`), so the two
+apps' packages share no file and install next to each other with no package
+relation. `scripts/build-release-bundles.mjs` passes the name to the bundler
+(which renames the built binary to it); every other build keeps
+`target/release/tine`. The release build compares its packages with the latest
+stable release's (`scripts/check-linux-package-paths.mjs`).
 
 The internal switch key remains `experiment`. Its Beta identity is new: the
 former experiment identity never shipped, so there is no migration from it.
@@ -46,7 +46,7 @@ remain accepted for the current campaign build and stable tooling.
   "identities": {
     "release": {
       "identifier": "page.tine.Tine", "productName": "Tine",
-      "androidApplicationId": "page.tine.app", "deployName": "tine", "iconDirectory": "icons",
+      "androidApplicationId": "page.tine.app", "deployName": "tine", "linuxBinaryName": "tine", "iconDirectory": "icons",
       "ios": {
         "displayName": "TineOutline", "appStoreAppleId": "6804403687",
         "provisioningProfileSecret": "IOS_MOBILE_PROVISION",
@@ -55,7 +55,7 @@ remain accepted for the current campaign build and stable tooling.
     },
     "experiment": {
       "identifier": "page.tine.TineBeta", "productName": "Tine Beta",
-      "androidApplicationId": "page.tine.beta", "deployName": "tine-og", "iconDirectory": "icons-beta",
+      "androidApplicationId": "page.tine.beta", "deployName": "tine-og", "linuxBinaryName": "tine-beta", "iconDirectory": "icons-beta",
       "ios": {
         "displayName": "Tine Beta", "appStoreAppleId": "6832052325",
         "provisioningProfileSecret": "IOS_BETA_MOBILE_PROVISION",
@@ -82,6 +82,7 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Release filenames (`scripts/release-layout.mjs`) | derive from `productName`; whitespace becomes `-` for GitHub assets, while `sourceAssets` names Tauri outputs verbatim |
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
 | Deploy destination (`scripts/deploy.sh`) | `~/research/<deployName>` |
+| Command, icon and man-page names in the Linux `.deb`, `.rpm` and AppImage | `linuxBinaryName` |
 | Native E2E journeys | `scripts/lib/app-identity.mjs` (`APP_ID`, `IDENTITY`) |
 | Flatpak (`.github/workflows/flatpak.yml`) | `flatpak/` carries the released identity; `scripts/derive-flatpak-identity.mjs` derives the app id, `Name=`, metainfo `<id>`/`<name>`/`<releases>` and every install path for the identity the tree ships (the Beta bundle is `page.tine.TineBeta`, so it installs beside a stable Tine Flatpak with its own `~/.var/app/<id>/` data). The workflow's `identity` input must equal `ship`; a mismatch is refused |
 

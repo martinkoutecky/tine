@@ -45,11 +45,6 @@ export function iosIdentity(identity = IDENTITY) {
   };
 }
 
-/** The name the bundler gives an identity's .deb and .rpm: its product name in kebab case. */
-export function linuxPackageName(identity) {
-  return identity.productName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-}
-
 /**
  * The derived identity-bearing files for `ship`, as { relativePath: text },
  * computed from the files currently under `root`. Pure: writes nothing.
@@ -75,17 +70,13 @@ export function deriveIdentityFiles(root, ship) {
     if (!pattern.test(conf)) throw new Error(`${confFile}: no match for ${pattern}`);
     conf = conf.replace(pattern, `$1${JSON.stringify(value)}`);
   }
-  // The .deb and .rpm of every identity install the same paths (/usr/bin/tine,
-  // the icons, the man pages), so two of them cannot be installed together. Each
-  // names the others as packages it replaces; without that, dpkg refuses to
-  // install one over the other.
-  const others = JSON.stringify(Object.values(sw.identities).filter((other) => other !== identity).map(linuxPackageName))
-    .replaceAll(",", ", ");
-  for (const [key, count] of [["conflicts", 2], ["replaces", 1], ["obsoletes", 1]]) {
-    const pattern = new RegExp(`^(        "${key}": )\\[[^\\]]*\\]`, "gm");
-    if ((conf.match(pattern) ?? []).length !== count) throw new Error(`${confFile}: expected ${count} "${key}" line(s)`);
-    conf = conf.replace(pattern, `$1${others}`);
-  }
+  // An identity's .deb and .rpm must share no path with another identity's, or
+  // the two cannot be installed together (tine#1011). The bundler names the
+  // command and the icons after `linuxBinaryName` (scripts/build-release-bundles.mjs
+  // passes it); the man pages' destinations are named here, from the same field.
+  const manPage = /^(\s+"\/?usr\/share\/man\/man1\/)[^"]+(": "\.\.\/docs\/tine)([^"]*)"/gm;
+  if (!manPage.test(conf)) throw new Error(`${confFile}: no man page destinations`);
+  conf = conf.replace(manPage, (_, start, source, rest) => `${start}${identity.linuxBinaryName}${rest}${source}${rest}"`);
   conf = conf.replace(/("icon": \[)([\s\S]*?)(\n    \])/,
     (_, start, entries, end) => start + entries.replace(/"icons(?:-beta)?\//g, `"${identity.iconDirectory}/`) + end);
   out[confFile] = conf;

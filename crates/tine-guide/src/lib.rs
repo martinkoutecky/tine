@@ -2386,6 +2386,7 @@ mod og_20d_guide_tests {
         for promised in [
             "tine --help",
             "tine --version",
+            "has its own command, `tine-beta`",
             "tine open GRAPH",
             "tine capture",
             "tine export static GRAPH",

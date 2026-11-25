@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Command line
 	- The installed desktop program also has a small command-line interface. Run `tine --help` for the current command list and `tine --version` (or `tine version`) for the exact build version.
+	- Tine Beta installed from a Linux `.deb` or `.rpm` package has its own command, `tine-beta`, so it can sit next to Tine: type `tine-beta` wherever this page says `tine`.
 - ## Open Tine
 	- `tine open GRAPH` opens a graph. The older shorthand `tine GRAPH` remains supported. If Tine is already running, the graph opens in a new window of that instance.
 	- `tine capture` opens Quick Capture. The older `tine --capture` spelling remains supported, so existing desktop shortcuts keep working.
