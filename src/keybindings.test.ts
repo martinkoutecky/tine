@@ -1506,7 +1506,7 @@ describe("secondary default chords (aliases)", () => {
     const row = commandDefaults().find((c) => c.id === "editor/redo");
     expect(row).toBeDefined();
     expect(row!.binding).toBe("mod+shift+z");
-    expect(row!.alias).toBe("mod+y");
+    expect(row!.alias).toBe("ctrl+y");
     // Exactly one Redo row — an alias must not become a second command.
     expect(commandDefaults().filter((c) => c.label === "Redo")).toHaveLength(1);
     expect(paletteCommands().filter((c) => c.id === "editor/redo")).toHaveLength(1);

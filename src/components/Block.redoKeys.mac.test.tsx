@@ -17,8 +17,8 @@ import { Block } from "./Block";
 
 // GH #1044: Redo answers Logseq's two keys, mod+shift+z and mod+y: on a Mac,
 // Cmd+Shift+Z and Cmd+Y, while physical Ctrl+Y stays the system's yank. The
-// second key is a default only: a chord the user bound to any command, in any
-// scope, is theirs. Other platforms: Block.redoKeys.linux.test.tsx.
+// second key is an alias under the rules Ctrl+Y already has on other
+// platforms (Block.redoKeys.linux.test.tsx): it goes once the user binds Redo.
 
 beforeAll(() => initParser());
 

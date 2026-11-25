@@ -500,7 +500,7 @@ const COMMANDS: CommandDef[] = [
   // Logseq binds redo to mod+shift+z and mod+y (GH #491, #1044). The first is the binding Settings shows and
   // remaps; the second rides along as an alias, so the shortcuts list keeps one Redo row: Ctrl+Y on Windows
   // and Linux, Cmd+Y on macOS (physical Ctrl+Y there stays the system's Emacs-style yank in every text field).
-  { id: "editor/redo", binding: "mod+shift+z", alias: "mod+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
+  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "mod+y" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
   // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
