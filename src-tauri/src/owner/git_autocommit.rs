@@ -413,7 +413,9 @@ pub(crate) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
             staged
         } else {
             let staged = repo.repo.find_tree(staged).map_err(failed)?;
-            let sub = staged.get_path(Path::new(&prefix)).ok().map(|e| e.id());
+            let sub = entry_at(&staged, Path::new(&prefix))
+                .map_err(|e| Unusable::Failed(format!("{prefix}: {}", e.message())))?
+                .map(|e| e.id());
             match sub {
                 Some(sub) => repo.tree_with(tip_tree.as_ref(), &prefix, Some(sub), 0o040000),
                 None => repo.tree_with(tip_tree.as_ref(), &prefix, None, 0o040000),
@@ -576,9 +578,9 @@ fn stage(
         }
         let full = workdir.join(path);
         match worktree_entry(&full).map_err(|e| Unusable::Failed(format!("{path}: {e}")))? {
-            None => {
-                let _ = index.remove_path(Path::new(path));
-            }
+            None => index
+                .remove_path(Path::new(path))
+                .map_err(|e| Unusable::Failed(format!("{path}: {}", e.message())))?,
             Some(meta) if !meta.is_file() => {}
             Some(meta) => {
                 if let Some(attr) = converting(&repo.repo, Path::new(path)).map_err(failed)? {
@@ -613,6 +615,21 @@ fn stage(
     Ok(())
 }
 
+/// `tree`'s entry at `path`: `None` only when git says the path is not there
+/// (`NotFound`, also when a parent is a file). An unreadable object is an
+/// error, never an absent entry: read as absent, it would commit the path, or
+/// the whole graph folder, as deleted.
+fn entry_at(
+    tree: &git2::Tree<'_>,
+    path: &Path,
+) -> Result<Option<git2::TreeEntry<'static>>, git2::Error> {
+    match tree.get_path(path) {
+        Ok(entry) => Ok(Some(entry)),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// What the worktree holds at a path git status lists: `None` when nothing is
 /// there, including when a parent folder became a file (`ENOTDIR`: the tracked
 /// file is gone). The one reading of that answer for ordinary and scratch
@@ -638,8 +655,9 @@ fn worktree_entry(full: &Path) -> std::io::Result<Option<std::fs::Metadata>> {
 /// dropped); once the file is confirmed gone, no entry, committed like any
 /// deletion. A temp left on disk therefore never changes the tree: a clean
 /// checkout stays clean and a fast-forward pull stays one (review of
-/// c897398d8, B1). Costs one `lstat`, and runs only for a temp git status
-/// lists.
+/// c897398d8, B1). Only git's not-found is an absent entry: any other error
+/// reading `tip` or removing the index entry fails the round. Costs one
+/// `lstat`, and runs only for a temp git status lists.
 fn keep_tip_for_scratch(
     workdir: &Path,
     tip: Option<&git2::Tree<'_>>,
@@ -650,14 +668,19 @@ fn keep_tip_for_scratch(
         .map_err(|e| Unusable::Failed(format!("{path}: {e}")))?
         // A folder where the temp was: the file is gone.
         .is_some_and(|meta| !meta.is_dir());
-    let kept = on_disk
-        .then(|| tip.and_then(|t| t.get_path(Path::new(path)).ok()))
-        .flatten()
+    let entry = tip
+        .filter(|_| on_disk)
+        .map(|t| entry_at(t, Path::new(path)))
+        .transpose()
+        .map_err(|e| Unusable::Failed(format!("{path}: {}", e.message())))?
+        .flatten();
+    let kept = entry
         .filter(|e| e.kind() == Some(git2::ObjectType::Blob))
         .map(|e| (e.id(), e.filemode() as u32));
     let Some((id, mode)) = kept else {
-        let _ = index.remove_path(Path::new(path));
-        return Ok(());
+        return index
+            .remove_path(Path::new(path))
+            .map_err(|e| Unusable::Failed(format!("{path}: {}", e.message())));
     };
     if index.get_path(Path::new(path), 0).map(|e| (e.id, e.mode)) == Some((id, mode)) {
         return Ok(());

@@ -1859,3 +1859,71 @@ fn a_folder_replaced_by_a_file_commits_the_file() {
         assert_eq!(at_head(&f.repo, child), None, "{child}");
     }
 }
+
+/// A temp still on disk whose `HEAD` entry cannot be read (the folder's tree
+/// object is missing) is not taken for one `HEAD` lacks: the candidate tree
+/// would drop an entry `HEAD` has, a change git never saw. The round fails
+/// and the index keeps what it held.
+#[test]
+fn an_unreadable_tip_entry_for_a_temp_fails_the_round() {
+    const TEMP: &str = "pages/sub/.a.md.4242.17.tmp";
+    let f = fixture(&[("pages/a.md", "- a\n"), (TEMP, "half a save")]);
+    let tree = head(&f.repo).tree().unwrap();
+    let sub = tree.get_path(Path::new("pages/sub")).unwrap().id();
+    let sub = sub.to_string();
+    fs::remove_file(f.work.join(".git/objects").join(&sub[..2]).join(&sub[2..])).unwrap();
+    // A fresh handle: the fixture's caches the object.
+    let repo = Repository::open(&f.work).unwrap();
+    let tip = head(&repo).tree().unwrap();
+    // git tells a missing object from a path the tree lacks.
+    let missing = tip.get_path(Path::new(TEMP)).err().unwrap();
+    assert_ne!(missing.code(), git2::ErrorCode::NotFound);
+    let absent = tip.get_path(Path::new("pages/b.md")).err().unwrap();
+    assert_eq!(absent.code(), git2::ErrorCode::NotFound);
+
+    let mut index = repo.index().unwrap();
+    let result = keep_tip_for_scratch(&f.work, Some(&tip), &mut index, TEMP);
+    assert!(
+        matches!(&result, Err(Unusable::Failed(m)) if m.contains(TEMP)),
+        "{result:?}"
+    );
+    assert!(index.get_path(Path::new(TEMP), 0).is_some());
+    // The whole round commits nothing.
+    let before = head(&repo).id();
+    write(&f.work, "pages/a.md", "- edited\n");
+    assert!(matches!(
+        commit_now(&f.work, MESSAGE),
+        Err(Unusable::Failed(_))
+    ));
+    assert_eq!(head(&Repository::open(&f.work).unwrap()).id(), before);
+}
+
+/// The graph is a folder deep in the repository and the index's tree cache
+/// names a folder object that is no longer readable. Read as "no graph
+/// subtree", the round would commit the whole graph folder as deleted.
+#[test]
+fn an_unreadable_graph_subtree_fails_the_round() {
+    let f = fixture(&[("notes/graph/pages/a.md", "- a\n"), ("notes/readme", "r\n")]);
+    // Another git program stages a change beside the graph and writes the
+    // index's tree cache, so the round reuses `notes`' object unread.
+    write(&f.work, "notes/readme", "r2\n");
+    let mut index = f.repo.index().unwrap();
+    index.add_path(Path::new("notes/readme")).unwrap();
+    let staged = f.repo.find_tree(index.write_tree().unwrap()).unwrap();
+    index.write().unwrap();
+    let notes = staged.get_path(Path::new("notes")).unwrap().id();
+    let notes = notes.to_string();
+    let objects = f.work.join(".git/objects");
+    fs::remove_file(objects.join(&notes[..2]).join(&notes[2..])).unwrap();
+    let before = head(&f.repo).id();
+
+    let result = commit_now(&f.work.join("notes/graph"), MESSAGE);
+    assert!(
+        matches!(&result, Err(Unusable::Failed(m)) if m.contains("notes/graph")),
+        "{result:?}"
+    );
+    let repo = Repository::open(&f.work).unwrap();
+    assert_eq!(head(&repo).id(), before);
+    let page = at_head(&repo, "notes/graph/pages/a.md");
+    assert_eq!(page.as_deref(), Some("- a\n"));
+}
