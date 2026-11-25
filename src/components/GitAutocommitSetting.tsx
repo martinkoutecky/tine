@@ -13,6 +13,13 @@ import { ignoreLines } from "../gitIgnoreNotice";
 
 const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
 
+/** A typed field's text: the device's value until the person types, then what they typed until `settle()`. A status
+ *  refresh only changes the device's value, so it never overwrites typing (#1035). */
+function draftField(device: () => string) {
+  const [draft, setDraft] = createSignal<string | null>(null);
+  return { value: () => draft() ?? device(), input: (text: string) => setDraft(text), settle: () => setDraft(null) };
+}
+
 /** Settings → Graph → Git (ADR 0078 slices 1–2): whether Tine commits this graph's changes to the git repository it
  *  sits in, how often, and whether it syncs them with the branch's upstream. The setting is per device and per graph
  *  (`tine-settings.json`); the backend applies it to the running worker at once. Shows the branch, the remote (read
@@ -27,8 +34,8 @@ export function GitAutocommitSetting(): JSX.Element {
   const [error, setError] = createSignal<string | null>(null);
   const [signingIn, setSigningIn] = createSignal(false);
   const [initializing, setInitializing] = createSignal(false);
-  const [initialRemote, setInitialRemote] = createSignal<string | null>(null);
-  const setupUrl = () => initialRemote() ?? status()?.remote?.url ?? "";
+  const setupUrl = draftField(() => status()?.remote?.url ?? "");
+  const interval = draftField(() => String(status()?.interval_minutes ?? 10));
   const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
 
   const load = async () => {
@@ -67,13 +74,14 @@ export function GitAutocommitSetting(): JSX.Element {
       setError(failed(message(failure)));
     } finally { settled?.(); }
   };
+  // The interval shows the device's value again once the change is answered, refused or not.
   const change = (policy: GitPolicy, minutes: number) =>
-    void write(() => backend().setGitAutocommit(policy, minutes), (e) => t("git-settings-save-failed", { error: e }));
+    void write(() => backend().setGitAutocommit(policy, minutes), (e) => t("git-settings-save-failed", { error: e }), undefined, interval.settle);
   const syncNow = () => void write(() => backend().gitSyncNow(), (e) => t("git-settings-sync-now-failed", { error: e }));
   const initGraph = () => {
     if (initializing()) return;
     setInitializing(true);
-    void write(() => status()?.setup_pending ? backend().gitFinishSetup(setupUrl().trim()) : backend().gitInitGraph(setupUrl().trim()), e => t("git-init-failed", { error: e }), undefined, () => { if (alive) setInitializing(false); });
+    void write(() => status()?.setup_pending ? backend().gitFinishSetup(setupUrl.value().trim()) : backend().gitInitGraph(setupUrl.value().trim()), e => t("git-init-failed", { error: e }), undefined, () => { if (alive) setInitializing(false); });
   };
 
   let username!: HTMLInputElement, token!: HTMLInputElement;
@@ -100,8 +108,8 @@ export function GitAutocommitSetting(): JSX.Element {
         <Show when={!s().repository}><div>{t("git-settings-not-a-repository")}</div></Show>
         <Show when={s().setup_pending}><div>{t("git-init-pending")}</div></Show>
         <div>{t("git-setup-off")}</div>
-        <label>{t("git-init-remote")}<input type="url" class="settings-input" data-git-initial-remote value={setupUrl()} disabled={initializing()}
-          onInput={e => setInitialRemote(e.currentTarget.value)} /></label>
+        <label>{t("git-init-remote")}<input type="url" class="settings-input" data-git-initial-remote value={setupUrl.value()} disabled={initializing()}
+          onInput={e => setupUrl.input(e.currentTarget.value)} /></label>
         <button class="settings-btn" data-git-init disabled={initializing()} onClick={() => void initGraph()}>{initializing() ? t("git-setup-working") : s().setup_pending ? t("git-init-finish") : t("git-init-label")}</button>
       </Show>
       <Show when={s().branch}>{(branch) => <div>{t("git-settings-branch", { branch: branch() })}</div>}</Show>
@@ -150,7 +158,8 @@ export function GitAutocommitSetting(): JSX.Element {
         <Show when={signingIn()}>
           <form data-git-sign-in-form onSubmit={(e) => { e.preventDefault(); signIn(); }}>
             <div>{t("git-settings-sign-in-hint")}</div>
-            <input class="settings-input" ref={username} autocomplete="username" aria-label={t("git-settings-username")} placeholder={t("git-settings-username")} value={s().signed_in ?? ""} data-git-username />
+            {/* Seeded once as the form opens; it keeps what the person types until they submit or cancel (#1035). */}
+            <input class="settings-input" ref={(el) => { username = el; el.value = s().signed_in ?? ""; }} autocomplete="username" aria-label={t("git-settings-username")} placeholder={t("git-settings-username")} data-git-username />
             <input class="settings-input" ref={token} type="password" autocomplete="off" aria-label={t("git-settings-token")} placeholder={t("git-settings-token")} data-git-token />
             <DialogActions
               cancel={<button class="settings-btn" type="button" onClick={() => { token.value = ""; setSigningIn(false); }}>{t("git-settings-sign-in-cancel")}</button>}
@@ -184,11 +193,12 @@ export function GitAutocommitSetting(): JSX.Element {
       <Show when={status()!.policy && status()!.policy !== "off"}>
         {t("git-settings-interval")}
         <input class="settings-input" type="number" min="1" max="1440" data-git-interval
-          aria-label={t("git-settings-interval-aria")} value={status()!.interval_minutes ?? 10}
+          aria-label={t("git-settings-interval-aria")} value={interval.value()}
+          onInput={(e) => interval.input(e.currentTarget.value)}
           onChange={(e) => {
             const minutes = Number(e.currentTarget.value);
             if (Number.isInteger(minutes) && minutes >= 1) change(status()!.policy!, Math.min(minutes, 1440));
-            else e.currentTarget.value = String(status()!.interval_minutes ?? 10);
+            else interval.settle();
           }} />
         {t("git-settings-minutes")}
       </Show>
