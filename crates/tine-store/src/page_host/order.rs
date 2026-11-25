@@ -1129,7 +1129,11 @@ impl<F: HostIo> Host<F> {
                 Self::source_original(&mut self.fs, &chosen.source, &chosen.preimage, &source);
             let receiver = if chosen.on_receiver {
                 Ok(bytes.clone())
-            } else if original == Original::Durable {
+            } else if original != Original::No {
+                // The source holds the original: its slot is taken, so the
+                // phase is Cancelled (durable) or Retained (unwitnessed)
+                // whatever the receiver holds; an unreadable receiver must not
+                // refuse the choice (review of 454a4381a, B2).
                 Ok(None)
             } else {
                 self.fs.read_page(&chosen.receiver)

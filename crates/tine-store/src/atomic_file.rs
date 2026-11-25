@@ -686,8 +686,9 @@ pub(crate) fn sync_existing(path: &Path) -> io::Result<()> {
     sync_target_directory(dir)
 }
 
-/// File part of the existing durability recipe.
-fn sync_file_bytes(path: &Path) -> io::Result<()> {
+/// File part of the existing durability recipe; also the custody witness's
+/// file sync (an external writer may not have flushed equal bytes).
+pub(crate) fn sync_file_bytes(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     let file = fs::OpenOptions::new().write(true).open(path);
     #[cfg(not(windows))]

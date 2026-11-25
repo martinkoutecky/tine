@@ -836,8 +836,8 @@ impl HostIo for ProductionIo {
 
     fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool {
         // The very file: its bytes and its handle's stamps before and after
-        // them (a read can move a file's times, GH #811), then the chain's
-        // syncs, then one metadata call: still that file, unchanged.
+        // them (a read can move a file's times, GH #811), its fsync, then the
+        // chain's syncs, then one metadata call: still that file, unchanged.
         let Some(bytes) = bytes.as_deref() else {
             return false;
         };
@@ -849,6 +849,11 @@ impl HostIo for ProductionIo {
             return false;
         };
         if now.as_slice() != bytes || !before.same_identity(&after) {
+            return false;
+        }
+        // The file's own bytes too: an external editor or sync may have
+        // written them without a flush (review of 454a4381a, B1).
+        if crate::atomic_file::sync_file_bytes(&path).is_err() {
             return false;
         }
         // Every directory from the page's up to the graph root, now: a

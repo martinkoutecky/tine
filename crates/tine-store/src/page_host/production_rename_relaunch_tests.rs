@@ -1082,6 +1082,44 @@ fn a_use_disk_whose_source_directory_sync_fails_keeps_custody() {
     assert!(trashed(&f).is_empty());
 }
 
+/// Review of 454a4381a, B1: the witness flushes the source file's own bytes
+/// (another program may have written them without a flush). A failed file
+/// sync keeps custody, as a failed directory sync does.
+#[test]
+fn a_use_disk_whose_source_file_sync_fails_keeps_custody() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    replace_outside(&f, "c.md", OLD);
+    crate::atomic_file::FAIL_FILE_SYNC.with(|fail| fail.set(true));
+    f.send("c.md", RequestKind::Discard);
+    assert!(f.host.order.restorable("a.md").is_some(), "retained");
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD));
+}
+
+/// Review of 454a4381a, B2: Use Disk on the source of a pending rename whose
+/// witness fails while the receiver cannot be read still records the choice
+/// (custody kept), instead of refusing it.
+#[test]
+fn a_use_disk_on_the_source_with_an_unreadable_receiver_keeps_custody() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    let root = f.graph.clone();
+    f.host.fs.sync_faults.insert(root, io::ErrorKind::Other);
+    let c = f.graph.join("c.md");
+    let _ = std::fs::remove_file(&c);
+    std::fs::create_dir(&c).unwrap();
+    f.send("a.md", RequestKind::Discard);
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(OLD.as_bytes()),
+        "A takes its disk version"
+    );
+    assert!(f.host.order.restorable("a.md").is_some(), "retained");
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD));
+}
+
 /// A graph whose filesystem offers no directory sync (NFS, FUSE): the
 /// source gets the same weak witness the save path and the receiver get
 /// there (a decision the fix-launch-custody receipt hands back). The
