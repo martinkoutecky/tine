@@ -178,6 +178,7 @@ impl<F: HostIo> Host<F> {
         &mut self,
         job: &mut SaveJob,
         cause: &mut Option<IoFailure>,
+        claimed: &mut Option<String>,
     ) -> Option<Outcome> {
         let key = job.page.clone();
         match self.creation_twin(job) {
@@ -190,6 +191,7 @@ impl<F: HostIo> Host<F> {
                 None
             }
             Ok(Some(existing)) => {
+                *claimed = Some(existing.clone());
                 self.events.push(Event::Twin {
                     page: key,
                     existing,
@@ -275,6 +277,8 @@ impl<F: HostIo> Host<F> {
         let key = job.page.clone();
         // The failed step's diagnosis for the page's notice (Q-P2b-3).
         let mut cause = None;
+        // The file a creation's twin check found claiming the page.
+        let mut claimed = None;
         let result = match job.phase {
             // A failure is saveFail (L442-445): nothing was renamed. After three
             // consecutive filesystem errors the save goes ahead, the error stays
@@ -341,7 +345,7 @@ impl<F: HostIo> Host<F> {
                             cause = Some(e);
                             Some(Outcome::Failed)
                         }
-                        Ok(None) => self.twin_or_marker(&mut job, &mut cause),
+                        Ok(None) => self.twin_or_marker(&mut job, &mut cause, &mut claimed),
                     }
                 }
                 // A page an order waits for whose path already holds this
@@ -352,12 +356,17 @@ impl<F: HostIo> Host<F> {
                 // its post-check still guards the pair.
                 Ok(bytes) if bytes == job.bytes && self.order.awaits(&key) => {
                     job.base = Base::Known(bytes);
-                    self.twin_or_marker(&mut job, &mut cause)
+                    self.twin_or_marker(&mut job, &mut cause, &mut claimed)
                 }
                 Ok(bytes) => {
                     if self.allocator_busy() {
                         self.job = Some(job);
                         return Disposition::Waiting;
+                    }
+                    // A restore's create over a slot taken meanwhile ends:
+                    // the page shows that file's text (its record says so).
+                    if bytes.is_some() {
+                        (self.order).restore_failed(&key, io::RestoreRefusal::Occupied);
                     }
                     self.adopt_read(&key, bytes);
                     // The base-revision guard ended this save without a
@@ -607,6 +616,16 @@ impl<F: HostIo> Host<F> {
                 });
             } else {
                 page.risk = true;
+                // A running restore's create did not publish: its record
+                // names why, and it retries as this save does.
+                let problem = match claimed {
+                    Some(file) => io::RestoreRefusal::Claimed { file },
+                    None => io::RestoreRefusal::Failed {
+                        operation: cause.as_ref().and_then(|c| c.operation),
+                        os_error: cause.as_ref().and_then(|c| c.os_error),
+                    },
+                };
+                self.order.restore_failed(&key, problem);
             }
             self.set_page(&key, Some(page));
             self.events.push(Event::SaveOutcome {

@@ -1051,7 +1051,7 @@ impl HostIo for ModelFs {
             unavailable: self.down.then(|| "drafts unsynced".into()),
             unreadable: vec![],
             unsaved: vec![],
-            restorable: vec![],
+            restorable: Default::default(),
         }
     }
 

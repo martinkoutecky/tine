@@ -253,6 +253,12 @@ pub(super) enum Removal {
     Refused,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Pairs `Order::pairs` visited on this thread (PC-1 pins).
+    pub(super) static PAIR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Order {
     replies: BTreeMap<ReplyId, Slot>,
@@ -266,6 +272,15 @@ pub(super) struct Order {
     release_receivers: BTreeMap<PageKey, PageKey>,
     publication_pending: BTreeMap<ReplyId, PublicationWatch>,
     publication_versions: BTreeMap<PageKey, (u64, Arc<PublicationWatch>)>,
+    /// Moves whenever the restorable list may have changed: a pair joined
+    /// or left `paired`, a pair's phase or choice changed, or a restore
+    /// record changed. The window's freshness check compares it, so a
+    /// collect with no such change visits no pair (PC-1).
+    restorable_generation: u64,
+    /// The host's record of each restore the window asked for, by source,
+    /// with the vehicle whose pair it restores (a record of an older
+    /// operation says nothing about a newer pair).
+    restores: BTreeMap<PageKey, (String, io::RestoreState)>,
 }
 
 #[derive(Clone, Debug)]
@@ -418,6 +433,10 @@ impl Order {
         self.paired
             .iter()
             .flat_map(|(name, op)| op.pairs.iter().map(move |p| (name, p)))
+            .inspect(|_| {
+                #[cfg(test)]
+                PAIR_VISITS.with(|visits| visits.set(visits.get() + 1));
+            })
     }
 
     fn active(&self, source: &str) -> Option<(&String, &Pair)> {
@@ -435,6 +454,75 @@ impl Order {
     /// Adopt a durable paired operation (admission's terminal, or launch).
     pub fn adopt(&mut self, name: String, op: PairedOp) {
         self.paired.insert(name, op);
+        self.pairs_changed();
+    }
+
+    /// The restorable list may have changed (`restorable_generation`).
+    fn pairs_changed(&mut self) {
+        self.restorable_generation = self.restorable_generation.wrapping_add(1);
+    }
+
+    /// Whether the restorable list may have changed since a reader saw
+    /// `generation`: a comparison, no pair visited.
+    pub fn restorable_generation(&self) -> u64 {
+        self.restorable_generation
+    }
+
+    /// The host's record of `key`'s latest restore of the pair in `vehicle`.
+    pub fn restore_record(&self, key: &str, vehicle: &str) -> Option<&io::RestoreState> {
+        (self.restores.get(key))
+            .filter(|(of, _)| of == vehicle)
+            .map(|(_, state)| state)
+    }
+
+    /// The restores this host finished (`Restored`), by source.
+    pub fn restored_sources(&self) -> impl Iterator<Item = &PageKey> {
+        (self.restores.iter())
+            .filter(|(_, (_, state))| *state == io::RestoreState::Restored)
+            .map(|(key, _)| key)
+    }
+
+    /// Record what happened to `key`'s restore of the pair in `vehicle`.
+    pub fn record_restore(&mut self, key: &str, vehicle: &str, state: io::RestoreState) {
+        let record = (vehicle.to_owned(), state);
+        if self.restores.get(key) != Some(&record) {
+            self.restores.insert(key.to_owned(), record);
+            self.pairs_changed();
+        }
+    }
+
+    /// Whether `key`'s restore is running (admitted, not yet published).
+    pub fn restoring(&self, key: &str) -> bool {
+        (self.restores.get(key))
+            .is_some_and(|(_, state)| matches!(state, io::RestoreState::Restoring { .. }))
+    }
+
+    /// `key`'s running restore did not publish this attempt (`problem`):
+    /// a slot taken before the create ends it (`Occupied`), anything else
+    /// is the latest problem of a create that keeps retrying. No running
+    /// restore: nothing to record.
+    pub fn restore_failed(&mut self, key: &str, problem: io::RestoreRefusal) {
+        if !self.restoring(key) {
+            return;
+        }
+        let vehicle = self.restores[key].0.clone();
+        let state = match problem {
+            io::RestoreRefusal::Occupied => io::RestoreState::Refused(problem),
+            problem => io::RestoreState::Restoring {
+                problem: Some(problem),
+            },
+        };
+        self.record_restore(key, &vehicle, state);
+    }
+
+    /// A new window session (`window_reloaded`) starts with no finished
+    /// restores to tell.
+    pub fn forget_restored(&mut self) {
+        let before = self.restores.len();
+        (self.restores).retain(|_, (_, state)| *state != io::RestoreState::Restored);
+        if self.restores.len() != before {
+            self.pairs_changed();
+        }
     }
 
     /// A settlement rewrite of `old` made its new draft `new` (with
@@ -464,12 +552,24 @@ impl Order {
             }
         }
         op.decisions = decisions;
-        self.paired.insert(new, op);
+        self.paired.insert(new.clone(), op);
+        // A record follows its pair to the rewritten vehicle.
+        for (vehicle, _) in self.restores.values_mut() {
+            if vehicle == old {
+                *vehicle = new.clone();
+            }
+        }
+        self.pairs_changed();
     }
 
     /// Its operation vehicle is durably gone: nothing more is owed.
     pub fn forget(&mut self, name: &str) {
-        self.paired.remove(name);
+        if self.paired.remove(name).is_some() {
+            (self.restores).retain(|_, (vehicle, state)| {
+                vehicle != name || *state == io::RestoreState::Restored
+            });
+            self.pairs_changed();
+        }
     }
 
     pub fn paired(&self, name: &str) -> Option<&PairedOp> {
@@ -576,6 +676,7 @@ impl Order {
                 };
                 pair.choice = choice;
                 pair.phase = phase.unwrap_or(PairPhase::Cancelled);
+                self.restorable_generation = self.restorable_generation.wrapping_add(1);
             }
             op.decisions
                 .extend(decision.map(|(name, d)| (name, Some(d))));
@@ -627,6 +728,7 @@ impl Order {
                 for pair in op.pairs.iter_mut().filter(|p| p.source_member == member) {
                     if pair.choice == PairChoice::None {
                         pair.choice = PairChoice::Superseded;
+                        self.restorable_generation = self.restorable_generation.wrapping_add(1);
                     }
                 }
             }
@@ -653,6 +755,7 @@ impl Order {
                     _ => PairPhase::Retained,
                 };
                 pair.phase = phase;
+                self.restorable_generation = self.restorable_generation.wrapping_add(1);
             }
         }
     }
@@ -677,6 +780,7 @@ impl Order {
             }
             op.decisions.insert(decision, None);
             op.unreadable = true;
+            self.restorable_generation = self.restorable_generation.wrapping_add(1);
         }
     }
 
@@ -686,6 +790,7 @@ impl Order {
             for pair in &mut op.pairs {
                 if pair.phase.gated() {
                     pair.phase = PairPhase::Blocked;
+                    self.restorable_generation = self.restorable_generation.wrapping_add(1);
                 }
             }
         }
@@ -707,6 +812,9 @@ impl Order {
             }
         }
         changed.dedup();
+        if !changed.is_empty() {
+            self.pairs_changed();
+        }
         changed
     }
 
@@ -757,6 +865,7 @@ impl Order {
         let pair = self.pair_mut(source)?;
         if matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. }) {
             pair.phase = PairPhase::Held { removed };
+            self.pairs_changed();
         }
         Some(name)
     }
@@ -804,6 +913,7 @@ impl Order {
             for pair in op.pairs.iter_mut().filter(|p| p.source == source) {
                 if pair.phase == phase && pair.choice == PairChoice::None {
                     pair.choice = PairChoice::Superseded;
+                    self.restorable_generation = self.restorable_generation.wrapping_add(1);
                 }
             }
         }
@@ -815,6 +925,7 @@ impl Order {
         let pair = self.pair_mut(source)?;
         if matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. }) {
             pair.phase = phase;
+            self.pairs_changed();
             return Some(name);
         }
         None
@@ -841,6 +952,7 @@ impl Order {
                     } else {
                         PairPhase::Armed
                     };
+                    self.restorable_generation = self.restorable_generation.wrapping_add(1);
                     changed.push(name.clone());
                 }
             }
@@ -863,6 +975,14 @@ impl Order {
                     changed.push(name.clone());
                 }
             }
+        }
+        if !changed.is_empty() {
+            // The window's restore, when one ran, ended as asked.
+            if self.restores.contains_key(source) {
+                let vehicle = changed[0].clone();
+                self.record_restore(source, &vehicle, io::RestoreState::Restored);
+            }
+            self.pairs_changed();
         }
         changed
     }
@@ -899,6 +1019,7 @@ impl Order {
         let name = self.restorable(key)?.0;
         let pair = self.pair_mut(key)?;
         pair.phase = PairPhase::Restore;
+        self.pairs_changed();
         Some(name)
     }
 
@@ -1014,7 +1135,11 @@ impl Order {
     pub fn stop(&mut self) {
         self.gates.clear();
         // Launch reinstalls every durable pairing from the draft store.
+        if !self.paired.is_empty() || !self.restores.is_empty() {
+            self.pairs_changed();
+        }
         self.paired.clear();
+        self.restores.clear();
         self.release_receivers.clear();
         self.publication_pending.clear();
         self.publication_versions.clear();
@@ -1229,18 +1354,37 @@ impl<F: HostIo> Host<F> {
 
     /// The window's restorable sources (`Order::restorable_sources`), one
     /// per key: the pair `restore_source` would take, with the key's
-    /// current spelling and the kept text. Bounded by the durable pairs;
-    /// no I/O.
-    pub(super) fn restorable_sources(&self) -> Vec<io::RestorableSource> {
+    /// current spelling, the kept text and the record of its latest
+    /// restore; then each restore this host finished since the window's
+    /// session began (`Restored`, no text). At the order's current
+    /// generation. One pass over the durable pairs and the records; no I/O.
+    pub(super) fn restorable_list(&self) -> io::RestorableList {
         let mut seen = BTreeSet::new();
-        (self.order.restorable_sources())
+        let mut sources: Vec<_> = (self.order.restorable_sources())
             .filter(|(key, ..)| seen.insert(*key))
-            .map(|(key, _, text)| io::RestorableSource {
+            .map(|(key, vehicle, text)| io::RestorableSource {
                 key: key.clone(),
                 path: self.fs.spelling(key),
                 text: String::from_utf8_lossy(text.as_deref().unwrap_or_default()).into_owned(),
+                state: (self.order.restore_record(key, vehicle))
+                    .filter(|state| **state != io::RestoreState::Restored)
+                    .cloned(),
             })
-            .collect()
+            .collect();
+        let restored = self
+            .order
+            .restored_sources()
+            .filter(|key| !seen.contains(key));
+        sources.extend(restored.map(|key| io::RestorableSource {
+            key: key.clone(),
+            path: self.fs.spelling(key),
+            text: String::new(),
+            state: Some(io::RestoreState::Restored),
+        }));
+        io::RestorableList {
+            generation: self.order.restorable_generation(),
+            sources,
+        }
     }
 
     /// Restore `key`'s admitted preimage after its pair's Use Disk left the
@@ -1260,8 +1404,20 @@ impl<F: HostIo> Host<F> {
         if self.busy(key) || self.allocator_busy() {
             return Disposition::Waiting;
         }
+        // Each answer below is also the host's record of this restore,
+        // which the window's list shows (`restorable_list`).
+        let refuse = |host: &mut Self, reason| {
+            let state = io::RestoreState::Refused(reason);
+            host.order.record_restore(key, &name, state);
+            Disposition::Refused
+        };
         if self.pages.get(key).is_some_and(|p| !p.clean()) {
-            return Disposition::Refused;
+            // A running restore's own text: its record already says how
+            // it stands.
+            if self.order.restoring(key) {
+                return Disposition::Refused;
+            }
+            return refuse(self, io::RestoreRefusal::Unsaved);
         }
         let keys = BTreeSet::from([key.to_owned()]);
         if self.lacks_locks(&keys) {
@@ -1270,10 +1426,22 @@ impl<F: HostIo> Host<F> {
         self.with_locks(&keys, |host| {
             // The slot is absent and no other spelling claims the page
             // (the creation guard's twin check); its save re-checks both.
-            if !matches!(host.fs.read_page(key), Ok(None))
-                || !matches!(host.fs.page_twin(key), Ok(None))
-            {
-                return Disposition::Refused;
+            let slot = host.fs.read_page(key).and_then(|bytes| match bytes {
+                Some(_) => Ok(Some(io::RestoreRefusal::Occupied)),
+                None => {
+                    Ok((host.fs.page_twin(key)?).map(|file| io::RestoreRefusal::Claimed { file }))
+                }
+            });
+            match slot {
+                Ok(None) => {}
+                Ok(Some(reason)) => return refuse(host, reason),
+                Err(e) => {
+                    let reason = io::RestoreRefusal::Failed {
+                        operation: e.operation,
+                        os_error: e.os_error,
+                    };
+                    return refuse(host, reason);
+                }
             }
             #[cfg(test)]
             host.events.push(Event::OperationRead {
@@ -1281,6 +1449,8 @@ impl<F: HostIo> Host<F> {
                 base: Base::Known(None),
             });
             host.order.select_restore(key);
+            let running = io::RestoreState::Restoring { problem: None };
+            host.order.record_restore(key, &name, running);
             host.repair_op(&name);
             host.version = host.next_version();
             let page = Page {

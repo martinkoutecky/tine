@@ -7,7 +7,7 @@ import { DialogActions } from "./DialogActions";
 // the draft. Copying is read-only and never acknowledges a save.
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { flushAll, restoreSource, unsavedDrafts, type RestorableSource } from "../document";
-import { restorableSources } from "../restorableSources";
+import { keptSources, restorableSources } from "../restorableSources";
 import { pushToast } from "../toasts";
 import { mainPaneRouter } from "../router";
 import { writeClipboardText } from "../clipboard";
@@ -44,14 +44,46 @@ function RecoveryDraft(props: { page: PageDto }): JSX.Element {
   </div>;
 }
 
+/** ` (<platform step>, os error <n>)` of a failed step, when the host named
+ * them (as a failed save's toast says it, GH #538). */
+function failedStep(refusal: { operation: string | null; osError: number | null }): string {
+  const parts = [refusal.operation, refusal.osError === null ? null : `os error ${refusal.osError}`]
+    .filter((part): part is string => !!part);
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
+/** What the host's record of this source's latest restore says (`RestoreState`),
+ * the one answer to "what happened to this restore"; nothing before any. */
+function restoreStatus(source: RestorableSource): string {
+  const state = source.state;
+  const path = source.path;
+  if (!state) return "";
+  if (state.kind === "restored") return t("unsaved-recovery-restored", { path });
+  if (state.kind === "restoring") {
+    const problem = state.problem;
+    if (!problem) return t("unsaved-recovery-restoring");
+    if (problem.reason === "claimed") return t("unsaved-recovery-restore-retrying-claimed", { path, file: problem.file });
+    if (problem.reason === "failed") return t("unsaved-recovery-restore-retrying-failed", { path, step: failedStep(problem) });
+    return t("unsaved-recovery-restoring");
+  }
+  switch (state.reason) {
+    case "occupied": return t("unsaved-recovery-restore-refused-occupied", { path });
+    case "claimed": return t("unsaved-recovery-restore-refused-claimed", { path, file: state.file });
+    case "unsaved": return t("unsaved-recovery-restore-refused-unsaved", { path });
+    case "failed": return t("unsaved-recovery-restore-refused-failed", { path, step: failedStep(state) });
+  }
+}
+
 /** A rename's source whose original text a cancelled rename kept (the host's
  * restorable list): Restore puts the text back through the page's own guarded
- * save, and the entry leaves once that publishes. A refusal is shown and the
- * text stays here to copy. */
+ * save. How it stands is the host's record, which the list carries (restoring,
+ * retrying and why, refused and why, restored); the command's reply only says
+ * whether the host recorded it. The text stays here to copy until restored. */
 function KeptSource(props: { source: RestorableSource }): JSX.Element {
   const [message, setMessage] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const path = () => props.source.path;
+  const kind = () => props.source.state?.kind;
   const copy = async () => {
     try {
       await writeClipboardText(props.source.text);
@@ -65,10 +97,9 @@ function KeptSource(props: { source: RestorableSource }): JSX.Element {
     setBusy(true);
     try {
       const outcome = await restoreSource(props.source.key);
-      if (outcome === "applied" || outcome === "pending") setMessage(t("unsaved-recovery-restoring"));
-      else if (outcome === "waiting") pushToast(msg("unsaved-recovery-restore-waiting", { path: path() }), "info");
+      if (outcome === "waiting") pushToast(msg("unsaved-recovery-restore-waiting", { path: path() }), "info");
       else if (outcome === "uncertain") pushToast(msg("unsaved-recovery-restore-uncertain", { path: path() }), "info");
-      else pushToast(msg("unsaved-recovery-restore-refused", { path: path() }), "error");
+      else if (outcome === "refused") pushToast(msg("unsaved-recovery-restore-refused", { path: path() }), "error");
     } catch (error) {
       pushToast(msg("unsaved-recovery-restore-failed", { path: path(), error: String(error) }), "error");
     } finally {
@@ -76,14 +107,19 @@ function KeptSource(props: { source: RestorableSource }): JSX.Element {
     }
   };
   return <section class="unsaved-recovery-entry">
-    <h3>{t("unsaved-recovery-kept-after-a-cancelled-rename", { path: path() })}</h3>
-    <p>{t("unsaved-recovery-kept-after-a-cancelled-rename-detail", { path: path() })}</p>
-    <button class="settings-btn" type="button" disabled={busy()} onClick={() => void restore()}>{t("unsaved-recovery-restore")}</button>
-    <div class="recovery-draft">
-      <pre tabIndex={0}>{props.source.text}</pre>
-      <button class="settings-btn" type="button" onClick={() => void copy()}>{t("unsaved-recovery-copy-draft")}</button>
-      <p role="status">{message()}</p>
-    </div>
+    <Show when={kind() !== "restored"} fallback={<p role="status">{restoreStatus(props.source)}</p>}>
+      <h3>{t("unsaved-recovery-kept-after-a-cancelled-rename", { path: path() })}</h3>
+      <p>{t("unsaved-recovery-kept-after-a-cancelled-rename-detail", { path: path() })}</p>
+      <Show when={kind() !== "restoring"}>
+        <button class="settings-btn" type="button" disabled={busy()} onClick={() => void restore()}>{t("unsaved-recovery-restore")}</button>
+      </Show>
+      <p role="status">{restoreStatus(props.source)}</p>
+      <div class="recovery-draft">
+        <pre tabIndex={0}>{props.source.text}</pre>
+        <button class="settings-btn" type="button" onClick={() => void copy()}>{t("unsaved-recovery-copy-draft")}</button>
+        <p role="status">{message()}</p>
+      </div>
+    </Show>
   </section>;
 }
 
@@ -130,7 +166,7 @@ function RecoveryPanel(): JSX.Element {
         primary={<button class="settings-btn" type="button" disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>} />
       <p role="status">{message()}</p>
       <For each={restorableSources()}>{(source) => <KeptSource source={source} />}</For>
-      <Show when={pages().length === 0 && restorableSources().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
+      <Show when={pages().length === 0 && keptSources().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
       <For each={pages()}>{(entry) => <section class="unsaved-recovery-entry">
         <h3>{entry.name} — {entry.state}</h3>
         <button class="settings-btn" type="button" onClick={() => {

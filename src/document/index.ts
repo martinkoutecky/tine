@@ -108,7 +108,7 @@ export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model
 export { trackAssetWrite } from "./assetWrites";
 export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushPage, restoreSource, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, type UnsavedState } from "./host/wiring";
 export { pendingDataRevision } from "./host/wiring";
-export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision, RestorableSource } from "./host/protocol";
+export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision, RestorableList, RestorableSource, RestoreState } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 export { admitRead } from "./readAdmission";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";

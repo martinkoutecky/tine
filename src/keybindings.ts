@@ -65,6 +65,8 @@ import { stepPageComment } from "./commentReview";
 import { openCommentReviewForFocusedPage, openCommentReviewInSidebar } from "./commentReviewQuery";
 import { toggleAuthorMarks } from "./authorMarksPref";
 import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
+import { keptSources } from "./restorableSources";
+import { openUnsavedRecovery } from "./unsavedRecovery";
 import { cellBlockId, cellSel, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { enterGridEdit, openGridTarget } from "./sheet/gridEditMove";
 import { containingGridCell } from "./sheet/gridNeighbour";
@@ -384,6 +386,9 @@ const COMMANDS: CommandDef[] = [
   { id: "seen/next-change", binding: "", label: msg("command-seen-next-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), 1) },
   { id: "seen/previous-change", binding: "", label: msg("command-seen-previous-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), -1) },
   { id: "seen/mark-graph", binding: "", label: msg("command-seen-mark-graph"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true; }, run: () => void markGraphSeenNow() },
+  // The standing way back to a source a cancelled rename kept (GH #540): the
+  // recovery panel lists it while the graph's restorable list does.
+  { id: "recovery/review-kept-originals", binding: "", label: msg("command-recovery-review-kept-originals"), scope: "global", available: () => keptSources().length > 0, run: () => { if (keptSources().length) openUnsavedRecovery(); }, global: true },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
   { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },
   { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },

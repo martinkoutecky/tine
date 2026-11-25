@@ -79,14 +79,26 @@ pub struct DraftStatus {
     pub(crate) unreadable: Vec<String>,
     pub(crate) unsaved: Vec<UnsavedPage>,
     /// The sources a cancelled rename kept the original text of, which the
-    /// window may restore (`Host::restorable_sources`). Page mail carries
-    /// the same list whenever it changes in the session.
-    pub(crate) restorable: Vec<RestorableSource>,
+    /// window may restore (`Host::restorable_list`). Page mail carries the
+    /// same list whenever it changes in the session.
+    pub(crate) restorable: RestorableList,
+}
+
+/// The host's restorable sources at one `generation` of the order's pairs
+/// (`Order::restorable_generation`): a window keeps the newest list it was
+/// given, so a list replayed late never replaces a newer one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorableList {
+    pub(crate) generation: u64,
+    pub(crate) sources: Vec<RestorableSource>,
 }
 
 /// A rename's source whose pair a Use Disk cancelled after the source was
 /// removed: its original text is only in the rename's recovery draft
 /// (`Order::restorable_sources`), and `page_restore_source` restores it.
+/// A restore this host finished stays listed as `Restored` (no text) until
+/// the window reloads, so the window always learns how it ended.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestorableSource {
@@ -96,6 +108,47 @@ pub struct RestorableSource {
     pub(crate) path: String,
     /// The kept original text (lossy UTF-8), for the panel's Copy draft.
     pub(crate) text: String,
+    /// The host's record of the latest restore of this source, if any.
+    pub(crate) state: Option<RestoreState>,
+}
+
+/// What happened to a restore the window asked for (`Order::restores`), the
+/// one answer the recovery panel shows.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RestoreState {
+    /// Admitted: the page holds the original text and its guarded create
+    /// runs, retrying as any failed save does. `problem` is why its latest
+    /// attempt did not publish (another file claims the page, or a failed
+    /// step), until one publishes.
+    Restoring { problem: Option<RestoreRefusal> },
+    /// Its create published the original text and ended the pair.
+    Restored,
+    /// Not restored, and nothing runs: refused at admission, or the slot
+    /// was taken before the create (the page then shows that file's text).
+    /// The original text stays kept; Restore may be asked again.
+    Refused(RestoreRefusal),
+}
+
+/// Why a restore was refused, or why its latest attempt did not publish
+/// (flattened into its state: `{kind, reason, file?, operation?, osError?}`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "camelCase")]
+pub enum RestoreRefusal {
+    /// A file exists again at the source's path.
+    Occupied,
+    /// Another file claims the page (a twin spelling or extension, or a
+    /// file whose title names it).
+    Claimed { file: String },
+    /// The page holds unsaved text.
+    Unsaved,
+    /// A filesystem step failed: its platform step and OS error (I-5:
+    /// never a path).
+    Failed {
+        operation: Option<&'static str>,
+        #[serde(rename = "osError")]
+        os_error: Option<i32>,
+    },
 }
 
 /// A page whose text is not on disk yet, and why (STEP3 §9, B-QA).

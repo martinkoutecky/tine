@@ -72,10 +72,10 @@ export interface PageMail {
   answer: MailAnswer | null;
   notice: MailNotice;
   /** The restorable sources (`DraftStatus.restorable`), on the first mail
-   * after the list differs from the one last mailed in the session (empty
-   * at its start, so a session starting with sources mails them once). A mail with an empty key
-   * carries only this. */
-  restorable?: RestorableSource[];
+   * after the list differs from the one the session was last told of (its
+   * `windowReloaded` reply, or mail). A mail with an empty key carries only
+   * this. */
+  restorable?: RestorableList;
 }
 
 /** A command the host did not admit: nothing was sent (`binding.rs` `PageRefusal`). */
@@ -108,18 +108,45 @@ export interface DraftStatus {
   unavailable?: string | null;
   unreadable: string[];
   unsaved?: UnsavedPage[];
-  /** Sources whose original text a cancelled rename kept (`io.rs` `RestorableSource`). */
-  restorable?: RestorableSource[];
+  /** Sources whose original text a cancelled rename kept (`io.rs` `RestorableList`). */
+  restorable?: RestorableList;
+}
+
+/** The host's restorable sources at one generation of its rename pairs
+ * (`io.rs` `RestorableList`): a window keeps the newest list it was given, so
+ * a list replayed late never replaces a newer one. */
+export interface RestorableList {
+  generation: number;
+  sources: RestorableSource[];
 }
 
 /** A rename's source whose pair a Use Disk cancelled after the source was
  * removed: its original text is only in the rename's recovery draft, and
- * `page_restore_source` restores it. `text` is that original, for Copy. */
+ * `page_restore_source` restores it. `text` is that original, for Copy.
+ * `state` is the host's record of its latest restore (`io.rs` `RestoreState`);
+ * a finished one stays listed as "restored" (no text) for the session. */
 export interface RestorableSource {
   key: string;
   path: string;
   text: string;
+  state?: RestoreState | null;
 }
+
+/** Why a restore was refused, or why its latest attempt did not publish
+ * (`io.rs` `RestoreRefusal`). `operation`/`osError` name a failed platform
+ * step, never a path (I-5). */
+export type RestoreRefusal =
+  | { reason: "occupied" }
+  | { reason: "claimed"; file: string }
+  | { reason: "unsaved" }
+  | { reason: "failed"; operation: string | null; osError: number | null };
+
+/** The host's record of a restore (`io.rs` `RestoreState`): running (with the
+ * latest attempt's problem while its create retries), restored, or refused. */
+export type RestoreState =
+  | { kind: "restoring"; problem: RestoreRefusal | null }
+  | { kind: "restored" }
+  | ({ kind: "refused" } & RestoreRefusal);
 
 /** A page whose text is not on disk yet (`io.rs` `UnsavedPage`). `recovered`:
  * launch recovered it from a crash-recovery copy and Tine is saving it. */
@@ -153,7 +180,7 @@ export interface PublishedNeed {
  * `page_*` promise also means not admitted (no slot, no host), or the host
  * panicked; a request id is never reused. */
 export interface HostPort {
-  windowReloaded(): Promise<{ session: number; nextId: number }>;
+  windowReloaded(): Promise<{ session: number; nextId: number; restorable?: RestorableList }>;
   /** `path` is the file the window's text was installed from, or, for a page
    * with no file yet, null: the port resolves the file it will be created as
    * (`resolve_page`) and sends that, never null (REVIEW-3b-P1). The reply says

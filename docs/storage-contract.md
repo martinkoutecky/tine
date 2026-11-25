@@ -1388,12 +1388,20 @@ from the scanned drafts before any recovered save or choice.
   the source page at risk over an absent base; its own draft and guarded
   create publish it, refused over an occupied slot, a claimant or twin, or
   unsaved text, and that publication cancels the pair. The window offers it
-  from the unsaved-changes recovery panel: the `load_graph` draft status and
-  page mail (whenever the list differs from the last one the session mailed) name
-  each source `Order::restorable_sources` lists (a pair in restore or
-  retained after a Use Disk; never a superseded one), with its kept text, and
-  `page_restore_source` runs the guarded restoration. A refusal leaves the
-  pair and its draft as they were.
+  from the unsaved-changes recovery panel: the `load_graph` draft status, each
+  window session's `page_window_reloaded` reply, and page mail (whenever the
+  list differs from the one the session was last told of) name each source
+  `Order::restorable_sources` lists (a pair in restore or retained after a
+  Use Disk; never a superseded one), with its kept text and the host's
+  record of its latest restore (`io::RestoreState`: restoring, with the
+  latest attempt's problem while the create retries; refused and why;
+  restored, which stays listed without text until the next window session).
+  Each list carries the order's restorable generation, which moves on any
+  pair or record change: a collect at an unchanged generation visits no
+  pair, and the window keeps the newest mailed list (a replayed older one
+  changes nothing). `page_restore_source` runs the guarded restoration and
+  says only whether the host recorded it. A refusal leaves the pair and its
+  draft as they were.
 - A decision this code does not act on (reviewed text `1`, or superseding
   input `2` on a receiver) or an unreadable or mismatched decision naming a
   readable paired operation blocks that operation's source removals and

@@ -81,13 +81,16 @@ fn next_session() -> u64 {
 
 /// `page_window_reloaded`'s reply: the window's new session, and the first
 /// request id the host can admit (ids never restart below its watermark).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reloaded {
     /// The session every later command carries.
     pub(crate) session: u64,
     /// One past the host's last admitted request id.
     pub(crate) next_id: u64,
+    /// The host's restorable list the session starts with (`PageMail`
+    /// carries its changes).
+    pub(crate) restorable: io::RestorableList,
 }
 
 /// `page_open`'s reply.
@@ -314,7 +317,7 @@ pub struct PageMail {
     /// mail after the list changed in the session. A mail with an empty
     /// key carries only this: no page has an empty key.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) restorable: Option<Vec<io::RestorableSource>>,
+    pub(crate) restorable: Option<io::RestorableList>,
 }
 
 /// A host page operation's disposition (delete, rename).
@@ -371,7 +374,7 @@ pub(super) struct MailFacts {
     /// The window session current when the mail was collected.
     pub session: u64,
     /// The restorable sources, when the list changed (`PageMail`).
-    pub restorable: Option<Vec<io::RestorableSource>>,
+    pub restorable: Option<io::RestorableList>,
 }
 
 /// The page notices the binding keeps beside the host's (A2, REVIEW-3a).
@@ -485,11 +488,23 @@ pub(super) struct Book {
     /// No window owns the session any more (`orphan_stop`): the window
     /// crash ran once for that owner. A window reload clears it.
     orphaned: bool,
-    /// The restorable pairs (source, vehicle name) the session's window
-    /// last heard of (`Order::restorable_sources`) by mail; empty at the
-    /// session's start (a window reload clears it), so an empty list is
-    /// never mailed and a listed one is mailed once.
-    restorable: Vec<(PageKey, String)>,
+    /// The order's restorable generation this session's window was last
+    /// told of, by its reload reply or mail (`Order::restorable_generation`):
+    /// a collect at the same generation visits no pair.
+    restorable_seen: u64,
+    /// What that list said, without its text (`said`): a new generation
+    /// whose list says the same is not mailed again.
+    restorable_said: Vec<Said>,
+}
+
+/// A listed source as the window was told of it: its key, path, record and
+/// the length of its kept text (the text of a key's pair never changes).
+type Said = (String, String, Option<io::RestoreState>, usize);
+
+fn said(list: &io::RestorableList) -> Vec<Said> {
+    (list.sources.iter())
+        .map(|s| (s.key.clone(), s.path.clone(), s.state.clone(), s.text.len()))
+        .collect()
 }
 
 impl Book {
@@ -769,26 +784,26 @@ impl Book {
     }
 
     /// The restorable sources ride the first mail after their list differs
-    /// from the one last mailed in the session (`PageMail::restorable`;
-    /// empty at the session's start), or a mail of their own (empty key)
-    /// when no page has mail: the restoring save that ends a pair need not
-    /// mail the window any page it holds. The graph-open reply names the
-    /// list a session starts with, so the window opens the recovery panel
-    /// only for a source it did not know. One pass over the durable pairs,
-    /// which allocates only when the list changed.
+    /// from the one the session's window was last told of (its reload
+    /// reply, or mail), or a mail of their own (empty key) when no page has
+    /// mail: the restoring save that ends a pair need not mail the window
+    /// any page it holds. Freshness is the order's restorable generation:
+    /// a collect at the generation last told visits no pair; a new one
+    /// builds the list once (one pass over the durable pairs) and mails it
+    /// only when it says something new.
     pub(super) fn mail_restorable<F: HostIo>(&mut self, host: &Host<F>, delivery: &mut Delivery) {
-        let sent = self.restorable.iter().map(|(key, name)| (key, name));
-        let now = host
-            .order
-            .restorable_sources()
-            .map(|(key, name, _)| (key, name));
-        if now.eq(sent) {
+        let generation = host.order.restorable_generation();
+        if generation == self.restorable_seen {
             return;
         }
-        self.restorable = (host.order.restorable_sources())
-            .map(|(key, name, _)| (key.clone(), name.clone()))
-            .collect();
-        let restorable = Some(host.restorable_sources());
+        self.restorable_seen = generation;
+        let list = host.restorable_list();
+        let said = said(&list);
+        if said == self.restorable_said {
+            return;
+        }
+        self.restorable_said = said;
+        let restorable = Some(list);
         if let Some((.., facts)) = delivery.mail.first_mut() {
             facts.restorable = restorable;
             return;
@@ -1004,16 +1019,23 @@ impl PageHost {
     /// the first request id the host can admit (R8).
     pub fn window_reloaded(&self) -> Reloaded {
         let reloaded = self.driver.shared.call(|state| {
-            let next_id = state.progress.with_host(|host| {
+            let (next_id, restorable) = state.progress.with_host(|host| {
                 host.window_crash();
-                host.last_admitted.saturating_add(1)
+                // The new session starts from the host's list now (no
+                // finished restore of an older session), so a window
+                // rebinding to a host whose list emptied meanwhile hears
+                // that too.
+                host.order.forget_restored();
+                (host.last_admitted.saturating_add(1), host.restorable_list())
             });
             state.book.session = next_session();
             state.book.orphaned = false;
-            state.book.restorable.clear();
+            state.book.restorable_seen = restorable.generation;
+            state.book.restorable_said = said(&restorable);
             Reloaded {
                 session: state.book.session,
                 next_id,
+                restorable,
             }
         });
         reloaded.expect(ENDED)

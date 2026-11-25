@@ -87,6 +87,12 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-25, GH #540 (rename recovery, review of 7f00b9a25 blocker 1: a standing
+  way back to a kept source): `commands.registry` 157→158 for **Review pages kept
+  after a cancelled rename**. It shows in the palette only while a source is kept
+  (so `commands.palette` does not grow at rest); palette-only is not possible
+  because every registry command is a Shortcuts row, and hiding the row while the
+  list is empty would make the Shortcuts list change under the user.
 - 2026-11-13, GH #926 (Martin: "926 yes to all", Q-S3): `settings.tabs`
   10→11 for the explicitly approved first-level **Themes** category. Its eight
   existing controls move out of Appearance: `settings.appearance.open` 31→23

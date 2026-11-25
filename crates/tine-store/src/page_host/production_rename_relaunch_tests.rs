@@ -7,6 +7,7 @@
 //! dropping it without a stop is a process death (it writes nothing it is
 //! not stepped through), so every cut below is "stop stepping here".
 use super::*;
+use crate::page_host::io as hio;
 
 const OLD: &str = "- old\n";
 const REF: &str = "- see [[A]]\n";
@@ -878,24 +879,48 @@ fn restorable_after_use_disk() -> Fixture {
     f
 }
 
-/// The recovery panel's list (`Host::restorable_sources`): only a source
+impl<F: hio::HostIo> crate::page_host::Host<F> {
+    /// The listed sources a restore could still take (`restorable_list`
+    /// without the finished ones).
+    pub(crate) fn restorable_sources(&self) -> Vec<hio::RestorableSource> {
+        let list = self.restorable_list().sources;
+        let finished = Some(hio::RestoreState::Restored);
+        list.into_iter().filter(|s| s.state != finished).collect()
+    }
+}
+
+fn kept(state: Option<hio::RestoreState>) -> hio::RestorableSource {
+    hio::RestorableSource {
+        key: "a.md".into(),
+        path: "a.md".into(),
+        text: OLD.into(),
+        state,
+    }
+}
+
+fn refused(reason: hio::RestoreRefusal) -> Option<hio::RestoreState> {
+    Some(hio::RestoreState::Refused(reason))
+}
+
+fn restoring(problem: Option<hio::RestoreRefusal>) -> Option<hio::RestoreState> {
+    Some(hio::RestoreState::Restoring { problem })
+}
+
+/// The recovery panel's list (`Host::restorable_list`): only a source
 /// whose pair a Use Disk left restorable, with its spelling and the kept
 /// original text; a restoration refused (the slot taken meanwhile) keeps it
-/// listed and changes nothing.
+/// listed, changes nothing, and the list says why.
 #[test]
 fn a_cancelled_rename_lists_its_source_as_restorable() {
     let mut f = restorable_after_use_disk();
-    assert_eq!(
-        f.host.restorable_sources(),
-        vec![crate::page_host::io::RestorableSource {
-            key: "a.md".into(),
-            path: "a.md".into(),
-            text: OLD.into(),
-        }]
-    );
+    assert_eq!(f.host.restorable_list().sources, vec![kept(None)]);
     fs::write(f.graph.join("a.md"), "- someone else\n").unwrap();
     assert_eq!(f.host.restore_source("a.md"), Disposition::Refused);
-    assert_eq!(f.host.restorable_sources().len(), 1, "still listed");
+    assert_eq!(
+        f.host.restorable_list().sources,
+        vec![kept(refused(hio::RestoreRefusal::Occupied))],
+        "still listed, with the refusal"
+    );
     assert_eq!(on_disk(&f, "a.md").as_deref(), Some("- someone else\n"));
     assert_eq!(
         f.host.restore_source("b.md"),
@@ -905,18 +930,28 @@ fn a_cancelled_rename_lists_its_source_as_restorable() {
 }
 
 /// Restore publishes the original text through the source's own guarded
-/// create, which ends the pair: the source leaves the list, and the
-/// operation draft, no longer owed, retires.
+/// create, which ends the pair: the source leaves the restorable list as
+/// `Restored`, and the operation draft, no longer owed, retires.
 #[test]
 fn restoring_a_source_publishes_its_original_and_leaves_the_list() {
     let mut f = restorable_after_use_disk();
     assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+    assert_eq!(
+        f.host.restorable_list().sources,
+        vec![kept(restoring(None))]
+    );
     assert_eq!(f.save("a.md"), Outcome::Published);
     assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
     assert!(
         f.host.restorable_sources().is_empty(),
         "the entry disappears"
     );
+    let restored = hio::RestorableSource {
+        text: String::new(),
+        state: Some(hio::RestoreState::Restored),
+        ..kept(None)
+    };
+    assert_eq!(f.host.restorable_list().sources, vec![restored.clone()]);
     assert_eq!(f.host.restore_source("a.md"), Disposition::Refused);
     settle_all(&mut f);
     assert_eq!(
@@ -925,6 +960,81 @@ fn restoring_a_source_publishes_its_original_and_leaves_the_list() {
         "the operation and its decision retire"
     );
     assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert_eq!(
+        f.host.restorable_list().sources,
+        vec![restored],
+        "the window still learns how it ended"
+    );
+    f.host.order.forget_restored();
+    assert!(
+        f.host.restorable_list().sources.is_empty(),
+        "until a reload"
+    );
+}
+
+/// Blocker 2 (review of 7f00b9a25): a restore admitted over an absent slot
+/// whose guarded create then fails never leaves the window with only
+/// "Restoring…": each attempt's outcome is the host's record, which the
+/// list carries. Another file claiming the page, then a persistent temp
+/// write failure, then success; and a slot taken before the create ends
+/// the restore as refused.
+#[test]
+fn a_restore_that_fails_after_admission_says_why() {
+    let mut f = restorable_after_use_disk();
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+    fs::write(f.graph.join("a.org"), "- twin\n").unwrap();
+    assert_eq!(f.save("a.md"), Outcome::Failed);
+    let claimed = hio::RestoreRefusal::Claimed {
+        file: "a.org".into(),
+    };
+    assert_eq!(
+        f.host.restorable_list().sources,
+        vec![kept(restoring(Some(claimed)))]
+    );
+    assert_eq!(on_disk(&f, "a.md"), None, "nothing written");
+    assert_eq!(
+        f.host.restore_source("a.md"),
+        Disposition::Refused,
+        "a running restore is not asked twice"
+    );
+    fs::remove_file(f.graph.join("a.org")).unwrap();
+    let faults = [io::ErrorKind::Other; 3].into_iter().collect();
+    f.host.fs.faults.insert(Phase::PageTemp, faults);
+    assert_eq!(f.save("a.md"), Outcome::Failed);
+    let [source] = &f.host.restorable_list().sources[..] else {
+        panic!("one entry");
+    };
+    assert!(
+        matches!(
+            &source.state,
+            Some(hio::RestoreState::Restoring {
+                problem: Some(hio::RestoreRefusal::Failed { .. })
+            })
+        ),
+        "{source:?}"
+    );
+    f.host.fs.faults.clear();
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert_eq!(
+        f.host.restorable_list().sources[0].state,
+        Some(hio::RestoreState::Restored)
+    );
+
+    let mut f = restorable_after_use_disk();
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+    fs::write(f.graph.join("a.md"), "- someone else\n").unwrap();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    while f.host.job.is_some() {
+        f.host.advance_save();
+    }
+    assert_eq!(
+        f.host.restorable_list().sources,
+        vec![kept(refused(hio::RestoreRefusal::Occupied))],
+        "the slot was taken first: refused, still listed"
+    );
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some("- someone else\n"));
+    assert!(drafted(&f, OLD), "the original text stays kept");
 }
 
 /// The window hears of each change of the list in the session: on a mail
@@ -943,7 +1053,7 @@ fn page_mail_carries_the_restorable_list_when_it_changes() {
     };
     assert_eq!((key.as_str(), facts.session), ("", 7));
     assert!(mail.page.is_none() && mail.answer.is_none());
-    assert_eq!(facts.restorable, Some(f.host.restorable_sources()));
+    assert_eq!(facts.restorable, Some(f.host.restorable_list()));
     let mut unchanged = Delivery::default();
     book.mail_restorable(&f.host, &mut unchanged);
     assert!(unchanged.mail.is_empty(), "unchanged: nothing to say");
@@ -967,7 +1077,93 @@ fn page_mail_carries_the_restorable_list_when_it_changes() {
     later.mail.push(("b.md".into(), mailed, facts(None)));
     book.mail_restorable(&f.host, &mut later);
     assert_eq!(later.mail.len(), 1, "it rides the page's mail");
-    assert_eq!(later.mail[0].2.restorable, Some(vec![]));
+    let list = later.mail[0].2.restorable.clone().expect("the list");
+    assert!(list.generation > delivery.mail[0].2.restorable.as_ref().unwrap().generation);
+    assert_eq!(list.sources[0].state, Some(hio::RestoreState::Restored));
+}
+
+/// Blocker 4 (review of 7f00b9a25): whether the recovery list changed is a
+/// generation comparison. With durable pairs outstanding, an unrelated
+/// page's edit and save, and the collects after it, visit no pair; a pair
+/// change makes the next collect build the list once (one visit per pair)
+/// and mail it only if it says something new.
+#[test]
+fn collects_with_no_pair_change_visit_no_pair() {
+    use crate::page_host::binding::{Book, Delivery};
+    use crate::page_host::order::PAIR_VISITS;
+    let visits = || PAIR_VISITS.with(|v| v.replace(0));
+    let mut f = restorable_after_use_disk();
+    let pairs = f.host.order.restorable_sources().count();
+    assert!(pairs > 0);
+    let mut book = Book::default();
+    book.mail_restorable(&f.host, &mut Delivery::default());
+    visits();
+    for _ in 0..3 {
+        let mut delivery = Delivery::default();
+        book.mail_restorable(&f.host, &mut delivery);
+        assert!(delivery.mail.is_empty());
+    }
+    assert_eq!(visits(), 0, "unchanged: no pair visited");
+    fs::write(f.graph.join("d.md"), "- d\n").unwrap();
+    f.edit("d.md", "- d, edited\n");
+    assert_eq!(f.save("d.md"), Outcome::Published);
+    visits();
+    let mut delivery = Delivery::default();
+    book.mail_restorable(&f.host, &mut delivery);
+    assert_eq!(visits(), 0, "an unrelated page's save changes no pair");
+    assert!(delivery.mail.is_empty());
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+    visits();
+    let mut delivery = Delivery::default();
+    book.mail_restorable(&f.host, &mut delivery);
+    assert_eq!(visits(), 1, "a pair changed: one pass over the one pair");
+    assert_eq!(delivery.mail.len(), 1, "it says Restoring");
+}
+
+/// The window-started restore under a process death at every step after
+/// its admission (the page's draft, its guarded create's temp, rename and
+/// directory sync, the operation's settlement and retirement), then a cold
+/// relaunch run to completion: the original text is on disk at A or still
+/// kept (listed, in the operation draft), never lost; and a kept one
+/// restores after the relaunch. It runs the existing crash-safe path: the
+/// same `Host::restore_source` the conformance capsule
+/// `s35_restores_source_after_raced_receiver` drives across a crash.
+#[test]
+fn a_window_restore_cut_at_every_step_keeps_or_restores_the_original() {
+    let mut total = 0;
+    {
+        let mut f = restorable_after_use_disk();
+        assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+        while step(&mut f) {
+            total += 1;
+            assert!(total < 200);
+        }
+        assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    }
+    assert!(total > 3, "{total} steps");
+    for cut in 0..=total {
+        let mut f = restorable_after_use_disk();
+        assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+        for _ in 0..cut {
+            step(&mut f);
+        }
+        let mut f = reopen(f);
+        let mut steps = 0;
+        while step(&mut f) {
+            steps += 1;
+            assert!(steps < 200, "cut {cut}: recovery did not settle");
+        }
+        if on_disk(&f, "a.md").as_deref() != Some(OLD) {
+            assert_eq!(on_disk(&f, "a.md"), None, "cut {cut}");
+            assert_eq!(f.host.restorable_sources(), vec![kept(None)], "cut {cut}");
+            assert!(drafted(&f, OLD), "cut {cut}: kept");
+            assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+            while step(&mut f) {}
+        }
+        assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD), "cut {cut}");
+        assert!(f.host.restorable_sources().is_empty(), "cut {cut}");
+        assert_eq!(pending_drafts(&f), 0, "cut {cut}");
+    }
 }
 
 /// The running-session trace: C was published by this host (witnessed),

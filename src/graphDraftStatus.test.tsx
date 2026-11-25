@@ -8,6 +8,7 @@ import { submittedPages } from "./document/host/wiring.test.support";
 import { setToasts, toasts } from "./toasts";
 import { renderEnglish, type UiText } from "./i18n";
 import { restorableSources } from "./restorableSources";
+import { invalidateBinding } from "./binding";
 import { closeUnsavedRecovery, unsavedRecoveryOpen } from "./unsavedRecovery";
 
 import type { DraftStatus } from "./document/host/protocol";
@@ -110,7 +111,7 @@ describe("crash-recovery status at graph open (STEP3 §9, B-Q1)", () => {
 
   it("sources a cancelled rename kept are named in a sticky notice whose Review opens the recovery panel (GH #540)", async () => {
     const kept = { key: "pages/a.md", path: "pages/a.md", text: "- old\n" };
-    await openGraph({ unreadable: [], restorable: [kept] });
+    await openGraph({ unreadable: [], restorable: { generation: 3, sources: [kept] } });
     expect(restorableSources()).toEqual([kept]);
     expect(unsavedRecoveryOpen()).toBe(false);
     const [notice] = said("whose rename was cancelled");
@@ -120,6 +121,20 @@ describe("crash-recovery status at graph open (STEP3 §9, B-Q1)", () => {
     notice.action!.run();
     expect(unsavedRecoveryOpen()).toBe(true);
     closeUnsavedRecovery();
+  });
+
+  // Blocker 3 (review of 7f00b9a25): the notice's Review is bound to the graph
+  // whose list it names. Before, a graph switch left it showing A's files, and
+  // its Review opened the panel for whichever graph was current.
+  it("a graph switch retires the kept-source notice, and its Review opens nothing for the next graph", async () => {
+    const kept = { key: "pages/a.md", path: "pages/a.md", text: "- old\n" };
+    await openGraph({ unreadable: [], restorable: { generation: 3, sources: [kept] } });
+    const [notice] = said("whose rename was cancelled");
+    invalidateBinding();
+    expect(said("whose rename was cancelled")).toEqual([]);
+    expect(restorableSources()).toEqual([]);
+    notice.action!.run();
+    expect(unsavedRecoveryOpen()).toBe(false);
   });
 
   it("a usable draft store says nothing", async () => {

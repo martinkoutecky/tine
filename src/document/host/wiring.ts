@@ -201,7 +201,7 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
   const next: HostClient = new HostClient(hostPort(), portFor(() => client === next),
     { pending: pendingAssetWrites, started: assetWritesStarted });
   next.onChange = hostChanged;
-  next.onRestorable = (sources) => setRestorableSources(sources, false);
+  next.onRestorable = setRestorableSources;
   client = next;
   bound = false;
   try {
@@ -728,8 +728,10 @@ export function cutSourcePagesRetired(sources: readonly ClipboardSourcePage[]): 
 // ------------------------------------------------------------------ conflicts (§9)
 
 /** The recovery panel's Restore: put back the original text a cancelled rename
- * kept of `key` (`page_restore_source`). The host's answer; "refused" with no
- * bound host or once the graph binding changed. */
+ * kept of `key` (`page_restore_source`). The host's answer says only whether it
+ * recorded the restore ("pending": the restorable list's entry says how it
+ * stands, a refusal included); "refused" with no record, no bound host, or once
+ * the graph binding changed. */
 export async function restoreSource(key: string): Promise<PageOperation> {
   const c = host();
   if (!c) return "refused";

@@ -83,7 +83,7 @@ import type { Backend, ConfirmOptions, FacetScope } from "./backendInterface";
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
-import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
+import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision, RestorableList } from "./document";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -342,7 +342,7 @@ class TauriBackend implements Backend {
     return this.call<import("./types").AliasGroup>("page_alias_group", { name });
   }
   pageWindowReloaded() {
-    return this.call<{ session: number; nextId: number }>("page_window_reloaded");
+    return this.call<{ session: number; nextId: number; restorable?: RestorableList }>("page_window_reloaded");
   }
   pageOpen(session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }) {
     const generation = this.bindingGeneration;

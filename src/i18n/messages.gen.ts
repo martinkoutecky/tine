@@ -250,6 +250,7 @@ export interface MessageArgs {
   "command-pane-split-right": {};
   "command-pane-toggle-maximize": {};
   "command-plugin": { "title": string | number };
+  "command-recovery-review-kept-originals": {};
   "command-right-sidebar-grow-width": {};
   "command-right-sidebar-shrink-width": {};
   "command-seen-mark-graph": {};
@@ -3361,8 +3362,15 @@ export interface MessageArgs {
   "unsaved-recovery-restore": {};
   "unsaved-recovery-restore-failed": { "error": string | number; "path": string | number };
   "unsaved-recovery-restore-refused": { "path": string | number };
+  "unsaved-recovery-restore-refused-claimed": { "file": string | number; "path": string | number };
+  "unsaved-recovery-restore-refused-failed": { "path": string | number; "step": string | number };
+  "unsaved-recovery-restore-refused-occupied": { "path": string | number };
+  "unsaved-recovery-restore-refused-unsaved": { "path": string | number };
+  "unsaved-recovery-restore-retrying-claimed": { "file": string | number; "path": string | number };
+  "unsaved-recovery-restore-retrying-failed": { "path": string | number; "step": string | number };
   "unsaved-recovery-restore-uncertain": { "path": string | number };
   "unsaved-recovery-restore-waiting": { "path": string | number };
+  "unsaved-recovery-restored": { "path": string | number };
   "unsaved-recovery-restoring": {};
   "unsaved-recovery-retry-saving": {};
   "unsaved-recovery-saving": {};

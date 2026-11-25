@@ -16,7 +16,7 @@ import { cutSourceMatches } from "../cutSource";
 import { inFileFormat } from "../convert";
 import {
   STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type OwedPage, type PageMail,
-  type PageRefusal, type PublishedNeed, type RestorableSource,
+  type PageRefusal, type PublishedNeed, type RestorableList,
 } from "./protocol";
 
 /** What the installed text's bytes were: a file revision, a proved absence, or unknown. */
@@ -203,8 +203,11 @@ export class HostClient {
    * drop). Every change of `busy`, `owes`, `conflicted`, `isOpen` or `holdsContent` must be told: the
    * query results gate (wiring.ts) reads them only when this moves its revision. */
   onChange: () => void = () => {};
-  /** Told the restorable sources a session's mail carries (`PageMail.restorable`). */
-  onRestorable: (sources: RestorableSource[]) => void = () => {};
+  /** Told the restorable sources the session starts with (`windowReloaded`,
+   * `session` true) and each list its mail carries (`PageMail.restorable`). A
+   * mailed list can be told again when stashed mail replays; its generation
+   * orders them. */
+  onRestorable: (list: RestorableList, session: boolean) => void = () => {};
 
   constructor(
     readonly host: HostPort,
@@ -214,9 +217,12 @@ export class HostClient {
 
   /** Bind to a session (`page_window_reloaded`): request ids continue above the host's watermark. */
   async bind(): Promise<void> {
-    const { session, nextId } = await this.host.windowReloaded();
+    const { session, nextId, restorable } = await this.host.windowReloaded();
     this.session = session;
     this.nextId = nextId;
+    // The host's list as this session starts, an empty one included: a
+    // rebind to a host whose list emptied meanwhile must not keep the old one.
+    if (restorable) this.onRestorable(restorable, true);
     // windowReloaded retired the prior session's mail. A fresh host starts at
     // zero; a surviving host supplies its existing request floor. Neither the
     // previous client's watermark nor an unconditional zero proves that floor.
@@ -631,7 +637,7 @@ export class HostClient {
   receive(mail: PageMail): void {
     if (this.rebinding) { this.rebinding.push(mail); return; }
     if (mail.session !== this.session) return;
-    if (mail.restorable) this.onRestorable(mail.restorable);
+    if (mail.restorable) this.onRestorable(mail.restorable, false);
     // A mail with an empty key carries only the restorable sources.
     if (!mail.key) return;
     const page = this.byKey.get(mail.key);

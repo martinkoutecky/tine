@@ -293,7 +293,21 @@ unsaved-recovery-restoring = 正在恢复…
 
 unsaved-recovery-restore-waiting = { $path } 正忙。请稍后再次点击“恢复”。
 
-unsaved-recovery-restore-refused = 无法恢复 { $path }：同名文件已再次存在，或该页面有未保存的编辑。原始文本仍保留在这里；可复制以保存。
+unsaved-recovery-restore-refused = Tine 无法开始恢复 { $path }。此处的条目显示 Tine 所知的情况；原始文本仍保留在这里，可供复制。
+
+unsaved-recovery-restore-refused-occupied = 无法恢复 { $path }：同名文件已再次存在。原始文本仍保留在这里；可复制以保存。
+
+unsaved-recovery-restore-refused-claimed = 无法恢复 { $path }：{ $file } 占用了该页面。原始文本仍保留在这里；可复制以保存。
+
+unsaved-recovery-restore-refused-unsaved = 无法恢复 { $path }：该页面有未保存的编辑。原始文本仍保留在这里；可复制以保存。
+
+unsaved-recovery-restore-refused-failed = 无法恢复 { $path }：Tine 无法检查其所在文件夹{ $step }。请再次点击“恢复”；原始文本仍保留在这里。
+
+unsaved-recovery-restore-retrying-claimed = 尚未恢复：{ $file } 占用了页面 { $path }。Tine 会继续尝试；请重命名或移走该文件，或复制下面的文本。
+
+unsaved-recovery-restore-retrying-failed = 尚未恢复：写入 { $path } 失败{ $step }。Tine 会继续尝试；原始文本仍保留在这里。
+
+unsaved-recovery-restored = 已恢复 { $path }。
 
 unsaved-recovery-restore-uncertain = Tine 尚未确认 { $path } 已恢复；它会继续尝试。
 

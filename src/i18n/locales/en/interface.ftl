@@ -298,7 +298,21 @@ unsaved-recovery-restoring = Restoring…
 
 unsaved-recovery-restore-waiting = { $path } is busy. Try Restore again in a moment.
 
-unsaved-recovery-restore-refused = Couldn't restore { $path }: a file with that name exists again, or the page has unsaved edits. The original text stays here; copy it to keep it.
+unsaved-recovery-restore-refused = Tine couldn't start restoring { $path }. Its entry here says what Tine knows; the original text stays here to copy.
+
+unsaved-recovery-restore-refused-occupied = Couldn't restore { $path }: a file with that name exists again. The original text stays here; copy it to keep it.
+
+unsaved-recovery-restore-refused-claimed = Couldn't restore { $path }: { $file } claims that page. The original text stays here; copy it to keep it.
+
+unsaved-recovery-restore-refused-unsaved = Couldn't restore { $path }: the page has unsaved edits. The original text stays here; copy it to keep it.
+
+unsaved-recovery-restore-refused-failed = Couldn't restore { $path }: Tine could not check its folder{ $step }. Try Restore again; the original text stays here.
+
+unsaved-recovery-restore-retrying-claimed = Not restored yet: { $file } claims the page { $path }. Tine keeps trying; rename or move that file, or copy the text below.
+
+unsaved-recovery-restore-retrying-failed = Not restored yet: writing { $path } failed{ $step }. Tine keeps trying; the original text stays here.
+
+unsaved-recovery-restored = Restored { $path }.
 
 unsaved-recovery-restore-uncertain = Tine has not confirmed the restore of { $path } yet; it keeps trying.
 

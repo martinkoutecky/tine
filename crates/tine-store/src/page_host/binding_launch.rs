@@ -343,7 +343,7 @@ impl PageHost {
                     })
                 })
                 .collect();
-            status.restorable = host.restorable_sources();
+            status.restorable = host.restorable_list();
             status
         });
         status.expect("page host driver ended")
@@ -351,12 +351,15 @@ impl PageHost {
 
     /// `page_restore_source`: restore the original text a cancelled rename
     /// kept of `key` (`DraftStatus::restorable`), for the current window
-    /// `session` only (S2), through `Host::restore_source`. `Pending` once
-    /// the page holds the text: its own guarded create publishes it, and
-    /// the publication ends the pair, so the source leaves the restorable
-    /// list (page mail says so). `Waiting` while the page or a rename is
-    /// busy; `Refused` when the key is not restorable, its slot is occupied
-    /// or another file claims its name, or it holds unsaved text.
+    /// `session` only (S2), through `Host::restore_source`. How a restore
+    /// stands (restoring, retrying and why, refused and why, restored) is
+    /// the host's record of it, which the restorable list carries
+    /// (`io::RestoreState`); this reply says only whether the host recorded
+    /// it: `Pending` (the list says how it stands, a refusal included),
+    /// `Waiting` while the page or a rename is busy, `Refused` with no
+    /// record (not restorable, another session, a restore already running),
+    /// `Uncertain` past the bound. The restoration writes the page's file:
+    /// `EditKind::CreatePage` (OG-RULES Rule 8), counted when admitted.
     pub fn restore_source(&self, session: u64, key: &str) -> PageOperation {
         // Only a listed key takes a lock registration; the step checks again.
         let owned = key.to_owned();
@@ -375,7 +378,20 @@ impl PageHost {
             if state.book.session != session {
                 return Disposition::Refused;
             }
-            state.progress.with_host(|host| host.restore_source(&key))
+            let (disposition, recorded) = state.progress.with_host(|host| {
+                let before = host.order.restorable_generation();
+                let disposition = host.restore_source(&key);
+                (disposition, host.order.restorable_generation() != before)
+            });
+            if disposition == Disposition::Applied {
+                state.book.took([key.clone()], EditKind::CreatePage);
+            }
+            // A refusal the host recorded is told by the list, like any
+            // other outcome of this restore.
+            if disposition == Disposition::Refused && recorded {
+                return Disposition::Pending;
+            }
+            disposition
         };
         let deadline = tine_core::clock::Instant::now() + retained::OPERATION_WAIT;
         match (self.driver.shared).locked_step(Deadline::At(deadline), step) {
