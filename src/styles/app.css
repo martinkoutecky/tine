@@ -3613,9 +3613,9 @@ html[data-system-insets="native-viewport"] {
    CodeMirror editor host sits outside `.block-content` and was left out, so its `**`
    markers sat at different heights). Inter's contextual alternates (calt) drew `->`
    as an arrow, but the SAME feature contextually re-positions the asterisk (`*(`
-   centered vs `)*` raised). Arrows come from an explicit render-time replacement
-   (render/typography.ts), which also works in export, so the raw `->` stays raw while
-   editing. `no-contextual` disables calt while keeping normal (fi/fl) ligatures. */
+   centered vs `)*` raised). Arrows come from the Typographic replacements setting
+   (render/typography.ts), which also works in export, never from the font.
+   `no-contextual` disables calt while keeping normal (fi/fl) ligatures. */
 .block-content,
 .block-editor,
 .cm6-block-editor {
