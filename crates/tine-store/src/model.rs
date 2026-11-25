@@ -2708,7 +2708,9 @@ impl Graph {
     /// spelled as a plain relative path, or that the source resolves as under
     /// a file or as a name too long, and an `assets` that is a file. The disk
     /// open then checks where links lead ([`validate_managed_dir`]); a memory
-    /// graph has none. One `lstat` per directory.
+    /// graph has none. One `lstat` per directory, read by Tine's names on
+    /// every platform ([`FileSource::lstat_spelled`]); a directory not found
+    /// adds a binary search of its prefixes, ⌈log₂ depth⌉ stats at most.
     pub(crate) fn check_layout(&self) -> io::Result<()> {
         let dirs = [
             (self.config.journals_dir.as_str(), "journals"),
@@ -2720,12 +2722,17 @@ impl Graph {
             |path: &Path| matches!(self.source.lstat(path), Ok(file_source::EntryKind::File));
         for (raw, label) in dirs {
             managed_dir_spelling(raw, label)?;
-            // One resolution of the spelling as given (MEMORY-SOURCE-MODEL Q2).
-            let why = match self.source.lstat(&self.root.join(raw)) {
+            // One resolution of the spelling as given (MEMORY-SOURCE-MODEL Q2),
+            // by its names as Tine splits them, on every platform.
+            let why = match self.source.lstat_spelled(&self.root, raw) {
                 Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
                     "is not a directory or is under a file"
                 }
                 Err(e) if e.kind() == io::ErrorKind::InvalidFilename => "has a name too long",
+                // Windows: a name with `:` ([`file_source::tine_names`]).
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
+                    "has a name with `:`, which Windows reads as a drive or a stream"
+                }
                 _ => continue,
             };
             return Err(io::Error::new(

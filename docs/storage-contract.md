@@ -1704,11 +1704,24 @@ directories, every file readable. A key is names joined by single `/`; a name is
 `.` or `..`, and holds no NUL or platform separator. Any other spelling, a key given twice, and a key that is also
 another key's directory are refused (`InvalidInput`), never normalized. The layout check is the disk's
 (`Graph::check_layout`): a configured directory whose spelling resolves under a file, or as a file when it ends in
-`/` or `/.`, or with a name over 255 bytes, is refused; so is an `assets` file. Construction and each lookup are one
-walk of the path's names (O(path bytes)); a parse read of a held file is a view of its bytes after the parse-input
+`/` or `/.`, or with a name over 255 bytes, is refused; so is an `assets` file. Both sources read a path by one rule
+over its names as Tine splits them, never as the platform normalizes it: each source locates the spelling (how many of
+its names exist, and what is at the deepest existing prefix) and `spelled_kind` decides from that alone. A file
+spelled as a directory, or a path whose deepest existing prefix is a file, is not a directory, so Windows (which
+reports a path under a file as not found and drops a trailing `/` or `.`) refuses what Linux refuses. On Windows a name holding `:` (a drive-relative `C:` or an alternate data
+stream) is refused before anything is probed; the spelling check refuses only a leading drive (`C:x`), and the
+containment check would pass `x/C:`. The memory source locates in one tree walk. The disk builds the probed path once
+(the root's own spelling, then the names after the platform separator) and probes it once: one `lstat`. Only after a
+not-found answer does it binary-search the deepest existing prefix (a prefix of an existing path exists), each probe a
+`stat` of one borrowed prefix of that path, stopping early at a prefix that is not a directory. For depth d that is at
+most ⌈log₂ d⌉ + 1 probes of at most d components each, O(d log d) components on every volume. The bound counts what
+crosses the wire too, since an SMB open carries the whole share-relative path whatever API sends it, so no walk by
+handles would cost less there. Construction
+and each lookup are one walk of the path's names (O(path bytes)); a parse read of a held file is a view of its bytes after the parse-input
 checks, never a copy. Proof: `layouts_open_or_refuse_alike`, `from_files_refuses_paths_no_directory_holds`,
 `a_deep_first_key_builds_in_linear_time`, `a_memory_parse_read_does_not_copy`, `backslash_names_open_alike`,
-`config_problems_answer_alike_from_files`.
+`config_problems_answer_alike_from_files`, `windows_answers_read_as_tine_reads_them`,
+`memory_and_disk_name_the_same_kinds`, `a_lookup_visits_each_name_once`, `a_missing_suffix_costs_logarithmic_probes`.
 
 An export's `WholeGraph::subgraph` can retain its serialized page sources.
 The private graph and the snapshot share those bytes. The captured
