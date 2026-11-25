@@ -52,9 +52,10 @@ fn load_plugin_registry_cache_at(path: &Path) -> PluginRegistryCacheLoad {
             return unsafe_cache(format!("registry cache settings are unreadable: {error}"))
         }
     };
-    let root: serde_json::Value = match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(value) if value.is_object() => value,
-        Ok(_) => return unsafe_cache("registry cache settings root is not an object"),
+    let root = match crate::settings::decode_settings(&text) {
+        Ok(Some(value)) if value.is_object() => value,
+        Ok(Some(_)) => return unsafe_cache("registry cache settings root is not an object"),
+        Ok(None) => return unsafe_cache("registry cache settings are blank"),
         Err(error) => {
             return unsafe_cache(format!("registry cache settings are malformed: {error}"))
         }
@@ -658,15 +659,15 @@ fn plugin_states_at(path: &Path) -> Result<std::collections::HashMap<String, Plu
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
         Err(error) => return Err(format!("device settings could not be read: {error}")),
     };
-    if text.trim().is_empty() {
-        return Ok(Default::default());
-    }
-    let json: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+    let Some(json) = crate::settings::decode_settings(&text).map_err(|error| {
         format!(
             "device settings file {} is not valid JSON ({error}); plugin states are unavailable until it is repaired or removed",
             path.display()
         )
-    })?;
+    })?
+    else {
+        return Ok(Default::default());
+    };
     Ok(json
         .get("plugin_states")
         .and_then(serde_json::Value::as_object)

@@ -151,6 +151,19 @@ impl UncertainProofs {
     }
 }
 
+/// The custody source witness's steps, in `page_host::io::WitnessStep`'s
+/// order: closed tokens, no names or paths.
+pub(crate) const SOURCE_WITNESS_STEPS: [&str; 8] = [
+    "containment",
+    "open",
+    "read",
+    "fileSync",
+    "reread",
+    "changed",
+    "directorySync",
+    "replaced",
+];
+
 #[derive(Default)]
 pub(crate) struct StorageCounters {
     pub published: AtomicU64,
@@ -165,6 +178,8 @@ pub(crate) struct StorageCounters {
     container_adoptions: AtomicU64,
     user_adoptions: AtomicU64,
     uncertain_proofs: UncertainProofs,
+    /// Failed custody source witnesses, one per failure, by failing step.
+    source_witness_failed: [AtomicU64; SOURCE_WITNESS_STEPS.len()],
 }
 
 impl StorageCounters {
@@ -181,7 +196,18 @@ impl StorageCounters {
         self.uncertain_proofs.record(proof);
     }
 
+    /// A custody source witness failed at step `step` (an index into
+    /// `SOURCE_WITNESS_STEPS`): one record per failed witness.
+    pub(crate) fn source_witness_failed(&self, step: usize) {
+        self.source_witness_failed[step].fetch_add(1, Relaxed);
+    }
+
     pub(crate) fn snapshot(&self) -> serde_json::Value {
+        let witness_failures: serde_json::Map<String, serde_json::Value> = (SOURCE_WITNESS_STEPS
+            .iter())
+        .zip(&self.source_witness_failed)
+        .map(|(step, count)| ((*step).to_owned(), count.load(Relaxed).into()))
+        .collect();
         #[allow(unused_mut)]
         let mut report = serde_json::json!({
             "scope": "since-launch",
@@ -198,6 +224,9 @@ impl StorageCounters {
                 "completed": self.case_moves_completed.load(Relaxed),
                 "keptInTrash": self.case_moves_kept_in_trash.load(Relaxed),
             },
+            // Failed custody source witnesses by step (the pair keeps its
+            // draft each time).
+            "custodySourceWitnessFailed": witness_failures,
             "draftNamespaceAdoptions": {
                 "appContainerMove": self.container_adoptions.load(Relaxed),
                 "userRecovery": self.user_adoptions.load(Relaxed),

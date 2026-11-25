@@ -216,7 +216,17 @@ fn retry_baseline(now: &mut HashMap<PathBuf, Stamp>, path: &Path, before: Option
     }
 }
 
-fn directory_identity(path: &Path) -> Option<u128> {
+/// A directory's OS identity (device and inode on Unix, creation time on
+/// Windows), the store's one answer: the watcher's root-replacement check
+/// and the custody witness's chain both ask it. `None`: the lookup failed or
+/// the path is not a directory.
+pub(crate) fn directory_identity(path: &Path) -> Option<u128> {
+    #[cfg(test)]
+    DIRECTORY_IDENTITIES.with(|ids| ids.set(ids.get() + 1));
+    #[cfg(test)]
+    if IDENTITY_FAULTS.with(|faults| faults.borrow().contains(path)) {
+        return None;
+    }
     let metadata = fs::metadata(path).ok()?;
     if !metadata.is_dir() {
         return None;
@@ -240,6 +250,17 @@ fn directory_identity(path: &Path) -> Option<u128> {
             .ok()
             .map(|time| time.as_nanos())
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Identities taken on this thread (`directory_identity`), for cost
+    /// tests.
+    pub(crate) static DIRECTORY_IDENTITIES: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+    /// Paths whose identity lookup fails on this thread.
+    pub(crate) static IDENTITY_FAULTS: std::cell::RefCell<HashSet<PathBuf>> =
+        std::cell::RefCell::new(HashSet::new());
 }
 
 fn record_walk_error(
