@@ -648,7 +648,7 @@ fn cancelling_one_of_two_disjoint_renames_keeps_the_other_order() {
     let cancelled = step(&queued, Action::DeliverUp(true)).unwrap();
     assert_eq!(cancelled.g.obl, other);
     assert_eq!(cancelled.s.gates.len(), 1);
-    assert_eq!(cancelled.s.gates[0].dst, 3);
+    assert_eq!(cancelled.s.gates[0].moves, BTreeSet::from([(3, 1)]));
     assert!(step(&cancelled, Action::FlushDel(1)).is_none());
     assert!(checked(&cancelled));
 }
@@ -682,6 +682,9 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                 "guarantee" => json!(guarantee(x)),
                 "orderHolds" => json!(order_holds(x)),
                 "renameResolves" => json!(rename_resolves(x)),
+                "draftOwner" => json!(x.s.owners.len() <= 1),
+                "retainedRecords" => json!(retained_records(&x.s)),
+                "disjointPairs" => json!(disjoint_pairs(&x.s)),
                 "canSwitch" => json!(can_switch(x)),
                 "ABSENT" => json!(ABSENT),
                 "NONE" => json!(NONE),
@@ -710,6 +713,9 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
         ),
         "bin" => {
             let a = eval(&e[2], x);
+            if e[1] == "and" && a == false || e[1] == "or" && a == true {
+                return a;
+            }
             let b = eval(&e[3], x);
             match e[1].as_str().unwrap() {
                 "and" => json!(a.as_bool().unwrap() && b.as_bool().unwrap()),
@@ -769,8 +775,14 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                         .map(|v| json!([v, eval(&substitute(&lambda[3], name, v), x)]))
                         .collect::<Vec<_>>());
                 }
-                if method == "get" {
+                if method == "get" || method == "nth" {
                     return eval(&f[1], x)[eval(&args[0], x).as_u64().unwrap() as usize].clone();
+                }
+                if method == "head" {
+                    return eval(&f[1], x)[0].clone();
+                }
+                if method == "length" {
+                    return json!(eval(&f[1], x).as_array().unwrap().len());
                 }
                 if method == "contains" && f[1][1] == "RACES" {
                     return json!(match eval(&args[0], x).as_str().unwrap() {
@@ -796,6 +808,7 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                 "draftEntry" => json!(draft_entry(&serde_json::from_value(a).unwrap())),
                 "opClean" => json!(op_clean(&x.s, eval(&args[1], x).as_u64().unwrap() as usize)),
                 "opCur" => json!(op_cur(&x.s, eval(&args[1], x).as_u64().unwrap() as usize)),
+                "gated" => json!(gated(x, eval(&args[1], x).as_u64().unwrap() as usize)),
                 function => panic!("unsupported function {function}"),
             }
         }
@@ -834,7 +847,7 @@ pub(super) fn action(name: &str, args: &[Value]) -> Action {
                 })
                 .collect(),
         ),
-        "opApply" => {
+        "opApply" | "opApplyMoves" => {
             let map = |i: usize| -> std::collections::BTreeMap<usize, Text> {
                 args[i]
                     .as_array()
@@ -848,7 +861,18 @@ pub(super) fn action(name: &str, args: &[Value]) -> Action {
                     })
                     .collect()
             };
-            Action::OpApply(map(0), map(1), v(2), v(3))
+            if name == "opApplyMoves" {
+                Action::OpApplyMoves(
+                    map(0),
+                    map(1),
+                    serde_json::from_value::<Vec<(usize, usize)>>(args[2].clone())
+                        .unwrap()
+                        .into_iter()
+                        .collect(),
+                )
+            } else {
+                Action::OpApply(map(0), map(1), v(2), v(3))
+            }
         }
         // The trace driver's encoding: which pages change (bits), their new
         // texts, the bytes each page holds (the plan), then (dst, src).
@@ -1014,18 +1038,21 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
         "bf9605a64f6a0f1ea7b9d2984191a7865ba0997df25f6990ceaf1324ee8c4960"
     );
     let scenarios = fixture["scenarios"].as_object().unwrap();
-    assert_eq!(scenarios.len(), 206);
-    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 54);
+    assert_eq!(scenarios.len(), 221);
+    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 61);
     let mut comparisons = 0;
     let mut differences = Vec::new();
     for oracle in fixture["oracles"].as_array().unwrap() {
         let profile = oracle["profile"].as_str().unwrap();
         let mutant = oracle["mutant"].as_str().unwrap();
-        for (name, ops) in scenarios {
-            let mut x = init(config(profile, mutant));
+        for (name, expected) in oracle["outcomes"].as_object().unwrap() {
+            let ops = &scenarios[name];
+            let mut cfg = config(profile, mutant);
+            cfg.pages = fixture["scenario_pages"][name].as_u64().unwrap_or(3) as usize;
+            let mut x = init(cfg);
             let result = program(ops.as_array().unwrap(), &mut x);
             let status = result.err().unwrap_or("pass");
-            let expected = oracle["outcomes"][name].as_str().unwrap();
+            let expected = expected.as_str().unwrap();
             if status != expected {
                 differences.push(format!(
                     "{profile}/{mutant}/{name}: Rust {status}, Quint {expected}, bad={:?}",
@@ -1035,7 +1062,7 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 11124);
+    assert_eq!(comparisons, 12731);
     assert!(
         differences.is_empty(),
         "{} differences\n{}",
@@ -1054,13 +1081,11 @@ fn every_declared_mutant_is_caught() {
         if mutant == "none" {
             continue;
         }
-        let mut x = init(config(oracle["profile"].as_str().unwrap(), mutant));
-        let result = program(
-            fixture["scenarios"][format!("m{mutant}")]
-                .as_array()
-                .unwrap(),
-            &mut x,
-        );
+        let name = format!("m{mutant}");
+        let mut cfg = config(oracle["profile"].as_str().unwrap(), mutant);
+        cfg.pages = fixture["scenario_pages"][&name].as_u64().unwrap_or(3) as usize;
+        let mut x = init(cfg);
+        let result = program(fixture["scenarios"][&name].as_array().unwrap(), &mut x);
         assert_eq!(result, Err("assertion"), "{mutant}");
         // MDE's own scenario checks risk before the later power-loss suffix.
         // Run that suffix to demonstrate the actual A violation as well.
@@ -1081,6 +1106,13 @@ fn every_declared_mutant_is_caught() {
                 | "MRejectRetainedSwitch"
                 | "MForgetTouches"
                 | "MKeepSettled"
+                | "MOverlapMoves"
+                | "MSharedChoice"
+                | "MDropSibling"
+                | "MDropShared"
+                | "MRewriteOnFailure"
+                | "MDropPreimage"
+                | "MUseLaunchBytes"
         ) {
             assert!(!checked(&x), "{mutant} failed only a scenario predicate");
         }
@@ -1098,7 +1130,7 @@ fn every_declared_mutant_is_caught() {
         );
         count += 1;
     }
-    assert_eq!(count, 50);
+    assert_eq!(count, 57);
 }
 
 fn replay_traces(fixture: &Value) -> (usize, usize) {

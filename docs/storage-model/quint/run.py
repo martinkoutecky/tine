@@ -32,6 +32,9 @@ def model():
 
 def variant(profile, mutant):
     t = (ROOT / model()).read_text()
+    if pages := os.environ.get('SCENARIO_PAGES'):
+        t = t.replace('pure val PAGES = Set(0, 1, 2)',
+                      'pure val PAGES = Set(' + ', '.join(map(str, range(int(pages)))) + ')')
     t = re.sub(r'pure val RACES: Set\[str\] = .*', f'pure val RACES: Set[str] = {PROFILES[profile]}', t, count=1)
     t = re.sub(r'pure val MUTANT: str = ".*"', f'pure val MUTANT: str = "{mutant}"', t, count=1)
     t = t.replace('  // @@SCENARIOS@@', (ROOT / os.environ.get('SCEN', 'scenarios-s35.inc')).read_text())

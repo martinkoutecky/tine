@@ -403,6 +403,26 @@ enum Application {
     /// RENAME-COST L1: an operation vehicle retired whole, removing each of
     /// the worker's pages' drafts.
     Retire,
+    /// A settlement rewrite: paired operation draft `old` is replaced by
+    /// `new` (its surviving pairs, their records and the shared ones) and
+    /// the decisions those pairs carry, then `old` and its decisions leave.
+    /// It commits at `old`'s durable unlink; a failed write before that
+    /// leaves `old` byte-identical (`failed`).
+    Rewrite(Box<Rewrite>),
+}
+
+#[cfg_attr(test, derive(Clone))]
+struct Rewrite {
+    old: String,
+    new: String,
+    id: [u8; 16],
+    records: Vec<Record>,
+    pairs: drafts::Pairs,
+    /// The surviving pairs' decisions, under `new`'s request id.
+    decisions: BTreeMap<String, Option<drafts::Decision>>,
+    /// Vehicles this rewrite made durable (unlinked again if it fails).
+    written: Vec<String>,
+    failed: bool,
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -1389,7 +1409,10 @@ impl<F: HostIo> Host<F> {
         self.fs.draft_changes();
         self.alive = true;
         if synced {
-            self.tidy_drafts(scan.stale_decisions.iter().cloned().collect())
+            // An uncommitted settlement rewrite leaves like a stale
+            // decision: its original kept every obligation.
+            let stale = scan.stale_decisions.iter().chain(&scan.rewrites);
+            self.tidy_drafts(stale.cloned().collect())
         } else {
             Disposition::Applied
         }

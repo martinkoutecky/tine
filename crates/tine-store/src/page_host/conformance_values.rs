@@ -34,21 +34,36 @@ pub(super) fn named(name: &str, args: &[Value]) -> Vec<usize> {
             .into_iter()
             .chain((0..3).filter(|&i| flag(2 + i)))
             .collect(),
-        "opApply" | "opApplyPacked" => apply_args(name, args).0.into_keys().collect(),
+        "opApply" | "opApplyPacked" | "opApplyMoves" => {
+            apply_args(name, args).0.into_keys().collect()
+        }
         _ => vec![],
     }
 }
 
-/// An `opApply`'s arguments, in either encoding: the changed pages' new
-/// texts, the planned (expected) text of every page, then (dst, src).
-pub(super) type ApplyArgs = (BTreeMap<usize, i64>, BTreeMap<usize, i64>, i64, i64);
+/// An apply's new texts, planned bases, and (receiver, source) moves.
+pub(super) type ApplyArgs = (
+    BTreeMap<usize, i64>,
+    BTreeMap<usize, i64>,
+    Vec<(usize, usize)>,
+);
 
 pub(super) fn apply_args(name: &str, args: &[Value]) -> ApplyArgs {
     let v = |i: usize| args[i].as_i64().unwrap();
+    let singleton = |dst, src| {
+        (dst != NONE)
+            .then_some((dst as usize, src as usize))
+            .into_iter()
+            .collect()
+    };
     if name == "opApplyPacked" {
         let b = |i: usize| args[i].as_bool().unwrap_or_else(|| v(i) == 1);
         let eff = (0..3).filter(|&i| b(i)).map(|i| (i, v(3 + i))).collect();
-        return (eff, (0..3).map(|i| (i, v(6 + i))).collect(), v(9), v(10));
+        return (
+            eff,
+            (0..3).map(|i| (i, v(6 + i))).collect(),
+            singleton(v(9), v(10)),
+        );
     }
     let map = |i: usize| -> BTreeMap<usize, i64> {
         (args[i].as_array().unwrap().iter())
@@ -60,7 +75,12 @@ pub(super) fn apply_args(name: &str, args: &[Value]) -> ApplyArgs {
             })
             .collect()
     };
-    (map(0), map(1), v(2), v(3))
+    let moves = if name == "opApplyMoves" {
+        serde_json::from_value(args[2].clone()).unwrap()
+    } else {
+        singleton(v(2), v(3))
+    };
+    (map(0), map(1), moves)
 }
 
 /// The model page a harness key names.

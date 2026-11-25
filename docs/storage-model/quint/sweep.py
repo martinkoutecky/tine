@@ -22,19 +22,34 @@ def errors(out):
 
 
 ok = True
-for prof in ['base', 'R1', 'weak', 'all']:
-    _, p, f = run.test(prof, 'none')
-    ok &= not f and bool(p)
-    print(f'spec[{prof}]: {len(p)} pass, failed={f}', flush=True)
 caught = 0
-for mut, prof in MUTS.items():
-    out, p, f = run.test(prof, mut)
-    hit = errors(out).get('m' + mut) == 'QNT508'
-    caught += hit
-    ok &= hit
-    print(f'{mut:4} [{prof}] m{mut}: {"CAUGHT" if hit else "MISSED " + str(errors(out).get("m" + mut))}', flush=True)
-for mut, prof in CONTROL.items():
-    out, p, f = run.test(prof, mut)
-    print(f'{mut:4} [{prof}] m{mut} (control): {"caught" if errors(out).get("m" + mut) == "QNT508" else "missed"}')
-print(f'SWEEP {"PASS" if ok else "FAIL"}: {run.model()}; {caught}/{len(MUTS)} mutants caught', flush=True)
+scenario = os.environ.get('SCEN', 'scenarios-s35.inc')
+vehicle = 'scenarios-vehicle-recovery.inc'
+vehicle_source = (run.ROOT / vehicle).read_text()
+suites = [(scenario, os.environ.get('SCENARIO_PAGES', '3'))]
+if scenario != vehicle and any(re.search(rf'\brun m{m}\b', vehicle_source) for m in MUTS):
+    suites.append((vehicle, '5'))
+selected = set()
+for source, pages in suites:
+    os.environ.update(SCEN=source, SCENARIO_PAGES=pages)
+    cases = (run.ROOT / source).read_text()
+    for prof in run.PROFILES:
+        _, p, f = run.test(prof, 'none')
+        ok &= not f and bool(p)
+        print(f'{source}[{prof}]: {len(p)} pass, failed={f}', flush=True)
+    for mut, prof in MUTS.items():
+        if not re.search(rf'\brun m{mut}\b', cases):
+            continue
+        selected.add(mut)
+        out, _, _ = run.test(prof, mut)
+        hit = errors(out).get('m' + mut) == 'QNT508'
+        caught += hit
+        ok &= hit
+        print(f'{mut:4} [{prof}] m{mut}: {"CAUGHT" if hit else "MISSED " + str(errors(out).get("m" + mut))}', flush=True)
+    for mut, prof in CONTROL.items():
+        if re.search(rf'\brun m{mut}\b', cases):
+            out, _, _ = run.test(prof, mut)
+            print(f'{mut:4} [{prof}] m{mut} (control): {"caught" if errors(out).get("m" + mut) == "QNT508" else "missed"}')
+ok &= selected == MUTS.keys()
+print(f'SWEEP {"PASS" if ok else "FAIL"}: {run.model()}; {caught}/{len(MUTS)} mutants caught; missing={MUTS.keys() - selected}', flush=True)
 sys.exit(0 if ok else 1)

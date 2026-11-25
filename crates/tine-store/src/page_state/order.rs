@@ -7,11 +7,31 @@ pub(super) type Obligations = BTreeSet<(usize, usize, i64, usize)>;
 
 /// Quint: gates1
 fn gates1(x: &State, gt: &Gate, k: usize) -> bool {
+    let receiver = |p| gt.moves.iter().any(|&(dst, _)| dst == p);
+    let source = |p| gt.moves.iter().any(|&(_, src)| src == p);
     gt.open.contains(&k)
-        && k != gt.dst
-        && !(x.config.mutant("MRF") && k != gt.src)
-        && (gt.open.contains(&gt.dst)
-            || (k == gt.src && gt.open.len() > 1 && !x.config.mutant("MRD")))
+        && !receiver(k)
+        && !(x.config.mutant("MRF") && !source(k))
+        && (gt.open.iter().copied().any(receiver)
+            || (source(k) && gt.open.iter().any(|&p| !source(p)) && !x.config.mutant("MRD")))
+}
+
+/// Quint: gateObligations
+pub(super) fn gate_obligations(gt: &Gate) -> Obligations {
+    let receiver = |p| gt.moves.iter().any(|&(dst, _)| dst == p);
+    let source = |p| gt.moves.iter().any(|&(_, src)| src == p);
+    let mut obligations = BTreeSet::new();
+    for &(dst, src) in &gt.moves {
+        for &p in gt.open.iter().filter(|&&p| !receiver(p)) {
+            if gt.open.contains(&dst) {
+                obligations.insert((p, dst, gt.vers[dst], dst));
+            }
+            if gt.open.contains(&src) && !source(p) {
+                obligations.insert((src, p, gt.vers[p], dst));
+            }
+        }
+    }
+    obligations
 }
 /// Quint: gated
 pub(super) fn gated(x: &State, k: usize) -> bool {
@@ -41,8 +61,10 @@ pub(super) fn partner(x: &State, k: usize) -> Option<usize> {
         .or_else(|| {
             s.gates
                 .iter()
-                .rfind(|gt| gt.dst == k && gt.open.contains(&k))
-                .map(|gt| gt.src)
+                .filter(|gt| gt.open.contains(&k))
+                .flat_map(|gt| &gt.moves)
+                .rfind(|&&(dst, _)| dst == k)
+                .map(|&(_, src)| src)
         })
 }
 /// Quint: discharge
@@ -91,23 +113,27 @@ pub(super) fn revert_partner(
     g.mine.insert(src);
 }
 /// Quint: discarded
-pub(super) fn discarded(s: &mut Sys, k: usize) {
-    s.gates.retain(|gt| !(gt.dst == k && gt.open.contains(&k)));
+pub(super) fn discarded(s: &mut Sys, k: usize, source: Option<usize>) {
     for gt in &mut s.gates {
-        if gt.dst != k {
-            gt.open.remove(&k);
+        if gt.open.remove(&k) || source.is_some() {
+            gt.moves.retain(|&(dst, src)| {
+                if dst == k {
+                    gt.open.remove(&src);
+                }
+                dst != k
+            });
         }
     }
-    s.gates.retain(|gt| !gt.open.is_empty());
+    s.gates
+        .retain(|gt| !gt.moves.is_empty() && !gt.open.is_empty());
 }
 /// Quint: oblPublished
 pub(super) fn obl_published(obl: &mut Obligations, q: usize, ver: i64) {
     obl.retain(|o| !(o.1 == q && ver >= o.2));
 }
 /// Quint: oblDiscarded
-pub(super) fn obl_discarded(obl: &mut Obligations, k: usize) {
-    let cancels = obl.iter().any(|o| o.1 == k && o.3 == k);
-    obl.retain(|o| !(o.0 == k || o.1 == k || (cancels && o.3 == k)));
+pub(super) fn obl_discarded(obl: &mut Obligations, k: usize, source: Option<usize>) {
+    obl.retain(|o| !(o.0 == k || o.1 == k || source.is_some_and(|src| o.0 == src || o.3 == k)));
 }
 /// Quint: unrename
 pub(super) fn unrename(renamed: &mut BTreeSet<(usize, usize)>, ks: &[usize]) {

@@ -493,16 +493,15 @@ impl<F: ConformanceIo> Driver<F> {
             .order
             .view()
             .map(|(moves, versions, open)| {
-                // The model's gate is one move (storage-s35 `Gate`); the
-                // scheduler drives no operation with more (S2-DESIGN Q1).
-                let [(dst, src)] = moves else {
-                    panic!("a conformance gate with {} moves", moves.len())
-                };
+                let moves: BTreeSet<_> = moves
+                    .iter()
+                    .map(|(dst, src)| (index(dst), index(src)))
+                    .collect();
                 let vers: Vec<_> = (0..self.windows.len())
                     .map(|p| versions.get(&key(p)).map_or(NONE, |v| self.version(*v)))
                     .collect();
                 let open: BTreeSet<_> = open.iter().map(|k| index(k)).collect();
-                json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
+                json!({"moves":moves,"vers":vers,"open":open})
             })
             .collect();
         let pairs = self.abstract_pairs();
@@ -534,14 +533,31 @@ impl<F: ConformanceIo> Driver<F> {
         for (name, members) in &scan.pairs {
             let records = &scan.files[name];
             let id = drafts::op_id(name).expect("paired vehicle has an operation id");
+            let ends: BTreeSet<_> = members
+                .iter()
+                .flat_map(|&(dst, src)| [dst as usize, src as usize])
+                .collect();
+            // Admission reserves one model version per page. Subtracting a
+            // member's slot recovers that reservation's start even after a rewrite.
+            let vehicle = records
+                .iter()
+                .map(|r| self.record_versions[&r.wseq] - index(&r.page) as i64)
+                .min()
+                .unwrap();
             for &(receiver, source) in members {
                 let dst = index(&records[receiver as usize].page);
                 let src = index(&records[source as usize].page);
-                let live = self
-                    .host
-                    .order
-                    .paired(name)
-                    .and_then(|op| op.pairs.iter().find(|pair| pair.member == receiver));
+                // By endpoints: a settlement rewrite moves the surviving
+                // pairs to its new draft before the original leaves.
+                let (dst_key, src_key) = (
+                    &records[receiver as usize].page,
+                    &records[source as usize].page,
+                );
+                let same =
+                    |pair: &&order::Pair| pair.receiver == *dst_key && pair.source == *src_key;
+                let live = (self.host.order.paired(name))
+                    .and_then(|op| op.pairs.iter().find(same))
+                    .or_else(|| self.host.order.live_pair(dst_key, src_key));
                 let took = |member| {
                     scan.decisions.values().any(|d| {
                         d.op == id && d.member == member && d.choice == drafts::Choice::TakeDisk
@@ -553,7 +569,16 @@ impl<F: ConformanceIo> Driver<F> {
                     "sourceDisk"
                 } else if scan.blocking.values().any(|blocked| blocked == name) {
                     "unreadable"
-                } else if live.is_some_and(|pair| pair.phase == PairPhase::Disarmed) {
+                } else if scan
+                    .decisions
+                    .values()
+                    .any(|d| d.op == id && d.member == source && d.choice.superseding())
+                    && live.is_none_or(|pair| {
+                        // Durable before the newer text's save; the model's
+                        // decision is taken when that text publishes.
+                        !matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. })
+                    })
+                {
                     "disarmed"
                 } else {
                     "none"
@@ -573,19 +598,23 @@ impl<F: ConformanceIo> Driver<F> {
                         "cancelled" => "cancelled",
                         "sourceDisk" => "sourceDisk",
                         "unreadable" => "blocked",
+                        "disarmed" => "disarmed",
                         _ => "armed",
                     },
                 };
                 let mut footprint =
                     vec![json!({"bytes":NONE,"base":NONE,"ver":0}); self.windows.len()];
-                for record in records {
+                for (i, record) in records.iter().enumerate() {
+                    if ends.contains(&i) && i != receiver as usize && i != source as usize {
+                        continue;
+                    }
                     footprint[index(&record.page)] = json!({
                         "bytes":label(&record.bytes), "base":base(&record.base),
                         "ver":self.record_versions[&record.wseq],
                     });
                 }
-                pairs.push((records.iter().map(|record| record.wseq).min().unwrap(),
-                    json!({"dst":dst,"src":src,"records":footprint,"phase":phase,"decision":decision})));
+                pairs.push(((vehicle, dst),
+                    json!({"vehicle":vehicle,"dst":dst,"src":src,"records":footprint,"phase":phase,"decision":decision})));
             }
         }
         // Like the logical draft records, a pending logical removal retains
@@ -594,15 +623,16 @@ impl<F: ConformanceIo> Driver<F> {
         if self.host.worker.as_ref().is_some_and(|worker| {
             matches!(
                 worker.application,
-                Some(Application::Removal | Application::Retire)
+                Some(Application::Removal | Application::Retire | Application::Rewrite(_))
             )
         }) {
             for old in self.observed["s"]["pairs"].as_array().into_iter().flatten() {
-                if !pairs
-                    .iter()
-                    .any(|(_, new)| new["records"] == old["records"])
-                {
-                    pairs.push((u64::MAX, old.clone()));
+                let key = (
+                    old["vehicle"].as_i64().unwrap(),
+                    old["dst"].as_u64().unwrap() as usize,
+                );
+                if !pairs.iter().any(|(current, _)| *current == key) {
+                    pairs.push((key, old.clone()));
                 }
             }
         }
@@ -982,7 +1012,7 @@ impl<F: ConformanceIo> Driver<F> {
     }
 
     fn apply_admission(&mut self, name: &str, args: &[Value]) -> Result<Disposition, ApplyRefusal> {
-        let (eff, plan, dst, src) = apply_args(name, args);
+        let (eff, plan, moves) = apply_args(name, args);
         let keys = eff.keys().map(|&p| key(p)).collect();
         let unsaved = binding::unsaved(&self.host, &keys);
         // Compare the complete production admission set with the independent
@@ -1026,9 +1056,9 @@ impl<F: ConformanceIo> Driver<F> {
             .iter()
             .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
             .collect();
-        let moves: Vec<_> = (dst != NONE)
-            .then(|| (key(dst as usize), key(src as usize)))
+        let moves: Vec<_> = moves
             .into_iter()
+            .map(|(dst, src)| (key(dst), key(src)))
             .collect();
         match self.host.apply(&effects, &moves) {
             Disposition::Refused | Disposition::Disabled => Err(ApplyRefusal::Changed),
@@ -1167,7 +1197,14 @@ impl<F: ConformanceIo> Driver<F> {
                             && op[1][0][0] == "action"
                             && matches!(
                                 op[1][0][1].as_str(),
-                                Some("opApply" | "planCreate" | "opDelete" | "opRename")
+                                Some(
+                                    "opApply"
+                                        | "opApplyMoves"
+                                        | "planCreate"
+                                        | "opDelete"
+                                        | "opRename"
+                                        | "pairRewrite"
+                                )
                             )
                         {
                             let before = self.abstract_state();
@@ -1264,7 +1301,7 @@ fn run(d: &mut Driver, actions: &[(&str, Value)]) {
 pub(super) fn applies_next(worker: &DraftWorker) -> bool {
     let removal = matches!(
         worker.application,
-        Some(Application::Removal | Application::Retire)
+        Some(Application::Removal | Application::Retire | Application::Rewrite(_))
     );
     let retry = worker.retry_copy && worker.task.stage == Stage::Absent;
     worker.application.is_some()

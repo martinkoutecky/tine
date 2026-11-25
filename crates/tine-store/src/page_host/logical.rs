@@ -18,17 +18,14 @@ pub(super) struct LiveOp {
     /// Pages held at risk, without a conflict, at their record's version:
     /// the operation's saves still to publish.
     pub(super) owed: BTreeSet<PageKey>,
-    /// A paired operation whose `Order` still owes a source settlement:
-    /// its vehicle neither retires nor splits (`Order::holds`).
-    pub(super) held: bool,
 }
 
-impl LiveOp {
-    /// Its pages keep their records in it: a publication or a pair's
-    /// settlement is still owed.
-    pub(super) fn waits(&self) -> bool {
-        !self.owed.is_empty() || self.held
-    }
+/// Operation vehicle `name` (`op`, its `live_ops` entry) keeps its pages'
+/// records: a publication (`op.owed`) or a pair's settlement is still owed.
+/// The settlement is `Order`'s answer, asked live (`Order::holds`), never
+/// cached: one map lookup and a scan of that operation's pairs.
+pub(super) fn waits(order: &order::Order, name: &str, op: &LiveOp) -> bool {
+    !op.owed.is_empty() || order.holds(name)
 }
 
 /// A host's test-only schedule knobs.
@@ -158,33 +155,38 @@ impl<F: HostIo> Host<F> {
             .filter(|(key, version)| owes(self.pages.get(*key), **version))
             .map(|(key, _)| key.clone())
             .collect();
-        let held = self.order.holds(name);
-        self.live_ops.insert(
-            name.into(),
-            LiveOp {
-                versions,
-                owed,
-                held,
-            },
-        );
+        self.live_ops.insert(name.into(), LiveOp { versions, owed });
         for receiver in receivers {
             self.release_witness(&receiver);
         }
     }
 
     /// `Order` changed paired operation `name`: refresh its entry, marking
-    /// its pages when whether it waits changed (their draft candidacy).
+    /// its pages when whether it waits may have changed (their draft
+    /// candidacy). `Order::holds` keeps no earlier answer to compare with,
+    /// so that is whenever no publication of it was owed before or after:
+    /// while one is, it waits either way.
     pub(super) fn repair_op(&mut self, name: &str) {
-        let before = self.live_ops.get(name).map(LiveOp::waits);
+        let owing = |op: Option<&LiveOp>| op.is_some_and(|op| !op.owed.is_empty());
+        let before = owing(self.live_ops.get(name));
         self.index_op(name);
-        let after = self.live_ops.get(name).map(LiveOp::waits);
-        if before != after {
+        if !(before && owing(self.live_ops.get(name))) {
             let pages: Vec<PageKey> = (self.live_ops.get(name))
                 .map(|op| op.versions.keys().cloned().collect())
                 .unwrap_or_default();
             for page in pages {
                 self.mark(&page);
             }
+        }
+        // A resolved pair's source may now be its settlement rewrite's
+        // draft candidate (`rewritable`), the operation still waiting.
+        let resolved: Vec<PageKey> = (self.order.paired(name).into_iter())
+            .flat_map(|op| op.pairs.iter())
+            .filter(|p| !p.phase.unresolved())
+            .map(|p| p.source.clone())
+            .collect();
+        for source in resolved {
+            self.mark(&source);
         }
     }
 
@@ -195,19 +197,32 @@ impl<F: HostIo> Host<F> {
         let ops = self.vehicles_of.get(key).into_iter().flatten();
         let ops: Vec<String> = ops.filter(|n| n.starts_with("op-")).cloned().collect();
         for name in ops {
+            let holds = self.order.holds(&name);
             let Some(op) = self.live_ops.get_mut(&name) else {
                 continue;
             };
-            let settled = !op.waits();
+            let idle = op.owed.is_empty();
             if owes(self.pages.get(key), op.versions[key]) {
                 op.owed.insert(key.into());
             } else {
                 op.owed.remove(key);
             }
-            if settled != !op.waits() {
+            // Whether it waits changed: only its owed set did (`holds`).
+            if !holds && idle != op.owed.is_empty() {
                 let pages: Vec<PageKey> = op.versions.keys().cloned().collect();
                 for page in pages {
                     self.mark(&page);
+                }
+            } else if idle != op.owed.is_empty() {
+                // Its resolved pairs' sources: rewrite candidates only
+                // while nothing of the operation is owed (`rewritable`).
+                let resolved: Vec<PageKey> = (self.order.paired(&name).into_iter())
+                    .flat_map(|op| op.pairs.iter())
+                    .filter(|p| !p.phase.unresolved())
+                    .map(|p| p.source.clone())
+                    .collect();
+                for source in resolved {
+                    self.mark(&source);
                 }
             }
         }
@@ -234,10 +249,8 @@ impl<F: HostIo> Host<F> {
     /// in its operation vehicle, rather than retiring it alone, while the
     /// vehicle still owes another page's publication.
     pub(super) fn op_waits(&self, key: &str) -> bool {
-        let names = self.vehicles_of.get(key).into_iter().flatten();
-        names
-            .filter_map(|n| self.live_ops.get(n))
-            .any(LiveOp::waits)
+        let mut names = self.vehicles_of.get(key).into_iter().flatten();
+        names.any(|n| (self.live_ops.get(n)).is_some_and(|op| waits(&self.order, n, op)))
     }
 
     /// `key`'s records stay in a paired operation draft that still owes a
@@ -246,8 +259,7 @@ impl<F: HostIo> Host<F> {
         let names = self.vehicles_of.get(key).into_iter().flatten();
         names
             .filter(|n| self.order.paired(n).is_some())
-            .filter_map(|n| self.live_ops.get(n))
-            .any(LiveOp::waits)
+            .any(|n| (self.live_ops.get(n)).is_some_and(|op| waits(&self.order, n, op)))
     }
 
     /// Recompute `page`'s highest-sequence record from its vehicles.
@@ -423,12 +435,20 @@ impl<F: HostIo> Host<F> {
             self.order
                 .adopt(name.clone(), order::PairedOp::new(id, records, pairs));
         }
-        // A receiver's decision outranks its source's own Use Disk.
+        // A receiver's decision outranks its source's own Use Disk and its
+        // superseding input.
         for (decision, d) in &scan.decisions {
+            let name = drafts::op_vehicle(&d.op);
             if d.choice == drafts::Choice::TakeDisk {
+                self.order
+                    .decide(&name, d.member, None, Some((decision.clone(), d.clone())));
+            }
+        }
+        for (decision, d) in &scan.decisions {
+            if d.choice.superseding() {
                 let name = drafts::op_vehicle(&d.op);
                 self.order
-                    .decide(&name, d.member, None, Some(decision.clone()));
+                    .decide_superseded(&name, d.member, (decision.clone(), d.clone()), true);
             }
         }
         // Where each decided pair's original text stands now: one read of
@@ -466,7 +486,9 @@ impl<F: HostIo> Host<F> {
             for pair in &op.pairs {
                 let keys = match pair.choice {
                     order::PairChoice::None => vec![],
-                    order::PairChoice::SourceDisk => vec![&pair.source],
+                    order::PairChoice::SourceDisk | order::PairChoice::Superseded => {
+                        vec![&pair.source]
+                    }
                     order::PairChoice::ReceiverDisk => vec![&pair.receiver, &pair.source],
                 };
                 for key in keys {
