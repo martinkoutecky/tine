@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 const template = (name: string) => readFileSync(`crates/tine-guide/src/templates/${name}.md`, "utf8");
 
 it("the Guide explains one history step for each repeated mouse press (GH #948)", () => {
-  expect(template("tips")).toContain("Each press steps once, including repeated presses before the page finishes displaying, just like **Alt+Left** and **Alt+Right**");
+  expect(template("tips")).toContain("Each press steps once, including repeated presses before the page finishes displaying, just like **Alt+Left** and **Alt+Right** (**Cmd+[** and **Cmd+]** on macOS");
 });
 
 it("the Guide explains link completion inside a complete link (GH #888)", () => {

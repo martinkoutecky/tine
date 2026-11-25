@@ -392,8 +392,10 @@ const COMMANDS: CommandDef[] = [
   { id: "go/keyboard-shortcuts", binding: "g s", label: msg("command-go-keyboard-shortcuts"), scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the
   // dispatcher so they fire even while editing a block; remappable like any other.
-  { id: "go/backward", binding: "alt+left", alias: isMac ? "mod+[" : "", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
-  { id: "go/forward", binding: "alt+right", alias: isMac ? "mod+]" : "", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
+  // GH #1040: on macOS Option+Left/Right is the editor's word motion, so the Mac
+  // keys are OG's (config.cljs `:go/backward` / `:go/forward`, mod+[ / mod+]).
+  { id: "go/backward", binding: isMac ? "mod+[" : "alt+left", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
+  { id: "go/forward", binding: isMac ? "mod+]" : "alt+right", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
   // mod+w is a mod-chord, so it clears the while-editing guard and reaches the
   // generic dispatch loop below — closes the active tab even mid-edit (like a
   // browser). The last tab can't be closed, so this never quits the app.
@@ -556,11 +558,11 @@ const COMMANDS: CommandDef[] = [
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: msg("command-editor-indent"), scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: msg("command-editor-outdent"), scope: "editor" },
-  // OG's non-Mac default (alt+shift+arrow). Super+arrow (the old "meta+up"
-  // binding) is grabbed by most Linux compositors for window tiling, so it never
-  // reached the app.
-  { id: "editor/move-block-up", binding: "alt+shift+up", label: msg("command-editor-move-block-up"), scope: "editor" },
-  { id: "editor/move-block-down", binding: "alt+shift+down", label: msg("command-editor-move-block-down"), scope: "editor" },
+  // OG's defaults. Super+arrow (the old "meta+up" binding) is grabbed by most
+  // Linux compositors for window tiling, so it never reached the app. On macOS
+  // Option+Shift+Up/Down selects to the paragraph's edge (GH #1040).
+  { id: "editor/move-block-up", binding: isMac ? "mod+shift+up" : "alt+shift+up", label: msg("command-editor-move-block-up"), scope: "editor" },
+  { id: "editor/move-block-down", binding: isMac ? "mod+shift+down" : "alt+shift+down", label: msg("command-editor-move-block-down"), scope: "editor" },
   { id: "editor/collapse", binding: "mod+up", label: msg("command-editor-collapse"), scope: "editor" },
   { id: "editor/expand", binding: "mod+down", label: msg("command-editor-expand"), scope: "editor" },
   { id: "editor/select-block-up", binding: "shift+up", label: msg("command-editor-select-block-up"), scope: "editor" },
@@ -589,14 +591,16 @@ const COMMANDS: CommandDef[] = [
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
   { id: "editor/copy-embed", binding: "mod+shift+c", label: msg("command-editor-copy-embed"), scope: "editor" },
-  { id: "editor/clear-block", binding: "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
-  // Emacs-style cursor/kill motions.
-  { id: "editor/kill-line-before", binding: "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
-  { id: "editor/kill-line-after", binding: "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
-  { id: "editor/backward-word", binding: "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
-  { id: "editor/forward-word", binding: "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
-  { id: "editor/backward-kill-word", binding: "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
-  { id: "editor/forward-kill-word", binding: "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
+  // Clear block and the Emacs-style cursor/kill motions, with OG's chords (config.cljs). On macOS
+  // Option+letter types a symbol (¬, ∑, ∂ …) and Control+K already kills to the
+  // line's end, so the Mac keys are OG's Control chords or none (GH #1040).
+  { id: "editor/clear-block", binding: isMac ? "ctrl+l" : "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
+  { id: "editor/kill-line-before", binding: isMac ? "ctrl+u" : "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
+  { id: "editor/kill-line-after", binding: isMac ? "" : "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
+  { id: "editor/backward-word", binding: isMac ? "ctrl+shift+b" : "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
+  { id: "editor/forward-word", binding: isMac ? "ctrl+shift+f" : "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
+  { id: "editor/backward-kill-word", binding: isMac ? "" : "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
+  { id: "editor/forward-kill-word", binding: isMac ? "ctrl+w" : "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
 ];
 
 export interface BuiltinKeyDef {
@@ -1211,8 +1215,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     }
 
     // Browser-style history nav, handled BEFORE the while-editing guard so
-    // Alt+Left / Alt+Right work from inside a block too (like a browser navigating
-    // from a focused field). preventDefault stops the textarea's own alt-arrow.
+    // Back / Forward work from inside a block too (like a browser navigating
+    // from a focused field). preventDefault stops the editor's own handling.
     if (matchesCommand(e, "go/backward")) {
       e.preventDefault();
       resetSeq();

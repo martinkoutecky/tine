@@ -6,7 +6,7 @@ icon:: 🗺️
   - Each pane shows the **page or PDF** its active tab points to. Tine opens on the **journal feed** — one continuous, editable list of days — and the **Journals** item in the left sidebar takes you back to it. With `:feature/enable-journals? false` in `logseq/config.edn`, the sidebar shows your configured home page instead of Journals.
   - Everything you write is a **block** (one bullet). Blocks nest under other blocks to form the outline, and any block can carry a task, a date, a link, or its own id for references from elsewhere.
   - Press **Ctrl+K** at any time to jump to a page by name or to text inside any block.
-  - Mouse back and forward buttons navigate page history on desktop. On macOS, **Cmd+[** and **Cmd+]** also go back and forward; dragging with a side button does not navigate.
+  - Mouse back and forward buttons navigate page history on desktop, and so do **Alt+Left** and **Alt+Right** (**Cmd+[** and **Cmd+]** on macOS); dragging with a side button does not navigate.
   - A page in a namespace has a **Hierarchy** section below its outline. Click its title, or focus it and press **Enter** or **Space**, to fold or expand the paths. It starts expanded and remembers your choice for that page until you switch graphs.
   - The reading column has a width cap. Press **t w** to toggle wide mode, which drops the cap; Settings → **Appearance** → **Advanced** holds **Standard page width** and **Wide page width** if you want your own numbers.
   - On desktop, resize any graph window down to 390 pt wide to use it beside another app.
