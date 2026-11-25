@@ -638,8 +638,9 @@ fn worktree_entry(full: &Path) -> std::io::Result<Option<std::fs::Metadata>> {
 /// dropped); once the file is confirmed gone, no entry, committed like any
 /// deletion. A temp left on disk therefore never changes the tree: a clean
 /// checkout stays clean and a fast-forward pull stays one (review of
-/// c897398d8, B1). Costs one `lstat`, and runs only for a temp git status
-/// lists.
+/// c897398d8, B1). Only git's not-found is an absent entry: any other error
+/// reading `tip` or removing the index entry fails the round. Costs one
+/// `lstat`, and runs only for a temp git status lists.
 fn keep_tip_for_scratch(
     workdir: &Path,
     tip: Option<&git2::Tree<'_>>,
@@ -650,14 +651,20 @@ fn keep_tip_for_scratch(
         .map_err(|e| Unusable::Failed(format!("{path}: {e}")))?
         // A folder where the temp was: the file is gone.
         .is_some_and(|meta| !meta.is_dir());
-    let kept = on_disk
-        .then(|| tip.and_then(|t| t.get_path(Path::new(path)).ok()))
-        .flatten()
+    let entry = match tip.filter(|_| on_disk).map(|t| t.get_path(Path::new(path))) {
+        Some(Ok(entry)) => Some(entry),
+        None => None,
+        Some(Err(e)) if e.code() == git2::ErrorCode::NotFound => None,
+        // An unreadable object is not an absent entry.
+        Some(Err(e)) => return Err(Unusable::Failed(format!("{path}: {}", e.message()))),
+    };
+    let kept = entry
         .filter(|e| e.kind() == Some(git2::ObjectType::Blob))
         .map(|e| (e.id(), e.filemode() as u32));
     let Some((id, mode)) = kept else {
-        let _ = index.remove_path(Path::new(path));
-        return Ok(());
+        return index
+            .remove_path(Path::new(path))
+            .map_err(|e| Unusable::Failed(format!("{path}: {}", e.message())));
     };
     if index.get_path(Path::new(path), 0).map(|e| (e.id, e.mode)) == Some((id, mode)) {
         return Ok(());
