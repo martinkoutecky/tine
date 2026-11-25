@@ -27,6 +27,8 @@ export function cm6Typing(ctx: {
   let generation = 0;
   let endValue: string | undefined;
   let compositionBefore: string | undefined;
+  /** The block's stored text when the held composition began. */
+  let heldRaw: string | undefined;
   let releaseHold: (() => void) | undefined;
   const begin = () => {
     if (!ctx.current()) return;
@@ -37,6 +39,7 @@ export function cm6Typing(ctx: {
     generation++;
     endValue = undefined;
     ctx.pauseCompletion();
+    if (!releaseHold) heldRaw = node(ctx.id)?.raw;
     releaseHold ??= pinPageWhileDrafting(() => node(ctx.id)?.page);
   };
   const active = () => composing || ending || !!ctx.view()?.compositionStarted;
@@ -143,6 +146,13 @@ export function cm6Typing(ctx: {
   // A plain key in the same event turn as compositionend still owns its normal
   // editor command (desktop WebKit). Native confirming/229 keys never call this.
   const beforeKey = () => { if (ending && !ctx.view()?.compositionStarted) finish(); };
-  const dispose = () => { disposed = true; releaseHold?.(); releaseHold = undefined; };
+  /** The editor is going away. A composition nobody ended holds text that exists only in the view: a tap on
+   *  another block moves editing without a blur, and a voice keyboard may never end its composition. Save it
+   *  as a blur does (GH #767). A block written since the composition began is left alone: its view only lags
+   *  the store, and whoever wrote the block took the text from the view. */
+  const dispose = () => {
+    if ((composing || ending) && node(ctx.id)?.raw === heldRaw) finish();
+    disposed = true; releaseHold?.(); releaseHold = undefined;
+  };
   return { filter, changed, begin, end, finish, input, active, settling: () => ending, beforeKey, dispose };
 }
