@@ -1,8 +1,8 @@
 //! Asset names a document mentions: the one collector behind orphan-asset
 //! detection and publication asset copying. Pure: no I/O, no store state.
 //!
-//! Liveness (orphan listing, trash recheck) adds a second answer, and neither
-//! may remove a name the other gives:
+//! Liveness (orphan listing, trash recheck) adds two answers, and none may
+//! remove a name another gives:
 //! - the collector's own link split and loose plaintext mentions
 //!   ([`collect_asset_refs`]). It stays the base until the reader asks the
 //!   link-target owner too, because until then it is the only answer that
@@ -10,7 +10,10 @@
 //!   answer alone;
 //! - the link-target owner ([`crate::local_target`]), asked for every Markdown
 //!   link and embed, Org link and `img` macro the parser reports; only its
-//!   attachments are kept ([`collect_live_asset_refs`]).
+//!   attachments are kept ([`collect_live_asset_refs`]);
+//! - the widening rule W ([`widen_one`]): one generous rule that holds every
+//!   name any reader, opener or exporter can make of a written destination,
+//!   compared by [`live_key`], so no file a surface uses is offered for trash.
 
 use std::collections::HashSet;
 
@@ -27,29 +30,120 @@ pub fn collect_asset_refs(text: &str, into: &mut HashSet<String>) {
     if !text.contains("assets/") {
         return;
     }
-    collect(text, Some(into), None);
+    collect(text, Some(into), None, None);
 }
 
-/// Liveness (orphan listing, trash recheck): [`collect_asset_refs`] plus the
-/// owner's attachments (with the first folder of each nested one), so it
-/// never holds fewer names. O(text bytes), one parse per format serving both
-/// answers; parsing is skipped when the text names no `assets` folder in any
-/// case.
+/// Liveness (orphan listing, trash recheck): L' = L ∪ W. L is
+/// [`collect_asset_refs`] plus the owner's attachments (with the first folder
+/// of each nested one), kept as written; W is the widening rule
+/// ([`widen_one`]) over every destination the parsers report, every
+/// `file-path` pointer and every `assets` mention in the text and its decoded
+/// views. `into` receives L and the [`live_key`] of every name in L', so a
+/// directory entry is live when `into` holds its `live_key`. O(text bytes):
+/// one parse per format serving all three answers, skipped unless the text
+/// names an `assets` folder, holds a destination with a dot or an escape, or
+/// a Hiccup escape.
 pub fn collect_live_asset_refs(text: &str, into: &mut HashSet<String>) {
-    if !names_assets_folder(text) {
+    let has = |needle: &str| memchr::memmem::find(text.as_bytes(), needle.as_bytes()).is_some();
+    let folder = names_assets_folder(text);
+    let linked = may_have_dotted_destination(text);
+    let hiccup = has("[:") && has("\\u");
+    let property = text.contains(':') && (has("file-path") || has("FILE-PATH"));
+    let escaped = text.contains('%') || (text.contains('<') && text.contains('&'));
+    if !(folder || linked || hiccup || property || escaped) {
         return;
     }
-    let mut targets = HashSet::new();
-    // The collector's own answer keeps its own prefilter (`assets/`, which
-    // implies the owner's).
-    let collected = text.contains("assets/").then_some(&mut *into);
-    collect(text, collected, Some(&mut targets));
-    for name in targets {
-        if let Some((folder, _)) = name.split_once('/') {
-            into.insert(folder.to_owned());
+    let mut live = HashSet::new();
+    let mut wide = HashSet::new();
+    if folder || linked || hiccup {
+        let mut targets = HashSet::new();
+        // The collector's own answer keeps its own prefilter (`assets/`, which
+        // implies the owner's).
+        let collected = text.contains("assets/").then_some(&mut live);
+        collect(
+            text,
+            collected,
+            folder.then_some(&mut targets),
+            Some(&mut wide),
+        );
+        for name in targets {
+            if let Some((folder, _)) = name.split_once('/') {
+                live.insert(folder.to_owned());
+            }
+            live.insert(name);
         }
-        into.insert(name);
     }
+    widen_text(text, property, &mut wide);
+    // No directory entry has an empty key (`/` alone folds to one).
+    let keys = live.iter().chain(&wide).map(|name| live_key(name));
+    into.extend(keys.filter(|key| !key.is_empty()));
+    into.extend(live);
+}
+
+/// The parse prefilter for the basename rule: whether some destination span
+/// (to its closer, whitespace for `](`, or line end) can name a file by its
+/// basename: a `{{…}}` or non-web `](…)` one holding a `.` or `%`, or a
+/// `[[…]]` one escaped, naming a PDF or read by the owner as a bare Org image
+/// (any other is a page). A necessary condition only. Spans never overlap,
+/// so O(text bytes).
+fn may_have_dotted_destination(text: &str) -> bool {
+    fn until<'a>(tail: &'a [u8], close: &[u8]) -> &'a [u8] {
+        let end = memchr::memmem::find(tail, close).unwrap_or(tail.len());
+        let line = memchr::memchr(b'\n', &tail[..end]).unwrap_or(end);
+        &tail[..line]
+    }
+    fn web(dest: &[u8]) -> bool {
+        let scheme = dest.iter().take_while(|c| c.is_ascii_alphabetic()).count();
+        scheme > 1
+            && dest[scheme..].starts_with(b"://")
+            && !dest[..scheme].eq_ignore_ascii_case(b"file")
+    }
+    let b = text.as_bytes();
+    let mut at = 0;
+    while let Some(i) = b
+        .get(at..)
+        .and_then(|rest| memchr::memchr3(b'[', b'{', b']', rest))
+    {
+        let start = at + i;
+        let rest = &b[start..];
+        let span = match rest {
+            [b'[', b'[', tail @ ..] => Some(until(tail, b"]]")),
+            [b'{', b'{', tail @ ..] => Some(until(tail, b"}}")),
+            [b']', b'(', b'<', tail @ ..] => Some(until(tail, b">")),
+            [b']', b'(', tail @ ..] if !web(tail) => {
+                let end = tail
+                    .iter()
+                    .position(|c| c.is_ascii_whitespace())
+                    .unwrap_or(tail.len());
+                Some(&tail[..end])
+            }
+            _ => None,
+        };
+        // A `[[…]]` destination is a page unless the owner reads it as a
+        // bare Org image, or it names a PDF.
+        let named = |span: &[u8]| {
+            if rest.starts_with(b"[[") {
+                let dest = String::from_utf8_lossy(until(span, b"]["));
+                return dest.contains('%')
+                    || crate::local_target::is_pdf(before_suffix(&dest))
+                    || crate::local_target::org_bare_image(&dest);
+            }
+            span.iter().any(|&c| c == b'.' || c == b'%')
+        };
+        match span {
+            Some(span) if named(span) => return true,
+            Some(span) => at = start + 2 + span.len(),
+            None => at = start + 1,
+        }
+    }
+    false
+}
+
+/// The key liveness compares a directory entry by: the file-name fold
+/// ([`crate::refs::fold_file_name`]), coarser than any volume's equivalence,
+/// so two spellings one volume opens as the same file meet.
+pub fn live_key(name: &str) -> String {
+    crate::refs::fold_file_name(name)
 }
 
 /// The owner's attachments alone: exactly the files the owner says `text`'s
@@ -57,21 +151,72 @@ pub fn collect_live_asset_refs(text: &str, into: &mut HashSet<String>) {
 #[cfg(test)]
 pub(crate) fn collect_asset_targets(text: &str, into: &mut HashSet<String>) {
     if names_assets_folder(text) {
-        collect(text, None, Some(into));
+        collect(text, None, Some(into), None);
     }
 }
 
 /// One parse per format serves both answers. `collected`, when given,
 /// receives the collector's own answer: parser-accepted targets split after
 /// `assets/` under raw and decoded spellings, and the loose plaintext
-/// mentions. `targets`, when given, receives the owner's attachments. The
-/// callers apply the prefilters.
+/// mentions. `targets`, when given, receives the owner's attachments.
+/// `widened`, when given, receives W of every destination the parser
+/// reports: each link's, each macro argument and its whitespace-separated
+/// pieces, and the `assets` mentions of each Hiccup vector's strings
+/// when it holds an escape. The callers apply the prefilters.
 fn collect(
     text: &str,
     mut collected: Option<&mut HashSet<String>>,
     mut targets: Option<&mut HashSet<String>>,
+    mut widened: Option<&mut HashSet<String>>,
 ) {
     use crate::lsdoc::ast::{Inline, Url};
+    fn destinations(nodes: &[Inline], into: &mut HashSet<String>) {
+        for node in nodes {
+            match node {
+                Inline::Link { url, label, .. } => {
+                    match url {
+                        Url::Search { v } | Url::File { v } | Url::PageRef { v } => {
+                            widen_one(v, true, true, into)
+                        }
+                        Url::Complex { protocol, link } => {
+                            let file = protocol
+                                .as_deref()
+                                .is_some_and(|p| p.eq_ignore_ascii_case("file"));
+                            if let Some(link) = link {
+                                widen_one(link, file, true, into);
+                            }
+                        }
+                        Url::BlockRef { .. } | Url::EmbedData { .. } => (),
+                    }
+                    destinations(label, into);
+                }
+                Inline::Macro { args, .. } => {
+                    // The reader joins the arguments with `, ` and splits
+                    // the first piece off at whitespace.
+                    let joined = args.join(", ");
+                    for arg in args.iter().map(String::as_str).chain([joined.as_str()]) {
+                        widen_one(arg.trim(), true, true, into);
+                        for piece in arg.split_whitespace() {
+                            widen_one(piece, true, true, into);
+                        }
+                    }
+                }
+                // The live reader reads a vector's strings with their
+                // escapes (`a`); the EDN reader decodes them alike.
+                Inline::Hiccup { v, .. } if v.contains("\\u") => {
+                    if let Some(form) = crate::edn::parse(v) {
+                        hiccup_strings(&form, into);
+                    }
+                }
+                Inline::Emphasis { children, .. }
+                | Inline::Subscript { children, .. }
+                | Inline::Superscript { children, .. }
+                | Inline::Tag { children, .. } => destinations(children, into),
+                Inline::Fnref { definition, .. } => destinations(definition, into),
+                _ => (),
+            }
+        }
+    }
     fn links(nodes: &[Inline], into: &mut HashSet<String>) {
         for node in nodes {
             match node {
@@ -142,6 +287,9 @@ fn collect(
             }
             if let Some(into) = targets.as_deref_mut() {
                 owner(&nodes, format == "md", into);
+            }
+            if let Some(into) = widened.as_deref_mut() {
+                destinations(&nodes, into);
             }
         }
     }
@@ -259,4 +407,262 @@ pub fn collect_document_live_asset_refs(doc: &Document, into: &mut HashSet<Strin
     for b in &doc.roots {
         block(b, into);
     }
+}
+
+/// The widening rule W for one written destination `candidate`: every name a
+/// reader, opener or exporter can make of it. Spellings: as written and cut
+/// before its first `?` or `#`, each raw and, with `decode` (a candidate not
+/// already read from a decoded view), decoded once (invalid UTF-8 as U+FFFD)
+/// and decoded leniently (invalid UTF-8 escapes kept literal), each cut
+/// again. Never decoded twice: no surface does. Each spelling, with `\` and then also `%5C` read as `/`, gives
+/// the text after its first `assets/` (any case, inside a segment too) and
+/// after its first whole `assets` segment, as written, without empty and `.`
+/// segments, with `..` steps applied, and each one's first folder; with
+/// `basename`, also its last segment when that has a dot (a bare `x.pdf` or a
+/// relative image the reader opens in `assets/`). Over-retaining is safe: an
+/// extra name only keeps a file off the unused list. O(candidate bytes).
+fn widen_one(candidate: &str, basename: bool, decode: bool, into: &mut HashSet<String>) {
+    use std::borrow::Cow;
+    fn push<'a>(spellings: &mut Vec<Cow<'a, str>>, s: Cow<'a, str>) {
+        if !spellings.iter().any(|known| *known == s) {
+            spellings.push(s);
+        }
+    }
+    let mut spellings: Vec<Cow<str>> = Vec::new();
+    for whole in [candidate, before_suffix(candidate)] {
+        push(&mut spellings, Cow::Borrowed(whole));
+        if decode && whole.contains('%') {
+            for decoded in [percent_decode(whole), lenient_decode(whole)] {
+                push(
+                    &mut spellings,
+                    Cow::Owned(before_suffix(&decoded).to_owned()),
+                );
+                push(&mut spellings, Cow::Owned(decoded));
+            }
+        }
+    }
+    let mut paths: Vec<Cow<str>> = Vec::new();
+    for s in spellings {
+        let slashed = match s.contains('\\') {
+            true => Cow::Owned(s.replace('\\', "/")),
+            false => s,
+        };
+        if slashed.contains("%5") {
+            push(&mut paths, Cow::Owned(replace_escaped_backslash(&slashed)));
+        }
+        push(&mut paths, slashed);
+    }
+    for path in &paths {
+        let inside = (0..path.len())
+            .find(|&i| {
+                path.as_bytes()
+                    .get(i..i + 7)
+                    .is_some_and(|w| w.eq_ignore_ascii_case(b"assets/"))
+            })
+            .map(|i| i + "assets/".len());
+        let segment = path
+            .split('/')
+            .scan(0, |at, part| {
+                let start = *at;
+                *at += part.len() + 1;
+                Some((start, part))
+            })
+            .find(|(_, part)| part.eq_ignore_ascii_case("assets"))
+            .map(|(start, _)| start + "assets/".len());
+        for start in [inside, segment].into_iter().flatten() {
+            if let Some(tail) = path.get(start..) {
+                insert_tail(tail, into);
+            }
+        }
+        if basename {
+            if let Some(last) = path.split('/').rev().find(|part| !part.is_empty()) {
+                if last.contains('.') && last != "." && last != ".." {
+                    insert(last, into);
+                }
+            }
+        }
+    }
+}
+
+/// Insert a non-empty name, allocating only when it is new.
+fn insert(name: &str, into: &mut HashSet<String>) {
+    if !name.is_empty() && !into.contains(name) {
+        into.insert(name.to_owned());
+    }
+}
+
+/// A name after an `assets` folder: as written, without empty and `.`
+/// segments, with `..` steps applied, and the first folder of each.
+fn insert_tail(tail: &str, into: &mut HashSet<String>) {
+    insert(tail, into);
+    if let Some((first, _)) = tail.split_once('/') {
+        insert(first, into);
+    }
+    for parents in [false, true] {
+        let mut segments = Vec::new();
+        crate::local_target::push_segments(&mut segments, tail, parents);
+        match segments.as_slice() {
+            [] => (),
+            [only] => insert(only, into),
+            [first, ..] => {
+                insert(first, into);
+                insert(&segments.join("/"), into);
+            }
+        }
+    }
+}
+
+/// The text before the first `?` or `#`.
+fn before_suffix(s: &str) -> &str {
+    s.find(['?', '#']).map_or(s, |i| &s[..i])
+}
+
+/// `%5C` (any case) read as `/`.
+fn replace_escaped_backslash(s: &str) -> String {
+    s.replace("%5C", "/").replace("%5c", "/")
+}
+
+/// Decode `%XX` escapes, keeping each escape whose byte forms no valid UTF-8
+/// literal (`%FF%20` gives `%FF `). O(bytes).
+fn lenient_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut bytes = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        let hex = |at: usize| b.get(at).and_then(|&c| (c as char).to_digit(16));
+        if let (b'%', Some(h), Some(l)) = (c, hex(i + 1), hex(i + 2)) {
+            bytes.push((h * 16 + l) as u8);
+            i += 3;
+        } else {
+            bytes.push(c);
+            i += 1;
+        }
+    }
+    let mut out = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        out.push_str(chunk.valid());
+        for byte in chunk.invalid() {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// W over the text itself: every `assets` mention in the text and in its
+/// decoded views (percent-decoded both ways; the attribute values the HTML
+/// sanitizer keeps, entities decoded), and with `property`, every `file-path`
+/// pointer value as a destination. O(text bytes).
+fn widen_text(text: &str, property: bool, into: &mut HashSet<String>) {
+    mentions(text, true, into);
+    if text.contains('%') {
+        for view in [percent_decode(text), lenient_decode(text)] {
+            if view != text {
+                mentions(&view, false, into);
+            }
+        }
+    }
+    if text.contains('<') && text.contains('&') {
+        mentions(&sanitized_view(text), true, into);
+    }
+    // The PDF pane reads an `hls__` page's pointer to line end and opens its
+    // basename when it names no `assets` folder.
+    if property {
+        for line in text.lines() {
+            let line = line.trim_start_matches(|c: char| c.is_whitespace() || c == '-');
+            let line = line.strip_prefix("#+").unwrap_or(line);
+            let value = match line.split_once(':') {
+                Some((key, value)) if key.eq_ignore_ascii_case("file-path") => {
+                    value.strip_prefix(':').unwrap_or(value)
+                }
+                _ => continue,
+            };
+            widen_one(value.trim(), true, true, into);
+        }
+    }
+}
+
+/// The `assets` mentions of every string in a Hiccup vector. O(form size).
+fn hiccup_strings(form: &crate::edn::Edn, into: &mut HashSet<String>) {
+    use crate::edn::Edn;
+    match form {
+        Edn::Str(text) => mentions(text, true, into),
+        Edn::Vec(items) | Edn::Set(items) | Edn::List(items) => {
+            items.iter().for_each(|item| hiccup_strings(item, into))
+        }
+        Edn::Map(pairs) => pairs.iter().for_each(|(key, value)| {
+            hiccup_strings(key, into);
+            hiccup_strings(value, into);
+        }),
+        Edn::Tagged(_, inner) => hiccup_strings(inner, into),
+        _ => (),
+    }
+}
+
+/// The HTML sanitizer's output with the entities it writes into attribute
+/// values decoded back: the values a browser loads, as the sanitizer read them.
+fn sanitized_view(html: &str) -> String {
+    crate::html_sanitize::sanitize(html)
+        .replace("&quot;", "\"")
+        .replace("&nbsp;", "\u{a0}")
+        .replace("&amp;", "&")
+}
+
+/// Every `assets` folder mention (any case, then `/`, `\`, `%2F` or `%5C`):
+/// the mention to its end at the first of whitespace and `()[]{}<>"'|,`, to
+/// the first whitespace, to the first of `"'<>` and line end, and to line
+/// end. The three wider ends are taken only for the first mention past the
+/// previous one of the same kind, and the scan resumes after the narrowest
+/// end, so each byte is read a bounded number of times. O(text bytes).
+fn mentions(text: &str, decode: bool, into: &mut HashSet<String>) {
+    let b = text.as_bytes();
+    let narrow = |c: char| c.is_whitespace() || "()[]{}<>\"'|,".contains(c);
+    let wider: [fn(char) -> bool; 3] = [
+        char::is_whitespace,
+        |c| "\"'<>\n\r".contains(c),
+        |c| c == '\n' || c == '\r',
+    ];
+    let mut reached = [0usize; 3];
+    let mut at = 0;
+    while let Some(found) = find_assets(b, at) {
+        let sep = match b.get(found + 6..) {
+            Some([b'/' | b'\\', ..]) => 1,
+            Some([b'%', b'2', b'F' | b'f', ..]) | Some([b'%', b'5', b'C' | b'c', ..]) => 3,
+            _ => {
+                at = found + 6;
+                continue;
+            }
+        };
+        let name = found + 6 + sep;
+        let end_at =
+            |stop: &dyn Fn(char) -> bool| text[name..].find(stop).map_or(text.len(), |i| name + i);
+        let end = end_at(&narrow);
+        let mut candidates = vec![&text[found..end]];
+        for (stop, reached) in wider.iter().zip(&mut reached) {
+            if found >= *reached {
+                let end = end_at(stop);
+                *reached = end;
+                candidates.push(text[found..end].trim_end());
+            }
+        }
+        candidates.dedup();
+        for candidate in candidates {
+            widen_one(candidate, false, decode, into);
+        }
+        at = end.max(name);
+    }
+}
+
+/// The next `assets` at or after `from`, in any ASCII case. O(bytes).
+fn find_assets(b: &[u8], from: usize) -> Option<usize> {
+    let mut at = from;
+    while let Some(i) = memchr::memchr2(b'a', b'A', b.get(at..)?) {
+        let start = at + i;
+        if b.get(start..start + 6)
+            .is_some_and(|w| w.eq_ignore_ascii_case(b"assets"))
+        {
+            return Some(start);
+        }
+        at = start + 1;
+    }
+    None
 }

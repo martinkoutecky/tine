@@ -111,10 +111,19 @@ The second is the one link-target owner
 (`crates/tine-core/src/local_target.rs`), asked for every Markdown link and
 image embed, Org link and `img` macro URL the parser reports; its attachment
 is added (a folder literally written `assets`, in any case, the name after it
-decoded once), with its first folder. The orphan list and the trash recheck
-compare names exactly, so the added names can only keep a file off the
-unused list. Until the reader asks the same owner, the collector's own answer
-stays the base, so no change to the owner can make a shown file unused.
+decoded once), with its first folder. The third is one generous widening
+rule (`widen_one`) over every destination the parser reports (links, macro
+arguments), every `file-path` pointer, and every `assets` mention in the text,
+in its percent-decoded views, in the attribute values the HTML sanitizer keeps
+and in Hiccup strings: the text after the first `assets` folder (any case,
+`/`, `\` or `%5C`), raw, decoded once and decoded leniently, with and without
+a `?`/`#` suffix, normalized, with its first folder, and for a parsed
+destination or pointer its dotted basename (a bare `x.pdf`, a relative image).
+The orphan list and the trash recheck compare a directory entry by its live
+key (`live_key`: the file-name fold the store's leaf identity uses, coarser
+than any volume's equivalence), so the added names can only keep a file off
+the unused list. Until the reader asks the same owner, the collector's own
+answer stays the base, so no change to the owner can make a shown file unused.
 Export does not ask the owner yet: it copies the collector's own answer (the
 decoded spelling, without folder markers), until a later step makes export
 and the reader ask the owner together.

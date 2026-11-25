@@ -168,11 +168,13 @@ fn table_owner_and_collector() {
                 live.insert(folder.to_owned());
             }
         }
-        if found != live {
-            let mut want: Vec<&String> = live.iter().collect();
+        // Liveness holds develop's names as written (the widening rule adds
+        // more, pinned by `liveness_keeps_every_name_any_answerer_gives`).
+        if !live.is_subset(&found) {
+            let mut want: Vec<&String> = live.difference(&found).collect();
             want.sort();
             failures.push(format!(
-                "{id}: liveness {collector:?} != today + owner {want:?}"
+                "{id}: liveness {collector:?} lost today + owner {want:?}"
             ));
         }
         // The record is consistent: `change.liveness` names why the earlier
@@ -292,6 +294,196 @@ fn liveness_only_adds_names_when_references_disagree() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn is_live(text: &str, name: &str) -> bool {
+    let mut live = HashSet::new();
+    crate::asset_refs::collect_live_asset_refs(text, &mut live);
+    live.contains(&crate::asset_refs::live_key(name))
+}
+
+/// The destination text a reader hands its helpers for a row: the parser's
+/// link destination (a `Complex` one with and without its protocol), the
+/// `img` macro's first token, or the row's explicit destination.
+fn destinations_of(row: &Value) -> Vec<String> {
+    if let Some(dest) = row.get("dest").and_then(Value::as_str) {
+        return vec![dest.to_owned()];
+    }
+    let source = row["source"].as_str().unwrap();
+    let nodes =
+        crate::render::parse_inline_bounded(source, row["format"].as_str().unwrap()).unwrap();
+    let nodes = serde_json::to_value(&nodes).unwrap();
+    if row["origin"] == "img-macro" {
+        let first = find(&nodes, "macro").unwrap()["args"][0]
+            .as_str()
+            .unwrap_or("")
+            .to_owned();
+        return first
+            .split_whitespace()
+            .next()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+    }
+    let Some(link) = find(&nodes, "link") else {
+        return vec![source.to_owned()];
+    };
+    match serde_json::from_value::<Url>(link["url"].clone()).unwrap() {
+        Url::Search { v } | Url::File { v } | Url::PageRef { v } => vec![v],
+        Url::Complex { protocol, link } => {
+            let link = link.unwrap_or_default();
+            let full = protocol.map(|p| complex_destination(&p, &link));
+            [Some(link), full].into_iter().flatten().collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The widening rule's property over the shared table: for every row, every
+/// file name any answerer gives is live (compared by `live_key`, as the
+/// orphan list and trash compare). Rust answerers: the owner (attachment and
+/// both PDF readers' names), develop's collector, and the reader's helpers
+/// `asset_rel_path` (raw and decoded, as images and asset links read it) and
+/// `pdf_asset_file` (for a destination some answerer opens as a PDF). The
+/// TypeScript reader's names come from the row's recorded `today.renderer`,
+/// which `src/render/localTarget.table.test.tsx` pins against the reader.
+#[test]
+fn liveness_keeps_every_name_any_answerer_gives() {
+    let mut failures = Vec::new();
+    for row in rows() {
+        let id = row["id"].as_str().unwrap();
+        let source = row["source"].as_str().unwrap();
+        let mut names: Vec<(String, &str)> = Vec::new();
+        let owner = target_of(&row);
+        if let Some(name) = owner.attachment() {
+            names.push((name.as_str().to_owned(), "owner attachment"));
+        }
+        match owner.pdf() {
+            Some(Pdf::AssetReader { name })
+            | Some(Pdf::OutsideReader {
+                fallback: Some(name),
+            }) => names.push((name.as_str().to_owned(), "owner pdf")),
+            _ => (),
+        }
+        for name in strings(&row["today"]["collector"]) {
+            names.push((name, "collector"));
+        }
+        let renderer = row["today"]["renderer"].as_str().unwrap();
+        for prefix in ["attachment:", "image:", "media:", "icon:", "asset-pdf:"] {
+            if let Some(name) = renderer.strip_prefix(prefix).filter(|n| *n != "none") {
+                names.push((name.to_owned(), "reader"));
+            }
+        }
+        let pdf = renderer.contains("pdf") || describe(&owner).contains("pdf=");
+        for dest in destinations_of(&row) {
+            if let Some(rel) = asset_rel_path(&dest) {
+                names.push((percent_decode(&rel), "asset_rel_path decoded"));
+                names.push((rel, "asset_rel_path"));
+            }
+            if pdf {
+                names.push((pdf_asset_file(&dest), "pdf_asset_file"));
+            }
+        }
+        for (name, who) in names {
+            if !crate::asset_refs::live_key(&name).is_empty() && !is_live(source, &name) {
+                failures.push(format!("{id} {source:?}: {who} {name:?} not live"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every trace the design checks and the step reviews found where develop
+/// offers a file some surface uses for trash: the sole reference, and the
+/// directory entry the surface opens. Each must be live.
+#[test]
+fn liveness_keeps_the_files_develop_offered_for_trash() {
+    let cases: &[(&str, &str)] = &[
+        // v1 check 5: a case-folding volume opens `pic.png` for `Pic.png`.
+        ("![x](../assets/Pic.png)", "pic.png"),
+        // v2 check 6: ext4 casefold opens `Maße.png` for `MASSE.png`.
+        ("![x](../assets/MASSE.png)", "Maße.png"),
+        // v1 check 5: a decoded `.pdf` the owner sends to the asset reader.
+        ("[x](guide.p%64f)", "guide.pdf"),
+        // v1 check 9: a page icon spelled with escapes.
+        ("icon:: ![](%2e%2e/%61ssets/i.png)", "i.png"),
+        // v2 check 5: the native image reads the undecoded tail.
+        ("![](../ASSETS/my%20f.png)", "my%20f.png"),
+        // v3 check 9: query suffix under an uppercase folder.
+        ("![](../ASSETS/a%20b.png?rev=1)", "a b.png"),
+        ("![](../ASSETS/a%20b.png?rev=1)", "a%20b.png?rev=1"),
+        ("![](../ASSETS/a%20b.png?rev=1)", "a%20b.png"),
+        // Judge revision: the loose scan kept `a.mp4}}`, the player shows `a.mp4`.
+        ("{{video ../assets/a.mp4}}", "a.mp4"),
+        ("{{video ../Assets/b.mp4}}", "b.mp4"),
+        // Judge revision (pending decision 4): bare and graph-relative PDFs
+        // open `assets/<basename>`.
+        ("[g](guide.pdf)", "guide.pdf"),
+        ("![Guide](docs/guide.pdf)", "guide.pdf"),
+        ("[[file:docs/a.pdf][x]]", "a.pdf"),
+        ("![x](%43:%5Cdocs%5Cbad%ZZ.PDF)", "bad%ZZ.PDF"),
+        // Judge revision (c40): the reader requests `a.png,` for the comma form.
+        ("{{img ../assets/a.png, 100}}", "a.png,"),
+        // Judge hard call 2: any case, `\` and `%5C` separators in raw HTML.
+        ("<img src=\"..\\ASSETS\\x.png\">", "x.png"),
+        ("<img src=\"..%5CAssets%5Cy.png\">", "y.png"),
+        // Step 2 review B2: entity-spelled HTML names and Hiccup escapes.
+        ("<img src=\"../assets/r&#101;al.png\">", "real.png"),
+        ("<img src=\"../&#97;ssets/e.png\">", "e.png"),
+        ("[:img {:src \"../\\u0061ssets/h.png\"}]", "h.png"),
+        // `hls__` pointers: the PDF pane reads `file-path::` to line end.
+        ("file-path:: ../ASSETS/my report.pdf", "my report.pdf"),
+        ("file-path:: report.pdf", "report.pdf"),
+        ("#+FILE-PATH: ../Assets/o.pdf", "o.pdf"),
+        // An uppercase raw-HTML attribute with a space and parentheses.
+        ("<img src=\"../ASSETS/a b(1).png\">", "a b(1).png"),
+        // Lenient decode: an invalid UTF-8 escape stays literal.
+        ("![](../ASSETS/a%FF%20b.png)", "a%FF b.png"),
+        // A non-`assets` relative image the reader opens by basename.
+        ("![x](pics/photo.png)", "photo.png"),
+    ];
+    let failures: Vec<String> = cases
+        .iter()
+        .filter(|(text, name)| !is_live(text, name))
+        .map(|(text, name)| format!("{text:?} leaves {name:?} trashable"))
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The widening rule decodes once, as every surface does: a twice-escaped
+/// name keeps its once-decoded file, never the twice-decoded look-alike, and
+/// a text with no file name keeps nothing.
+#[test]
+fn liveness_widens_by_one_decode_only() {
+    assert!(is_live("![x](../assets/demo%2520v2.png)", "demo%20v2.png"));
+    assert!(!is_live("![x](../assets/demo%2520v2.png)", "demo v2.png"));
+    let html = "<img src=\"../assets/demo%2520v2.png\">";
+    assert!(!is_live(html, "demo v2.png"));
+    let mut live = HashSet::new();
+    crate::asset_refs::collect_live_asset_refs("plain prose, a [[Page]] and #tag", &mut live);
+    assert!(live.is_empty(), "{live:?}");
+}
+
+/// The widening rule is O(text bytes) in what it keeps: four times the text
+/// keeps at most about four times the name bytes, for many mentions on one
+/// line, one long run of nested folders and many bracketed destinations.
+#[test]
+fn liveness_keeps_name_bytes_linear_in_the_text() {
+    let kept = |text: &str| {
+        let mut live = HashSet::new();
+        crate::asset_refs::collect_live_asset_refs(text, &mut live);
+        live.iter().map(String::len).sum::<usize>()
+    };
+    for unit in [
+        "<img src=\"../ASSETS/a b.png\"> ![x](../Assets/c%20d.png?x=1) ",
+        "assets/",
+        "[[x.pdf]] {{video ../assets/v.mp4}} [y](z.pdf) ",
+    ] {
+        let small = kept(&unit.repeat(200));
+        let large = kept(&unit.repeat(800));
+        assert!(small > 0, "{unit:?}");
+        assert!(large <= small * 5, "{unit:?}: {small} -> {large}");
+    }
 }
 
 /// Principle 2: pure and O(destination bytes). Times the owner alone over the

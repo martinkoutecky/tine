@@ -3783,7 +3783,7 @@ impl Graph {
             if name.starts_with('.') || name.ends_with(".edn") {
                 continue;
             }
-            if referenced.contains(name) {
+            if referenced.contains(&tine_core::asset_refs::live_key(name)) {
                 continue;
             }
             let meta = entry.metadata().ok();

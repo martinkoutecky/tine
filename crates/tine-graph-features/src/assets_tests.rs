@@ -194,3 +194,69 @@ fn orphans_and_trash_see_the_file_the_reader_shows() {
     );
     store.close();
 }
+
+/// Through the store: an in-use attachment is never offered for trash when a
+/// surface opens it under another spelling than develop's liveness kept (a
+/// case-folding volume's other case, an uppercase folder with an escape and
+/// a query, a player macro, a bare PDF the reader opens in `assets/`, an
+/// `hls__` pointer, an entity-spelled HTML source). The orphan list leaves
+/// each out and the trash recheck refuses it; a file nothing names stays
+/// unused and trashable.
+#[test]
+fn an_in_use_attachment_is_never_offered_for_trash() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for folder in ["pages", "journals", "assets"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let page = [
+        "- ![x](../assets/Pic.png)",
+        "- ![x](../ASSETS/a%20b.png?rev=1)",
+        "- {{video ../assets/clip.mp4}}",
+        "- [g](guide.pdf)",
+        "- <img src=\"../assets/r&#101;al.png\">",
+    ];
+    std::fs::write(root.join("pages/a.md"), page.join("\n") + "\n").unwrap();
+    std::fs::write(
+        root.join("pages/hls__report.md"),
+        "file-path:: ../ASSETS/my report.pdf\n\n- highlight\n",
+    )
+    .unwrap();
+    let shown = [
+        "pic.png",
+        "a b.png",
+        "clip.mp4",
+        "guide.pdf",
+        "real.png",
+        "my report.pdf",
+    ];
+    for name in shown.iter().chain(&["unused.png"]) {
+        std::fs::write(root.join("assets").join(name), name.as_bytes()).unwrap();
+    }
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
+    let orphans: Vec<String> = orphan_assets(&store)
+        .unwrap()
+        .into_iter()
+        .map(|asset| asset.name)
+        .collect();
+    let listed: Vec<&str> = shown
+        .iter()
+        .copied()
+        .filter(|name| orphans.iter().any(|o| o == name))
+        .collect();
+    assert!(listed.is_empty(), "in use but listed as unused: {listed:?}");
+    assert_eq!(orphans, ["unused.png"]);
+    for name in shown {
+        assert_eq!(
+            trash_asset(&store, name).unwrap(),
+            TrashOutcome::Referenced,
+            "{name}"
+        );
+        assert!(root.join("assets").join(name).exists(), "{name}");
+    }
+    assert_eq!(
+        trash_asset(&store, "unused.png").unwrap(),
+        TrashOutcome::Trashed
+    );
+    store.close();
+}

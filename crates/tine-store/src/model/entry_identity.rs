@@ -29,7 +29,6 @@
 use super::*;
 use std::collections::{BTreeSet, HashSet};
 use std::ffi::{OsStr, OsString};
-use unicode_normalization::UnicodeNormalization;
 
 /// What a path names among the registered keys.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,17 +49,12 @@ pub(crate) enum Identity {
     Outside,
 }
 
-/// A file name folded for the collision filter: NFC and a Unicode case
-/// fold (`page_key`'s lowercase, then upper and lower again, so `ß` and
-/// `SS` meet). Coarser than any filesystem's equivalence is harmless (the
-/// filter only selects which collisions are checked); finer would not be.
+/// A file name folded for the collision filter
+/// ([`tine_core::refs::fold_file_name`], which asset liveness also compares
+/// by). Coarser than any filesystem's equivalence is harmless (the filter
+/// only selects which collisions are checked); finer would not be.
 pub(crate) fn fold_leaf(leaf: &OsStr) -> String {
-    let leaf = leaf.to_string_lossy();
-    tine_core::refs::page_key(&leaf)
-        .to_uppercase()
-        .to_lowercase()
-        .nfc()
-        .collect()
+    tine_core::refs::fold_file_name(&leaf.to_string_lossy())
 }
 
 /// The page host's spelling table (STEP3 §2, B1): each registered key's

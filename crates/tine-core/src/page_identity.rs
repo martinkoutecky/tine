@@ -29,3 +29,16 @@ pub fn page_key(name: &str) -> String {
     let without_boundaries = without_leading.strip_suffix('/').unwrap_or(without_leading);
     without_boundaries.nfc().collect()
 }
+
+/// A file name folded for collision tests: [`page_key`], then upper and lower
+/// again (so `ß` and `SS` meet), then NFC. Coarser than any filesystem's name
+/// equivalence, never finer: two names some volume treats as one entry fold
+/// alike. O(name bytes).
+pub fn fold_file_name(name: &str) -> String {
+    let key = page_key(name);
+    // ASCII is already folded and NFC.
+    if key.is_ascii() {
+        return key;
+    }
+    key.to_uppercase().to_lowercase().nfc().collect()
+}
