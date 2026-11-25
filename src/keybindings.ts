@@ -166,10 +166,9 @@ interface CommandDef {
   run?: () => void;
   /** Offered in the palette only while this holds (e.g. a desktop-only command). */
   available?: () => boolean;
-  /** A SECOND default chord for the same command (Logseq's second key, or a platform convention), without a
-   *  second row in Settings. A default, not an override: once the user binds the command, or its chord to any
-   *  command, it is gone (`liveAlias`), since they can neither see it in the recorder nor reset it. Global scope
-   *  only; it loses every collision with a primary binding. */
+  /** A SECOND default chord for the same command (Logseq's second key, or a platform convention), without a second
+   *  row in Settings. A default: gone once the user binds the command (`liveAlias`), and in a block editor it yields
+   *  to an editor command the user bound to its chord. Global scope only; a primary binding wins every collision. */
   alias?: string;
   /** When false (default), a global command does not fire while typing in an
    *  editor unless its chord includes a modifier. */
@@ -493,9 +492,8 @@ const COMMANDS: CommandDef[] = [
   // Carry the Settings-configured number of days.
   { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
-  // Logseq binds redo to mod+shift+z and mod+y (GH #491, #1044): the first is the binding Settings shows and
-  // remaps, the second an alias (Ctrl+Y on Windows and Linux, Cmd+Y on macOS, whose physical Ctrl+Y stays the
-  // system's yank in text fields), so the shortcuts list keeps one Redo row.
+  // Logseq binds redo to mod+shift+z and mod+y (GH #491, #1044). The second is an alias, so Settings keeps one Redo
+  // row: Ctrl+Y on Windows and Linux, Cmd+Y on macOS (physical Ctrl+Y there stays the system's yank).
   { id: "editor/redo", binding: "mod+shift+z", alias: "mod+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
@@ -945,10 +943,14 @@ export function runGlobalCommand(id: string): boolean {
   return true;
 }
 
-/** The alias that runs `command` under the user's bindings, or undefined once they bound the command, or its
- *  chord to any command in any scope. The dispatcher and Settings both ask here. Cost: O(overrides). */
-export function liveAlias({ id, alias }: { id: string; alias?: string }, overrides: Record<string, ShortcutBinding>): string | undefined {
-  return alias && !(id in overrides) && !Object.values(overrides).some((b) => shortcutBindingsConflict(b, alias)) ? alias : undefined;
+/** The alias that runs a command, or undefined once the user bound the command. Dispatcher and Settings ask here. */
+export const liveAlias = (c: { id: string; alias?: string }, o: Record<string, ShortcutBinding>) => (c.alias && !(c.id in o) ? c.alias : undefined);
+
+/** In a block editor an alias leaves its chord to the editor command the user bound to it (GH #1044); elsewhere, and
+ *  against default editor bindings, it runs. Asked only after an alias chord matched; cost O(commands). */
+function aliasYieldsToEditor(e: KeyboardEvent): boolean {
+  const id = isOutlineBlockEditorTarget(e.target) ? editorCommandFor(e) : null;
+  return id !== null && id in overridesApplied;
 }
 
 /** Built-in command defaults (id + label + default binding) for the Settings
@@ -1116,8 +1118,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     .flatMap((c) => bindings[c.id].map((chords) => ({ ...c, chords })));
   const aliased = allCommands
     .filter((c) => c.scope === "global" && c.run && liveAlias(c, overrides))
-    .map((c) => ({ ...c, chords: parseBinding(c.alias!) }));
-  const commands = [...primary, ...aliased];
+    .map((c) => ({ ...c, chords: parseBinding(c.alias!), viaAlias: true }));
+  const commands: (typeof primary[number] & { viaAlias?: boolean })[] = [...primary, ...aliased];
 
   let seq: Chord[] = [];
   let seqTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1346,6 +1348,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);
       if (cs.every((c, i) => chordEq(c, tail[i]))) {
+        if (cmd.viaAlias && aliasYieldsToEditor(e)) continue;
         if (cmd.id === "go/find-in-page" && paneRouter(focusedPaneId()).route().kind === "pdf") {
           resetSeq();
           return;

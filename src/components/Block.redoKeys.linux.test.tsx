@@ -70,4 +70,20 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1044 Redo keys off macOS (%s
     expect(editor().keydown(ctrl("y")).defaultPrevented).toBe(true);
     expect(editor().value()).toBe("[alpha]()");
   });
+
+  it("outside the block editor, Ctrl+Y still redoes although the user bound it to an editor command", () => {
+    typedThenUndone({ "editor/insert-link": "ctrl+y" });
+    endEdit("page-navigation");
+    expect(doc.byId[ID].raw).toBe("alpha");
+    const e = new KeyboardEvent("keydown", { ...ctrl("y"), bubbles: true, cancelable: true });
+    document.body.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(doc.byId[ID].raw).toBe("alpha beta");
+  });
+
+  it("a binding of a command Tine does not know leaves Ctrl+Y to Redo", () => {
+    const editor = typedThenUndone({ "editor/copy-text": "ctrl+y" });
+    expect(editor().keydown(ctrl("y")).defaultPrevented).toBe(true);
+    expect(editor().value()).toBe("alpha beta");
+  });
 });
