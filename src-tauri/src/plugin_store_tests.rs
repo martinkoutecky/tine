@@ -287,6 +287,19 @@ fn production_plugin_writes_stay_on_the_no_replace_store_path() {
     );
 }
 
+/// GH #1042: plugin states survive a byte-order mark instead of erroring.
+#[test]
+fn plugin_states_read_through_a_byte_order_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("tine-settings.json");
+    std::fs::write(
+        &settings,
+        "\u{feff}{\"plugin_states\":{\"a\":{\"version\":\"1.0.0\",\"enabled\":true}}}",
+    )
+    .unwrap();
+    assert_eq!(plugin_states_at(&settings).unwrap().len(), 1);
+}
+
 #[test]
 fn plugin_states_distinguish_absent_from_unreadable_and_keep_unknown_entries() {
     let dir = tempfile::tempdir().unwrap();

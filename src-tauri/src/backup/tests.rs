@@ -47,6 +47,15 @@ impl Graph {
     }
 
     fn snap_waiting(&self, suffix: &str, keep: usize, wait: std::time::Duration) -> BackupOutcome {
+        self.snap_keeping(suffix, Some(keep), wait)
+    }
+
+    fn snap_keeping(
+        &self,
+        suffix: &str,
+        keep: Option<usize>,
+        wait: std::time::Duration,
+    ) -> BackupOutcome {
         write_snapshot(
             &self.base,
             &self.store,
@@ -626,7 +635,7 @@ fn backup_writer_child() {
         source,
         "",
         &|| false,
-        1,
+        Some(1),
         std::time::Duration::from_secs(30),
     );
     println!(
@@ -1047,6 +1056,44 @@ fn an_unchanged_launch_applies_a_keep_count_a_busy_prune_left() {
     g.close();
 }
 
+/// GH #1042: a settings file that exists but cannot be read leaves the keep
+/// count unknown, and no retention pass runs: neither a healthy snapshot
+/// over the count it would fall back to nor a damaged one is retired.
+#[test]
+fn an_unreadable_settings_file_never_prunes_a_backup() {
+    let g = Graph::new("backup-zip-unknown-keep");
+    let settings = g.root.join("tine-settings.json");
+    for n in 0..=BACKUP_KEEP_DEFAULT {
+        write(&g.graph.join("pages/A.md"), &format!("- {n}\n"));
+        assert!(g.snap("", 40).failure.is_none());
+    }
+    write(&settings, "{\"backup_keep\": 40");
+    let torn = g.zips().join("2026-09-05_00-00-00.zip");
+    std::fs::write(&torn, b"torn").unwrap();
+    write(&g.graph.join("pages/A.md"), "- last\n");
+    let long = std::time::Duration::from_secs(30);
+    assert!(g
+        .snap_keeping("", retention_keep_at(&settings), long)
+        .failure
+        .is_none());
+    assert_eq!(
+        g.zip_names().len(),
+        BACKUP_KEEP_DEFAULT + 3,
+        "{:?}",
+        g.zip_names()
+    );
+    assert!(torn.exists(), "a damaged snapshot is not retired either");
+    // A readable file is obeyed, with or without a byte-order mark.
+    write(&settings, "\u{feff}{\"backup_keep\": 2}");
+    write(&g.graph.join("pages/A.md"), "- after\n");
+    assert!(g
+        .snap_keeping("", retention_keep_at(&settings), long)
+        .failure
+        .is_none());
+    assert_eq!(g.zip_names().len(), 2, "{:?}", g.zip_names());
+    g.close();
+}
+
 /// D2 (F4): a deletion that failed is retried by the next unchanged launch.
 #[test]
 fn a_failed_prune_delete_is_retried_by_the_next_unchanged_launch() {
@@ -1393,7 +1440,15 @@ fn launch_backup_cost_on_corpus() {
         let rss_before = proc_status_kib("VmRSS");
         let started = std::time::Instant::now();
         let base = backups.join(root_backup_id(&source.root));
-        let outcome = write_snapshot(&base, &store, source, "", &|| false, keep, BACKUP_LOCK_WAIT);
+        let outcome = write_snapshot(
+            &base,
+            &store,
+            source,
+            "",
+            &|| false,
+            Some(keep),
+            BACKUP_LOCK_WAIT,
+        );
         let elapsed = started.elapsed();
         let peak = proc_status_kib("VmHWM");
         assert!(outcome.failure.is_none(), "{:?}", outcome.failure);

@@ -152,24 +152,30 @@ enum Seeded {
     Skipped(&'static str),
 }
 
-/// A dir has a configured graph when its device settings name one.
+/// Whether a dir's device settings name a graph; an error when the file
+/// exists but cannot be read or decoded.
+fn configured_graph(dir: &Path) -> io::Result<bool> {
+    let settings = crate::settings::read_settings_at(&crate::settings::settings_path_in(dir))?;
+    Ok(settings.is_some_and(|json| {
+        json.get("last_graph_path")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|path| !path.is_empty())
+            || json
+                .get("known_graphs")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|graphs| !graphs.is_empty())
+    }))
+}
+
 fn has_configured_graph(dir: &Path) -> bool {
-    fs::read_to_string(dir.join("tine-settings.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .is_some_and(|json| {
-            json.get("last_graph_path")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|path| !path.is_empty())
-                || json
-                    .get("known_graphs")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|graphs| !graphs.is_empty())
-        })
+    configured_graph(dir).unwrap_or(false)
 }
 
 fn seed(own: &Path, release: &Path, config_dirs: Option<(PathBuf, PathBuf)>) -> io::Result<Seeded> {
-    if has_configured_graph(own) {
+    // Settings an external editor left undecodable are the user's data this
+    // launch cannot judge: a write never follows a failed read, so the error
+    // abandons the seed and nothing is set aside or replaced.
+    if configured_graph(own)? {
         return Ok(Seeded::Skipped("this build already has a configured graph"));
     }
     if !has_configured_graph(release) {
