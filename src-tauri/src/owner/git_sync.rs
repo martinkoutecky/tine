@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use git2::{AutotagOption, FetchOptions, FetchPrune, Oid, PushOptions, RemoteCallbacks};
 
-use super::git_run::{open_repo_at, raw_content_conversion, Repo, RUN_LOCK};
+use super::git_run::{attribute_files_apply, checkout_conversion, open_repo_at, Repo, RUN_LOCK};
 
 pub(crate) mod clone;
 pub(crate) mod credentials;
@@ -597,40 +597,30 @@ fn check_paths(repo: &Repo) -> Result<(), Outcome> {
     if index.iter().any(|e| e.flags_extended & (1 << 14) != 0) {
         return Err(refused("sync refuses sparse/skip-worktree entries"));
     }
+    let tracked = index
+        .iter()
+        .map(|e| String::from_utf8(e.path))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| refused("sync requires UTF-8 repository paths"))?;
     // Check every tracked path, not only representative page names. This also
     // catches a conversion rule scoped to one asset or an unusual extension.
-    let mut paths: Vec<_> = index.iter().map(|e| e.path).collect();
-    paths.extend([
-        b"pages/a.md".to_vec(),
-        b"journals/a.md".to_vec(),
-        b"pages/a.org".to_vec(),
-        b"a.md".to_vec(),
-        b"logseq/config.edn".to_vec(),
-        b"assets/a.png".to_vec(),
+    let paths = tracked.iter().map(String::as_str).chain([
+        "pages/a.md",
+        "journals/a.md",
+        "pages/a.org",
+        "a.md",
+        "logseq/config.edn",
+        "assets/a.png",
     ]);
+    // With no attribute file, no path can convert: skip the lookups (#1034).
+    if !attribute_files_apply(&repo.repo, paths.clone()) {
+        return Ok(());
+    }
     for path in paths {
-        let path = std::str::from_utf8(&path)
-            .map_err(|_| refused("sync requires UTF-8 repository paths"))?;
-        if let Some(attr) =
-            raw_content_conversion(&repo.repo, Path::new(path)).map_err(git_error)?
-        {
+        if let Some(attr) = checkout_conversion(&repo.repo, Path::new(path)).map_err(git_error)? {
             return Err(refused(&format!(
                 "sync refuses {attr} conversion for {path}"
             )));
-        }
-        for attr in ["text", "eol", "crlf"] {
-            let value = repo
-                .repo
-                .get_attr(Path::new(path), attr, git2::AttrCheckFlags::FILE_THEN_INDEX)
-                .map_err(git_error)?;
-            if !matches!(
-                git2::AttrValue::from_string(value),
-                git2::AttrValue::Unspecified | git2::AttrValue::False
-            ) {
-                return Err(refused(&format!(
-                    "sync refuses {attr} conversion for {path}"
-                )));
-            }
         }
     }
     Ok(())
