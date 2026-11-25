@@ -520,6 +520,30 @@ fn the_destination_prefilter_never_searches_past_a_line() {
     }
 }
 
+/// The `file-path` read costs one block parse per format per text that holds
+/// `file-path` in any case, however many pointers the text holds, and none
+/// for a text without it (third review, PC-3).
+#[test]
+fn the_file_path_read_parses_each_text_once_per_format() {
+    use crate::asset_refs::PROPERTY_PARSES;
+    let parses = |text: &str| {
+        PROPERTY_PARSES.with(|n| n.set(0));
+        let mut live = HashSet::new();
+        crate::asset_refs::collect_live_asset_refs(text, &mut live);
+        PROPERTY_PARSES.with(|n| n.get())
+    };
+    assert_eq!(parses("file-path:: ../assets/a.pdf"), 2);
+    let pointers = "FILE-PATH:: a.pdf\nfile-path:: b.pdf\n".repeat(50);
+    assert_eq!(parses(&pointers), 2);
+    assert_eq!(parses(":PROPERTIES:\n:file-path: d.pdf\n:END:\n"), 2);
+    let other_triggers = "![x](../assets/a.png) [[b.pdf]] 50% {{video v.mp4}}";
+    assert_eq!(parses(other_triggers), 0);
+    let doc = crate::doc::parse(&"- file-path:: a.pdf\n".repeat(7));
+    PROPERTY_PARSES.with(|n| n.set(0));
+    crate::asset_refs::collect_document_live_asset_refs(&doc, &mut HashSet::new());
+    assert_eq!(PROPERTY_PARSES.with(|n| n.get()), 14);
+}
+
 /// One lenient decoder (I-12): liveness asks `tine-outline`'s, it keeps no
 /// copy of its own.
 #[test]
