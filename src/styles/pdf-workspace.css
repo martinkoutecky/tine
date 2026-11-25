@@ -249,6 +249,11 @@
   min-width: 70px;
   text-align: center;
 }
+/* The current match, painted over the page without taking the selection. */
+::highlight(tine-pdf-find) {
+  background: rgba(255, 170, 58, 0.55);
+  color: inherit;
+}
 
 .pdf-notes-btn {
   font-size: 12px;
