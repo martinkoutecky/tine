@@ -5,6 +5,7 @@
 // window page names it. The switch must be refused with a toast that names the
 // page and carries no action, and the graph stays alpha.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { spawn, execFileSync } from "node:child_process";
@@ -18,7 +19,8 @@ import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root, "artifacts/gh1041-switch-draft"));
+// A short path: the app's owner socket lives under this run, and a socket path is capped near 108 bytes.
+const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(os.tmpdir(), "tine-e2e-gh1041"));
 fs.mkdirSync(artifacts, { recursive: true });
 const run = fs.mkdtempSync(path.join(artifacts, "native-"));
 const alpha = path.join(run, "alpha"), beta = path.join(run, "beta");
