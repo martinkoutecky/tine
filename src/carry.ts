@@ -31,9 +31,9 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
 async function ensureToday(owner: Owner): Promise<string | null> {
   const t = journalTitle(appNow());
   const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t));
-  if (admitted === "stale") return null;
-  if (admitted) {
-    reportPageLoadRefusal(admitted, "Nothing was carried.");
+  if (admitted.kind === "stale") return null;
+  if (admitted.kind === "refused") {
+    reportPageLoadRefusal(admitted.refusal, "Nothing was carried.");
     return null;
   }
   return pageByName(t) ? t : null;
