@@ -1422,7 +1422,7 @@ from the scanned drafts before any recovered save or choice.
   bytes plus a stamp. At the receiver's pre-check a read error fails the
   save and leaves the pair's phase as it was; a readable receiver without
   its certified image holds the pair. A witness that keeps failing leaves
-  the pair retained, its draft kept and its pages editable, until a witness
+  the pair where the table puts a failed witness (retained; a restoration stays restore), its draft kept and its pages editable, until a witness
   succeeds or the receiver certifies (accepted: no other exit).
   Launch witnesses only where the result can change the pair: a source whose
   bytes match, of a decided pair whose two reads both succeeded (an absent
