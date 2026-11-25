@@ -620,7 +620,7 @@ fn a_page_held_unindexed_through_the_launch_install_still_refuses_a_twin() {
         let answer = answer.answer.unwrap();
         assert!(answer.took, "{rel}: typing accepted by host");
         writer.save_now(session, std::slice::from_ref(&key));
-        let (outcome, _) = writer.wait_published(
+        let (outcome, ..) = writer.wait_published(
             session,
             &[(key.clone(), answer.version, None)],
             Duration::from_secs(10),

@@ -13,7 +13,7 @@ import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpo
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
-import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
+import { bindHost, resetStore, flushAllUnsettled, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
@@ -27,7 +27,7 @@ import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto, GraphMeta, PageKind, RenameOffer, RenameRefusal, TagUnion } from "./types";
-import type { DraftStatus } from "./document";
+import type { DraftStatus, Unsettled } from "./document";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
@@ -189,11 +189,11 @@ export async function loadGraphPath(
   // discard that edit — gated on whether a graph is actually loaded now, NOT on
   // the persisted path (which is empty on a TINE_GRAPH/CLI launch).
   const hadGraph = !!graphMeta();
-  const flushed = await flushAll();
+  const unflushed = await flushAllUnsettled();
   const cssFlushed = await flushCssEditor();
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
-  if (hadGraph && (!flushed || !cssFlushed)) {
-    pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
+  if (hadGraph && (unflushed || !cssFlushed)) {
+    switchRefused(unflushed);
     return { kind: "aborted" };
   }
   if (hadGraph) {
@@ -272,9 +272,10 @@ export async function loadGraphPath(
   // An edit can land during the awaits since the first flush (session save,
   // access prompt, PDF drain); resetStore would discard it with the old
   // working set. Flush once more as the last await before the binding moves.
-  if (hadGraph && !(await flushAll())) {
+  const lateUnflushed = hadGraph ? await flushAllUnsettled() : null;
+  if (lateUnflushed) {
     if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
-    pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
+    switchRefused(lateUnflushed);
     return { kind: "aborted" };
   }
   if (hadGraph && !(await flushCssEditor())) {
@@ -395,6 +396,19 @@ export async function loadGraphPath(
     unfreeze?.();
     if (ownsTransition) setGraphTransitioning(false);
   }
+}
+
+/** A switch refused by its barrier (tine#1041). Pages the host would not
+ * publish are named by the files the host gave, as given: the first three and
+ * then a count. The notice has no action. Every other reason (no answer, still
+ * busy, unbound, the CSS editor) keeps the fixed text. */
+function switchRefused(reason: Unsettled | null): void {
+  if (reason?.kind !== "stuck") {
+    pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
+    return;
+  }
+  const shown = reason.files.slice(0, 3);
+  pushToast(msg("graph-switch-refused-pages", { pages: shown.join(", "), more: reason.files.length - shown.length }), "error");
 }
 
 /** Crash-draft storage the new host could not use (STEP3 §4): saves keep

@@ -1164,6 +1164,7 @@ export interface MessageArgs {
   "graph-row-menu-show-in-folder": {};
   "graph-session-couldn-t-save-the-journal-template-setting": { "error": string | number };
   "graph-some-pages-couldn-t-be-saved-resolve": {};
+  "graph-switch-refused-pages": { "more": number; "pages": string | number };
   "graph-this-graph-s-assets-folder-points-outside-the": { "assetsDirectory": string | number };
   "graph-tine-left-unreadable-crash-recovery-file-s-in-place": { "count": number; "files": string | number };
   "graph-tine-needs-a-folder-on-the-device-s": {};

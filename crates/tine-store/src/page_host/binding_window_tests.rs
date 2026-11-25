@@ -235,8 +235,9 @@ fn command(
                 .host
                 .wait_published(session, &needs, Duration::from_millis(50))
             {
-                (PageOperation::Applied, revisions) => json!(revisions),
-                (PageOperation::Refused, _) => json!(false),
+                (PageOperation::Applied, revisions, _) => json!(revisions),
+                (PageOperation::Refused, _, stuck) if stuck.is_empty() => json!(false),
+                (PageOperation::Refused, _, stuck) => json!({ "refused": stuck }),
                 _ => Value::Null,
             }
         }

@@ -5,6 +5,7 @@ import { InventoryOrder } from "./inventoryOrder";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
+import { isQuickCaptureWindow } from "./windowRole";
 import { pageIdentityKey } from "./ui";
 import { journalRowIn, linkTargetIn, ownerPath, type LinkDestination } from "./inventoryRows";
 import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
@@ -75,20 +76,6 @@ let queued = false;
 let inFlight: string | null = null;
 let again = false;
 const refreshScope = {};
-// False in a WebView the backend grants no graph-wide read (Quick Capture).
-let inventoryGranted = true;
-
-/** The Quick Capture WebView has no graph slot: the backend grants it only
- *  narrow capture-scoped commands (src-tauri `state.rs`), so `page_inventory`
- *  is refused there by design. Its entry point calls this before rendering:
- *  the index then never reads, and every name lookup answers as before the
- *  first load (`undefined`, the name unchanged, no names), which callers
- *  already handle. Capture completion uses `capture_quick_switch` instead.
- *  Without it, typing `[[` in Quick Capture raised "Couldn't refresh the page
- *  list" (UI-CAPTURE-NO-PAGE-INVENTORY). */
-export function withoutPageInventory(): void {
-  inventoryGranted = false;
-}
 
 function build(inventory: PageInventory, rev: bigint): Held {
   const entries = new Map<string, PageInventoryEntry[]>();
@@ -186,7 +173,7 @@ export function patchPageIndex(rev: bigint, delta: PageInventoryDelta): { aliase
 /** Fetch the inventory now and keep it unless a newer one is already held or
  *  the graph was rebound meanwhile. */
 export async function refreshPageIndex(): Promise<void> {
-  if (!inventoryGranted) return;
+  if (isQuickCaptureWindow()) return;
   const requested = generation;
   const owner = latestOwner(refreshScope, "inventory", graphOwner(() => requested === generation));
   let inventory: PageInventory;
@@ -267,7 +254,7 @@ export function installPageIndex(): void {
 function ensureInstalled() {
   if (installed) return installed;
   installed = createRoot(() => {
-    if (inventoryGranted) createEffect(on([graphEpoch, pageInventoryRev], () => scheduleRefresh()));
+    if (!isQuickCaptureWindow()) createEffect(on([graphEpoch, pageInventoryRev], () => scheduleRefresh()));
     // Keyed on the file list, which a patch leaves alone: All pages and the
     // views built on it do not recompute while names are typed.
     const files = createMemo(() => held()?.files);
