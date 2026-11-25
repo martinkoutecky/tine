@@ -223,6 +223,12 @@ it.each([" ", "\t", "\n", "\r\n"])("splits a piece around 32,000 interior %j in 
     return elapsed;
   };
   time(4_000);
-  const small = time(4_000), large = time(32_000);
+  // One sample can be stretched by a loaded machine (seen in gates: 12.7 times
+  // instead of 8); a quadratic split is 64 times in every sample.
+  let small = 0, large = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    small = time(4_000); large = time(32_000);
+    if (large < 12 * small + 50) break;
+  }
   expect(large).toBeLessThan(12 * small + 50);
 });

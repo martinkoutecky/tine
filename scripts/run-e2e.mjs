@@ -153,6 +153,7 @@ const suites = {
     ["margin-comment", "scripts/e2e-margin-comment.mjs", {}, BY_NAME],
     ["margin-column", "scripts/e2e-margin-column.mjs", {}, BY_NAME],
     ["all-graphs", "scripts/e2e-all-graphs.mjs", {}, BY_NAME],
+    ["gh1041-switch-draft", "scripts/e2e-gh1041-switch-draft.mjs", {}, BY_NAME],
     ["cm-query-alias", "scripts/e2e-cm-query-alias.mjs", {}, BY_NAME],
     ["keyed-refresh", "scripts/e2e-keyed-refresh.mjs", {}, BY_NAME],
     ["panes-keys", "scripts/e2e-panes-keys.mjs", {}, BY_NAME],

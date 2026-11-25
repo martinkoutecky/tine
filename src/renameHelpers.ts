@@ -102,9 +102,9 @@ export async function applyHelperEdits(edits: readonly HelperEdit[]): Promise<Ap
 async function admit(owner: Owner, name: string, kind: PageKind, at: string | null, file?: string): Promise<boolean> {
   const loaded = pageByName(name);
   if (loaded && (loaded.id ?? null) === at) return true;
-  const refused = await admitPageFile(name, kind, owner, emptyPage(name, kind, file ? formatOfFile(file) : undefined));
-  if (refused === "stale") return false;
-  if (refused) { reportPageLoadRefusal(refused); return false; }
+  const admitted = await admitPageFile(name, kind, owner, emptyPage(name, kind, file ? formatOfFile(file) : undefined));
+  if (admitted.kind === "stale") return false;
+  if (admitted.kind === "refused") { reportPageLoadRefusal(admitted.refusal); return false; }
   return !!pageByName(name);
 }
 
