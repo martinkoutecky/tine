@@ -1840,3 +1840,22 @@ fn index_lock_identity_failure_leaves_no_lock_behind() {
     assert!(!gitdir.join("index.lock").exists());
     drop(IndexLock::acquire(&f.repo, open_checked(&f.work).unwrap().guard).unwrap());
 }
+
+/// Review of a7de52a73, B2: a folder whose only tracked child is a temp (or a
+/// page) is replaced by a file of the same name. The old child reads as gone
+/// (`ENOTDIR`), the new file is committed, and the commit is not aborted.
+#[test]
+fn a_folder_replaced_by_a_file_commits_the_file() {
+    for child in ["assets/name/.a.md.4242.17.tmp", "assets/name/photo.png"] {
+        let f = fixture(&[("pages/a.md", "- a\n"), (child, "old")]);
+        std::fs::remove_dir_all(f.work.join("assets/name")).unwrap();
+        write(&f.work, "assets/name", "now a file");
+        commit_now(&f.work, MESSAGE).unwrap();
+        assert_eq!(
+            at_head(&f.repo, "assets/name").as_deref(),
+            Some("now a file"),
+            "{child}"
+        );
+        assert_eq!(at_head(&f.repo, child), None, "{child}");
+    }
+}

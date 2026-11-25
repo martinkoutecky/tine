@@ -121,12 +121,18 @@ fn writer_number(part: &str, max: u128) -> bool {
 }
 
 /// The one reader of [`temp_path`]'s names: `(target name, tag)` for
-/// `.{name}.{pid}.{seq}{tag}.tmp`, with a non-empty name, pid and seq as the
+/// `.{name}.{pid}.{seq}{tag}.tmp`, with a name a file can have (not empty,
+/// `.` or `..`: a writer takes it from a file), pid and seq as the
 /// writers format them ([`writer_number`]) and a tag of [`TempTag::ALL`] or
 /// [`LEGACY_TEMP_TAGS`], nothing else. For a shortened temp the target name is
 /// the one the temp carries (the cut stem and its kept extension), not the
 /// full name: the cut is not reversible. Each watcher keeps its own folder
 /// scope. O(name length × 9), no I/O.
+/// A name a file can carry: what a temp writer's target name always is.
+fn is_file_name(name: &str) -> bool {
+    !matches!(name, "" | "." | "..")
+}
+
 pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, &'static str)> {
     let stem = name.strip_prefix('.')?.strip_suffix(".tmp")?;
     TempTag::ALL
@@ -136,7 +142,7 @@ pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, &'static str)> {
         .find_map(|tag| {
             let (before, seq) = stem.strip_suffix(tag)?.rsplit_once('.')?;
             let (target, pid) = before.rsplit_once('.')?;
-            (writer_number(seq, SEQ_MAX) && writer_number(pid, PID_MAX) && !target.is_empty())
+            (writer_number(seq, SEQ_MAX) && writer_number(pid, PID_MAX) && is_file_name(target))
                 .then_some((target, tag))
         })
 }
@@ -725,6 +731,10 @@ pub(crate) fn atomic_write_with_check(
 #[cfg(test)]
 pub(crate) const TEMP_LOOK_ALIKES: &[&str] = &[
     ".report.2026.11.backup.tmp",
+    // Targets no writer takes from a file (review of a7de52a73, B1).
+    "...1.2.new.tmp",
+    "....1.2.new.tmp",
+    "....1.2.import.tmp",
     ".tine-report.tmp",
     ".report.2026.11..tmp",
     ".tine-.tmp",

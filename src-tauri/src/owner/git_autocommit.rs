@@ -575,13 +575,12 @@ fn stage(
             continue;
         }
         let full = workdir.join(path);
-        match std::fs::symlink_metadata(&full) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        match worktree_entry(&full).map_err(|e| Unusable::Failed(format!("{path}: {e}")))? {
+            None => {
                 let _ = index.remove_path(Path::new(path));
             }
-            Err(e) => return Err(Unusable::Failed(format!("{path}: {e}"))),
-            Ok(meta) if !meta.is_file() => {}
-            Ok(meta) => {
+            Some(meta) if !meta.is_file() => {}
+            Some(meta) => {
                 if let Some(attr) = converting(&repo.repo, Path::new(path)).map_err(failed)? {
                     return Err(Unusable::Conversion(format!("{attr} for {path}")));
                 }
@@ -614,6 +613,25 @@ fn stage(
     Ok(())
 }
 
+/// What the worktree holds at a path git status lists: `None` when nothing is
+/// there, including when a parent folder became a file (`ENOTDIR`: the tracked
+/// file is gone). The one reading of that answer for ordinary and scratch
+/// staging (review of a7de52a73, B2). One `lstat`.
+fn worktree_entry(full: &Path) -> std::io::Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(full) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// The candidate tree's entry for `path`, a Tine temp file (ADR 0078 §2):
 /// while the file is on disk, `tip`'s entry, or its absence, whatever the
 /// index holds (a staged addition, modification or removal of scratch is
@@ -628,12 +646,10 @@ fn keep_tip_for_scratch(
     index: &mut git2::Index,
     path: &str,
 ) -> Result<(), Unusable> {
-    let on_disk = match std::fs::symlink_metadata(workdir.join(path)) {
+    let on_disk = worktree_entry(&workdir.join(path))
+        .map_err(|e| Unusable::Failed(format!("{path}: {e}")))?
         // A folder where the temp was: the file is gone.
-        Ok(meta) => !meta.is_dir(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-        Err(e) => return Err(Unusable::Failed(format!("{path}: {e}"))),
-    };
+        .is_some_and(|meta| !meta.is_dir());
     let kept = on_disk
         .then(|| tip.and_then(|t| t.get_path(Path::new(path)).ok()))
         .flatten()
