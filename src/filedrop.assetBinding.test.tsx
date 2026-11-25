@@ -27,7 +27,8 @@ it("binds the second file of a drop to the generation captured at drop time", as
   loadSingle({ name: "Drop", title: "Drop", kind: "page", pre_block: null,
     blocks: [{ id: "drop-host", raw: "host", collapsed: false, children: [] }] });
   expect(pageByName("Drop")?.roots).toContain("drop-host");
-  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
+  const host = document.createElement("div"); host.dataset.blockId = "drop-host";
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => host });
   let generation = 1;
   vi.spyOn(backend(), "graphBindingGeneration").mockImplementation(() => generation);
   let finishFirst!: (name: string) => void;
