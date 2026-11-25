@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use crate::doc::{DocBlock, Document};
 
-pub use crate::asset_path::percent_decode;
+pub use crate::local_target::percent_decode;
 
 /// Asset liveness combines parser-accepted targets with conservative plaintext
 /// mentions. The latter may retain extra files (including literal code), but

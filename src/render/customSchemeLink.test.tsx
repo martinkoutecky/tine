@@ -111,11 +111,15 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
   it("the native and browser openers use the same scheme table", () => {
     const ts = readFileSync("src/linkSchemePolicy.ts", "utf8");
     const rs = readFileSync("src-tauri/src/platform.rs", "utf8");
-    const build = readFileSync("src-tauri/build.rs", "utf8");
+    const build = readFileSync("crates/tine-core/build.rs", "utf8");
+    const core = readFileSync("crates/tine-core/src/link_scheme.rs", "utf8");
     expect(ts).toContain('from "../src-tauri/external-link-schemes.json"');
-    expect(build).toContain('generate_external_link_schemes(&read("external-link-schemes.json"))');
+    // Core compiles the list in and answers membership; the native gate asks core.
+    expect(build).toContain('"../../src-tauri/external-link-schemes.json"');
+    expect(core).toContain('include!(concat!(env!("OUT_DIR"), "/refused_schemes.rs"))');
     expect(rs).not.toMatch(/NEVER_OPENED_SCHEMES: &\[&str\] = &\[/);
-    expect(rs).toContain('include!(concat!(env!("OUT_DIR"), "/external_link_schemes.rs"))');
+    expect(rs).not.toContain("external_link_schemes.rs");
+    expect(rs).toContain("tine_core::link_scheme::refused_scheme(&scheme)");
     expect(schemes.refused.length).toBeGreaterThan(0);
     expect(schemes.refused.every(refusedLinkScheme)).toBe(true);
   });

@@ -16,6 +16,7 @@ use ammonia::Builder;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
+use tine_outline::editor_text::{is_js_whitespace, js_trim};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,26 +40,10 @@ fn policy() -> &'static Policy {
         serde_json::from_str(POLICY_JSON).expect("checked-in HTML sanitizer policy")
     })
 }
-/// The policy's `browser.styleProperties`, read on its own so the app's wasm
-/// build (which calls only `color_only_styles`) carries no native-policy code.
-fn style_properties() -> &'static [String] {
-    #[derive(Deserialize)]
-    struct Browser {
-        #[serde(rename = "styleProperties")]
-        style_properties: Vec<String>,
-    }
-    #[derive(Deserialize)]
-    struct StyleOnly {
-        browser: Browser,
-    }
-    static PROPERTIES: OnceLock<Vec<String>> = OnceLock::new();
-    PROPERTIES.get_or_init(|| {
-        serde_json::from_str::<StyleOnly>(POLICY_JSON)
-            .expect("checked-in HTML sanitizer policy")
-            .browser
-            .style_properties
-    })
-}
+// The policy's `browser.styleProperties` as `STYLE_PROPERTIES`, compiled in
+// (`build.rs`) so the app's wasm build carries neither the policy JSON nor a
+// reader for it.
+include!(concat!(env!("OUT_DIR"), "/style_properties.rs"));
 
 /// The export's one rule for where a note-authored link may navigate (Markdown
 /// links in `decorate`, raw-HTML and Hiccup anchors in `sanitize`). External
@@ -96,34 +81,17 @@ pub fn safe_export_url(url: &str) -> Option<&str> {
     Some(url)
 }
 
-/// ECMAScript's WhiteSpace and LineTerminator code points (ECMA-262
-/// §12.2, §12.3): what JavaScript's `String.prototype.trim` strips and what
-/// `\s` matches in a JavaScript regex. The app's colour rule was written in
-/// JavaScript, so this set (U+FEFF in, U+0085 out) is the one it trims; Rust's
+/// JavaScript's `\s` as a regex class body: ECMAScript's WhiteSpace and
+/// LineTerminator code points (ECMA-262 §12.2, §12.3), the set
+/// `editor_text::is_js_whitespace` answers and `String.prototype.trim` strips (U+FEFF in,
+/// U+0085 out). The app's colour rule was written in JavaScript; Rust's
 /// `str::trim` and regex `\s` use Unicode White_Space, which differs on both.
-const ECMASCRIPT_WHITESPACE: &[char] = &[
-    // WhiteSpace: TAB, VT, FF, ZWNBSP, and every Zs (space separator).
-    '\u{0009}', '\u{000B}', '\u{000C}', '\u{FEFF}', '\u{0020}', '\u{00A0}', '\u{1680}', '\u{2000}',
-    '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}',
-    '\u{2009}', '\u{200A}', '\u{202F}', '\u{205F}', '\u{3000}',
-    // LineTerminator: LF, CR, LINE SEPARATOR, PARAGRAPH SEPARATOR.
-    '\u{000A}', '\u{000D}', '\u{2028}', '\u{2029}',
-];
-
-/// `s` without leading and trailing [`ECMASCRIPT_WHITESPACE`]; matches
-/// ECMAScript `String.prototype.trim`.
-fn ecmascript_trim(s: &str) -> &str {
-    s.trim_matches(ECMASCRIPT_WHITESPACE)
-}
-
-/// [`ECMASCRIPT_WHITESPACE`] as a regex class body, JavaScript's `\s`.
+/// A test checks this class against that set for every char; the rule itself
+/// asks `is_js_whitespace` / `js_trim`.
 #[cfg(test)]
-fn ecmascript_whitespace_class() -> String {
-    ECMASCRIPT_WHITESPACE
-        .iter()
-        .map(|c| format!("\\x{{{:X}}}", u32::from(*c)))
-        .collect()
-}
+/// A test checks this class against that set for every char.
+const ECMASCRIPT_WHITESPACE_CLASS: &str =
+    r"\t\n\x0B\x0C\r \xA0\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}";
 
 /// The colour functions a literal may use, matched ASCII-case-insensitively.
 const COLOR_FUNCTIONS: &[&str] = &[
@@ -162,7 +130,7 @@ fn is_color_literal(v: &str) -> bool {
     {
         return false;
     }
-    let is_space = |c: char| ECMASCRIPT_WHITESPACE.contains(&c);
+    let is_space = is_js_whitespace;
     let is_body = |c: char| c.is_ascii_alphanumeric() || "-+.%/,".contains(c) || is_space(c);
     let leading = body.chars().take_while(|&c| is_space(c)).count();
     let mut total = 0usize;
@@ -197,24 +165,23 @@ pub fn color_only_style(value: &str) -> String {
 /// [`color_only_style`] appended to `out`, with no allocation of its own (the
 /// batch calls it once per value).
 fn push_color_only_style(value: &str, out: &mut String) {
-    let properties = style_properties();
     let start = out.len();
     for declaration in value.split(';') {
         let Some((property, v)) = declaration.split_once(':') else {
             continue;
         };
-        let property = ecmascript_trim(property);
+        let property = js_trim(property);
         // `toLowerCase`: for ASCII text, ASCII lowercase, without a copy.
         let matched = if property.is_ascii() {
-            properties.iter().find(|p| {
+            STYLE_PROPERTIES.iter().find(|p| {
                 p.bytes()
                     .eq(property.bytes().map(|b| b.to_ascii_lowercase()))
             })
         } else {
             let lower = property.to_lowercase();
-            properties.iter().find(|p| **p == lower)
+            STYLE_PROPERTIES.iter().find(|p| **p == lower)
         };
-        let v = ecmascript_trim(v);
+        let v = js_trim(v);
         let Some(property) = matched.filter(|_| is_color_literal(v)) else {
             continue;
         };
@@ -386,6 +353,24 @@ pub fn sanitize(html: &str) -> String {
 mod tests {
     use super::sanitize;
     use serde::Deserialize;
+
+    /// The colour rule's `\s` class is the outline's one JavaScript
+    /// whitespace set, for every char.
+    #[test]
+    fn whitespace_class_is_the_js_whitespace_set() {
+        let class = regex::Regex::new(&format!("^[{}]$", super::ECMASCRIPT_WHITESPACE_CLASS))
+            .expect("class");
+        let mut buf = [0u8; 4];
+        let differ: Vec<u32> = (0..=0x10FFFFu32)
+            .filter_map(char::from_u32)
+            .filter(|&c| {
+                class.is_match(c.encode_utf8(&mut buf))
+                    != tine_outline::editor_text::is_js_whitespace(c)
+            })
+            .map(u32::from)
+            .collect();
+        assert!(differ.is_empty(), "class and set differ at {differ:X?}");
+    }
 
     #[derive(Deserialize)]
     struct Case {
@@ -594,18 +579,16 @@ mod tests {
     /// as they were written (regex, `(?i-u)` = JavaScript `/i` without `u`).
     #[test]
     fn color_literal_matches_the_former_patterns() {
-        use super::{
-            ecmascript_whitespace_class, is_color_literal, COLOR_FUNCTION_BANNED,
-            ECMASCRIPT_WHITESPACE,
-        };
-        let ws = ecmascript_whitespace_class();
+        use super::{is_color_literal, COLOR_FUNCTION_BANNED, ECMASCRIPT_WHITESPACE_CLASS};
+        let ws = ECMASCRIPT_WHITESPACE_CLASS;
         let color = regex::Regex::new(&format!(
             r"^(?:#(?:[0-9a-fA-F]{{3,4}}|[0-9a-fA-F]{{6}}|[0-9a-fA-F]{{8}})|[a-zA-Z]{{3,30}}|(?i-u:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\([{ws}]*[-+0-9a-zA-Z.%/,{ws}]{{1,80}}\))$"
         ))
         .unwrap();
         let banned = regex::Regex::new(r"(?i-u)var|calc|url|env|attr|image|min|max|clamp").unwrap();
-        let mut spaces: Vec<String> = ECMASCRIPT_WHITESPACE
-            .iter()
+        let mut spaces: Vec<String> = (0..=0xFEFFu32)
+            .filter_map(char::from_u32)
+            .filter(|&c| tine_outline::editor_text::is_js_whitespace(c))
             .map(|c| c.to_string())
             .collect();
         spaces.extend(["\u{85}", "\u{200B}", "\u{180E}", "\0", "\u{1F600}"].map(String::from));

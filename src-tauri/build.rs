@@ -9,8 +9,6 @@ fn main() {
     let read = |file: &str| -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(file).expect(file)).expect(file)
     };
-    println!("cargo:rerun-if-changed=external-link-schemes.json");
-    generate_external_link_schemes(&read("external-link-schemes.json"));
     let switch = read("app-identity.json");
     let ship = switch["ship"].as_str().expect("app-identity.json: ship");
     let shipped = &switch["identities"][ship];
@@ -160,22 +158,6 @@ fn main() {
             ),
     )
     .expect("failed to run tauri-build");
-}
-
-/// The refused schemes the TypeScript policy imports, compiled for the native gate.
-fn generate_external_link_schemes(schemes: &serde_json::Value) {
-    let refused: Vec<&str> = schemes["refused"]
-        .as_array()
-        .expect("refused")
-        .iter()
-        .map(|value| value.as_str().expect("refused"))
-        .collect();
-    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
-    std::fs::write(
-        out.join("external_link_schemes.rs"),
-        format!("const NEVER_OPENED_SCHEMES: &[&str] = &{refused:?};\n"),
-    )
-    .expect("generated link schemes");
 }
 
 /// Diagnostics accepts registered names, never arbitrary IPC text. Derive

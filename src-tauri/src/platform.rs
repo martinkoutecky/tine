@@ -1014,10 +1014,6 @@ pub(crate) enum ExternalOpen {
     CustomScheme,
 }
 
-// NEVER_OPENED_SCHEMES (external-link-schemes.json, shared with the TS policy):
-// they run code or carry inline content in whatever receives them (I-22).
-include!(concat!(env!("OUT_DIR"), "/external_link_schemes.rs"));
-
 /// The RFC 3986 scheme of `url`, lowercased, or `None` when it has none. A
 /// single letter is a Windows drive (`C:\notes`), not a scheme.
 pub(crate) fn url_scheme(url: &str) -> Option<String> {
@@ -1062,7 +1058,9 @@ pub(crate) fn external_open_plan(
     let Some(scheme) = url_scheme(url) else {
         return Err("unsupported url scheme".into());
     };
-    if NEVER_OPENED_SCHEMES.contains(&scheme.as_str()) || scheme == "tine" {
+    // The refused schemes (external-link-schemes.json) run code or carry
+    // inline content in whatever receives them (I-22); core answers membership.
+    if tine_core::link_scheme::refused_scheme(&scheme) || scheme == "tine" {
         return Err(format!("{scheme}: links are never opened"));
     }
     if confirmed_scheme.map(str::to_ascii_lowercase).as_deref() != Some(scheme.as_str()) {
@@ -1728,6 +1726,8 @@ mod file_url_tests {
             ("obsidian://open?vault=v&file=f", "obsidian"),
             ("Zotero://select/items/ABC", "ZOTERO"),
             ("tel:+420123456", "tel"),
+            // The shared list's key name is no refused scheme.
+            ("refused://item", "refused"),
         ] {
             assert_eq!(
                 external_open_plan(url, Some(scheme)),

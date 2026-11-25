@@ -1096,13 +1096,89 @@ pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
 /// Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
 pub fn asset_rel_path(url: &str) -> Option<String> {
-    tine_core::asset_path::asset_rel_path(url)
+    tine_core::local_target::asset_rel_path(url)
 }
 
 /// PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
 #[wasm_bindgen]
 pub fn pdf_asset_file(path: &str) -> String {
-    tine_core::asset_path::pdf_asset_file(path)
+    tine_core::local_target::pdf_asset_file(path)
+}
+
+/// The one scheme-route rule's bound (`tine_core::link_scheme`): callers pass
+/// at most this many leading bytes, as every answer depends only on them.
+#[wasm_bindgen]
+pub fn link_scheme_prefix_bytes() -> u32 {
+    tine_core::link_scheme::ROUTE_PREFIX_BYTES as u32
+}
+
+/// The anchor route of a destination (relative, web, mail, file, drive,
+/// defer, drop as 0–6). A number: no allocation back. O(prefix bytes).
+#[wasm_bindgen]
+pub fn link_anchor_route(dest: &str) -> u32 {
+    tine_core::link_scheme::anchor_route_code(dest)
+}
+
+/// The browser-resource route of a raw HTML resource (local candidate,
+/// browser, drop as 0–2). O(prefix bytes).
+#[wasm_bindgen]
+pub fn link_preview_route(dest: &str) -> u32 {
+    tine_core::link_scheme::preview_resource_code(dest)
+}
+
+/// The lowercased URL scheme, or none (no scheme, or a drive letter). O(prefix bytes).
+#[wasm_bindgen]
+pub fn link_scheme(dest: &str) -> Option<String> {
+    tine_core::link_scheme::link_scheme(dest)
+}
+
+/// The one owner of "which local target does this destination name". A parser
+/// link node arrives as its `url` fields. `url_type` is 0 for a plain text
+/// destination in `v`, else the Url tag (1 page_ref, 2 block_ref, 3 search,
+/// 4 file, 5 embed_data, 6 complex); `origin` indexes the list below. Both
+/// orders are `src/localTarget.ts`'s. The answer is the `LocalTarget` JSON, or
+/// `null` for a number out of range. O(destination bytes), no parse or
+/// filesystem I/O. Numbers, not names or JSON: both modules have a size
+/// ceiling, and matching names cost the app module about 0.5k.
+#[wasm_bindgen]
+pub fn local_target_json(
+    url_type: u32,
+    mut v: String,
+    protocol: Option<String>,
+    link: Option<String>,
+    origin: u32,
+) -> String {
+    use lsdoc::ast::Url;
+    use std::mem::take;
+    use tine_core::local_target::{local_target, Destination, Origin};
+    // The order `src/localTarget.ts` sends.
+    const ORIGINS: [Origin; 7] = [
+        Origin::MdLink,
+        Origin::MdEmbed,
+        Origin::OrgLink,
+        Origin::OrgBare,
+        Origin::ImgMacro,
+        Origin::HtmlResource,
+        Origin::PageIcon,
+    ];
+    let Some(&origin) = ORIGINS.get(origin as usize) else {
+        return "null".into();
+    };
+    let url = match url_type {
+        0 => None,
+        1 => Some(Url::PageRef { v: take(&mut v) }),
+        2 => Some(Url::BlockRef { v: take(&mut v) }),
+        3 => Some(Url::Search { v: take(&mut v) }),
+        4 => Some(Url::File { v: take(&mut v) }),
+        5 => Some(Url::EmbedData { v: take(&mut v) }),
+        6 => Some(Url::Complex { protocol, link }),
+        _ => return "null".into(),
+    };
+    let dest = match &url {
+        Some(url) => Destination::Link { url },
+        None => Destination::Text(&v),
+    };
+    local_target(dest, origin).to_json()
 }
 
 /// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.

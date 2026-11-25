@@ -72,6 +72,10 @@ describe("capture preference request ownership", () => {
   it("hosts the shared app-link consent prompt in the separate Capture entrypoint", async () => {
     vi.spyOn(backend(), "getAppString").mockResolvedValue("[]");
     const open = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+    // The scheme rule is core's (wasm): a link is only clickable once the
+    // parser is ready, so ready it here past this file's no-op parser mock.
+    const { initParser } = await vi.importActual<typeof import("./render/parse")>("./render/parse");
+    await initParser();
     const { initLinkSchemeSettings } = await import("./linkSchemeSettings");
     await initLinkSchemeSettings();
     const { openOutboundLink } = await import("./components/ExternalLink");

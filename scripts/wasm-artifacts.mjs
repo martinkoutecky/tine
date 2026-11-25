@@ -13,9 +13,14 @@ export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // file replace 36.1k, five shared answers 20.3k; tine-agents
 // subagent-tasks/notes/browser-core-5a-size.md). No trim fits the old ceiling
 // without a second serializer.
+// 2026-11-24, local-target owner: the core ceiling moved to 4,794,000 (about
+// 0.5% above the measured 4,770,096) for the one owner of link targets
+// (crates/tine-core/src/local_target.rs, about 12k of code). Both modules must
+// export it (src/browserCoreParser.test.ts); trimming its code saved 1.1k of the
+// 2.3k overshoot, and no further trim fits without dropping a rule.
 export const wasmArtifacts = [
   { dir: "src/render/wasm", feature: null, maxBytes: 1_560_000 },
-  { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_768_000 },
+  { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_794_000 },
 ];
 
 /** The one size check for a vendored module, used before regeneration writes

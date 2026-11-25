@@ -1,0 +1,2459 @@
+{
+  "about": "One row per input of the local-target design's acceptance list, for every origin. 'owner' is what the one owner (crates/tine-core/src/local_target.rs) answers; 'today' is what develop's current answerers do: the renderer (rendered and clicked, desktop, graph root 'root'), the asset collector (orphans and trash) and export. 'change' names the decision or rule behind each place the owner differs from today; null means the same answer. Tests: src/render/localTarget.table.test.tsx, crates/tine-core/src/local_target_tests.rs, crates/tine-graph-features/src/publish_query_table_tests.rs.",
+  "root": "/graph",
+  "rows": [
+    {
+      "id": "5.1-1",
+      "case": "5.1",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](#section)",
+      "owner": "fragment:#section",
+      "today": {
+        "renderer": "open:#section",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.1-2",
+      "case": "5.1",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](#a.b)",
+      "owner": "fragment:#a.b",
+      "today": {
+        "renderer": "open:#a.b",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.1-3",
+      "case": "5.1",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](#)",
+      "owner": "fragment:#",
+      "today": {
+        "renderer": "open:#",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.1-4",
+      "case": "5.1",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](*Heading)",
+      "owner": "fragment:*Heading",
+      "today": {
+        "renderer": "open:*Heading",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.1-5",
+      "case": "5.1",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x]()",
+      "owner": "fragment:",
+      "today": {
+        "renderer": "open:",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.2-1",
+      "case": "5.2",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](#/page/Project)",
+      "owner": "fragment:#/page/Project",
+      "today": {
+        "renderer": "open:#/page/Project",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.2-2",
+      "case": "5.2",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](?q=1)",
+      "owner": "page:?q=1",
+      "today": {
+        "renderer": "page:?q=1",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.2-3",
+      "case": "5.2",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[#section][x]]",
+      "owner": "fragment:#section",
+      "today": {
+        "renderer": "open:#section",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-1",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:%2Fdocs%2Fnote.txt)",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C:/docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-2",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:%2fdocs%2fnote.pdf)",
+      "owner": "drive:C:/docs/note.pdf",
+      "today": {
+        "renderer": "open:C:%2fdocs%2fnote.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-3",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](C:%2Fdocs%2Fnote.PDF)",
+      "owner": "drive:C:/docs/note.PDF pdf=outside",
+      "today": {
+        "renderer": "open:C:%2Fdocs%2Fnote.PDF",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-4",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:/docs\\note.txt)",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C:/docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-5",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:%5Cdocs%5Cnote.txt)",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "graph-file:C:\\docs\\note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-6",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C%3A%2Fdocs%2Fnote.txt)",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C:/docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-7",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](C%3A%2Fdocs%2Fnote.pdf)",
+      "owner": "drive:C:/docs/note.pdf pdf=outside",
+      "today": {
+        "renderer": "open:C%3A%2Fdocs%2Fnote.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.3-8",
+      "case": "5.3",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](C:/docs/note.PDF)",
+      "owner": "drive:C:/docs/note.PDF pdf=outside",
+      "today": {
+        "renderer": "open:file:///C:/docs/note.PDF",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive PDF opens the outside reader",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-1",
+      "case": "5.4",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C://docs/note.txt)",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive path is normalized (C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-2",
+      "case": "5.4",
+      "format": "md",
+      "origin": "md-link",
+      "source": "<C://docs/note.txt>",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive path is normalized (C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-3",
+      "case": "5.4",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[C://docs/note.txt][x]]",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive path is normalized (C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-4",
+      "case": "5.4",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[C://docs/note.txt]]",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive path is normalized (C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-5",
+      "case": "5.4",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "<C://docs/note.txt>",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a drive path is normalized (C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-6",
+      "case": "5.4",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:docs/note)",
+      "owner": "page:C:docs/note",
+      "today": {
+        "renderer": "page:c:docs/note",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-7",
+      "case": "5.4",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[C:docs/note.txt][x]]",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "parser gives no distinction; as Logseq (C:x arrives as C://x; a drive path is normalized, C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.4-8",
+      "case": "5.4",
+      "format": "md",
+      "origin": "md-link",
+      "source": "<C:docs/note.txt>",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "open:file:///C://docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "parser gives no distinction; as Logseq (C:x arrives as C://x; a drive path is normalized, C:// to C:/)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.5-1",
+      "case": "5.5",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[C%3A//docs/note.PDF]]",
+      "owner": "drive:C:/docs/note.PDF pdf=outside",
+      "today": {
+        "renderer": "page:c%3a//docs/note.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a bare Org drive link is a file, not a page",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.5-2",
+      "case": "5.5",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[C:/docs/note.txt]]",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "page:c:/docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a bare Org drive link is a file, not a page",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.5-3",
+      "case": "5.5",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[%43:%5Cdocs%5Cnote.txt]]",
+      "owner": "drive:C:/docs/note.txt",
+      "today": {
+        "renderer": "page:%43:%5cdocs%5cnote.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: a bare Org drive link is a file, not a page",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-1",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](tel:123)",
+      "owner": "app:tel",
+      "today": {
+        "renderer": "open:tel:123",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-2",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](sms:123)",
+      "owner": "app:sms",
+      "today": {
+        "renderer": "open:sms:123",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-3",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](mailto:alice@localhost)",
+      "owner": "mail",
+      "today": {
+        "renderer": "open:mailto:alice@localhost",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-4",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](tel:123)",
+      "owner": "app:tel",
+      "today": {
+        "renderer": "open:tel:123",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-5",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](myapp:open)",
+      "owner": "app:myapp",
+      "today": {
+        "renderer": "open:myapp:open",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-6",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](Project)",
+      "owner": "page:Project",
+      "today": {
+        "renderer": "page:project",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-7",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[[Project]]",
+      "owner": "page:Project",
+      "today": {
+        "renderer": "page:project",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.6-8",
+      "case": "5.6",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](javascript:alert)",
+      "owner": "refused",
+      "today": {
+        "renderer": "inert",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.7-1",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:/assets/note.txt)",
+      "owner": "drive:C:/assets/note.txt",
+      "today": {
+        "renderer": "open:file:///C:/assets/note.txt",
+        "collector": [
+          "note.txt"
+        ],
+        "export": [
+          "note.txt"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.7-2",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](c:\\ASSETS\\note.txt)",
+      "owner": "drive:c:/ASSETS/note.txt",
+      "today": {
+        "renderer": "open:file:///c:/ASSETS/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.7-3",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:%2Fassets%2Fnote.txt)",
+      "owner": "drive:C:/assets/note.txt",
+      "today": {
+        "renderer": "open:file:///C:/assets/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.7-4",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C%3A/assets/note.txt)",
+      "owner": "drive:C:/assets/note.txt",
+      "today": {
+        "renderer": "attachment:note.txt",
+        "collector": [
+          "note.txt"
+        ],
+        "export": [
+          "note.txt"
+        ]
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": null,
+        "export": "settled rule: decode, then normalize and classify"
+      }
+    },
+    {
+      "id": "5.7-5",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C:assets/note.txt)",
+      "owner": "refused-malformed",
+      "today": {
+        "renderer": "graph-file:C:assets/note.txt",
+        "collector": [
+          "note.txt"
+        ],
+        "export": [
+          "note.txt"
+        ]
+      },
+      "change": {
+        "renderer": "finding: a drive-relative path (C:x) is refused",
+        "liveness": null,
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.7-6",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C://assets/note.txt)",
+      "owner": "drive:C:/assets/note.txt",
+      "today": {
+        "renderer": "open:file:///C://assets/note.txt",
+        "collector": [
+          "note.txt"
+        ],
+        "export": [
+          "note.txt"
+        ]
+      },
+      "change": {
+        "renderer": "finding: a drive path is normalized (C:// to C:/)",
+        "liveness": null,
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.7-7",
+      "case": "5.7",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](C:/assets/photo.png)",
+      "owner": "drive:C:/assets/photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": "finding: the link rule 'a drive is never an attachment' also holds for images",
+        "liveness": null,
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.8-1",
+      "case": "5.8",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](C%3A%2Fdocs%2Fbad%.txt)",
+      "owner": "drive:C:/docs/bad%.txt",
+      "today": {
+        "renderer": "graph-file:C%3A%2Fdocs%2Fbad%.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "decision 1: bad escapes",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.8-2",
+      "case": "5.8",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](%43:%5Cdocs%5Cbad%ZZ.PDF)",
+      "owner": "drive:C:/docs/bad%ZZ.PDF pdf=outside",
+      "today": {
+        "renderer": "asset-pdf:bad%ZZ.PDF",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "decision 1: bad escapes",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.8-3",
+      "case": "5.8",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](C%3a%5Cassets/bad%.png)",
+      "owner": "drive:C:/assets/bad%.png",
+      "today": {
+        "renderer": "image:bad%.png",
+        "collector": [
+          "bad%.png"
+        ],
+        "export": [
+          "bad%.png"
+        ]
+      },
+      "change": {
+        "renderer": "decision 1: bad escapes",
+        "liveness": null,
+        "export": "settled rule: decode, then normalize and classify"
+      }
+    },
+    {
+      "id": "5.9-1",
+      "case": "5.9",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](docs.v1/myassets/)",
+      "owner": "graph-file:docs.v1/myassets",
+      "today": {
+        "renderer": "graph-file:docs.v1/myassets",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.9-2",
+      "case": "5.9",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../myassets/)",
+      "owner": "outside-escapes:../myassets",
+      "today": {
+        "renderer": "open:file:///myassets",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.9-3",
+      "case": "5.9",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](docs.v1//MyAssets//)",
+      "owner": "graph-file:docs.v1/MyAssets",
+      "today": {
+        "renderer": "graph-file:docs.v1/MyAssets",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.10-1",
+      "case": "5.10",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](docs.v1/%61ssets/)",
+      "owner": "graph-file:docs.v1/assets",
+      "today": {
+        "renderer": "graph-file:docs.v1/assets",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.10-2",
+      "case": "5.10",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](assets%2F)",
+      "owner": "page:assets%2F",
+      "today": {
+        "renderer": "page:assets%2f",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.10-3",
+      "case": "5.10",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](docs.v1/%41ssets/photo.png)",
+      "owner": "graph-file:docs.v1/Assets/photo.png",
+      "today": {
+        "renderer": "none",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.11-1",
+      "case": "5.11",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets/nested/assets)",
+      "owner": "attachment:nested/assets",
+      "today": {
+        "renderer": "attachment:",
+        "collector": [
+          "nested",
+          "nested/assets"
+        ],
+        "export": [
+          "nested/assets"
+        ]
+      },
+      "change": {
+        "renderer": "finding: a nested assets folder is not the root",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.11-2",
+      "case": "5.11",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets/nested/assets/)",
+      "owner": "attachment:nested/assets",
+      "today": {
+        "renderer": "attachment:",
+        "collector": [
+          "nested",
+          "nested/assets/"
+        ],
+        "export": [
+          "nested/assets/"
+        ]
+      },
+      "change": {
+        "renderer": "finding: a nested assets folder is not the root",
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.11-3",
+      "case": "5.11",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets/nested/%61ssets)",
+      "owner": "attachment:nested/assets",
+      "today": {
+        "renderer": "attachment:nested/assets",
+        "collector": [
+          "nested",
+          "nested/%61ssets",
+          "nested/assets"
+        ],
+        "export": [
+          "nested/assets"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-1",
+      "case": "5.12",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![Guide](docs/guide.pdf)",
+      "owner": "graph-file:docs/guide.pdf pdf=outside>asset:guide.pdf",
+      "today": {
+        "renderer": "outside-pdf:file:///graph/docs/guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-2",
+      "case": "5.12",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![g](./guide.PDF)",
+      "owner": "graph-file:guide.PDF pdf=outside>asset:guide.PDF",
+      "today": {
+        "renderer": "outside-pdf:file:///graph/guide.PDF",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-3",
+      "case": "5.12",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![g](docs\\guide.pdf)",
+      "owner": "graph-file:docs/guide.pdf pdf=outside>asset:guide.pdf",
+      "today": {
+        "renderer": "outside-pdf:file:///graph/docs/guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-4",
+      "case": "5.12",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![g](docs/../guide.pdf)",
+      "owner": "graph-file:guide.pdf pdf=outside>asset:guide.pdf",
+      "today": {
+        "renderer": "outside-pdf:file:///graph/guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-5",
+      "case": "5.12",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[g](docs/guide.pdf)",
+      "owner": "graph-file:docs/guide.pdf",
+      "today": {
+        "renderer": "graph-file:docs/guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-6",
+      "case": "5.12",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[g](guide.pdf)",
+      "owner": "graph-file:guide.pdf pdf=asset:guide.pdf",
+      "today": {
+        "renderer": "asset-pdf:guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-7",
+      "case": "5.12",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[docs/guide.pdf][g]]",
+      "owner": "graph-file:docs/guide.pdf pdf=outside>asset:guide.pdf",
+      "today": {
+        "renderer": "outside-pdf:file:///graph/docs/guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.12-8",
+      "case": "5.12",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[docs/guide.pdf]]",
+      "owner": "page:docs/guide.pdf",
+      "today": {
+        "renderer": "page:docs/guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.13-1",
+      "case": "5.13",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](assets/bad%20%.pdf)",
+      "owner": "attachment:bad %.pdf pdf=asset:bad %.pdf",
+      "today": {
+        "renderer": "asset-pdf:bad %.pdf",
+        "collector": [
+          "bad %.pdf",
+          "bad%20%.pdf"
+        ],
+        "export": [
+          "bad %.pdf"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.13-2",
+      "case": "5.13",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/bad%20%.pdf)",
+      "owner": "attachment:bad %.pdf pdf=asset:bad %.pdf",
+      "today": {
+        "renderer": "asset-pdf:bad %.pdf",
+        "collector": [
+          "bad %.pdf",
+          "bad%20%.pdf"
+        ],
+        "export": [
+          "bad %.pdf"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.13-3",
+      "case": "5.13",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](guide.p%64f)",
+      "owner": "graph-file:guide.pdf pdf=asset:guide.pdf",
+      "today": {
+        "renderer": "graph-file:guide.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: decoding before the PDF test makes guide.p%64f a bare PDF, where the design asks for the graph-root file",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.13-4",
+      "case": "5.13",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](guide.p%64f)",
+      "owner": "graph-file:guide.pdf pdf=asset:guide.pdf",
+      "today": {
+        "renderer": "none",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "finding: decoding before the PDF test makes guide.p%64f a bare PDF, where the design asks for the graph-root file",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-1",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../%61ssets/photo.png)",
+      "owner": "outside-escapes:../assets/photo.png",
+      "today": {
+        "renderer": "none",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-2",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets%2Fphoto.png)",
+      "owner": "outside-escapes:../assets/photo.png",
+      "today": {
+        "renderer": "open:file:///assets/photo.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-3",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets%5Cphoto.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "none",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": "settled rule: decode, then normalize and classify",
+        "export": "settled rule: decode, then normalize and classify"
+      }
+    },
+    {
+      "id": "5.14-4",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../ASSETS/photo.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": "settled rule: literal assets folder, any case",
+        "export": "settled rule: literal assets folder, any case"
+      }
+    },
+    {
+      "id": "5.14-5",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/sub%5Cphoto.png)",
+      "owner": "attachment:sub/photo.png",
+      "today": {
+        "renderer": "image:sub%5Cphoto.png",
+        "collector": [
+          "sub%5Cphoto.png",
+          "sub\\photo.png"
+        ],
+        "export": [
+          "sub\\photo.png"
+        ]
+      },
+      "change": {
+        "renderer": "settled rule: decode, then normalize and classify",
+        "liveness": "settled rule: decode, then normalize and classify",
+        "export": "settled rule: decode, then normalize and classify"
+      }
+    },
+    {
+      "id": "5.14-6",
+      "case": "5.14",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[../assets/photo.png]]",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-7",
+      "case": "5.14",
+      "format": "md",
+      "origin": "img-macro",
+      "source": "{{img ../assets/photo.png}}",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png}}"
+        ],
+        "export": [
+          "photo.png}}"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.14-8",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../%61ssets/./guide.PDF)",
+      "owner": "outside-escapes:../assets/guide.PDF",
+      "today": {
+        "renderer": "open:file:///assets/guide.PDF",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-9",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](﻿../assets/photo.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-10",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/photo.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png",
+          "photo.png"
+        ],
+        "export": [
+          "photo.png",
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 2: whitespace trimming"
+      }
+    },
+    {
+      "id": "5.14-11",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](https://example.com/%61ssets/x.png)",
+      "owner": "web",
+      "today": {
+        "renderer": "open:https://example.com/%61ssets/x.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.14-12",
+      "case": "5.14",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](https://example.com/assets/x.png)",
+      "owner": "web",
+      "today": {
+        "renderer": "open:https://example.com/assets/x.png",
+        "collector": [
+          "x.png"
+        ],
+        "export": [
+          "x.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.15-1",
+      "case": "5.15",
+      "format": "md",
+      "origin": "img-macro",
+      "source": "{{img ../assets/photo.png, 200}}",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png,",
+        "collector": [
+          "photo.png, 200}}"
+        ],
+        "export": [
+          "photo.png, 200}}"
+        ]
+      },
+      "change": {
+        "renderer": "finding: the img macro URL comes from the parser's arguments",
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.15-2",
+      "case": "5.15",
+      "format": "md",
+      "origin": "img-macro",
+      "source": "{{img ../assets/photo.png,200}}",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png,",
+        "collector": [
+          "photo.png,200}}"
+        ],
+        "export": [
+          "photo.png,200}}"
+        ]
+      },
+      "change": {
+        "renderer": "finding: the img macro URL comes from the parser's arguments",
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.15-3",
+      "case": "5.15",
+      "format": "md",
+      "origin": "img-macro",
+      "source": "{{img ../assets/photo.png left}}",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png left}}"
+        ],
+        "export": [
+          "photo.png left}}"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.15-4",
+      "case": "5.15",
+      "format": "md",
+      "origin": "img-macro",
+      "source": "{{img ../assets/photo.png 200 100}}",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png 200 100}}"
+        ],
+        "export": [
+          "photo.png 200 100}}"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.15-5",
+      "case": "5.15",
+      "format": "md",
+      "origin": "img-macro",
+      "source": "{{IMG ../assets/photo.png}}",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "image:photo.png",
+        "collector": [
+          "photo.png}}"
+        ],
+        "export": [
+          "photo.png}}"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": "settled rule: one owner for renderer, trash and export",
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "5.16-1",
+      "case": "5.16",
+      "format": "md",
+      "origin": "html-resource",
+      "source": "<img src=\"../assets/x.png\">",
+      "dest": "../assets/x.png",
+      "owner": "fragment:../assets/x.png",
+      "today": {
+        "renderer": "browser",
+        "collector": [
+          "x.png"
+        ],
+        "export": [
+          "x.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 5: raw HTML and Hiccup resources"
+      }
+    },
+    {
+      "id": "5.16-2",
+      "case": "5.16",
+      "format": "md",
+      "origin": "html-resource",
+      "source": "<a href=\"../assets/x.pdf\">a</a>",
+      "dest": "../assets/x.pdf",
+      "owner": "fragment:../assets/x.pdf",
+      "today": {
+        "renderer": "browser",
+        "collector": [
+          "x.pdf"
+        ],
+        "export": [
+          "x.pdf"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 5: raw HTML and Hiccup resources"
+      }
+    },
+    {
+      "id": "5.16-3",
+      "case": "5.16",
+      "format": "md",
+      "origin": "html-resource",
+      "source": "<video poster=\"../assets/p.png\"></video>",
+      "dest": "../assets/p.png",
+      "owner": "fragment:../assets/p.png",
+      "today": {
+        "renderer": "browser",
+        "collector": [
+          "p.png"
+        ],
+        "export": [
+          "p.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 5: raw HTML and Hiccup resources"
+      }
+    },
+    {
+      "id": "5.16-4",
+      "case": "5.16",
+      "format": "md",
+      "origin": "html-resource",
+      "source": "<img src=\"file:///C:/docs/x.png\">",
+      "dest": "file:///C:/docs/x.png",
+      "owner": "drive:C:/docs/x.png",
+      "today": {
+        "renderer": "local-image:C:/docs/x.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.16-5",
+      "case": "5.16",
+      "format": "md",
+      "origin": "html-resource",
+      "source": "<img src=\"/abs/x%20y.png\">",
+      "dest": "/abs/x%20y.png",
+      "owner": "outside-absolute:/abs/x y.png",
+      "today": {
+        "renderer": "local-image:/abs/x y.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.16-6",
+      "case": "5.16",
+      "format": "md",
+      "origin": "html-resource",
+      "source": "[:img {:src \"../assets/x.png\"}]",
+      "dest": "../assets/x.png",
+      "owner": "fragment:../assets/x.png",
+      "today": {
+        "renderer": "browser",
+        "collector": [
+          "x.png"
+        ],
+        "export": [
+          "x.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 5: raw HTML and Hiccup resources"
+      }
+    },
+    {
+      "id": "5.17-1",
+      "case": "5.17",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/photo%23v2.png)",
+      "owner": "attachment:photo#v2.png",
+      "today": {
+        "renderer": "image:photo%23v2.png",
+        "collector": [
+          "photo#v2.png",
+          "photo%23v2.png"
+        ],
+        "export": [
+          "photo#v2.png"
+        ]
+      },
+      "change": {
+        "renderer": "settled rule: file names decoded once",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.17-2",
+      "case": "5.17",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/photo%3Fv2.png)",
+      "owner": "attachment:photo?v2.png",
+      "today": {
+        "renderer": "image:photo%3Fv2.png",
+        "collector": [
+          "photo%3Fv2.png",
+          "photo?v2.png"
+        ],
+        "export": [
+          "photo?v2.png"
+        ]
+      },
+      "change": {
+        "renderer": "settled rule: file names decoded once",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "5.17-3",
+      "case": "5.17",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/demo%2520v2.png)",
+      "owner": "attachment:demo%20v2.png",
+      "today": {
+        "renderer": "image:demo%2520v2.png",
+        "collector": [
+          "demo%20v2.png",
+          "demo%2520v2.png"
+        ],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: file names decoded once",
+        "liveness": null,
+        "export": "settled rule: file names decoded once"
+      }
+    },
+    {
+      "id": "5.17-4",
+      "case": "5.17",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/demo%252Fv2.png)",
+      "owner": "attachment:demo%2Fv2.png",
+      "today": {
+        "renderer": "image:demo%252Fv2.png",
+        "collector": [
+          "demo%252Fv2.png",
+          "demo%2Fv2.png"
+        ],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: file names decoded once",
+        "liveness": null,
+        "export": "settled rule: file names decoded once"
+      }
+    },
+    {
+      "id": "5.17-5",
+      "case": "5.17",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/demo%25FFv2.png)",
+      "owner": "attachment:demo%FFv2.png",
+      "today": {
+        "renderer": "image:demo%25FFv2.png",
+        "collector": [
+          "demo%25FFv2.png",
+          "demo%FFv2.png"
+        ],
+        "export": []
+      },
+      "change": {
+        "renderer": "settled rule: file names decoded once",
+        "liveness": null,
+        "export": "settled rule: file names decoded once"
+      }
+    },
+    {
+      "id": "8-1",
+      "case": "8",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets/my%20file.png)",
+      "owner": "attachment:my file.png",
+      "today": {
+        "renderer": "attachment:my file.png",
+        "collector": [
+          "my file.png",
+          "my%20file.png"
+        ],
+        "export": [
+          "my file.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "8-2",
+      "case": "8",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/my%20file.png)",
+      "owner": "attachment:my file.png",
+      "today": {
+        "renderer": "image:my%20file.png",
+        "collector": [
+          "my file.png",
+          "my%20file.png"
+        ],
+        "export": [
+          "my file.png"
+        ]
+      },
+      "change": {
+        "renderer": "settled rule: file names decoded once",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-1",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets/photo.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "attachment:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-2",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](./assets/)",
+      "owner": "attachment:",
+      "today": {
+        "renderer": "attachment:",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-3",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](./assets)",
+      "owner": "attachment:",
+      "today": {
+        "renderer": "attachment:",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-4",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](docs/assets/photo.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "attachment:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-5",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](/abs/assets/photo.png)",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "attachment:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-6",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../assets/nested/report.pdf)",
+      "owner": "attachment:nested/report.pdf pdf=asset:nested/report.pdf",
+      "today": {
+        "renderer": "asset-pdf:nested/report.pdf",
+        "collector": [
+          "nested",
+          "nested/report.pdf"
+        ],
+        "export": [
+          "nested/report.pdf"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-7",
+      "case": "base",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/clip.mp4)",
+      "owner": "attachment:clip.mp4",
+      "today": {
+        "renderer": "media:clip.mp4",
+        "collector": [
+          "clip.mp4"
+        ],
+        "export": [
+          "clip.mp4"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-8",
+      "case": "base",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](../assets/song.mp3)",
+      "owner": "attachment:song.mp3",
+      "today": {
+        "renderer": "media:song.mp3",
+        "collector": [
+          "song.mp3"
+        ],
+        "export": [
+          "song.mp3"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-9",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](https://example.com/a.png)",
+      "owner": "web",
+      "today": {
+        "renderer": "open:https://example.com/a.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-10",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "https://example.com/a.png",
+      "owner": "web",
+      "today": {
+        "renderer": "image-web",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-11",
+      "case": "base",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](https://example.com/a.png)",
+      "owner": "web",
+      "today": {
+        "renderer": "image-web",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-12",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](file:///tmp/a.pdf)",
+      "owner": "outside-absolute:/tmp/a.pdf",
+      "today": {
+        "renderer": "open:file:///tmp/a.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-13",
+      "case": "base",
+      "format": "md",
+      "origin": "md-embed",
+      "source": "![x](file:///tmp/a.pdf)",
+      "owner": "outside-absolute:/tmp/a.pdf pdf=outside",
+      "today": {
+        "renderer": "outside-pdf:file:///tmp/a.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-14",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](file:docs/a.txt)",
+      "owner": "graph-file:docs/a.txt",
+      "today": {
+        "renderer": "graph-file:docs/a.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-15",
+      "case": "base",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[file:docs/a.pdf][x]]",
+      "owner": "graph-file:docs/a.pdf pdf=outside>asset:a.pdf",
+      "today": {
+        "renderer": "outside-pdf:file:///graph/docs/a.pdf",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-16",
+      "case": "base",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[file:../assets/a.png][x]]",
+      "owner": "outside-escapes:../assets/a.png",
+      "today": {
+        "renderer": "open:file:///assets/a.png",
+        "collector": [
+          "a.png"
+        ],
+        "export": [
+          "a.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "settled rule: one owner for renderer, trash and export"
+      }
+    },
+    {
+      "id": "base-17",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](docs/note.txt)",
+      "owner": "graph-file:docs/note.txt",
+      "today": {
+        "renderer": "graph-file:docs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-18",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](../outside/note.txt)",
+      "owner": "outside-escapes:../outside/note.txt",
+      "today": {
+        "renderer": "open:file:///outside/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-19",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](/abs/note.txt)",
+      "owner": "outside-absolute:/abs/note.txt",
+      "today": {
+        "renderer": "open:file:///abs/note.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-20",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](docs/folder)",
+      "owner": "page:docs/folder",
+      "today": {
+        "renderer": "page:docs/folder",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-21",
+      "case": "base",
+      "format": "org",
+      "origin": "org-link",
+      "source": "[[../assets/photo.png][x]]",
+      "owner": "attachment:photo.png",
+      "today": {
+        "renderer": "attachment:photo.png",
+        "collector": [
+          "photo.png"
+        ],
+        "export": [
+          "photo.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-22",
+      "case": "base",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[https://example.com/a.png]]",
+      "owner": "web",
+      "today": {
+        "renderer": "open:https://example.com/a.png",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-23",
+      "case": "base",
+      "format": "org",
+      "origin": "org-bare",
+      "source": "[[Project]]",
+      "owner": "page:Project",
+      "today": {
+        "renderer": "page:project",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "base-24",
+      "case": "base",
+      "format": "md",
+      "origin": "md-link",
+      "source": "[x](file:////server/share/a.txt)",
+      "owner": "graph-file:server/share/a.txt",
+      "today": {
+        "renderer": "open:file://server/share/a.txt",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": "parser gives no distinction; as Logseq (file:////server and file://server arrive alike, and a Complex file link is its bare path)",
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "icon-1",
+      "case": "icon",
+      "format": "md",
+      "origin": "page-icon",
+      "source": "![](../assets/icon.png)",
+      "page": "pages/Foo.md",
+      "owner": "page-relative:../assets/icon.png",
+      "today": {
+        "renderer": "icon:icon.png",
+        "collector": [
+          "icon.png"
+        ],
+        "export": [
+          "icon.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 6: page icons"
+      }
+    },
+    {
+      "id": "icon-2",
+      "case": "icon",
+      "format": "md",
+      "origin": "page-icon",
+      "source": "![](../assets/my%20icon.png)",
+      "page": "pages/Foo.md",
+      "owner": "page-relative:../assets/my icon.png",
+      "today": {
+        "renderer": "icon:my icon.png",
+        "collector": [
+          "my icon.png",
+          "my%20icon.png"
+        ],
+        "export": [
+          "my icon.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 6: page icons"
+      }
+    },
+    {
+      "id": "icon-3",
+      "case": "icon",
+      "format": "md",
+      "origin": "page-icon",
+      "source": "![](../assets/bad%.png)",
+      "page": "pages/Foo.md",
+      "owner": "refused-malformed",
+      "today": {
+        "renderer": "icon:none",
+        "collector": [
+          "bad%.png"
+        ],
+        "export": [
+          "bad%.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 6: page icons"
+      }
+    },
+    {
+      "id": "icon-4",
+      "case": "icon",
+      "format": "md",
+      "origin": "page-icon",
+      "source": "![](C:/x.png)",
+      "page": "pages/Foo.md",
+      "owner": "refused-malformed",
+      "today": {
+        "renderer": "icon:none",
+        "collector": [],
+        "export": []
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": null
+      }
+    },
+    {
+      "id": "icon-5",
+      "case": "icon",
+      "format": "md",
+      "origin": "page-icon",
+      "source": "![](../../assets/icon.png)",
+      "page": "pages/sub/Foo.md",
+      "owner": "page-relative:../../assets/icon.png",
+      "today": {
+        "renderer": "icon:icon.png",
+        "collector": [
+          "icon.png"
+        ],
+        "export": [
+          "icon.png"
+        ]
+      },
+      "change": {
+        "renderer": null,
+        "liveness": null,
+        "export": "decision 6: page icons"
+      }
+    }
+  ]
+}

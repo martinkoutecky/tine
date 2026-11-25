@@ -845,23 +845,32 @@ pub fn byte_to_utf16(s: &str, byte: usize) -> usize {
     s[..at].encode_utf16().count()
 }
 
-/// JavaScript's `String.prototype.trim() === ""`: ECMAScript WhiteSpace and
-/// LineTerminator, which differ from Rust's `char::is_whitespace` at U+0085
-/// (not JS whitespace) and U+FEFF (JS whitespace).
+/// ECMAScript WhiteSpace and LineTerminator, the set `String.prototype.trim`
+/// strips: the one Rust answer (the link owner and the outline both ask it).
+/// It differs from Rust's `char::is_whitespace` at U+0085 (not JS whitespace)
+/// and U+FEFF (JS whitespace).
+pub fn is_js_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
+/// JavaScript's `String.prototype.trim() === ""` (see [`is_js_whitespace`]).
 pub fn js_blank(s: &str) -> bool {
-    s.chars().all(|c| {
-        matches!(
-            c,
-            '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
-                ..='\u{200A}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202F}'
-                    | '\u{205F}'
-                    | '\u{3000}'
-                    | '\u{FEFF}'
-        )
-    })
+    s.chars().all(is_js_whitespace)
+}
+
+/// JavaScript's `String.prototype.trim()` (see [`is_js_whitespace`]). O(bytes).
+pub fn js_trim(s: &str) -> &str {
+    s.trim_matches(is_js_whitespace)
 }
 
 #[cfg(test)]
