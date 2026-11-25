@@ -25,7 +25,8 @@ import { ContentWidthFields } from "./ContentWidthFields";
 // field moves by a word; Cmd+[ / Cmd+] (Logseq's Mac keys) go Back/Forward
 // everywhere. The Emacs motions are on Logseq's Control chords. Move block keeps
 // Option+Shift+Up/Down, so Cmd+Shift+Up/Down (select to the start or end) stays
-// with the editor.
+// with the editor. An iPad whose WebView reports MacIntel (the iPadOS default) is
+// this file's platform too: Tine's shortcut table has one answer to "Mac keys".
 
 beforeAll(() => initParser());
 
@@ -166,6 +167,37 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1040 macOS Option keys stay 
     expect(routeName()).toBe("Earlier page");
   });
 
+  // A chord the user saved for Back or Forward navigates, also when it is the
+  // other command's default key.
+  it("Back saved on Option+Right, Forward on its default: Option+Right goes Back", () => {
+    const editor = mount({ "go/backward": "alt+right" });
+    expect(editor.keydown(optionRight).defaultPrevented).toBe(true);
+    expect(routeName()).toBe("Earlier page");
+  });
+
+  it("Forward saved on Option+Left, Back on its default: Option+Left goes Back (Back is asked first, as before)", () => {
+    const editor = mount({ "go/forward": "alt+left" });
+    expect(editor.keydown(optionLeft).defaultPrevented).toBe(true);
+    expect(routeName()).toBe("Earlier page");
+  });
+
+  it("Back saved on F8: Option+Left is no history key, Option+Right (Forward's default) stays with the editor", () => {
+    const editor = mount({ "go/backward": "f8" });
+    editor.keydown(optionLeft);
+    expect(routeName()).toBe("Mac keys");
+    editor.keydown(optionRight);
+    expect(routeName()).toBe("Mac keys");
+    expect(editor.value()).toBe(TEXT);
+    expect(editor.keydown({ key: "F8", code: "F8" }).defaultPrevented).toBe(true);
+    expect(routeName()).toBe("Earlier page");
+  });
+
+  it("an editor command saved on Option+Left gets the key: the page stays", () => {
+    const editor = mount({ "editor/insert-link": "alt+left" });
+    editor.keydown(optionLeft);
+    expect(routeName()).toBe("Mac keys");
+  });
+
   it("the Edit code language button inside an editor is no text field: Option+Left goes Back", () => {
     disposeKeys = installKeybindings();
     loadSingle({ name: "Mac keys", kind: "page", title: "Mac keys", pre_block: null, blocks: [
@@ -259,6 +291,25 @@ describe("GH #1040 macOS Option+Left/Right outside a block editor", () => {
     expect(routeName()).toBe("Later page");
     expect(cellSel()).toBeNull();
     expect(editingId()).toBeNull();
+  });
+
+  it.each([
+    ["Back saved on Option+Right", { "go/backward": "alt+right" }, optionRight],
+    ["Forward saved on Option+Left", { "go/forward": "alt+left" }, optionLeft],
+  ] as const)("%s: in a text field the saved chord goes Back", (_name, overrides, key) => {
+    install({ ...overrides });
+    expect(press(field("text"), key).defaultPrevented).toBe(true);
+    expect(routeName()).toBe("Earlier page");
+  });
+
+  it("Back saved on F8: in a text field Option+Right (Forward's default) is the field's and Option+Left nobody's", () => {
+    install({ "go/backward": "f8" });
+    const input = field("text");
+    expect(press(input, optionLeft).defaultPrevented).toBe(false);
+    expect(press(input, optionRight).defaultPrevented).toBe(false);
+    expect(routeName()).toBe("Mac keys");
+    expect(press(input, { key: "F8", code: "F8" }).defaultPrevented).toBe(true);
+    expect(routeName()).toBe("Earlier page");
   });
 
   it("a Journals key saved on Cmd+[ opens Journals: Back's Cmd+[ is only an alias", () => {

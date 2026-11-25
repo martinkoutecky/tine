@@ -988,6 +988,8 @@ const CARET_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "pas
 /** A field with a text caret: a textarea, a text-like input, or editable content
  *  (CodeMirror's). The target itself, not its editor wrapper: a button inside an
  *  editor has no caret. */
+const HISTORY_COMMANDS = ["go/backward", "go/forward"];
+
 function isTextCaretTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   if (!el?.tagName) return false;
@@ -1228,10 +1230,12 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
 
     // GH #1040: on macOS Option+Left/Right is a text field's word motion. Back
     // and Forward's default keys leave a field with a text caret alone, before
-    // either dispatch path below (this test, the global list) can take them; a
-    // key the user saved for them still navigates, and Cmd+[ / ] always do.
+    // either dispatch path below (this test, the global list) can take them. A
+    // chord the user saved for Back or Forward still navigates, also when it is
+    // the other one's default key. The Cmd+[ / ] aliases are not touched here.
     if (isMac && isTextCaretTarget(e.target)
-        && ["go/backward", "go/forward"].some((id) => !(id in overrides) && matchesCommand(e, id))) {
+        && HISTORY_COMMANDS.some((id) => matchesCommand(e, id))
+        && !HISTORY_COMMANDS.some((id) => id in overrides && matchesCommand(e, id))) {
       resetSeq();
       return;
     }
