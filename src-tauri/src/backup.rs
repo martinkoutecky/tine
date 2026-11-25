@@ -1308,9 +1308,7 @@ fn backup_keep(app: &tauri::AppHandle) -> usize {
 }
 
 fn backup_keep_at(settings: &std::path::Path) -> usize {
-    std::fs::read_to_string(settings)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    crate::settings::read_settings_value_at(settings)
         .and_then(|v| v.get("backup_keep").and_then(|x| x.as_u64()))
         .map(|n| (n as usize).max(1))
         .unwrap_or(BACKUP_KEEP_DEFAULT)

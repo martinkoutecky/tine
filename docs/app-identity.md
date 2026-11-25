@@ -206,6 +206,8 @@ staging dir, fsyncs it, and renames it into place.
     recovery, not a refusal.
   - An experiment dir that only ever showed Welcome is renamed to
     `<id>.pre-seed.N`, not deleted.
+  - An experiment dir whose `tine-settings.json` exists but cannot be read or
+    decoded (an external edit) is left alone: the seed does not run.
 - Config and external browser stores publish independently. If startup stops after
   config publication, the next launch retries any missing external browser store
   without replacing existing experiment browser state. Windows uses the native

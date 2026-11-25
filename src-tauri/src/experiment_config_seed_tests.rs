@@ -149,6 +149,44 @@ fn a_build_with_its_own_configured_graph_is_left_alone() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// GH #1042: the user's own settings, saved by a script with a UTF-8
+/// byte-order mark, still name their graph, so the seed leaves them alone.
+#[test]
+fn a_settings_file_with_a_byte_order_mark_keeps_its_configured_graph() {
+    let root = scratch("bom");
+    let release = released_dir(&root);
+    let own = root.join("own-id");
+    write(
+        &own.join("tine-settings.json"),
+        "\u{feff}{\"known_graphs\":[{\"name\":\"other\",\"path\":\"/graphs/other\"}],\"last_graph_path\":\"/graphs/other\"}"
+            .as_bytes(),
+    );
+    let before = tree(&own);
+    assert_eq!(
+        seed(&own, &release, None).unwrap(),
+        Seeded::Skipped("this build already has a configured graph")
+    );
+    assert_eq!(tree(&own), before);
+    assert!(!root.join("own-id.pre-seed.0").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A settings file that exists but cannot be decoded is the user's data the
+/// seed cannot judge: it is never set aside or replaced.
+#[test]
+fn an_undecodable_settings_file_is_never_set_aside_or_replaced() {
+    let root = scratch("undecodable");
+    let release = released_dir(&root);
+    let own = root.join("own-id");
+    write(&own.join("tine-settings.json"), b"{\"known_graphs\": [");
+    let before = tree(&own);
+    let error = seed(&own, &release, None).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(tree(&own), before);
+    assert!(!root.join("own-id.pre-seed.0").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn a_welcome_only_launch_is_set_aside_intact_not_deleted() {
     let root = scratch("aside");
