@@ -1,39 +1,34 @@
 import schemes from "../src-tauri/external-link-schemes.json";
+import { link_anchor_route, link_preview_route, link_scheme, link_scheme_prefix_bytes } from "./render/wasm/lsdoc_wasm.js";
 
-// Native platform.rs rechecks every OS handoff against the same refused list.
+// Which scheme route a destination takes is one rule in core
+// (crates/tine-core/src/link_scheme.rs), shared with the link-target owner;
+// this module only names its answers. Native platform.rs rechecks every OS
+// handoff against the same refused list.
 const NATIVE_SCHEMES = ["file", "tine"];
-const WEB_SCHEMES = ["http", "https"];
-const MAIL_SCHEME = "mailto";
-// One-letter prefixes reserve a browser href but name a drive in graph content.
-const SCHEME_PREFIX = /^(?:([a-z][a-z0-9+.-]+)|[a-z]):/i;
 
-function schemePrefix(dest: string): RegExpExecArray | null {
-  // Match the browser's treatment of URL whitespace, even on malformed URLs.
-  return SCHEME_PREFIX.exec(dest.replace(/^[\u0000-\u0020]+|[\t\n\r]/g, ""));
-}
-
-/** The scheme left after removing every control byte and space. O(bytes). */
-function compactScheme(dest: string): string | undefined {
-  return SCHEME_PREFIX.exec(dest.replace(/[\u0000-\u0020]/g, ""))?.[1]?.toLowerCase();
+// Core's rule reads only a bounded prefix, so only that crosses into wasm. The
+// bound is in bytes; a slice of that many UTF-16 units is at least as long.
+let prefixBytes: number | undefined;
+function head(dest: string): string {
+  prefixBytes ??= link_scheme_prefix_bytes();
+  return dest.length > prefixBytes ? dest.slice(0, prefixBytes) : dest;
 }
 
 /** The lowercased URL scheme for consent, reserving single letters for drives. O(bytes). */
 export function linkScheme(dest: string): string | null {
-  return schemePrefix(dest)?.[1]?.toLowerCase() ?? null;
+  return link_scheme(head(dest)) ?? null;
 }
 
 export function refusedLinkScheme(scheme: string): boolean {
   return schemes.refused.includes(scheme);
 }
 
-function isWebOrMailScheme(scheme: string): boolean {
-  return WEB_SCHEMES.includes(scheme) || scheme === MAIL_SCHEME;
-}
-
 /** Saved consent is for valid registered app scheme names. */
 export function rememberableLinkScheme(scheme: string): boolean {
-  return /^[a-z][a-z0-9+.-]+$/.test(scheme) && !isWebOrMailScheme(scheme)
-    && !NATIVE_SCHEMES.includes(scheme) && !refusedLinkScheme(scheme);
+  // A valid name's own route is "defer" unless it is web, mail, file: or refused.
+  return /^[a-z][a-z0-9+.-]+$/.test(scheme) && anchorDecision(`${scheme}:`) === "defer"
+    && !NATIVE_SCHEMES.includes(scheme);
 }
 
 /** Classify an authored destination before attachment, file or media routing.
@@ -41,17 +36,10 @@ export function rememberableLinkScheme(scheme: string): boolean {
  * routes, with browser navigation suppressed. Custom schemes defer to consent.
  * O(destination bytes), with no I/O. */
 export type AnchorDecision = "relative" | "web" | "mail" | "file" | "drive" | "defer" | "drop";
+const ROUTES: readonly AnchorDecision[] = ["relative", "web", "mail", "file", "drive", "defer", "drop"];
+const PREVIEWS = ["local-candidate", "browser", "drop"] as const;
 export function anchorDecision(dest: string): AnchorDecision {
-  const prefix = schemePrefix(dest);
-  // Beta refused a scheme hidden by embedded control bytes or spaces too.
-  if (!prefix) return refusedLinkScheme(compactScheme(dest) ?? "") ? "drop" : "relative";
-  const scheme = prefix[1]?.toLowerCase();
-  if (!scheme) return "drive";
-  if (refusedLinkScheme(scheme)) return "drop";
-  if (WEB_SCHEMES.includes(scheme)) return "web";
-  if (scheme === MAIL_SCHEME) return "mail";
-  if (scheme === "file" && dest.trim().slice(0, scheme.length + 1).toLowerCase() === `${scheme}:`) return "file";
-  return "defer";
+  return ROUTES[link_anchor_route(head(dest))];
 }
 
 export function isSchemeLess(decision: AnchorDecision): boolean {
@@ -70,9 +58,7 @@ export function hasWebUrlPrefix(dest: string): boolean {
 /** Browser media may use web URLs and DOMPurify's data-URI subset. Local image
  * candidates still need the existing path resolver and opt-in. O(bytes), no I/O. */
 export function previewResourceDecision(dest: string): "local-candidate" | "browser" | "drop" {
-  const scheme = compactScheme(dest);
-  if (!scheme || scheme === "file") return "local-candidate";
-  return WEB_SCHEMES.includes(scheme) || scheme === "data" ? "browser" : "drop";
+  return PREVIEWS[link_preview_route(head(dest))];
 }
 
 /** Check a browser handoff (published reader, browser preview) before
@@ -90,7 +76,8 @@ export function checkBrowserHandoff(dest: string, confirmedScheme: string | unde
   if (!scheme) throw new Error("unsupported url scheme");
   if (refusedLinkScheme(scheme) || NATIVE_SCHEMES.includes(scheme)) throw new Error(`${scheme}: links are never opened`);
   new URL(dest);
-  if (isWebOrMailScheme(scheme)) return;
+  const decision = anchorDecision(dest);
+  if (decision === "web" || decision === "mail") return;
   const confirmed = confirmedScheme?.replace(/[A-Z]/g, (c) => c.toLowerCase());
   if (confirmed !== scheme) throw new Error(`opening a ${scheme}: link needs your confirmation`);
 }

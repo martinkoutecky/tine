@@ -501,6 +501,59 @@ function __tine_raw_last_panic() {
 }
 
 /**
+ * The anchor route of a destination (relative, web, mail, file, drive,
+ * defer, drop as 0–6). A number: no allocation back. O(prefix bytes).
+ * @param {string} dest
+ * @returns {number}
+ */
+function __tine_raw_link_anchor_route(dest) {
+    const ptr0 = passStringToWasm0(dest, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.link_anchor_route(ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * The browser-resource route of a raw HTML resource (local candidate,
+ * browser, drop as 0–2). O(prefix bytes).
+ * @param {string} dest
+ * @returns {number}
+ */
+function __tine_raw_link_preview_route(dest) {
+    const ptr0 = passStringToWasm0(dest, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.link_preview_route(ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * The lowercased URL scheme, or none (no scheme, or a drive letter). O(prefix bytes).
+ * @param {string} dest
+ * @returns {string | undefined}
+ */
+function __tine_raw_link_scheme(dest) {
+    const ptr0 = passStringToWasm0(dest, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.link_scheme(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * The one scheme-route rule's bound (`tine_core::link_scheme`): callers pass
+ * at most this many leading bytes, as every answer depends only on them.
+ * @returns {number}
+ */
+function __tine_raw_link_scheme_prefix_bytes() {
+    const ret = wasm.link_scheme_prefix_bytes();
+    return ret >>> 0;
+}
+
+/**
  * OG property tokens, shared with native property atomization. O(value bytes).
  * @param {string} value
  * @param {boolean} is_org
@@ -513,6 +566,41 @@ function __tine_raw_linkable_property_names(value, is_org) {
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
+}
+
+/**
+ * The one owner of "which local target does this destination name". A parser
+ * link node arrives as its `url` fields. `url_type` is 0 for a plain text
+ * destination in `v`, else the Url tag (1 page_ref, 2 block_ref, 3 search,
+ * 4 file, 5 embed_data, 6 complex); `origin` indexes the list below. Both
+ * orders are `src/localTarget.ts`'s. The answer is the `LocalTarget` JSON, or
+ * `null` for a number out of range. O(destination bytes), no parse or
+ * filesystem I/O. Numbers, not names or JSON: both modules have a size
+ * ceiling, and matching names cost the app module about 0.5k.
+ * @param {number} url_type
+ * @param {string} v
+ * @param {string | null | undefined} protocol
+ * @param {string | null | undefined} link
+ * @param {number} origin
+ * @returns {string}
+ */
+function __tine_raw_local_target_json(url_type, v, protocol, link, origin) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(v, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(protocol) ? 0 : passStringToWasm0(protocol, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(link) ? 0 : passStringToWasm0(link, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.local_target_json(url_type, ptr0, len0, ptr1, len1, ptr2, len2, origin);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -1893,7 +1981,12 @@ export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const journal_day_json = __tineGuard("journal_day_json", __tine_raw_journal_day_json);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
+export const link_anchor_route = __tineGuard("link_anchor_route", __tine_raw_link_anchor_route);
+export const link_preview_route = __tineGuard("link_preview_route", __tine_raw_link_preview_route);
+export const link_scheme = __tineGuard("link_scheme", __tine_raw_link_scheme);
+export const link_scheme_prefix_bytes = __tineGuard("link_scheme_prefix_bytes", __tine_raw_link_scheme_prefix_bytes);
 export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
+export const local_target_json = __tineGuard("local_target_json", __tine_raw_local_target_json);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
 export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);

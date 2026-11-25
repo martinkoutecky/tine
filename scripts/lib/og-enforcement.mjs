@@ -192,6 +192,11 @@ export function readWriterSiteCounts(root) {
   // simulated external edits, out of transaction.rs. Transfer their allowance.
   baseline["crates/tine-store/src/transaction.rs"] -= 5;
   baseline["crates/tine-store/src/transaction/read_checks.rs"] = 5;
+  // The refused-link-scheme list is compiled into tine-core, which answers
+  // membership; its generated-source write moved from the app's build script.
+  // A build output, not a persisted format.
+  baseline["src-tauri/build.rs"] -= 1;
+  baseline["crates/tine-core/build.rs"] = 1;
   const current = Object.fromEntries(currentFiles(root).map((file) => [file, writerSiteCounts(fs.readFileSync(path.join(root, file), "utf8"))]));
   return { current, baseline };
 }

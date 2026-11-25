@@ -506,19 +506,10 @@ fn app_files(
     Ok(())
 }
 
-/// Read the assets exactly the supplied parsed pages mention, through the
-/// store's validated asset reader. Candidate names come from tine-core's one
-/// asset-reference collector (`Corpus::asset_refs`, shared with orphan-asset
-/// detection). Missing files and non-files warn; `TooLarge` refuses the
-/// caller's cumulative byte budget before publication. Reads are bounded by
-/// the remaining budget. Cost O(selected text + asset bytes); no graph writes.
-fn publication_assets(
-    store: &Store,
-    corpus: &tine_core::Corpus,
-    budget: u64,
-    warnings: &mut Vec<String>,
-) -> Result<Vec<(String, Vec<u8>)>, tine_store::StoreError> {
-    let mut names = corpus.asset_refs();
+/// The asset names publication copies, from the collector's candidates: the
+/// decoded spelling of each, without the directory markers. Pure; O(names ×
+/// path depth).
+pub(crate) fn publication_asset_names(mut names: HashSet<String>) -> Vec<String> {
     // The orphan scanner keeps raw and decoded URL spellings. A browser
     // decodes the URL, so copy only the decoded name when both were seen.
     let encoded: Vec<_> = names
@@ -544,6 +535,22 @@ fn publication_assets(
     }
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
+    names
+}
+
+/// Read the assets exactly the supplied parsed pages mention, through the
+/// store's validated asset reader. Candidate names come from tine-core's one
+/// asset-reference collector (`Corpus::asset_refs`, shared with orphan-asset
+/// detection). Missing files and non-files warn; `TooLarge` refuses the
+/// caller's cumulative byte budget before publication. Reads are bounded by
+/// the remaining budget. Cost O(selected text + asset bytes); no graph writes.
+fn publication_assets(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+    budget: u64,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<(String, Vec<u8>)>, tine_store::StoreError> {
+    let names = publication_asset_names(corpus.asset_refs());
     let mut out = Vec::new();
     let mut remaining = budget;
     for name in names {
@@ -1081,3 +1088,7 @@ mod snapshot_consistency_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "publish_query_table_tests.rs"]
+mod table_tests;

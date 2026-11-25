@@ -120,8 +120,10 @@ fn hex_escape(bytes: &[u8], index: usize) -> Option<u8> {
 }
 
 /// JavaScript's `decodeURIComponent`: `None` when a `%` starts no escape or
-/// the decoded bytes are not UTF-8.
-fn decode_uri_component(text: &str) -> Option<String> {
+/// the decoded bytes are not UTF-8. The one Rust strict decoder: the link
+/// owner (`tine-core` `local_target`) asks it too; each caller keeps its own
+/// fallback. O(bytes).
+pub fn decode_uri_component(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;

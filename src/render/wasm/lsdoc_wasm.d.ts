@@ -141,9 +141,44 @@ export function journal_day_json(name: string, file_format: string, title_format
 export function last_panic(): string;
 
 /**
+ * The anchor route of a destination (relative, web, mail, file, drive,
+ * defer, drop as 0–6). A number: no allocation back. O(prefix bytes).
+ */
+export function link_anchor_route(dest: string): number;
+
+/**
+ * The browser-resource route of a raw HTML resource (local candidate,
+ * browser, drop as 0–2). O(prefix bytes).
+ */
+export function link_preview_route(dest: string): number;
+
+/**
+ * The lowercased URL scheme, or none (no scheme, or a drive letter). O(prefix bytes).
+ */
+export function link_scheme(dest: string): string | undefined;
+
+/**
+ * The one scheme-route rule's bound (`tine_core::link_scheme`): callers pass
+ * at most this many leading bytes, as every answer depends only on them.
+ */
+export function link_scheme_prefix_bytes(): number;
+
+/**
  * OG property tokens, shared with native property atomization. O(value bytes).
  */
 export function linkable_property_names(value: string, is_org: boolean): string[];
+
+/**
+ * The one owner of "which local target does this destination name". A parser
+ * link node arrives as its `url` fields. `url_type` is 0 for a plain text
+ * destination in `v`, else the Url tag (1 page_ref, 2 block_ref, 3 search,
+ * 4 file, 5 embed_data, 6 complex); `origin` indexes the list below. Both
+ * orders are `src/localTarget.ts`'s. The answer is the `LocalTarget` JSON, or
+ * `null` for a number out of range. O(destination bytes), no parse or
+ * filesystem I/O. Numbers, not names or JSON: both modules have a size
+ * ceiling, and matching names cost the app module about 0.5k.
+ */
+export function local_target_json(url_type: number, v: string, protocol: string | null | undefined, link: string | null | undefined, origin: number): string;
 
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
 
@@ -420,7 +455,12 @@ export interface InitOutput {
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly journal_day_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly last_panic: () => [number, number];
+    readonly link_anchor_route: (a: number, b: number) => number;
+    readonly link_preview_route: (a: number, b: number) => number;
+    readonly link_scheme: (a: number, b: number) => [number, number];
+    readonly link_scheme_prefix_bytes: () => number;
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
+    readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
