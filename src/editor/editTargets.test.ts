@@ -83,29 +83,43 @@ describe("forbidsEditEntry: mounted CodeMirror editors", () => {
   });
 });
 
-describe("forbidsEditEntry: a query's results surface (GH #1000)", () => {
-  // host (query) > results region > result row > its own content host
+describe("forbidsEditEntry: blank space among a query's live result rows (GH #1000)", () => {
+  // host > query header + results region > [live group > result row > its content] + the query's own message
   function queryHost() {
     const host = document.createElement("div");
     host.innerHTML = '<div class="query-header">Query</div><div class="query-results-region" data-block-surface="query">'
-      + '<div class="ls-block"><div class="block-main"><div class="block-content-wrapper"><div class="block-content">result</div></div></div></div></div>';
+      + '<div class="live-ref-group"><div class="ls-block"><div class="block-main"><div class="block-content-wrapper">'
+      + '<div class="block-content">result</div></div></div></div></div>'
+      + '<div class="query-empty">No results</div><div class="query-summary"><p class="query-summary-note">3 blocks</p></div>'
+      + '<div class="query-results-board"><h4 class="query-board-heading">Doing</h4></div></div>';
     document.body.append(host);
-    return { host, row: host.querySelector(".block-main")!, content: host.querySelector(".block-content")!, header: host.querySelector(".query-header")! };
+    const q = (selector: string) => host.querySelector(selector)!;
+    return { host, q };
   }
 
-  it("a press on blank space in the results never edits the query host", () => {
-    const { host, row } = queryHost();
-    expect(forbidsEditEntry(press(host, row, 5, 5))).toBe(true);
-    expect(forbidsEditEntry(press(host, host.querySelector(".query-results-region")!, 5, 5))).toBe(true);
+  it("a press on blank space among the result rows never enters the host", () => {
+    const { host, q } = queryHost();
+    for (const blank of [".block-main", ".ls-block", ".live-ref-group", ".query-results-region"]) {
+      expect(forbidsEditEntry(press(host, q(blank), 5, 5)), blank).toBe(true);
+    }
   });
 
-  it("the result row's own handler still takes a press on its text", () => {
-    const { content } = queryHost();
-    expect(forbidsEditEntry(press(content, content, 5, 5))).toBe(false);
+  it("the query's own text in the results still enters the host, whatever the host is", () => {
+    const { host, q } = queryHost();
+    for (const own of [".query-empty", ".query-summary-note", ".query-board-heading", ".query-header"]) {
+      expect(forbidsEditEntry(press(host, q(own), 5, 5)), own).toBe(false);
+    }
   });
 
-  it("the query's header still edits the query", () => {
-    const { host, header } = queryHost();
-    expect(forbidsEditEntry(press(host, header, 5, 5))).toBe(false);
+  it("a result row's own handler still takes a press on its text", () => {
+    const { q } = queryHost();
+    expect(forbidsEditEntry(press(q(".block-content"), q(".block-content"), 5, 5))).toBe(false);
+  });
+
+  it("a live group outside a query (Linked References) is not affected", () => {
+    const host = document.createElement("div");
+    host.innerHTML = '<div class="live-ref-group"><div class="ls-block"></div></div>';
+    document.body.append(host);
+    expect(forbidsEditEntry(press(host, host.querySelector(".ls-block")!, 5, 5))).toBe(false);
   });
 });

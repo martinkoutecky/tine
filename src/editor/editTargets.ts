@@ -1,5 +1,4 @@
 import { isHTMLElementNode } from "../windowRealm";
-import { BLOCK_SURFACE_ATTR } from "../contextMenuPolicy";
 // Interactive targets that must NOT enter edit on mousedown (mirrors OG's
 // target-forbidden-edit?). Their own handlers run on click, so entering edit
 // first would swap the DOM out from under them.
@@ -24,10 +23,6 @@ export const FORBID_EDIT_SELECTOR = [
   // The embed owns its whole surface, including gaps between nested rows.
   // Nested editors remain allowed: their own host does not contain this ancestor.
   ".embed-block",
-  // A query's results draw other blocks: a press on their blank space (a row's
-  // padding, the gap between rows or pages) belongs to the row there or to
-  // nobody, never to the host query (GH #1000), as for the menu (GH #726).
-  `[${BLOCK_SURFACE_ATTR}]`,
   // DTO result rows own source actions (including preamble promotion on click).
   // A query host must not replace them with its editor on the earlier press.
   ".ref-block",
@@ -71,6 +66,20 @@ function pressIsOnHorizontalScrollbar(node: HTMLElement, e: MouseEvent): boolean
   return y >= node.clientTop + node.clientHeight && y < bottom && x >= node.clientLeft && x < right;
 }
 
+// GH #1000: blank space among a query's live result rows (a row's padding, the
+// area left of its bullet, the gap between rows or page groups) belongs to
+// the row there or to nobody, as blank space inside an embed does. Entering
+// the host there put the caret at the end of the query's text and scrolled the
+// page to it. The query's own text in the results (the empty message, a
+// summary, a table cell) still enters the host. Logseq enters the host from
+// such blank space too; Tine keeps one rule for nested live blocks.
+function pressIsBlankAmongQueryResultRows(target: Element | null, host: Element): boolean {
+  const box = target?.matches?.(".query-results-region")
+    ? target
+    : target?.closest?.(".query-results-region .live-ref-group");
+  return !!box && host.contains(box);
+}
+
 export function forbidsEditEntry(e: MouseEvent): boolean {
   const target = e.target as Element | null;
   const host = e.currentTarget as Element;
@@ -85,6 +94,7 @@ export function forbidsEditEntry(e: MouseEvent): boolean {
     if (isHTMLElementNode(node) && pressIsOnHorizontalScrollbar(node, e)) return true;
     if (node === host) break;
   }
+  if (pressIsBlankAmongQueryResultRows(target, host)) return true;
   const hit = target?.closest?.(FORBID_EDIT_SELECTOR);
   return !!hit && host.contains(hit);
 }
