@@ -136,8 +136,8 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
   // Quick capture: the same "continue writing below" as the page's trailing
   // target, in the pane that shows the journal.
   const admitted = await admitPageFile(today, "journal", owner, captureEmptyPage(today, "journal"));
-  if (admitted && admitted !== "stale") reportPageLoadRefusal(admitted, "Nothing was opened for writing.");
-  if (admitted || !owner()) return;
+  if (admitted.kind === "refused") reportPageLoadRefusal(admitted.refusal, "Nothing was opened for writing.");
+  if (admitted.kind !== "admitted" || !owner()) return;
   const pane = focusedPaneId();
   if (focusPageTrailing(pageByName(today), pane === "main" ? "main" : `pane:${pane}`)) await showKeyboardForFocusedInput(current);
 }
