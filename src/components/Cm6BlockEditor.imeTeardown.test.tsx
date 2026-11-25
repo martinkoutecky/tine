@@ -5,7 +5,7 @@ import { render } from "solid-js/web";
 import { EditorView } from "@codemirror/view";
 import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { editingId, endEdit, startEditing } from "../editorController";
-import { resetStore, setRaw } from "../document";
+import { redo, resetStore, setRaw, undo } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 
@@ -20,10 +20,11 @@ afterEach(() => { dispose?.(); dispose = undefined; endEdit("page-navigation"); 
 function mount() {
   loadSingle({ name: "Voice", title: "Voice", kind: "page", pre_block: null, blocks: [
     { id: "a", raw: "first ", collapsed: false, children: [] },
-    { id: "b", raw: "second", collapsed: false, children: [] }] });
+    { id: "b", raw: "second", collapsed: false, children: [] },
+    { id: "c", raw: "third", collapsed: false, children: [] }] });
   startEditing("a", 6);
   const root = document.createElement("div"); document.body.append(root);
-  dispose = render(() => <For each={["a", "b"]}>{id =>
+  dispose = render(() => <For each={["a", "b", "c"]}>{id =>
     <Show when={editingId() === id} fallback={<div class="rendered">{doc.byId[id].raw}</div>}>
       <Cm6BlockEditor id={id} surface="main" scope={null} />
     </Show>}</For>, root);
@@ -91,4 +92,36 @@ it("a block written since its composition began is not overwritten by the laggin
   await Promise.resolve(); await Promise.resolve();
   expect(view.state.doc.toString()).toBe("first hello world");
   expect(doc.byId.a.raw).toBe("first hello");
+});
+
+const editorOf = (id: string) => {
+  startEditing(id, doc.byId[id].raw.length);
+  const view = EditorView.findFromDOM(document.querySelector(".cm-content")!)!;
+  view.focus();
+  return view;
+};
+
+it("Undo while a composition is held keeps what it undid redoable, and the held text is not written", async () => {
+  mount();
+  setRaw("b", "second!");
+  composeThroughEditContext(editorOf("a"), ["hello"], false);
+  expect(undo()).toBe(true);
+  await Promise.resolve();
+  expect(doc.byId.b.raw).toBe("second");
+  expect(doc.byId.a.raw).toBe("first ");
+  redo();
+  expect(doc.byId.b.raw).toBe("second!");
+});
+
+it("Redo while a composition is held keeps the entries after the one it replays", async () => {
+  mount();
+  setRaw("b", "second!"); setRaw("c", "third!");
+  undo(); undo();
+  expect([doc.byId.b.raw, doc.byId.c.raw]).toEqual(["second", "third"]);
+  composeThroughEditContext(editorOf("a"), ["hello"], false);
+  redo();
+  await Promise.resolve();
+  redo();
+  expect([doc.byId.b.raw, doc.byId.c.raw]).toEqual(["second!", "third!"]);
+  expect(doc.byId.a.raw).toBe("first ");
 });

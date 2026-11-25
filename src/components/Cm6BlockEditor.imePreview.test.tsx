@@ -13,9 +13,9 @@ import { PreviewWidget } from "../editor/cm6PreviewWidget";
 // element it replaced; the widget disposed its one Solid root, which emptied the element still on screen.
 
 afterEach(() => { endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; });
-const RAW = "用不同的两列进行理实际是把**某两个键分别的两列内容** 进行XY轴展示";
-const BOLD = "某两个键分别的两列内容";
-const CARET = RAW.indexOf("实");
+const RAW = "我们先在这里写**重要的内容** 然后继续";
+const BOLD = "重要的内容";
+const CARET = RAW.indexOf("这");
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 function mount() {

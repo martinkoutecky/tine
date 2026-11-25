@@ -1,6 +1,6 @@
 import { EditorState, StateEffect, type AnnotationType, type ChangeSpec } from "@codemirror/state";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
-import { makeOwnNumberedList, node, pinPageWhileDrafting } from "../document";
+import { historyReplaying, makeOwnNumberedList, node, pinPageWhileDrafting } from "../document";
 import { autoPairing, typographyMode } from "../ui";
 import { autoPairEdit, fullWidthCloserEdit, fullWidthRefReplace } from "./autocomplete";
 import { autoPairInsertOnInput } from "./autopair";
@@ -104,7 +104,7 @@ export function cm6Typing(ctx: {
     }
     return true;
   };
-  const finish = () => {
+  const finish = (closing = false) => {
     if (!composing && !ending) return;
     const view = ctx.view();
     if (disposed || !view || !ctx.current()) {
@@ -123,7 +123,7 @@ export function cm6Typing(ctx: {
     ctx.commit(view.state.doc.toString());
     endValue = view.state.doc.toString();
     releaseHold?.(); releaseHold = undefined;
-    ctx.refresh();
+    if (!closing) ctx.refresh();
   };
   const end = () => {
     ended = true;
@@ -149,9 +149,12 @@ export function cm6Typing(ctx: {
   /** The editor is going away. A composition nobody ended holds text that exists only in the view: a tap on
    *  another block moves editing without a blur, and a voice keyboard may never end its composition. Save it
    *  as a blur does (GH #767). A block written since the composition began is left alone: its view only lags
-   *  the store, and whoever wrote the block took the text from the view. */
+   *  the store, and whoever wrote the block took the text from the view. An editor closed by undo or redo
+   *  writes nothing, as before: history keeps its stacks. */
   const dispose = () => {
-    if ((composing || ending) && node(ctx.id)?.raw === heldRaw) finish();
+    try {
+      if ((composing || ending) && !historyReplaying() && node(ctx.id)?.raw === heldRaw) finish(true);
+    } catch { /* a refused save was reported with its text (commitRecovery); the editor still closes */ }
     disposed = true; releaseHold?.(); releaseHold = undefined;
   };
   return { filter, changed, begin, end, finish, input, active, settling: () => ending, beforeKey, dispose };
