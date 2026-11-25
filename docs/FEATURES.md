@@ -36,7 +36,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   the selection is itself a URL — then a normal replace happens.)
 - Inline formatting (`Mod+B/I`, strike, `==highlight==`, link) via a floating
   selection toolbar, including page-link and inline-code wrapping/unwrapping,
-  plus Emacs-style word/line kill motions.
+  plus Emacs-style word/line kill motions (on macOS, Logseq's Control chords).
 - **Select then wrap** (always on, Logseq parity) — with text selected, typing a
   wrap character surrounds it: `[` twice → `[[selection]]` (opens the page search
   seeded with the words — Enter links or creates), `(` twice → `((selection))`
@@ -492,8 +492,8 @@ within a column; merged cells are still v2+.
   to close. Plain navigation to a route already open in another tab focuses that
   tab instead of duplicating it; Settings → Editor can turn this off. (Logseq core
   has no tabs.)
-- ⊕ **Browser-style back/forward** (`Alt+Left` / `Alt+Right`, per-tab history, works
-  mid-edit).
+- ⊕ **Browser-style back/forward** (`Alt+Left` / `Alt+Right`, `Cmd+[` / `Cmd+]` on macOS,
+  per-tab history, works mid-edit).
 - ⊕ **Focus mode + dim-inactive-blocks** (`t f` / `t b`): hide the chrome and fade
   everything but the block you're working on, with Logseq-style layered `Esc`.
 - ⊕ **Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small

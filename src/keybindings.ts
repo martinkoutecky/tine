@@ -589,14 +589,16 @@ const COMMANDS: CommandDef[] = [
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
   { id: "editor/copy-embed", binding: "mod+shift+c", label: msg("command-editor-copy-embed"), scope: "editor" },
-  { id: "editor/clear-block", binding: "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
-  // Emacs-style cursor/kill motions.
-  { id: "editor/kill-line-before", binding: "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
-  { id: "editor/kill-line-after", binding: "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
-  { id: "editor/backward-word", binding: "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
-  { id: "editor/forward-word", binding: "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
-  { id: "editor/backward-kill-word", binding: "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
-  { id: "editor/forward-kill-word", binding: "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
+  // Clear block and the Emacs-style cursor/kill motions, with OG's chords (config.cljs). On macOS
+  // Option+letter types a symbol (¬, ∑, ∂ …) and Control+K already kills to the
+  // line's end, so the Mac keys are OG's Control chords or none (GH #1040).
+  { id: "editor/clear-block", binding: isMac ? "ctrl+l" : "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
+  { id: "editor/kill-line-before", binding: isMac ? "ctrl+u" : "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
+  { id: "editor/kill-line-after", binding: isMac ? "" : "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
+  { id: "editor/backward-word", binding: isMac ? "ctrl+shift+b" : "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
+  { id: "editor/forward-word", binding: isMac ? "ctrl+shift+f" : "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
+  { id: "editor/backward-kill-word", binding: isMac ? "" : "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
+  { id: "editor/forward-kill-word", binding: isMac ? "ctrl+w" : "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
 ];
 
 export interface BuiltinKeyDef {
@@ -981,6 +983,22 @@ function isEditableTarget(t: EventTarget | null): boolean {
     || !!el.closest?.('[data-block-editor="cm6"]');
 }
 
+const CARET_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "password", "number"]);
+
+/** A field with a text caret: a textarea, a text-like input, or editable content
+ *  (CodeMirror's). The target itself, not its editor wrapper: a button inside an
+ *  editor has no caret. */
+const HISTORY_COMMANDS = ["go/backward", "go/forward"];
+
+function isTextCaretTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el?.tagName) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName === "INPUT") return CARET_INPUT_TYPES.has((el as HTMLInputElement).type);
+  // isContentEditable, with the nearest contenteditable attribute where it is missing.
+  return el.isContentEditable ?? (el.closest?.("[contenteditable]")?.getAttribute("contenteditable") ?? "false") !== "false";
+}
+
 function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true
@@ -1206,6 +1224,18 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     // field has focus. Escape itself was handled after transient/drawer.
     if (paneSel() && !editing && handlePaneSelectKey(e)) {
       e.preventDefault();
+      resetSeq();
+      return;
+    }
+
+    // GH #1040: on macOS Option+Left/Right is a text field's word motion. Back
+    // and Forward's default keys leave a field with a text caret alone, before
+    // either dispatch path below (this test, the global list) can take them. A
+    // chord the user saved for Back or Forward still navigates, also when it is
+    // the other one's default key. The Cmd+[ / ] aliases are not touched here.
+    if (isMac && isTextCaretTarget(e.target)
+        && HISTORY_COMMANDS.some((id) => matchesCommand(e, id))
+        && !HISTORY_COMMANDS.some((id) => id in overrides && matchesCommand(e, id))) {
       resetSeq();
       return;
     }
