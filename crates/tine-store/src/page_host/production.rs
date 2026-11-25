@@ -972,8 +972,8 @@ impl HostIo for ProductionIo {
             .map_err(|error| (error, UncertainProof::DirectorySync))
             .and_then(|witness| {
                 if let Some(published) = self.publications.get(page) {
-                    // One metadata call, no payload read/hash (a reread on a
-                    // volume without file identity, below). Parent loss or
+                    // One metadata call, no payload read/hash (plus a reread
+                    // on a volume without file identity, below). Parent loss or
                     // replacement after rename must take the Uncertain path,
                     // including a platform's tolerated/no-op directory sync.
                     // The path must still hold the file the publication read
@@ -982,14 +982,12 @@ impl HostIo for ProductionIo {
                     // the same identity.
                     // GH #1033: on a volume whose stamps do not identify a
                     // file (WSL's share, FAT, Samba on Windows) an unchanged
-                    // file's stamps differ, so the path is reread instead
-                    // and must hold the bytes the publication read read.
+                    // file's stamps differ. There the probe still decides
+                    // that the entry is a file (it does not follow a link),
+                    // and the entry is then reread: it must hold the bytes
+                    // the publication read read.
                     let by_content = !self.root_binding.stamps_identify_files();
-                    let current = if by_content {
-                        read_observed(&path).ok().and_then(|(_, stamp)| stamp)
-                    } else {
-                        crate::watch::stamp_metadata(&path)
-                    };
+                    let current = crate::watch::stamp_metadata(&path);
                     // The toast names the failed check (GH #811: it named
                     // no step, as this failure has no OS error).
                     let changed = |expected: &crate::watch::Stamp, actual: &crate::watch::Stamp| {
@@ -1008,7 +1006,8 @@ impl HostIo for ProductionIo {
                             UncertainProof::PublicationMissing,
                         ),
                         (Some((before, after)), Some(actual)) if by_content => {
-                            if actual.rev() == before.rev() {
+                            let reread = read_observed(&path).ok().and_then(|(_, stamp)| stamp);
+                            if reread.is_some_and(|reread| reread.rev() == before.rev()) {
                                 return Ok(witness);
                             }
                             changed(after, actual)

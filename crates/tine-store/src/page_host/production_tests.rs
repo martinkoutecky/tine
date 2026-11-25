@@ -457,8 +457,8 @@ fn gh1033_unchanged_bytes_publish_where_stamps_do_not_identify_files() {
     crate::watch::STAMPS_BY_PATH.with(|count| count.set(0));
     let (outcome, step) = save_around_directory_sync(&mut f, "a.md", touch_times);
     assert_eq!((outcome, step), (Outcome::Published, None), "other times");
-    // The reread replaces the post-sync path probe: no stamp by path.
-    assert_eq!(crate::watch::STAMPS_BY_PATH.with(|count| count.get()), 0);
+    // The reread comes on top of the post-sync path probe, which stays one.
+    assert_eq!(crate::watch::STAMPS_BY_PATH.with(|count| count.get()), 1);
     f.edit("a.md", "mine again");
     let (outcome, step) = save_around_directory_sync(&mut f, "a.md", same_bytes_copy);
     assert_eq!(
@@ -493,6 +493,30 @@ fn gh1033_unchanged_bytes_publish_where_stamps_do_not_identify_files() {
     );
     assert!(f.host.pages["a.md"].risk);
     crate::root_binding::UNIDENTIFIED_STAMPS.with(|seam| seam.set(false));
+}
+
+/// GH #1033's boundary: where stamps do not identify files, a link put in the
+/// page's place is refused before its target is read, as everywhere: even one
+/// whose target holds the saved bytes.
+/// Scenario: a sync client replaces the page with a link to an identical file.
+#[cfg(unix)]
+#[test]
+fn gh1033_a_link_in_the_pages_place_stays_uncertain_where_stamps_do_not_identify_files() {
+    crate::root_binding::UNIDENTIFIED_STAMPS.with(|seam| seam.set(true));
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", |path| {
+        let target = path.with_file_name("elsewhere.txt");
+        fs::copy(path, &target).unwrap();
+        fs::remove_file(path).unwrap();
+        std::os::unix::fs::symlink(&target, path).unwrap();
+    });
+    crate::root_binding::UNIDENTIFIED_STAMPS.with(|seam| seam.set(false));
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: no file after directory sync")
+    );
 }
 
 /// GH #1033's guard: where stamps identify files, a file another program put
