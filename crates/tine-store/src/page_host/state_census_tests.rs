@@ -787,6 +787,13 @@ const WITNESS_CALLERS: [&str; 4] = [
     "io.rs::graph_launch",
 ];
 const PRESENT_ASKERS: [&str; 2] = [ORIGINAL_ANSWERER, "logical.rs::adopt_pairing"];
+/// One producer of a witness chain directory's evidence (containment,
+/// identity, sync): `chain_evidence`, shared by the direct witness and
+/// launch's pass; `witness_end` rereads the identity to compare.
+const CHAIN_EVIDENCE: [&str; 2] = [
+    "production.rs::chain_evidence",
+    "production.rs::witness_end",
+];
 /// Every function that names an `Original` value, with the only text it
 /// may name: the answerer constructs them, `holds` defines D or W, and Use
 /// Disk's E2 receiver read tests for U.
@@ -839,6 +846,11 @@ fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
         {
             out.push(format!(
                 "{function} asks the source witness outside a decider"
+            ));
+        }
+        if flat.contains("directory_id(") && !CHAIN_EVIDENCE.contains(&function.as_str()) {
+            out.push(format!(
+                "{function} takes a witness directory's identity itself"
             ));
         }
         if flat.contains("Original::") {

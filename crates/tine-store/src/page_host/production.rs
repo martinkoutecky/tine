@@ -267,26 +267,36 @@ impl ProductionIo {
     }
 
     /// Sync each of `dirs` once (root first: a `BTreeSet` orders a parent
-    /// before its children), recording its identity first. A directory that
-    /// fails the containment check is skipped and recorded as such. Each
-    /// sync counts as a host fsync (`cost_counters`; the launch pass, which
-    /// the counters never included, does not use this).
+    /// before its children), with its evidence (`chain_evidence`). Each sync
+    /// counts as a host fsync (`cost_counters`).
     fn sync_chain(
         &self,
         dirs: std::collections::BTreeSet<PathBuf>,
     ) -> BTreeMap<PathBuf, ChainSync> {
         (dirs.into_iter())
             .map(|dir| {
-                if self.check_path(&dir).is_err() {
-                    return (dir, (None, None));
-                }
-                let id = directory_id(&dir);
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::fsync();
-                let result = self.sync_graph_directory(&dir);
-                (dir, (Some(result), id))
+                let evidence = self.chain_evidence(&dir, true);
+                (dir, evidence)
             })
             .collect()
+    }
+
+    /// One witness-chain directory's evidence, the only place it is
+    /// computed: a directory that fails the containment check is not synced
+    /// (`None` result); otherwise its identity, then its sync. `count`: the
+    /// sync counts as a host fsync (`cost_counters`; the launch pass, which
+    /// the counters never included, passes false).
+    fn chain_evidence(&self, dir: &Path, count: bool) -> ChainSync {
+        if self.check_path(dir).is_err() {
+            return (None, None);
+        }
+        let id = directory_id(dir);
+        #[cfg(feature = "test-faults")]
+        if count {
+            crate::cost_counters::fsync();
+        }
+        let _ = count;
+        (Some(self.sync_graph_directory(dir)), id)
     }
 
     /// The source witness's end (`HostIo::source_witnessed`), after its
@@ -863,24 +873,19 @@ impl HostIo for ProductionIo {
         self.launch_warnings.clear();
         let mut synced: BTreeMap<PathBuf, ChainSync> = BTreeMap::new();
         for directory in directories {
-            let evidence = witnessed.contains(&directory);
-            if self.check_path(&directory).is_err() {
-                if evidence {
-                    synced.insert(directory, (None, None));
+            if witnessed.contains(&directory) {
+                let evidence = self.chain_evidence(&directory, false);
+                if let (Some(Err(error)), _) = &evidence {
+                    self.launch_warnings.push((directory.clone(), error.kind()));
                 }
+                synced.insert(directory, evidence);
                 continue;
             }
-            let id = if evidence {
-                directory_id(&directory)
-            } else {
-                None
-            };
-            let result = self.sync_graph_directory(&directory);
-            if let Err(error) = &result {
-                self.launch_warnings.push((directory.clone(), error.kind()));
+            if self.check_path(&directory).is_err() {
+                continue;
             }
-            if evidence {
-                synced.insert(directory, (Some(result), id));
+            if let Err(error) = self.sync_graph_directory(&directory) {
+                self.launch_warnings.push((directory, error.kind()));
             }
         }
         let mut now = BTreeMap::new();

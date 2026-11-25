@@ -1411,7 +1411,7 @@ from the scanned drafts before any recovered save or choice.
 
   | Decision | D or W | U (failed witness) |
   |---|---|---|
-  | Launch, a decided pair | cancelled | retained |
+  | Launch, a decided pair | cancelled once the receiver reads (an unreadable receiver keeps it retained, as before) | retained |
   | Use Disk on the source | cancelled, receiver not read | reads the receiver: certified → cancelled; readable but not certified, or unreadable → retained (the choice is recorded, not refused) |
   | Use Disk on the receiver | cancelled | certified receiver → cancelled, else retained |
   | Newer text published on the source | disarmed | certified receiver → disarmed, else retained |
