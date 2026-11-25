@@ -642,3 +642,132 @@ fn a_new_entry_never_takes_a_respelled_key() {
     );
     live.host.stop();
 }
+
+/// tine#1041: a publication wait refused for a key names the key's current
+/// file, as the spelling table has it when the wait refuses. The key itself
+/// (here still the old spelling) is never the answer.
+#[test]
+fn a_refused_wait_names_the_current_file_of_a_respelled_key() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, _) = live.open("pages/a.md");
+    fs::rename(live.root.join("pages/a.md"), live.root.join("pages/A.md")).unwrap();
+    test_spelling(&live, &key, "pages/a.md", "pages/A.md");
+    let (again, page) = live.open("pages/A.md");
+    assert_eq!(again, key);
+    live.faults(super::super::io::Phase::PageTemp, 10_000);
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    let version = live.answer(&key, id).answer.unwrap().version;
+    assert_eq!(
+        live.host.wait_published(
+            live.host.session(),
+            &[(key.clone(), version, None)],
+            std::time::Duration::from_secs(20)
+        ),
+        (
+            PageOperation::Refused,
+            vec![],
+            vec!["pages/A.md".to_string()]
+        ),
+    );
+    live.host.stop();
+}
+
+/// tine#1041: a fresh entry's key is opaque. Made at `pages/a.md` and moved to
+/// `pages/b.md`, a refusal for it names `pages/b.md`.
+#[test]
+fn a_refused_wait_names_the_current_file_of_a_fresh_entry_that_moved() {
+    let live = Live::new(&[("pages/a.md", "- old\n")]);
+    if folds_case(&live.root) {
+        live.host.stop();
+        return;
+    }
+    let (old, _) = live.open("pages/a.md");
+    fs::rename(live.root.join("pages/a.md"), live.root.join("pages/A.md")).unwrap();
+    test_spelling(&live, &old, "pages/a.md", "pages/A.md");
+    fs::write(live.root.join("pages/a.md"), "- new distinct entry\n").unwrap();
+    let (new, _) = live.open("pages/a.md");
+    assert_ne!(new, old);
+    assert_ne!(new, "pages/a.md", "a fresh entry's key is not a path");
+    fs::rename(live.root.join("pages/a.md"), live.root.join("pages/b.md")).unwrap();
+    test_spelling(&live, &new, "pages/a.md", "pages/b.md");
+    let (again, page) = live.open("pages/b.md");
+    assert_eq!(again, new);
+    live.faults(super::super::io::Phase::PageTemp, 10_000);
+    let id = live.id();
+    let edit = live.dto("pages/b.md", "- typed\n");
+    (live.host)
+        .submit(
+            live.host.session(),
+            id,
+            &new,
+            &edit,
+            page.version,
+            None,
+            &[EditKind::SaveBlock],
+        )
+        .unwrap();
+    let version = live.answer(&new, id).answer.unwrap().version;
+    assert_eq!(
+        live.host.wait_published(
+            live.host.session(),
+            &[(new.clone(), version, None)],
+            std::time::Duration::from_secs(20)
+        ),
+        (
+            PageOperation::Refused,
+            vec![],
+            vec!["pages/b.md".to_string()]
+        ),
+    );
+    live.host.stop();
+}
+
+/// tine#1041: the refused files come sorted and once each, whatever the order
+/// of the needs. Two keys that spell one file name it once.
+#[test]
+fn a_refused_wait_names_each_file_once_in_order() {
+    let live = Live::new(&[("pages/B.md", "- b\n"), ("pages/Z.md", "- z\n")]);
+    live.faults(super::super::io::Phase::PageTemp, 10_000);
+    let mut needs = Vec::new();
+    for name in ["pages/Z.md", "pages/B.md"] {
+        let (key, page) = live.open(name);
+        let id = live.submit(&key, "- mine\n", page.version, None).unwrap();
+        needs.push((
+            key.clone(),
+            live.answer(&key, id).answer.unwrap().version,
+            None,
+        ));
+    }
+    let wait = || {
+        (live.host).wait_published(
+            live.host.session(),
+            &needs,
+            std::time::Duration::from_secs(20),
+        )
+    };
+    // Both saves have failed before the count starts.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while wait().2.len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "both saves fail");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        wait(),
+        (
+            PageOperation::Refused,
+            vec![],
+            vec!["pages/B.md".to_string(), "pages/Z.md".to_string()]
+        ),
+    );
+    test_spelling(&live, &needs[0].0, "pages/Z.md", "pages/X.md");
+    test_spelling(&live, &needs[1].0, "pages/B.md", "pages/X.md");
+    assert_eq!(
+        wait(),
+        (
+            PageOperation::Refused,
+            vec![],
+            vec!["pages/X.md".to_string()]
+        ),
+    );
+    live.host.stop();
+}

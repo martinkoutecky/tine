@@ -39,7 +39,7 @@ import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, typ
 import { runSequence } from "./planner";
 import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
-import { settle, unpublishedAfterDrain } from "./settle";
+import { settle, UNBOUND, unpublishedAfterDrain, unsettled, type Unsettled } from "./settle";
 import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
 import { refreshReadsIdle, resetRefreshReads } from "../../refreshReads";
 
@@ -683,11 +683,28 @@ export async function flushPage(name: string): Promise<boolean> {
   return settle(c, [name], { noConflict: true });
 }
 
+const FLUSH_ALL = { assets: true, noConflict: true } as const;
+
+/** With no client bound, why the window's edits cannot all settle: edits
+ * typed before any client bound wait for one (unbound); none means settled.
+ * The one answer `flushAll` and `flushAllUnsettled` both read (tine#1041). */
+function unboundUnsettled(): Unsettled | null {
+  return early.size === 0 ? null : UNBOUND;
+}
+
 /** Every page's input and the tracked asset writes, published (switch, restore, print). */
 export async function flushAll(): Promise<boolean> {
   const c = host();
-  if (!c) return early.size === 0;
-  return settle(c, "all", { assets: true, noConflict: true });
+  if (!c) return unboundUnsettled() === null;
+  return settle(c, "all", FLUSH_ALL);
+}
+
+/** `flushAll`'s barrier with its reason (a graph switch names what it refused
+ * for): null when everything published, else why not. */
+export function flushAllUnsettled(): Promise<Unsettled | null> {
+  const c = host();
+  if (!c) return Promise.resolve(unboundUnsettled());
+  return unsettled(c, "all", FLUSH_ALL);
 }
 
 /** A block reference's target (§8, Q2): published bytes that contain `witness`. */
