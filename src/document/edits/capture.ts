@@ -29,7 +29,7 @@ export async function appendToTodayJournal(
 ): Promise<boolean> {
   const name = journalTitle(appNow());
   const nodes = parseOutline(markdown);
-  return captureOutlineInto(name, "journal", shape ? shape(nodes) : nodes, () => inserted?.(name));
+  return captureOutlineInto(name, "journal", "exact", shape ? shape(nodes) : nodes, () => inserted?.(name));
 }
 
 /** Append `markdown` at the END of journal `day` exactly (never a recomputed
@@ -48,7 +48,7 @@ export async function appendToJournalDay(
   arm: (before: string | null) => Promise<boolean>,
   inserted?: (ids: string[]) => void,
 ): Promise<boolean> {
-  return captureOutlineInto(day, "journal", parseOutline(markdown), inserted, async () => {
+  return captureOutlineInto(day, "journal", "exact", parseOutline(markdown), inserted, async () => {
     let before = baseRevFor(day);
     for (let attempt = 0; before !== undefined && attempt < 3; attempt++) {
       if (!(await arm(before))) return false;
@@ -60,8 +60,10 @@ export async function appendToJournalDay(
   });
 }
 
-/** In-app quick capture into a (new or existing) named PAGE — the heading-filled
- *  branch of the journal-top capture bar. Same single-writer guarantees as
+/** Quick capture into a (new or existing) page the user named. The typed title
+ *  writes to the page it resolves to, as a link with that text opens it (any
+ *  spelling of the name, an alias, a date spelling of a journal day);
+ *  `inserted` receives that page's name. Same single-writer guarantees as
  *  {@link appendToTodayJournal}: routes through the live store + immediate flush,
  *  so it can't race a main-view edit of the same page into a conflict. */
 export async function captureToPage(
@@ -73,7 +75,7 @@ export async function captureToPage(
   const name = title.trim();
   if (!name) return false;
   const nodes = parseOutline(markdown);
-  return captureOutlineInto(name, "page", shape ? shape(nodes) : nodes, () => inserted?.(name));
+  return captureOutlineInto(name, "page", "typed", shape ? shape(nodes) : nodes, (_, page) => inserted?.(page));
 }
 
 /** Append ONE query block (`query` macro text plus its `key:: value` properties,
@@ -90,7 +92,7 @@ export async function appendQueryBlock(
   const name = page.trim();
   if (!name || !query.trim()) return false;
   // The same definition already at the root is not added twice: re-sharing an unchanged selection to the same folder.
-  return captureOutlineInto(name, "page", (format, roots) => {
+  return captureOutlineInto(name, "page", "exact", (format, roots) => {
     const raw = queryBlockRaw(query, properties, format);
     return roots.includes(raw) ? null : [{ raw, children: [] }];
   });
@@ -99,13 +101,17 @@ export async function appendQueryBlock(
 /** Append outline `nodes` at the END of the named page (loaded — or synthesized
  *  if it has no file yet — first), then flush immediately. Shared by the journal
  *  append and the new-page capture; never clobbers in-progress edits and never
- *  writes into a second file holding the name. One page read. Returns whether
- *  it landed. */
+ *  writes into a second file holding the name. A `typed` name (the user's
+ *  spelling) writes to the page admission resolved it to; an `exact` name (a
+ *  journal day, the exports page) is computed and writes to the page of that
+ *  exact name. `inserted` gets the new root ids and the written page's name.
+ *  One page read. Returns whether it landed. */
 async function captureOutlineInto(
   name: string,
   kind: PageKind,
+  spelling: "typed" | "exact",
   built: OutlineNode[] | ((format: Format, roots: readonly string[]) => OutlineNode[] | null),
-  inserted?: (ids: string[]) => void,
+  inserted?: (ids: string[], page: string) => void,
   gate?: () => Promise<boolean>,
 ): Promise<boolean> {
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
@@ -118,23 +124,30 @@ async function captureOutlineInto(
   // reported as saved (GH #254 family, master 7bd793bd0). Returning false keeps
   // the text in the capture window, which says so.
   const admitted = await admitPageFile(name, kind, owner, captureEmptyPage(name, kind));
-  if (admitted === "stale") return false;
-  if (admitted) {
-    reportPageLoadRefusal(admitted, "Nothing was captured into it.");
+  if (admitted.kind === "stale") return false;
+  if (admitted.kind === "refused") {
+    reportPageLoadRefusal(admitted.refusal, "Nothing was captured into it.");
     return false;
   }
-  if (!pageByName(name) || !pageWritable(name)) return false;
+  const { target } = admitted;
+  const written = spelling === "typed" ? target.name : name;
+  if (!pageByName(written) || !pageWritable(written)) return false;
   // A builder is spelled for the format of the page this name resolved to.
   const nodes = typeof built === "function"
-    ? built(formatForPage(name), pageByName(name)!.roots.map((id) => doc.byId[id]?.raw ?? ""))
+    ? built(formatForPage(written), pageByName(written)!.roots.map((id) => doc.byId[id]?.raw ?? ""))
     : built;
   // A builder answers null when what it would add is already there: nothing to write, nothing lost.
   if (nodes === null) return true;
   if (!fits(nodes)) return false;
   if (gate && (!(await gate()) || !owner())) return false;
   // Re-read after the gate's await: the page may have been reloaded meanwhile.
-  const page = pageByName(name);
-  if (!page || !pageWritable(name)) return false;
+  const page = pageByName(written);
+  if (!page || !pageWritable(written)) return false;
+  // The slot admission loaded with a file must still hold that file: a clean
+  // slot can be replaced by another file of the name (a path-pinned open of a
+  // duplicate day) while the gate awaited. A slot that had no file and got its
+  // own since is still the target.
+  if (target.name === written && target.file !== null && (page.id || null) !== target.file) return false;
   const prior = new Set(page.roots);
   if (page.roots.length) {
     // Append after the last top-level block (end of the page).
@@ -145,22 +158,22 @@ async function captureOutlineInto(
     // bespoke root builder. One undo unit: the anchor/insert/delete sequence used
     // to push three undo entries, so one undo left the anchor + row behind
     // (Phase-6 review finding, validated).
-    const seeded = withUndoUnit("capture", [name], () => {
+    const seeded = withUndoUnit("capture", [written], () => {
       const anchor = freshId();
       setDoc(
         produce((s) => {
-          s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: name, children: [] };
-          s.pages[s.pages.findIndex((p) => p.name === name)].roots.push(anchor);
+          s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: written, children: [] };
+          s.pages[s.pages.findIndex((p) => p.name === written)].roots.push(anchor);
         })
       );
-      markDirty(name, "insert-blocks");
+      markDirty(written, "insert-blocks");
       if (!insertOutlineAfter(anchor, nodes)) return false;
       deleteBlock(anchor);
       return true;
     });
     if (!seeded) return false;
   }
-  inserted?.(pageByName(name)?.roots.filter((id) => !prior.has(id)) ?? []);
-  const saved = await flushPage(name);
+  inserted?.(pageByName(written)?.roots.filter((id) => !prior.has(id)) ?? [], written);
+  const saved = await flushPage(written);
   return owner() && saved;
 }

@@ -15,7 +15,7 @@ import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import { installDiskHost, type FakeDisk } from "./diskHost.test.support";
-import { resetStore, pageByName, node, appendToTodayJournal } from "./document";
+import { resetStore, pageByName, node, appendToTodayJournal, ensurePageLoaded, flushPage, setRaw } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { graphMeta, setGraphMeta } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
@@ -452,5 +452,48 @@ it("files are imported into the recorded graph once, and a retry reuses them", a
   await ingestShares();
   expect(imports).toEqual([expect.stringMatching(/^\/g:/)]);
   expect(journal().filter((raw) => raw.includes("p.png"))).toHaveLength(1);
+  expect(inbox.size).toBe(0);
+});
+
+/** Run `during` once, while the share's append is armed (its recovery record is being written). */
+function whileArming(during: () => unknown) {
+  const apiInbox = backend().tineLinks!.inbox!;
+  const prepare = apiInbox.prepare;
+  apiInbox.prepare = async (id, prepared) => {
+    await prepare(id, prepared);
+    if (prepared.armed) { apiInbox.prepare = prepare; await during(); }
+  };
+}
+
+it("a share stops when another file of the day replaced the journal while arming, and lands in the journal's own file on the next pass", async () => {
+  writeFile(day(), ["earlier note"]);
+  // A clean, path-pinned open of the day's `.org` twin takes the day's slot meanwhile.
+  const twin = { ...dto(day())!, id: `journals/${day()}.org`, rev: "org", blocks: [{ id: "org-0", raw: "org twin", collapsed: false, children: [] }] };
+  const writes = vi.spyOn(disk, "write");
+  share("a", "pinned day");
+  whileArming(() => expect(ensurePageLoaded(twin)).toBeNull());
+  await ingestShares();
+  expect(writes).not.toHaveBeenCalled();
+  expect(pageByName(day())!.id).toBe(twin.id);
+  expect(pageByName(day())!.roots.map((id) => node(id).raw)).toEqual(["org twin"]);
+  expect(inbox.has("a")).toBe(true);
+  await ingestShares();
+  expect(writes.mock.calls.map(([key]) => key)).toEqual([`journals/${day()}.md`]);
+  expect(shared("pinned day")).toHaveLength(1);
+  expect(inbox.size).toBe(0);
+});
+
+it("a share into a day with no file lands in the file the day gets while arming", async () => {
+  // The user typed into today's empty journal; its save creates the file while the share arms.
+  expect(loadSingle({ name: day(), kind: "journal", title: day(), pre_block: null, blocks: [{ id: "typed", raw: "", collapsed: false, children: [] }] })).toBeNull();
+  setRaw("typed", "typed today");
+  share("a", "after typing");
+  whileArming(async () => {
+    expect(await flushPage(day())).toBe(true);
+    expect(pageByName(day())!.id).toBe(`journals/${day()}.md`);
+  });
+  await ingestShares();
+  expect(journal()[0]).toBe("typed today");
+  expect(shared("after typing")).toHaveLength(1);
   expect(inbox.size).toBe(0);
 });
