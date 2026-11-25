@@ -1,14 +1,21 @@
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import { latestOwner, type Owner } from "../owned";
 import { isMobilePlatform } from "../nativeChrome";
 import { reportUiFailure } from "../uiFailure";
-import { createRangeIn, selectionOf } from "../windowRealm";
+import { createRangeIn, windowOf } from "../windowRealm";
 import { pdfTextContent } from "./pdfTextContent";
 
 export const PDF_FIND_TEXT_CACHE_BYTES = isMobilePlatform ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
 export const PDF_FIND_PAGE_TEXT_BYTES = 1024 * 1024;
 export const PDF_FIND_MATCH_CAP = 10_000;
+/** The CSS highlight that paints the current match (`::highlight(tine-pdf-find)`). */
+const PDF_FIND_HIGHLIGHT = "tine-pdf-find";
+
+type HighlightRealm = Window & {
+  CSS?: { highlights?: Map<string, unknown> };
+  Highlight?: new (...ranges: Range[]) => unknown;
+};
 
 /** Own one reader's bounded text cache and find UI. Document scans run off the
  * UI thread in pdf.js and stop when the graph/view owner retires. The caller
@@ -37,6 +44,34 @@ export function createPdfFind(ctx: {
   let cacheBytes = 0;
   let debounce: number | undefined;
   let input: HTMLInputElement | undefined;
+  // The current match is painted, never selected: moving the document selection
+  // into the text layer takes the keyboard from the find box (#1037).
+  let painted: { registry: Map<string, unknown>; highlight: unknown } | null = null;
+  // A runtime without CSS highlights (WebKit before 17.2) keeps the old mark,
+  // the selection, with its cost: there the box still loses the keyboard.
+  let selected: Selection | null = null;
+  function paint(range: Range) {
+    unpaint();
+    const realm = windowOf(range.startContainer) as HighlightRealm;
+    const registry = realm.CSS?.highlights;
+    if (!registry || !realm.Highlight) {
+      selected = realm.getSelection();
+      selected?.removeAllRanges();
+      selected?.addRange(range);
+      return;
+    }
+    const highlight = new realm.Highlight(range);
+    registry.set(PDF_FIND_HIGHLIGHT, highlight);
+    painted = { registry, highlight };
+  }
+  /** Another reader in the same window may have painted since: leave its match. */
+  function unpaint() {
+    if (painted && painted.registry.get(PDF_FIND_HIGHLIGHT) === painted.highlight) painted.registry.delete(PDF_FIND_HIGHLIGHT);
+    painted = null;
+    selected?.removeAllRanges();
+    selected = null;
+  }
+  onCleanup(unpaint);
 
   function touch(n: number) {
     const index = pageTextLru.indexOf(n);
@@ -83,7 +118,7 @@ export function createPdfFind(ctx: {
     setFindCount(0);
     setFindCur(0);
     setFindTruncated(false);
-    selectionOf(ctx.scrollElement())?.removeAllRanges();
+    unpaint();
   }
   async function run(query: string) {
     const current = latestOwner(ctx.requests, "find", ctx.owner);
@@ -121,7 +156,7 @@ export function createPdfFind(ctx: {
     matches = acc;
     setFindCount(acc.length);
     if (acc.length) navigate(0);
-    else { setFindCur(0); selectionOf(ctx.scrollElement())?.removeAllRanges(); }
+    else { setFindCur(0); unpaint(); }
   }
   function runReported(query: string) {
     run(query).catch((error) => reportUiFailure("pdf-find", error));
@@ -189,9 +224,7 @@ export function createPdfFind(ctx: {
     const range = createRangeIn(a.node);
     try { range.setStart(a.node, from - a.start); range.setEnd(b.node, to - b.start); }
     catch { return; }
-    const selection = selectionOf(a.node);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    paint(range);
     const rect = range.getBoundingClientRect();
     const scroller = ctx.scrollElement();
     const bounds = scroller.getBoundingClientRect();
@@ -208,7 +241,7 @@ export function createPdfFind(ctx: {
     setFindOpen(false);
     // Closing retires the pending debounce, any running scan and navigation.
     cancel();
-    selectionOf(ctx.scrollElement())?.removeAllRanges();
+    unpaint();
   }
   function cancel() { clearTimeout(debounce); latestOwner(ctx.requests, "find"); retireNavigation(); }
   return { findOpen, findQuery, findCount, findCur, findTruncated,

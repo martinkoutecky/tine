@@ -22,16 +22,18 @@ fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{:tine/guide-announced?
 const ID = "86900000-0000-4000-8000-000000000001";
 const STAMP = 1730000000000;
 const sourceFormat = process.env.E2E_AREA_FORMAT === "org" ? "org" : "md";
-// A generated one-page fixture with a blue rectangle. No external attachment.
-const content = "q 0 0.25 1 rg 72 592 240 100 re f Q\n";
+// A generated one-page fixture with a blue rectangle and one line of text
+// (for Find, GH #1037). No external attachment.
+const content = "q 0 0.25 1 rg 72 592 240 100 re f Q\nBT /F1 18 Tf 72 740 Td (Tine PDF viewer keeps a page) Tj ET\n";
 const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
-  `<< /Length ${content.length} >>\nstream\n${content}endstream`];
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+  `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
 let pdf = "%PDF-1.4\n";
 const offsets = [0];
 for (const [i, object] of objects.entries()) { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; }
 const xref = Buffer.byteLength(pdf);
-pdf += `xref\n0 5\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
 fs.writeFileSync(path.join(GRAPH, "assets/book.pdf"), pdf);
 // Seed the corresponding 240x100 crop using a standard PNG encoder.
 function chunk(type, data) {
@@ -85,6 +87,34 @@ try {
   await openPageByName(browser, "Reader");
   await browser.$(".pdf-link").click();
   await browser.$(`.pdf-hl-area[data-highlight-id="${ID}"]`).waitForExist({ timeout: 20000 });
+  // GH #1037: a match landing while the user types must not take the keyboard
+  // from the find box. Each wait is for the count the typed text must produce.
+  stage = "find box keeps the keyboard while matches land";
+  const findState = () => browser.execute(() => {
+    const input = document.querySelector(".pdf-find-input");
+    return { value: input?.value ?? null, focused: document.activeElement === input,
+      count: document.querySelector(".pdf-find-count")?.textContent?.trim() ?? "" };
+  });
+  const typeAndWait = async (text, count) => {
+    for (const key of text) await browser.keys([key]);
+    await browser.waitUntil(async () => (await findState()).count === count,
+      { timeout: 10000, timeoutMsg: `${stage}: after typing ${JSON.stringify(text)} the count never read ${count}` });
+  };
+  await browser.execute(() => [...document.querySelectorAll(".pdf-viewer .icon-btn")].find(b => b.textContent.trim() === "🔍").click());
+  await browser.$(".pdf-find-input").waitForExist({ timeout: 10000 });
+  await browser.waitUntil(async () => (await findState()).focused, { timeout: 10000, timeoutMsg: `${stage}: Find did not focus its box` });
+  await typeAndWait("viewer", "1 / 1");
+  // The reporter's second search: select the old query, type the new one.
+  await browser.performActions([{ type: "key", id: "select-query", actions: [
+    { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
+  await browser.releaseActions();
+  await typeAndWait("p", "1 / 3");
+  await typeAndWait("age", "1 / 1");
+  const found = await findState();
+  assert.deepEqual({ value: found.value, focused: found.focused }, { value: "page", focused: true }, `${stage}: ${JSON.stringify(found)}`);
+  evidence.rows.push({ name: "find keeps typing", ...found });
+  await browser.keys(["Escape"]);
+  await browser.$(".pdf-find-input").waitForExist({ timeout: 10000, reverse: true });
   for (const [name, file] of [["Citation", "Citation.md"], ["Citation Org", "Citation Org.org"]]) {
     stage = `${name}: copy highlight reference`;
     await browser.execute(id => {

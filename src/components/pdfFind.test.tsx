@@ -120,3 +120,149 @@ describe("PdfFind failures and retirement", () => {
     } finally { dispose(); }
   });
 });
+
+// UI-GH1037-PDF-FIND-KEEPS-TYPING: a search result arriving while the user types
+// a second query must not take the keyboard from the find box. Moving the
+// document selection into the text layer did (#1037): later keystrokes no
+// longer reached the box. The current match is painted as a CSS highlight.
+describe("PdfFind keeps the find box's keyboard while matches land", () => {
+  class FakeHighlight { ranges: Range[]; constructor(...ranges: Range[]) { this.ranges = ranges; } }
+  const realm = window as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: unknown };
+  let savedCss: unknown, savedHighlight: unknown, registry: Map<string, unknown>;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    savedCss = realm.CSS; savedHighlight = realm.Highlight;
+    registry = new Map();
+    realm.CSS = { ...(savedCss as object), highlights: registry };
+    realm.Highlight = FakeHighlight;
+    if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = () => new DOMRect();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    realm.CSS = savedCss as typeof realm.CSS; realm.Highlight = savedHighlight;
+    document.body.replaceChildren();
+    document.getSelection()?.removeAllRanges();
+  });
+  const painted = () => (registry.get("tine-pdf-find") as FakeHighlight | undefined)?.ranges.map(String) ?? [];
+
+  it("leaves the selection in the find box and paints the match instead", async () => {
+    const doc = pdfWith(["Tine PDF viewer", "Highlights persist to a page"]);
+    const layers = [1, 2].map((n) => {
+      const layer = document.createElement("div");
+      for (const part of (n === 1 ? ["Tine PDF ", "viewer"] : ["Highlights ", "persist to a page"])) {
+        const span = document.createElement("span");
+        span.textContent = part;
+        layer.appendChild(span);
+      }
+      document.body.appendChild(layer);
+      return layer;
+    });
+    const scroller = document.createElement("div");
+    document.body.appendChild(scroller);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const { find, dispose } = setup(doc, { textLayer: (page: number) => layers[page - 1], scrollElement: () => scroller });
+    find.setInput(input);
+    const type = async (value: string) => {
+      input.value = value;
+      input.setSelectionRange(value.length, value.length);
+      find.scheduleFind(value);
+      await vi.advanceTimersByTimeAsync(200);
+      await settle();
+    };
+    const keyboardStaysInBox = () => {
+      const selection = document.getSelection()!;
+      const node = selection.rangeCount ? selection.getRangeAt(0).startContainer : null;
+      expect(layers.some((layer) => node && layer.contains(node)), "the document selection moved into the text layer").toBe(false);
+      expect(document.activeElement).toBe(input);
+    };
+    try {
+      find.openFind();
+      await settle();
+      input.focus();
+      // First query lands; then the reporter selects it and types a new one.
+      await type("viewer");
+      expect(find.findCount()).toBe(1);
+      keyboardStaysInBox();
+      expect(painted()).toEqual(["viewer"]);
+      input.select();
+      await type("p");
+      expect(find.findCount()).toBe(3);
+      keyboardStaysInBox();
+      expect(painted()).toEqual(["P"]);
+      await type("persist");
+      keyboardStaysInBox();
+      expect(input.value).toBe("persist");
+      expect(painted()).toEqual(["persist"]);
+      // Enter between matches paints the next one and still leaves the box alone.
+      await type("i");
+      find.nextMatch(1);
+      await settle();
+      expect(find.findCur()).toBe(2);
+      keyboardStaysInBox();
+      // An emptied query and a closed Find both clear the paint.
+      await type("");
+      expect(painted()).toEqual([]);
+      await type("viewer");
+      expect(painted()).toEqual(["viewer"]);
+      find.closeFind();
+      expect(painted()).toEqual([]);
+    } finally { dispose(); }
+  });
+
+  it("marks the match with the selection where the runtime has no CSS highlights (the old mark)", async () => {
+    realm.CSS = savedCss as typeof realm.CSS; realm.Highlight = undefined;
+    const doc = pdfWith(["Tine PDF viewer"]);
+    const layer = document.createElement("div");
+    const span = document.createElement("span");
+    span.textContent = "Tine PDF viewer";
+    layer.appendChild(span);
+    document.body.appendChild(layer);
+    const scroller = document.createElement("div");
+    document.body.appendChild(scroller);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const { find, dispose } = setup(doc, { textLayer: () => layer, scrollElement: () => scroller });
+    find.setInput(input);
+    const type = async (value: string) => {
+      find.scheduleFind(value);
+      await vi.advanceTimersByTimeAsync(200);
+      await settle();
+    };
+    try {
+      find.openFind();
+      await settle();
+      await type("viewer");
+      expect(find.findCount()).toBe(1);
+      expect(document.getSelection()!.toString()).toBe("viewer");
+      await type("");
+      expect(document.getSelection()!.toString()).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("does not erase the match another reader painted in the same window", async () => {
+    const doc = pdfWith(["alpha"]);
+    const layer = document.createElement("div");
+    layer.textContent = "alpha";
+    document.body.appendChild(layer);
+    const first = setup(doc, { textLayer: () => layer });
+    const second = setup(doc, { textLayer: () => layer });
+    try {
+      first.find.openFind();
+      first.find.scheduleFind("alpha");
+      await vi.advanceTimersByTimeAsync(200);
+      await settle();
+      const firstPaint = registry.get("tine-pdf-find");
+      second.find.openFind();
+      second.find.scheduleFind("alp");
+      await vi.advanceTimersByTimeAsync(200);
+      await settle();
+      expect(painted()).toEqual(["alp"]);
+      first.find.closeFind();
+      expect(painted(), "the first reader's close must not erase the second reader's match").toEqual(["alp"]);
+      expect(registry.get("tine-pdf-find")).not.toBe(firstPaint);
+      second.dispose();
+      expect(painted(), "a torn-down reader lets its paint go").toEqual([]);
+    } finally { first.dispose(); second.dispose(); }
+  });
+});
