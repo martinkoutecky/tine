@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 mod guard_tests;
 #[path = "production_crash_tests.rs"]
 mod production_crash_tests;
+#[path = "production_launch_custody_journey_tests.rs"]
+mod production_launch_custody_journey;
 #[path = "production_move_crash_tests.rs"]
 mod production_move_crash_tests;
 #[path = "production_rename_relaunch_tests.rs"]
@@ -540,7 +542,9 @@ fn m3_partial_replan_refusal_retains_root_sync_until_restoration() {
 fn launch_sync_error_is_reported_best_effort_without_refusing_graph_saves() {
     let mut f = Fixture::new();
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.fs.graph_launch(&BTreeSet::from(["a.md".into()]));
+    f.host
+        .fs
+        .graph_launch(&BTreeSet::from(["a.md".into()]), &[]);
     assert_eq!(
         f.host.fs.launch_warnings,
         vec![(f.graph.clone(), io::ErrorKind::Other)]
