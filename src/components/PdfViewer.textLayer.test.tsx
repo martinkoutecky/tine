@@ -185,8 +185,14 @@ describe("PdfViewer text layer ownership", () => {
     } finally { dispose(); }
   });
 
-  it("builds and selects Find results while scrolling is still active", async () => {
+  it("builds and marks Find results while scrolling is still active", async () => {
     vi.useFakeTimers();
+    // The current match is painted as a CSS highlight (jsdom has none: record it).
+    const realm = window as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: unknown };
+    const savedCss = realm.CSS, savedHighlight = realm.Highlight;
+    const highlights = new Map<string, { ranges: Range[] }>();
+    realm.CSS = { ...(savedCss as object), highlights };
+    realm.Highlight = class { ranges: Range[]; constructor(...ranges: Range[]) { this.ranges = ranges; } };
     const { host, dispose, pages } = await mount(1, 3);
     try {
       pages[1].getTextContent.mockResolvedValue({ items: [{ str: "needle" }] } as any);
@@ -207,10 +213,10 @@ describe("PdfViewer text layer ownership", () => {
       Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(0, 50, 30, 10) });
       h.layers[1].finish(); await flush();
       expect(host.querySelector(".pdf-find-count")?.textContent).toBe("1 / 1");
-      expect(window.getSelection()?.toString()).toBe("needle");
+      expect(highlights.get("tine-pdf-find")?.ranges.map(String)).toEqual(["needle"]);
     } finally {
       Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
-      window.getSelection()?.removeAllRanges();
+      realm.CSS = savedCss; realm.Highlight = savedHighlight;
       dispose();
     }
   });
