@@ -32,7 +32,7 @@ describe("autoPairInsertOnInput — single pair insert", () => {
 
 describe("autoPairInsertOnInput — a quote after a word closes (GH #1020)", () => {
   // `type(v, c, ch)` inserts `ch` at `c` first, as the browser does.
-  it("adds no second quote after a letter or a digit", () => {
+  it("adds no second quote after a letter or a number", () => {
     expect(type('{{y "hello}}', 10, '"')).toEqual({ value: '{{y "hello"}}', caret: 11 }); // the report
     expect(type('say "hello', 10, '"')).toEqual({ value: 'say "hello"', caret: 11 }); // end of the block
     expect(type('"hello now', 6, '"')).toEqual({ value: '"hello" now', caret: 7 }); // before a space
@@ -40,6 +40,18 @@ describe("autoPairInsertOnInput — a quote after a word closes (GH #1020)", () 
     expect(type('"žluťoučký', 10, '"')).toEqual({ value: '"žluťoučký"', caret: 11 }); // not only ASCII
     expect(type('"2026', 5, '"')).toEqual({ value: '"2026"', caret: 6 });
     expect(type("`code", 5, "`")).toEqual({ value: "`code`", caret: 6 });
+  });
+
+  it("knows letters outside the BMP, combining marks and number signs", () => {
+    // `before` ends in the word; the quote is typed at its end.
+    const closes = (before: string) => expect(type(before, before.length, '"')).toEqual({ value: before + '"', caret: before.length + 1 });
+    closes('"\u{20BB7}'); // a CJK letter stored as a surrogate pair
+    closes('"\u{10437}'); // Deseret
+    closes('"\u{1D7E0}'); // a mathematical digit
+    closes('"cafe\u0301'); // e + combining acute
+    closes('"\u0915\u0940'); // Devanagari letter + vowel sign
+    closes('"\u00BD'); // one half
+    expect(type("say \u0301", 5, '"')).toEqual({ value: 'say \u0301""', caret: 6 }); // a mark with no letter opens
   });
 
   it("still pairs a quote that opens: at the start, after a space, an opener or punctuation", () => {

@@ -64,11 +64,14 @@ function shouldAutoClose(next: string | undefined): boolean {
   return !next || /\s/.test(next) || CLOSERS.has(next);
 }
 
-/** A quote or backtick typed right after a letter or a digit closes what an earlier
- *  one opened (`"hello` + `"`), so it gets no partner (GH #1020). Brackets have a
- *  distinct opener and never hit this. The same rule as VS Code and CodeMirror. */
-function closesAfterWord(typed: string, before: string | undefined): boolean {
-  return PAIRS[typed] === typed && before !== undefined && /[\p{L}\p{N}]/u.test(before);
+/** A quote or backtick typed right after a letter or a number (with its combining
+ *  marks) closes what an earlier one opened (`"hello` + `"`), so it gets no partner
+ *  (GH #1020). `at` is the index of the typed character. Brackets have a distinct
+ *  opener and never hit this. CodeMirror and VS Code have a rule of the same kind:
+ *  no new string starts after a word character. Reads at most 8 UTF-16 units, which
+ *  covers a letter outside the BMP and its marks. */
+function closesAfterWord(typed: string, value: string, at: number): boolean {
+  return PAIRS[typed] === typed && /[\p{L}\p{N}]\p{M}*$/u.test(value.slice(Math.max(0, at - 8), at));
 }
 
 /** Post-input auto-pairing (run from `onInput`, AFTER the browser inserted the
@@ -79,7 +82,7 @@ function closesAfterWord(typed: string, before: string | undefined): boolean {
  *   2. skip-over — typing a closer that already sits right after the caret steps
  *      over it instead of stacking a duplicate;
  *   3. single pair insert — typing an opener at a boundary inserts its closer,
- *      caret between; a quote or backtick right after a letter or digit is a
+ *      caret between; a quote or backtick right after a letter or number is a
  *      closer and inserts nothing. */
 export function autoPairInsertOnInput(
   value: string,
@@ -100,7 +103,7 @@ export function autoPairInsertOnInput(
   }
   // 3) Single pair insert.
   const closer = PAIRS[typed];
-  if (closer && shouldAutoClose(value[caret]) && !closesAfterWord(typed, value[caret - 2])) {
+  if (closer && shouldAutoClose(value[caret]) && !closesAfterWord(typed, value, caret - 1)) {
     return { value: value.slice(0, caret) + closer + value.slice(caret), caret };
   }
   return null;
