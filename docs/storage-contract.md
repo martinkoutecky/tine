@@ -1980,10 +1980,15 @@ Proof `the_skip_compares_with_the_newest_snapshot_of_any_suffix`,
 `a_damaged_baseline_is_never_the_reason_to_skip`,
 `another_roots_identical_zip_is_never_the_baseline`,
 `an_unchanged_launch_applies_a_keep_count_a_busy_prune_left`,
-`a_failed_prune_delete_is_retried_by_the_next_unchanged_launch`.
+`a_failed_prune_delete_is_retried_by_the_next_unchanged_launch`,
+`an_unreadable_settings_file_never_prunes_a_backup`.
 
 **Retention.** Every locked path (a launch, an unchanged launch, a suffixed
-snapshot, a Settings prune) runs one retention pass (`maintain_locked`). The
+snapshot, a Settings prune) runs one retention pass (`maintain_locked`) with
+the keep count the device settings state when that path reads them (a launch
+reads them once, before its capture). While the settings file exists but
+cannot be read or decoded, the count is unknown and the pass does not run:
+nothing is retired, healthy or damaged, and nothing is verified. The
 keep-count N keeps the last N successive distinct states among the counted
 snapshots: legacy directories and zips written by og, neither `pre-restore`
 nor another writer's (a schema-3 directory another writer made, or one of an
