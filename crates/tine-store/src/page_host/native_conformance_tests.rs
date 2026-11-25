@@ -363,6 +363,13 @@ impl HostIo for NativeFs {
         );
         ledger
     }
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool {
+        // The native adapter pays the chain's syncs now, so it may witness
+        // a file the model's launch left unstable; the ledger's answer is
+        // the refined model's, as for `durable_page`.
+        let _ = self.native.source_witnessed(page, bytes);
+        self.ledger.source_witnessed(page, bytes)
+    }
     fn release_durable(&mut self, page: &str) {
         // Only the native witness is bounded; the ledger's is the model's
         // physical durability, which no release changes.

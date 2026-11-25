@@ -463,9 +463,15 @@ impl<F: HostIo> Host<F> {
         // No durability witness survives a relaunch, so a receiver whose
         // bytes match certifies nothing here: the pair restores or retains,
         // and its operation draft keeps the source's admitted text.
+        // A source whose bytes match anchors the original text only with
+        // a durability witness of that file (`source_original`): launch's
+        // best-effort directory syncs prove nothing on their own.
         let fs = &mut self.fs;
-        (self.order).decided_phases(&reads, |receiver, bytes, image| {
-            Self::receiver_certified(fs, receiver, bytes, image)
+        (self.order).decided_phases(&reads, |pair, source, receiver| {
+            (
+                Self::source_original(fs, &pair.source, &pair.preimage, source),
+                Self::receiver_certified(fs, &pair.receiver, receiver, &pair.image),
+            )
         });
         for (decision, name) in &scan.blocking {
             self.order.block(name, decision.clone());

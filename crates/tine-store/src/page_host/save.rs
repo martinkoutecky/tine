@@ -161,6 +161,31 @@ impl<F: HostIo> Host<F> {
         bytes == image && fs.durable_page(receiver)
     }
 
+    /// The one answer to "does this source durably hold its pair's
+    /// original text" (the model's `sourcePresent`), read as `bytes`: they
+    /// are the admitted `preimage` (`order::source_present`), and the very
+    /// file holding them has a durability witness
+    /// (`HostIo::source_witnessed`: its directory entries up to the graph
+    /// root synced now, the file unchanged meanwhile). Matching bytes whose
+    /// directory sync failed, at launch or since, anchor nothing: a power
+    /// cut may still drop them, so the operation draft keeps custody. Every
+    /// custody decision asks this: launch's decided phases, Use Disk's
+    /// phase, and a paired source's publication (disarm and restoration).
+    pub(super) fn source_original(
+        fs: &mut F,
+        source: &str,
+        preimage: &Text,
+        bytes: &Text,
+    ) -> order::Original {
+        if !order::source_present(preimage, bytes) {
+            order::Original::No
+        } else if fs.source_witnessed(source, bytes) {
+            order::Original::Durable
+        } else {
+            order::Original::Unwitnessed
+        }
+    }
+
     /// Surface a diverged receiver as its ordinary read (a held page with
     /// unsaved text conflicts, as for any outside change).
     fn receiver_differs(&mut self, receiver: &str, bytes: Text) {
@@ -581,12 +606,18 @@ impl<F: HostIo> Host<F> {
                             }
                             Err(_) => false,
                         };
-                        let anchored = order::anchored(&preimage, &job.bytes, certified);
+                        let original =
+                            Self::source_original(&mut self.fs, &key, &preimage, &job.bytes);
+                        let anchored = order::anchored(original, certified);
                         if let Some(name) = self.order.disarm(&key, anchored) {
                             self.repair_op(&name);
                         }
                     }
-                    for name in self.order.restored(&key, &job.bytes) {
+                    let fs = &mut self.fs;
+                    let restored = (self.order).restored(&key, |preimage| {
+                        Self::source_original(fs, &key, preimage, &job.bytes)
+                    });
+                    for name in restored {
                         self.repair_op(&name);
                     }
                 }

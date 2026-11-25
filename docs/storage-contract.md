@@ -1389,6 +1389,24 @@ from the scanned drafts before any recovered save or choice.
   create publish it, refused over an occupied slot, a claimant or twin, or
   unsaved text, and that publication cancels the pair. The window does not
   offer restoration yet (follow-up): the draft keeps custody meanwhile.
+- A source anchors its original text only while it **durably** holds it
+  (`Host::source_original`, the one answerer; REG-LAUNCH-CUSTODY-SECOND-CUT):
+  its bytes are the admitted text *and* that very file is witnessed. The
+  decision syncs the file's directory and every ancestor up to the graph
+  root, then checks the path still names the file it read. Launch's
+  best-effort directory syncs prove nothing by themselves, and a save that
+  syncs only its own directory pays no ancestor's debt; there is no
+  page-wide "published since launch" bit. A sync that fails keeps custody
+  (the pair is **retained**, its draft kept, and the next decision syncs
+  again), so a crash after a restoring publication's rename and before its
+  directory sync, then a launch whose sync fails, can no longer release the
+  only durable copy of the original. Every custody decision asks it:
+  launch's decided phases, Use Disk, and a paired source's publication
+  (newer text, a restoration). On a filesystem that offers no directory
+  sync (NFS, FUSE, Android shared storage: the save path's tolerated set)
+  the source gets the same weak witness its saves and receivers already get
+  there. Cost: one read, two metadata calls and one sync per directory of
+  the chain, only at a custody decision on a source whose bytes match.
 - A decision this code does not act on (reviewed text `1`, or superseding
   input `2` on a receiver) or an unreadable or mismatched decision naming a
   readable paired operation blocks that operation's source removals and

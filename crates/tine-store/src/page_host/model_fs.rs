@@ -770,6 +770,16 @@ impl HostIo for ModelFs {
         self.weak_graph || self.witnessed.get(page) == Some(&(epoch, current))
     }
 
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool {
+        // The model's `sourcePresent`: the bytes are what a power cut keeps
+        // (`stable`), or the graph is weak, where bytes certify. The model
+        // syncs no graph page at launch, so it never witnesses more than
+        // production, which syncs the chain at the decision.
+        let key = format!("graph/{page}");
+        self.files.get(&key).cloned() == *bytes
+            && (self.weak_graph || self.stable.get(&key).cloned() == *bytes)
+    }
+
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
         let twin = if let Some(stem) = page.strip_suffix(".md") {
             format!("{stem}.org")

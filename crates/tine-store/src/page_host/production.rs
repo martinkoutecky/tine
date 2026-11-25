@@ -90,6 +90,10 @@ pub(super) struct ProductionIo {
     /// keeps making progress.
     #[cfg(test)]
     pub delays: BTreeMap<super::io::Phase, std::time::Duration>,
+    /// Graph directories whose every sync fails with this error until
+    /// removed (launch, page and source-witness syncs alike).
+    #[cfg(test)]
+    pub(super) sync_faults: BTreeMap<PathBuf, io::ErrorKind>,
     /// Abort the process just before the phase's call number `n` (0-based).
     #[cfg(any(test, feature = "test-faults"))]
     abort: Option<(super::io::Phase, usize)>,
@@ -158,6 +162,8 @@ impl ProductionIo {
             untouchable: Default::default(),
             trash_chain: None,
             marker_files: cfg!(test) || !cfg!(windows),
+            #[cfg(test)]
+            sync_faults: BTreeMap::new(),
             unwritten: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
@@ -230,9 +236,24 @@ impl ProductionIo {
         self.check_path(dir)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::fsync();
-        durability::sync_directory_witness(dir)
+        self.sync_graph_directory(dir)
             .map(witness)
             .map_err(sync_failure)
+    }
+
+    /// A graph directory's sync (`sync_directory_witness`), or its planted
+    /// test fault (`sync_faults`), classified as the real one is.
+    fn sync_graph_directory(&self, dir: &Path) -> io::Result<DirectoryWitness> {
+        #[cfg(test)]
+        if let Some(kind) = self.sync_faults.get(dir) {
+            let error = io::Error::new(*kind, "injected directory sync failure");
+            return if durability::dir_sync_is_unsupported(&error) {
+                Ok(DirectoryWitness::Unsupported)
+            } else {
+                Err(error)
+            };
+        }
+        durability::sync_directory_witness(dir)
     }
 
     /// The page's file, through its key's current spelling.
@@ -484,6 +505,18 @@ fn read_published(path: &Path) -> io::Result<Option<(crate::watch::Stamp, crate:
     Ok(before.zip(after))
 }
 
+/// A source witness's read (`HostIo::source_witnessed`): the bytes, with
+/// the handle's stamps before and after them.
+fn read_witnessed(
+    path: &Path,
+) -> io::Result<(Vec<u8>, Option<crate::watch::Stamp>, crate::watch::Stamp)> {
+    let mut input = fs::File::open(path)?;
+    let (bytes, before) = read_open(&mut input)?;
+    let after = crate::watch::stamp_from_metadata(&input.metadata()?)
+        .ok_or_else(|| io::Error::other("no stamp after the read"))?;
+    Ok((bytes, before, after))
+}
+
 /// A synced temporary file for `path`. The host's writes and syncs are
 /// counted where the transaction's are (`cost_counters`, I-25, Q-P2b-2), by
 /// the shared recipe itself.
@@ -636,7 +669,7 @@ impl HostIo for ProductionIo {
             if self.check_path(&directory).is_err() {
                 continue;
             }
-            if let Err(error) = durability::sync_directory_witness(&directory) {
+            if let Err(error) = self.sync_graph_directory(&directory) {
                 self.launch_warnings.push((directory, error.kind()));
             }
         }
@@ -799,6 +832,53 @@ impl HostIo for ProductionIo {
         };
         let current = crate::watch::stamp_metadata(&self.page_path(page));
         current.is_some_and(|now| stamp.same_metadata(&now))
+    }
+
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool {
+        // The very file: its bytes and its handle's stamps before and after
+        // them (a read can move a file's times, GH #811), then the chain's
+        // syncs, then one metadata call: still that file, unchanged.
+        let Some(bytes) = bytes.as_deref() else {
+            return false;
+        };
+        let path = self.page_path(page);
+        if self.check_path(&path).is_err() {
+            return false;
+        }
+        let Ok((now, Some(before), after)) = read_witnessed(&path) else {
+            return false;
+        };
+        if now.as_slice() != bytes || !before.same_identity(&after) {
+            return false;
+        }
+        // Every directory from the page's up to the graph root, now: a
+        // launch whose sync failed, or a nested directory newly visible
+        // after an interrupted publication, leaves an ancestor entry no
+        // later page save syncs. Each failure keeps custody, so it is never
+        // dropped; the next custody decision syncs again.
+        let dirs: Vec<PathBuf> = chain(&self.graph, path.parent().unwrap())
+            .map(Path::to_path_buf)
+            .collect();
+        for dir in dirs {
+            if self.check_path(&dir).is_err() {
+                return false;
+            }
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+            match self.sync_graph_directory(&dir) {
+                Ok(DirectoryWitness::Durable) => {}
+                // Decision pending (fix-launch-custody receipt): a graph
+                // whose filesystem offers no directory sync (NFS, FUSE,
+                // Android shared storage) gets the weak witness its saves
+                // and receivers already get (`page_sync` publishes and
+                // witnesses on it; the formal model's weak profile
+                // certifies bytes there). Requiring Durable here would keep
+                // custody on such a graph forever.
+                Ok(DirectoryWitness::Unsupported) => {}
+                Err(_) => return false,
+            }
+        }
+        crate::watch::stamp_metadata(&path).is_some_and(|current| after.same_metadata(&current))
     }
 
     fn release_durable(&mut self, page: &str) {

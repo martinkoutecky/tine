@@ -11,7 +11,7 @@ use super::*;
 const OLD: &str = "- old\n";
 const REF: &str = "- see [[A]]\n";
 const REWRITTEN: &str = "- see [[C]]\n";
-const KEYS: [&str; 4] = ["a.md", "b.md", "c.md", "d.md"];
+const KEYS: [&str; 5] = ["a.md", "b.md", "c.md", "d.md", "sub/a.md"];
 
 fn bytes(text: &str) -> Text {
     Some(Arc::from(text.as_bytes()))
@@ -24,6 +24,12 @@ fn reopen(f: Fixture) -> Fixture {
 
 /// A cold relaunch whose launch meets `faults`.
 fn reopen_with(f: Fixture, faults: &[Phase]) -> Fixture {
+    reopen_syncing(f, faults, &[])
+}
+
+/// A cold relaunch whose launch meets `faults`, and whose syncs of the
+/// directories in `syncs` keep failing with their error.
+fn reopen_syncing(f: Fixture, faults: &[Phase], syncs: &[(PathBuf, io::ErrorKind)]) -> Fixture {
     let Fixture {
         graph,
         app,
@@ -32,7 +38,8 @@ fn reopen_with(f: Fixture, faults: &[Phase]) -> Fixture {
         root,
     } = f;
     drop(host);
-    let io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
+    let mut io = ProductionIo::attach(&graph, &app, "test-graph", &trash);
+    io.sync_faults.extend(syncs.iter().cloned());
     let locks = KEYS
         .into_iter()
         .map(|key| (key.into(), Arc::new(Mutex::new(()))))
@@ -925,4 +932,169 @@ fn a_closed_receiver_keeps_its_witness_while_its_pair_owes() {
     assert_eq!(f.save("a.md"), Outcome::Published, "C is still certified");
     assert_eq!(trashed(&f), vec![OLD.to_string()]);
     assert!(f.host.fs.witnessed().is_empty());
+}
+
+/// The source `src` (A's text) renamed to C over B; C's and B's saves
+/// publish, A's removal publishes, then another program replaces C before
+/// the post-check and Use Disk on C records the cancellation: Restore (A's
+/// slot is free, its text is in the trash and the operation draft). The
+/// user's Restore is admitted; its save has not started.
+fn restoring(src: &str) -> Fixture {
+    let mut f = fixture();
+    if src != "a.md" {
+        fs::create_dir_all(f.graph.join(src).parent().unwrap()).unwrap();
+        fs::write(f.graph.join(src), OLD).unwrap();
+        f.host.register(src.into(), src, Arc::new(Mutex::new(())));
+    }
+    assert_eq!(
+        f.host.rename(
+            src,
+            "c.md",
+            &BTreeSet::from(["b.md".into()]),
+            "A",
+            "C",
+            tine_core::config::FileNameFormat::TripleLowbar
+        ),
+        Disposition::Pending
+    );
+    f.drain();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.host.start_save(src), Disposition::Pending);
+    while f.graph.join(src).exists() {
+        f.host.advance_save();
+        assert!(f.host.job.is_some());
+    }
+    fs::write(f.graph.join("c.md"), "- other\n").unwrap();
+    for _ in 0..15 {
+        f.host.advance_save();
+        if f.host.job.is_none() {
+            break;
+        }
+    }
+    assert_eq!(trashed(&f), vec![OLD.to_string()]);
+    f.send("c.md", RequestKind::Discard);
+    assert!(f.host.order.restorable(src).is_some(), "Restore");
+    assert_eq!(f.host.restore_source(src), Disposition::Applied);
+    f
+}
+
+/// Run the restoring save of `src` until its publication's rename landed,
+/// then stop stepping (a process death before its directory sync).
+fn cut_before_the_directory_sync(f: &mut Fixture, src: &str) {
+    assert_eq!(f.host.start_save(src), Disposition::Pending);
+    while !f.graph.join(src).exists() {
+        f.host.advance_save();
+        assert!(f.host.job.is_some());
+    }
+    assert_eq!(f.host.job.as_ref().unwrap().phase, SavePhase::DirectorySync);
+}
+
+/// Custody second cut (regression `launch-custody-second-cut`): a crash
+/// after the restoring publication's rename and before its directory sync,
+/// then a relaunch whose source-directory sync fails while the draft store
+/// still retires files. A's bytes are its preimage, but nothing witnesses
+/// that file: a power cut could still drop it. The pair stays Retained and
+/// the operation draft keeps A's text. Before, launch compared bytes only,
+/// cancelled the pair and retired the draft. A relaunch whose sync
+/// succeeds cancels the pair, as before.
+#[test]
+fn a_relaunch_whose_source_directory_sync_fails_keeps_the_original() {
+    let mut f = restoring("a.md");
+    cut_before_the_directory_sync(&mut f, "a.md");
+    let root = f.graph.clone();
+    let mut f = reopen_syncing(f, &[], &[(root, io::ErrorKind::Other)]);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert!(
+        f.host.order.restorable("a.md").is_some(),
+        "an unwitnessed byte match keeps custody"
+    );
+    assert!(blocked(&f, "a.md"));
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD), "the operation draft keeps A's text");
+    // The success path: every sync succeeds, the pair cancels as today.
+    let mut f = reopen(f);
+    assert!(f.host.order.restorable("a.md").is_none(), "cancelled");
+    assert!(!blocked(&f, "a.md"));
+    settle_all(&mut f);
+    assert!(!drafted(&f, OLD), "custody released once witnessed");
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+}
+
+/// The nested source: the graph root's sync keeps failing, and the
+/// restoring save of `sub/a.md` publishes (its own directory sync covers
+/// only `sub`). That save pays no ancestor's debt, so the restoration does
+/// not cancel the pair: custody holds, across a relaunch that still cannot
+/// sync the root, until a launch syncs it. Before, the publication's byte
+/// match cancelled the pair.
+#[test]
+fn a_nested_restoration_keeps_custody_until_the_graph_root_syncs() {
+    let mut f = restoring("sub/a.md");
+    let root = f.graph.clone();
+    f.host
+        .fs
+        .sync_faults
+        .insert(root.clone(), io::ErrorKind::Other);
+    assert_eq!(f.save("sub/a.md"), Outcome::Published, "sub synced");
+    assert_eq!(on_disk(&f, "sub/a.md").as_deref(), Some(OLD));
+    assert!(
+        f.host.order.restorable("sub/a.md").is_some(),
+        "the root's entry is not witnessed"
+    );
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD));
+    let mut f = reopen_syncing(f, &[], &[(root, io::ErrorKind::Other)]);
+    assert!(f.host.order.restorable("sub/a.md").is_some());
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD), "still held");
+    let mut f = reopen(f);
+    assert!(f.host.order.restorable("sub/a.md").is_none(), "cancelled");
+    settle_all(&mut f);
+    assert!(!drafted(&f, OLD));
+}
+
+/// Use Disk on C while A still has its original file, whose directory
+/// sync fails: the decision cannot anchor A's text on its bytes, so the
+/// pair is retained and the draft keeps it. Before, Use Disk cancelled on
+/// the byte match. The next launch that syncs A's directory cancels.
+#[test]
+fn a_use_disk_whose_source_directory_sync_fails_keeps_custody() {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    replace_outside(&f, "c.md", OLD);
+    let root = f.graph.clone();
+    f.host.fs.sync_faults.insert(root, io::ErrorKind::Other);
+    f.send("c.md", RequestKind::Discard);
+    assert_eq!(
+        f.host.pages["a.md"].buf.as_deref(),
+        Some(OLD.as_bytes()),
+        "A's removal is reverted"
+    );
+    assert!(f.host.order.restorable("a.md").is_some(), "retained");
+    retire_drafts(&mut f);
+    assert!(drafted(&f, OLD));
+    let mut f = reopen(f);
+    assert!(f.host.order.restorable("a.md").is_none());
+    settle_all(&mut f);
+    assert!(!drafted(&f, OLD));
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert!(trashed(&f).is_empty());
+}
+
+/// A graph whose filesystem offers no directory sync (NFS, FUSE): the
+/// source gets the same weak witness the save path and the receiver get
+/// there (a decision the fix-launch-custody receipt hands back). The
+/// decision still syncs the chain, and a failure would keep custody; an
+/// Unsupported answer does not keep it forever.
+#[test]
+fn an_unsupported_directory_sync_gets_the_weak_witness() {
+    let mut f = restoring("a.md");
+    cut_before_the_directory_sync(&mut f, "a.md");
+    let root = f.graph.clone();
+    let mut f = reopen_syncing(f, &[], &[(root, io::ErrorKind::Unsupported)]);
+    assert!(f.host.order.restorable("a.md").is_none(), "cancelled");
+    settle_all(&mut f);
+    assert!(!drafted(&f, OLD));
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
 }

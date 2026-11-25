@@ -134,6 +134,17 @@ pub(super) trait HostIo {
     /// profile (the model certifies on bytes there), never weaker; only
     /// the conformance ledger implements the model's exemption.
     fn durable_page(&mut self, page: &str) -> bool;
+    /// A durability witness for a paired source's current file, read as
+    /// `bytes` (`Host::source_original`, asked only when those are its
+    /// pair's preimage): the file at the path still holds `bytes`, and its
+    /// directory entry and every ancestor's up to the graph root can no
+    /// longer be reverted by a power cut. Production syncs that whole chain
+    /// now, at every custody decision, so a failed sync (at launch or since)
+    /// is carried forward and never forgotten, and an own save that synced
+    /// only the page's own directory does not pay an ancestor's debt. No
+    /// page-wide "published since launch" bit: the answer is about this
+    /// file. Rare: only custody decisions on a matching source ask it.
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool;
     /// The host no longer needs `page`'s durability witness (it is no
     /// receiver of an unresolved pair): drop it, so the adapter's witnesses
     /// stay bounded by the unresolved pairs and are not one per page ever

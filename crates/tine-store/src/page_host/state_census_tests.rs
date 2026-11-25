@@ -763,6 +763,18 @@ const SUPERSEDED_ANSWERER: &str = "order.rs::superseded";
 /// newer text's publication.
 const PREIMAGE_ANSWERER: &str = "order.rs::source_present";
 
+/// One answerer of "does this source durably hold its pair's original
+/// text" (fix-launch-custody): `Host::source_original` alone asks the byte
+/// match (`source_present`) and the file's durability witness
+/// (`source_witnessed`); every custody decision asks it: launch's decided
+/// phases, Use Disk, and a paired source's publication.
+const ORIGINAL_ANSWERER: &str = "save.rs::source_original";
+const ORIGINAL_DECIDERS: [&str; 3] = [
+    "logical.rs::adopt_pairing",
+    "order.rs::discard",
+    "save.rs::advance_save_locked",
+];
+
 /// A `==`/`!=` whose operand ends in `preimage` (`x . preimage`, `* p .
 /// preimage`) in a body's token text.
 fn compares_preimage(body: &str) -> bool {
@@ -797,6 +809,18 @@ fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
         if compares_preimage(body) && function != PREIMAGE_ANSWERER {
             out.push(format!("{function} compares bytes with a preimage"));
         }
+        let flat = squashed(body);
+        if (flat.contains("source_present(") || flat.contains(".source_witnessed("))
+            && function != ORIGINAL_ANSWERER
+        {
+            out.push(format!("{function} judges a source's original itself"));
+        }
+    }
+    for decider in ORIGINAL_DECIDERS {
+        let asks = calls.get(decider).map(|b| squashed(b));
+        if !asks.is_some_and(|b| b.contains("Self::source_original(")) {
+            out.push(format!("{decider} no longer asks `source_original`"));
+        }
     }
     out
 }
@@ -809,18 +833,26 @@ fn one_function_answers_each_superseding_question() {
     let (_, calls) = census(&files);
     assert!(calls[SUPERSEDED_ANSWERER].contains(SUPERSEDED_PHASES));
     assert!(compares_preimage(&calls[PREIMAGE_ANSWERER]));
-    // Its mutants: the base's inline anchoring at publication, an inline
-    // preimage match in a restoration, a second copy of the phase set.
+    let original = squashed(&calls[ORIGINAL_ANSWERER]);
+    assert!(original.contains("source_present(") && original.contains(".source_witnessed("));
+    // Its mutants: an inline preimage match in the answerer, the base's
+    // byte-only anchoring at publication and in a restoration, a second
+    // copy of the phase set.
     let mutants = [
         (
             "save.rs",
-            "order::anchored(&preimage, &job.bytes, certified)",
-            "job.bytes == preimage || certified",
+            "!order::source_present(preimage, bytes)",
+            "!(bytes.is_some() && bytes == preimage)",
         ),
         (
-            "order.rs",
-            "source_present(&pair.preimage, bytes)",
-            "bytes.is_some() && pair.preimage == *bytes",
+            "save.rs",
+            "Self::source_original(&mut self.fs, &key, &preimage, &job.bytes)",
+            "if order::source_present(&preimage, &job.bytes) { order::Original::Durable } else { order::Original::No }",
+        ),
+        (
+            "save.rs",
+            "Self::source_original(fs, &key, preimage, &job.bytes)",
+            "if order::source_present(preimage, &job.bytes) { order::Original::Durable } else { order::Original::No }",
         ),
         (
             "order.rs",
