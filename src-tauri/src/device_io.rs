@@ -13,10 +13,11 @@ mod no_replace;
 #[cfg(test)]
 pub(crate) use no_replace::REFUSE_NOREPLACE_FLAG;
 
-// The app uses only the atomic writers of this shared source.
+// The app uses the atomic writers of this shared source, and its temp-name
+// answer (`is_temp_name`, for Git autocommit and pull).
 #[allow(dead_code)]
 #[path = "../../crates/tine-store/src/atomic_file.rs"]
-mod atomic_file;
+pub(crate) mod atomic_file;
 #[allow(dead_code)]
 #[path = "../../crates/tine-store/src/platform_step.rs"]
 mod platform_step;

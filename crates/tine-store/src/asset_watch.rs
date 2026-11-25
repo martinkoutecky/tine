@@ -69,22 +69,28 @@ impl AssetScope {
     }
 }
 
-/// Tine's atomic publishers leave hidden numeric temp names
-/// (`.{name}.{pid}.{seq}[.tag].tmp`), and restore/transactions leave
-/// `.tine-*` litter. Only the final rename is a logical asset change.
+/// Tine's own writes under the assets directory: a temp of any of its atomic
+/// publishers ([`crate::atomic_file::is_temp_name`], the one temp-name answer),
+/// or a path inside or naming one of [`tine_own_entry`]'s folders. Only the
+/// final rename is a logical asset change.
 fn is_tine_bookkeeping(path: &Path, root: &Path) -> bool {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    let hidden_tine = relative.components().any(|part| {
-        part.as_os_str()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".tine-"))
-    });
     let atomic_temp = path
         .file_name()
         .and_then(|name| name.to_str())
-        .and_then(crate::atomic_file::parse_temp_name)
-        .is_some();
-    hidden_tine || atomic_temp
+        .is_some_and(crate::atomic_file::is_temp_name);
+    atomic_temp || tine_own_entry(path.strip_prefix(root).unwrap_or(path))
+}
+
+/// Whether a component of `relative` is a `.tine-` entry Tine keeps for itself
+/// under the assets directory (restore's `.tine-restore-recovery` folder and
+/// what it holds). A wider question than "is this a temp name": such a folder
+/// is no temp, and every file inside it is Tine's whatever its name.
+fn tine_own_entry(relative: &Path) -> bool {
+    relative.components().any(|part| {
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".tine-"))
+    })
 }
 
 /// Events queued between watcher cycles: exact ordinary-file paths and whether

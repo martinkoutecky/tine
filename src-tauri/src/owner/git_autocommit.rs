@@ -361,24 +361,11 @@ pub(super) fn without_tine_own(
     repo.tree_with(Some(tree), &logseq, left, 0o040000)
 }
 
-/// One of Tine's own in-flight atomic-save temp files
-/// (`.{name}.{pid}.{seq}{tag}.tmp`, `tine_store::atomic_file::temp_path`).
+/// Whether the work-tree path `path` names one of Tine's own temp files; the
+/// file name is read by the one temp-name answer,
+/// [`crate::device_io::atomic_file::is_temp_name`].
 pub(super) fn tine_temp(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let Some(stem) = name.strip_suffix(".tmp") else {
-        return false;
-    };
-    let Some((before, seq)) = stem.rsplit_once('.') else {
-        return false;
-    };
-    let Some((target, pid)) = before.rsplit_once('.') else {
-        return false;
-    };
-    let digits = seq.bytes().take_while(u8::is_ascii_digit).count();
-    target.starts_with('.')
-        && !pid.is_empty()
-        && pid.bytes().all(|b| b.is_ascii_digit())
-        && digits > 0
+    crate::device_io::atomic_file::is_temp_name(path.rsplit('/').next().unwrap_or(path))
 }
 
 /// What an autocommit did.

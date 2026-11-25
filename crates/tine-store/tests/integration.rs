@@ -104,6 +104,9 @@ mod c3y_derived_names_guard;
 #[path = "c3y_property_separator_guard.rs"]
 mod c3y_property_separator_guard;
 
+#[path = "temp_name_owner_guard.rs"]
+mod temp_name_owner_guard;
+
 #[path = "client_root_boundary.rs"]
 mod client_root_boundary;
 

@@ -14,7 +14,7 @@ const EXEMPLAR: &str = "crates/tine-store/src/atomic_file.rs";
 /// never a user's file name — so their length is fixed.
 const NAME_FREE_TEMPS: &[&str] = &[".tine-restore-{}-{}.tmp", ".tine-tx-{}.tmp", ".tmp"];
 
-fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap().flatten() {
         let path = entry.path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -31,7 +31,7 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Production lines: a `#[cfg(test)]` item (a test module or helper) is skipped
 /// to the end of its braces.
-fn production_lines(text: &str) -> Vec<(usize, &str)> {
+pub(crate) fn production_lines(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut skip = false;
     let mut depth = 0i64;

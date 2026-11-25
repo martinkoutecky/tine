@@ -68,6 +68,16 @@ pub(crate) fn is_fixed_temp_name(name: &str) -> bool {
     name.starts_with(".tine-") && name.ends_with(".tmp")
 }
 
+/// Whether the file name `name` is one of Tine's own temps: a [`temp_path`]
+/// temp of any target and tag, or a [`fixed_temp_name`]. The one answer for
+/// callers that skip every Tine temp wherever it lies (the asset watcher; Git
+/// autocommit and pull, through the app's `device_io` copy of this file); the
+/// graph watcher narrows the target to graph text.
+/// Guarded by `tests/temp_name_owner_guard.rs`. O(name length), no I/O.
+pub(crate) fn is_temp_name(name: &str) -> bool {
+    is_fixed_temp_name(name) || parse_temp_name(name).is_some()
+}
+
 /// A trash or conflict-copy name `{prefix}{name}` (prefix = stamp + reason)
 /// that fits NAME_MAX whenever `name` itself does: the stem is cut at a char
 /// boundary and its extension kept, so the copy is still recognized by kind
@@ -774,6 +784,35 @@ mod tests {
             ".A.md.1.2.new.part",
         ] {
             assert_eq!(parse_temp_name(foreign), None, "{foreign}");
+            assert!(!is_temp_name(foreign), "{foreign}");
+        }
+    }
+
+    /// `is_temp_name` says yes to every name Tine's temp makers produce (every
+    /// tag, a shortened name, the fixed form, a temp of a fixed temp) and no
+    /// to user names that only look alike.
+    #[test]
+    fn is_temp_name_covers_every_temp_maker() {
+        let long = format!("{}.md", "漢".repeat(84));
+        for name in ["A.md", "x.png", "config.edn", long.as_str()] {
+            for tag in ["", ".new", ".private", ".restore", ".capture"] {
+                let temp = temp_path(&Path::new("/g/pages").join(name), 9, tag);
+                let temp = temp.file_name().unwrap().to_str().unwrap();
+                assert!(is_temp_name(temp), "{temp}");
+            }
+        }
+        let tx = fixed_temp_name("restore", "12-3");
+        assert!(is_temp_name(&tx));
+        let stage = temp_path(&Path::new("/g").join(&tx), 1, ".new");
+        assert!(is_temp_name(stage.file_name().unwrap().to_str().unwrap()));
+        for foreign in [
+            "notes.tmp",
+            ".hidden.tmp",
+            "a.x.y.tmp",
+            ".tine-trash",
+            ".config.edn.9.10new.tmp",
+        ] {
+            assert!(!is_temp_name(foreign), "{foreign}");
         }
     }
 

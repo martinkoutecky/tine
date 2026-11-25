@@ -1001,7 +1001,12 @@ fn ignored_files_temps_and_nested_repositories_are_left_out() {
     let f = fixture(&[(".gitignore", "logseq/bak/\n"), ("pages/a.md", "- a\n")]);
     write(&f.work, "logseq/bak/pages/a.md", "backup");
     write(&f.work, "pages/.a.md.4242.17.tmp", "half a save");
-    write(&f.work, "pages/.a.md.4242.18new.tmp", "half a save");
+    write(&f.work, "pages/.a.md.4242.18.new.tmp", "half a save");
+    write(
+        &f.work,
+        "pages/.tine-tx-1759000000000-1.tmp",
+        "a staged transaction",
+    );
     let nested = f.work.join("vendor/other");
     fs::create_dir_all(&nested).unwrap();
     Repository::init(&nested).unwrap();
@@ -1013,7 +1018,10 @@ fn ignored_files_temps_and_nested_repositories_are_left_out() {
     assert!(tree.get_path(Path::new("logseq/bak")).is_err());
     assert!(tree.get_path(Path::new("pages/.a.md.4242.17.tmp")).is_err());
     assert!(tree
-        .get_path(Path::new("pages/.a.md.4242.18new.tmp"))
+        .get_path(Path::new("pages/.a.md.4242.18.new.tmp"))
+        .is_err());
+    assert!(tree
+        .get_path(Path::new("pages/.tine-tx-1759000000000-1.tmp"))
         .is_err());
     assert!(
         tree.get_path(Path::new("vendor")).is_err(),
@@ -1494,7 +1502,11 @@ fn settings_round_trip_through_the_device_settings_json() {
 #[test]
 fn tine_temp_matches_only_the_atomic_save_shape() {
     assert!(tine_temp("pages/.a.md.123.4.tmp"));
-    assert!(tine_temp(".config.edn.9.10new.tmp"));
+    assert!(tine_temp(".config.edn.9.10.new.tmp"));
+    assert!(tine_temp("pages/.a.md.123.4.capture.tmp"));
+    assert!(tine_temp("pages/.tine-tx-1759000000000-1.tmp"));
+    // A shape no Tine writer ever made (the tag always starts with a dot).
+    assert!(!tine_temp(".config.edn.9.10new.tmp"));
     assert!(!tine_temp("pages/a.md"));
     assert!(!tine_temp("pages/notes.tmp"));
     assert!(!tine_temp("pages/.hidden.tmp"));
