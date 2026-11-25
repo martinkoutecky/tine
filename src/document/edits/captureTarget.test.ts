@@ -18,6 +18,7 @@ import { withToday } from "../convert";
 import { appendQueryBlock, appendToJournalDay, appendToTodayJournal, captureToPage, installAliasDraftRouteHandler, loadFeed, pageByName, resetStore } from "../index";
 import { doc } from "../model";
 import { loadSingle } from "../workingSet";
+import { captureDestination, QUICK_CAPTURE_PAGE } from "../../quickCaptureConfig";
 import type { BlockDto, PageDto, PageRead } from "../../types";
 
 beforeAll(() => initParser());
@@ -69,6 +70,19 @@ it("a capture to another spelling of a page's name lands in that page's file", a
   expect(writes).toEqual(["pages/Inbox.md"]);
   expect(names, "the capture reports the page it wrote").toEqual(["Inbox"]);
   expect(pageByName("inbox")).toBeUndefined();
+});
+
+// With journals off and no default page set, an untitled capture goes to the
+// built-in page name, by the same route as a typed title.
+it("an untitled capture with journals off lands in the page a link to the built-in name opens", async () => {
+  await graph({ "pages/Quick Capture.md": "- earlier\n" });
+  const destination = captureDestination("", { enableJournals: false });
+  expect(destination).toEqual({ kind: "page", name: QUICK_CAPTURE_PAGE });
+  const names: string[] = [];
+  expect(await captureToPage(QUICK_CAPTURE_PAGE, "- untitled", (name) => names.push(name))).toBe(true);
+  expect(onDisk("pages/Quick Capture.md")).toEqual(["earlier", "untitled"]);
+  expect(writes).toEqual(["pages/Quick Capture.md"]);
+  expect(names).toEqual(["Quick Capture"]);
 });
 
 it("a capture to a date spelling of a journal day lands in that day's journal file", async () => {
