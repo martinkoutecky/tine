@@ -1,8 +1,8 @@
 //! The shared local-target table (`fixtures/local-target-cases.json`), Rust
-//! side: the owner gives each row's recorded answer, and the asset collector
-//! (orphan listing, trash recheck) keeps the owner's attachment alive and
-//! never fewer names than before it asked the owner (the row's `today`). A row
-//! whose recorded liveness differs from the owner's attachment must name the
+//! side: the owner gives each row's recorded answer, the asset collector's own
+//! answer is still the row's `today.collector`, and liveness (orphan listing,
+//! trash recheck) is exactly that plus the owner's attachment. A row whose
+//! recorded collector answer misses the owner's attachment must name the
 //! decision or rule that explains it. The TypeScript side pins the renderer;
 //! export is pinned in tine-graph-features (`publish_query_table_tests.rs`).
 
@@ -123,7 +123,7 @@ fn table_owner_and_collector() {
         let owner = target_of(&row);
         let source = row["source"].as_str().unwrap();
         let mut found = HashSet::new();
-        crate::asset_refs::collect_asset_refs(source, &mut found);
+        crate::asset_refs::collect_live_asset_refs(source, &mut found);
         let mut collector: Vec<String> = found.iter().cloned().collect();
         collector.sort();
         let mut targets = HashSet::new();
@@ -152,8 +152,17 @@ fn table_owner_and_collector() {
         // attachment (and its first folder): never fewer names than before
         // the collector asked the owner.
         let before = strings(&row["today"]["collector"]);
+        // The collector's own answer, which export copies, is still exactly
+        // what it was before liveness asked the owner.
+        let mut own = HashSet::new();
+        crate::asset_refs::collect_asset_refs(source, &mut own);
+        let mut own: Vec<String> = own.into_iter().collect();
+        own.sort();
+        if own != before {
+            failures.push(format!("{id}: collector {own:?} != today {before:?}"));
+        }
         let mut live: HashSet<String> = before.iter().cloned().collect();
-        for name in &kept {
+        if let Some(name) = &kept {
             live.insert(name.clone());
             if let Some((folder, _)) = name.split_once('/') {
                 live.insert(folder.to_owned());
@@ -193,7 +202,7 @@ fn collector_prefilter_admits_every_spelling_the_owner_reads() {
         crate::asset_refs::collect_asset_targets(text, &mut targets);
         assert_eq!(targets, HashSet::from([name.to_owned()]), "{text}");
         let mut live = HashSet::new();
-        crate::asset_refs::collect_asset_refs(text, &mut live);
+        crate::asset_refs::collect_live_asset_refs(text, &mut live);
         assert!(live.contains(name), "{text}: {live:?}");
     }
     // The prefilter reads long text in overlapping windows: a folder name at
@@ -224,10 +233,64 @@ fn liveness_keeps_the_names_the_collector_kept_before_the_owner() {
     .into_iter()
     .filter_map(|(text, shown)| {
         let mut live = HashSet::new();
-        crate::asset_refs::collect_asset_refs(text, &mut live);
+        crate::asset_refs::collect_live_asset_refs(text, &mut live);
         (!live.contains(shown)).then(|| format!("{text}: {shown} not kept in {live:?}"))
     })
     .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Liveness only adds names, also when one note's references disagree: a
+/// stale prose path under a file (`x.png/thumb.png`, which a folder rule
+/// could read as "x.png is a folder") and two spellings of one file on a
+/// case-insensitive volume. Every name the collector alone keeps, and every
+/// file the reader shows, stays kept; the orphan list and trash compare
+/// names exactly, so an extra name can only keep a file off the unused list.
+#[test]
+fn liveness_only_adds_names_when_references_disagree() {
+    let cases: [(&str, &[&str]); 6] = [
+        (
+            "- ![x](../assets/./x.png)\n- see ../assets/x.png/thumb.png",
+            &["x.png"],
+        ),
+        (
+            "- ![x](../ASSETS/x.png)\n- see ../assets/x.png/thumb.png",
+            &["x.png"],
+        ),
+        (
+            "- ![x](../assets/x.png/../x.png)\n- see ../assets/x.png/thumb.png",
+            &["x.png"],
+        ),
+        (
+            "- <img src=\"../assets/x.png/thumb.png\">\n- ![x](../assets/./x.png)",
+            &["x.png"],
+        ),
+        (
+            "- ![x](../ASSETS/Pic.png)\n- banner:: ../assets/pic.png",
+            &["Pic.png", "pic.png"],
+        ),
+        (
+            "- ![x](../Assets/Sub/Pic.png)\n- ![x](../assets/sub/pic.png)",
+            &["Sub/Pic.png", "Sub", "sub/pic.png", "sub"],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (text, shown) in cases {
+        let mut own = HashSet::new();
+        crate::asset_refs::collect_asset_refs(text, &mut own);
+        let mut live = HashSet::new();
+        crate::asset_refs::collect_live_asset_refs(text, &mut live);
+        if let Some(lost) = own.difference(&live).next() {
+            failures.push(format!(
+                "{text:?}: liveness lost {lost} the collector keeps"
+            ));
+        }
+        for name in shown {
+            if !live.contains(*name) {
+                failures.push(format!("{text:?}: {name} not kept in {live:?}"));
+            }
+        }
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 

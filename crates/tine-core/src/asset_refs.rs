@@ -1,15 +1,16 @@
 //! Asset names a document mentions: the one collector behind orphan-asset
-//! detection, the trash recheck and publication asset copying. Pure: no I/O,
-//! no store state.
+//! detection and publication asset copying. Pure: no I/O, no store state.
 //!
-//! Two answers are combined, and neither may remove a name the other gives:
-//! - the collector's own link split and loose plaintext mentions (what this
-//!   module answered before the link-target owner existed). It stays the
-//!   base until the reader asks the owner too, because until then it is the
-//!   only answer that never forgets a spelling the reader may show;
+//! Liveness (orphan listing, trash recheck) adds a second answer, and neither
+//! may remove a name the other gives:
+//! - the collector's own link split and loose plaintext mentions
+//!   ([`collect_asset_refs`]). It stays the base until the reader asks the
+//!   link-target owner too, because until then it is the only answer that
+//!   never forgets a spelling the reader may show. Publication copies this
+//!   answer alone;
 //! - the link-target owner ([`crate::local_target`]), asked for every Markdown
 //!   link and embed, Org link and `img` macro the parser reports; only its
-//!   attachments are kept.
+//!   attachments are kept ([`collect_live_asset_refs`]).
 
 use std::collections::HashSet;
 
@@ -18,14 +19,31 @@ use crate::local_target::{local_target, Destination, LocalTarget, Origin};
 
 pub use crate::local_target::percent_decode;
 
-/// Liveness (orphan listing, trash recheck): parser-accepted link targets and
-/// conservative plaintext mentions, plus the owner's attachments (with the
-/// first folder of each nested one). The mentions may retain extra files
-/// (including literal code) but cannot shorten or replace an accepted target.
-/// O(text bytes); parsing is skipped when the text names no `assets` folder.
+/// Asset liveness combines parser-accepted targets with conservative plaintext
+/// mentions. The latter may retain extra files (including literal code), but
+/// cannot shorten or replace an accepted target. Parsing is skipped entirely
+/// when there is no asset mention.
 pub fn collect_asset_refs(text: &str, into: &mut HashSet<String>) {
+    if !text.contains("assets/") {
+        return;
+    }
+    collect(text, Some(into), None);
+}
+
+/// Liveness (orphan listing, trash recheck): [`collect_asset_refs`] plus the
+/// owner's attachments (with the first folder of each nested one), so it
+/// never holds fewer names. O(text bytes), one parse per format serving both
+/// answers; parsing is skipped when the text names no `assets` folder in any
+/// case.
+pub fn collect_live_asset_refs(text: &str, into: &mut HashSet<String>) {
+    if !names_assets_folder(text) {
+        return;
+    }
     let mut targets = HashSet::new();
-    collect(text, Some(&mut *into), &mut targets);
+    // The collector's own answer keeps its own prefilter (`assets/`, which
+    // implies the owner's).
+    let collected = text.contains("assets/").then_some(&mut *into);
+    collect(text, collected, Some(&mut targets));
     for name in targets {
         if let Some((folder, _)) = name.split_once('/') {
             into.insert(folder.to_owned());
@@ -36,16 +54,23 @@ pub fn collect_asset_refs(text: &str, into: &mut HashSet<String>) {
 
 /// The owner's attachments alone: exactly the files the owner says `text`'s
 /// destinations name (decoded once; the folder itself is no file).
-/// O(text bytes); no parse when the text names no `assets` folder.
-pub fn collect_asset_targets(text: &str, into: &mut HashSet<String>) {
-    collect(text, None, into);
+#[cfg(test)]
+pub(crate) fn collect_asset_targets(text: &str, into: &mut HashSet<String>) {
+    if names_assets_folder(text) {
+        collect(text, None, Some(into));
+    }
 }
 
 /// One parse per format serves both answers. `collected`, when given,
 /// receives the collector's own answer: parser-accepted targets split after
 /// `assets/` under raw and decoded spellings, and the loose plaintext
-/// mentions. `targets` receives the owner's attachments.
-fn collect(text: &str, collected: Option<&mut HashSet<String>>, targets: &mut HashSet<String>) {
+/// mentions. `targets`, when given, receives the owner's attachments. The
+/// callers apply the prefilters.
+fn collect(
+    text: &str,
+    mut collected: Option<&mut HashSet<String>>,
+    mut targets: Option<&mut HashSet<String>>,
+) {
     use crate::lsdoc::ast::{Inline, Url};
     fn links(nodes: &[Inline], into: &mut HashSet<String>) {
         for node in nodes {
@@ -108,12 +133,6 @@ fn collect(text: &str, collected: Option<&mut HashSet<String>>, targets: &mut Ha
             }
         }
     }
-    if !names_assets_folder(text) {
-        return;
-    }
-    // The collector's own answer keeps its own prefilter (`assets/`, which
-    // implies the owner's).
-    let mut collected = collected.filter(|_| text.contains("assets/"));
     // Preambles carry no format argument. Both parsers may conservatively add
     // accepted targets; neither removes a target recognized by the other.
     for format in ["md", "org"] {
@@ -121,7 +140,9 @@ fn collect(text: &str, collected: Option<&mut HashSet<String>>, targets: &mut Ha
             if let Some(into) = collected.as_deref_mut() {
                 links(&nodes, into);
             }
-            owner(&nodes, format == "md", targets);
+            if let Some(into) = targets.as_deref_mut() {
+                owner(&nodes, format == "md", into);
+            }
         }
     }
     if let Some(into) = collected {
@@ -214,40 +235,28 @@ pub fn collect_block_asset_refs(b: &DocBlock, into: &mut HashSet<String>) {
 /// [`collect_asset_refs`] over a document's preamble and every block.
 /// Cost O(document text bytes).
 pub fn collect_document_asset_refs(doc: &Document, into: &mut HashSet<String>) {
-    each_text(doc, &mut |text| collect_asset_refs(text, into));
+    if let Some(pre) = &doc.pre_block {
+        collect_asset_refs(pre, into);
+    }
+    for block in &doc.roots {
+        collect_block_asset_refs(block, into);
+    }
 }
 
-/// The names export starts from, kept as two answers so neither can narrow
-/// the other: `collected` is the collector's own answer (raw and decoded
-/// spellings, mentions, folder markers), `targets` the owner's attachments.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct ExportNames {
-    pub collected: HashSet<String>,
-    pub targets: HashSet<String>,
-}
-
-/// [`ExportNames`] of one text, with one parse per format. O(text bytes).
-pub fn collect_export_names(text: &str, into: &mut ExportNames) {
-    collect(text, Some(&mut into.collected), &mut into.targets);
-}
-
-/// [`collect_export_names`] over a document's preamble and every block.
+/// [`collect_live_asset_refs`] over a document's preamble and every block:
+/// the names the orphan list and the trash recheck keep alive.
 /// Cost O(document text bytes).
-pub fn collect_document_export_names(doc: &Document, into: &mut ExportNames) {
-    each_text(doc, &mut |text| collect_export_names(text, into));
-}
-
-fn each_text(doc: &Document, f: &mut dyn FnMut(&str)) {
-    fn block(b: &DocBlock, f: &mut dyn FnMut(&str)) {
-        f(b.raw());
+pub fn collect_document_live_asset_refs(doc: &Document, into: &mut HashSet<String>) {
+    fn block(b: &DocBlock, into: &mut HashSet<String>) {
+        collect_live_asset_refs(b.raw(), into);
         for c in &b.children {
-            block(c, f);
+            block(c, into);
         }
     }
     if let Some(pre) = &doc.pre_block {
-        f(pre.as_str());
+        collect_live_asset_refs(pre, into);
     }
     for b in &doc.roots {
-        block(b, f);
+        block(b, into);
     }
 }

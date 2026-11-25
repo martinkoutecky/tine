@@ -510,12 +510,12 @@ pub(crate) fn parse_doc(path: &Path, content: &str) -> Document {
 
 /// Asset safety also includes physical files omitted from the query snapshot.
 /// Use the normal bounded input and format parser, isolating parser failures.
-/// [`tine_core::asset_refs::collect_document_asset_refs`], counted for cost
+/// [`tine_core::asset_refs::collect_document_live_asset_refs`], counted for cost
 /// tests: the one entry the store uses to scan a document for asset names.
 pub(crate) fn collect_document_asset_refs(doc: &Document, names: &mut HashSet<String>) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::asset_ref_document();
-    tine_core::asset_refs::collect_document_asset_refs(doc, names);
+    tine_core::asset_refs::collect_document_live_asset_refs(doc, names);
 }
 
 pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
@@ -3763,7 +3763,7 @@ impl Graph {
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
         self.with_pages(|pages| {
             for (_e, doc) in pages {
-                tine_core::asset_refs::collect_document_asset_refs(doc, &mut referenced);
+                tine_core::asset_refs::collect_document_live_asset_refs(doc, &mut referenced);
             }
         });
         let mut out = Vec::new();

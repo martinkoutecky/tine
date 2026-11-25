@@ -113,7 +113,7 @@ impl ReadSnapshot {
             // Oracle: the carried index answers what a full scan does.
             let mut scanned = HashSet::new();
             for (_, doc) in self.physical_pages.iter() {
-                tine_core::asset_refs::collect_document_asset_refs(doc, &mut scanned);
+                tine_core::asset_refs::collect_document_live_asset_refs(doc, &mut scanned);
             }
             let indexed: HashSet<String> = index.names().cloned().collect();
             assert_eq!(

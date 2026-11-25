@@ -125,3 +125,72 @@ fn a_bounded_asset_read_refuses_an_oversized_file_and_accepts_the_limit() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Through the store: for a sole reference in each spelling the link-target
+/// owner reads, the orphan list leaves out exactly the file the reader shows
+/// and trash refuses it. Look-alikes the reader does not show stay unused.
+#[test]
+fn orphans_and_trash_see_the_file_the_reader_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for folder in ["pages", "journals", "assets/sub"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let page = [
+        "- ![x](../ASSETS/upper.png)",
+        "- ![x](../assets%5Cbackslash.png)",
+        "- ![x](../assets/sub%5Cnested.png)",
+        "- {{img ../assets/macro.png, 200}}",
+        "- [[../assets/org-bare.png]]",
+        "- <video poster=\"../assets/poster.png\"></video>",
+        "- [:img {:src \"../assets/hiccup.png\"}]",
+        "- ![x](../assets/photo%23v2.png)",
+        "- ![x](../assets/demo%2520v2.png)",
+    ];
+    std::fs::write(root.join("pages/a.md"), page.join("\n") + "\n").unwrap();
+    let shown = [
+        "upper.png",
+        "backslash.png",
+        "macro.png",
+        "org-bare.png",
+        "poster.png",
+        "hiccup.png",
+        "photo#v2.png",
+        "demo%20v2.png",
+    ];
+    // Look-alikes the reader does not show: the twice-decoded spelling, and
+    // a file nothing names.
+    let others = ["demo v2.png", "unused.png"];
+    for name in shown.iter().chain(&others).chain(&["sub/nested.png"]) {
+        std::fs::write(root.join("assets").join(name), name.as_bytes()).unwrap();
+    }
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
+
+    let orphans: Vec<String> = orphan_assets(&store)
+        .unwrap()
+        .into_iter()
+        .map(|asset| asset.name)
+        .collect();
+    for name in shown {
+        assert!(
+            !orphans.contains(&name.to_owned()),
+            "{name} listed as unused: {orphans:?}"
+        );
+    }
+    assert!(orphans.contains(&"unused.png".to_owned()), "{orphans:?}");
+    assert!(orphans.contains(&"demo v2.png".to_owned()), "{orphans:?}");
+
+    for name in shown {
+        assert_eq!(
+            trash_asset(&store, name).unwrap(),
+            TrashOutcome::Referenced,
+            "{name}"
+        );
+        assert!(root.join("assets").join(name).exists(), "{name}");
+    }
+    assert_eq!(
+        trash_asset(&store, "unused.png").unwrap(),
+        TrashOutcome::Trashed
+    );
+    store.close();
+}

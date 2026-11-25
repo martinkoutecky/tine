@@ -45,13 +45,12 @@ impl Corpus {
     }
 
     /// Asset names these pages mention, by the same collector as orphan-asset
-    /// detection: its own answer (raw and percent-decoded spellings, plus the
-    /// first segment of a nested reference) and, kept apart, the link-target
-    /// owner's attachments. Cost O(page text bytes); no I/O.
-    pub fn asset_refs(&self) -> crate::asset_refs::ExportNames {
-        let mut names = crate::asset_refs::ExportNames::default();
+    /// detection: raw and percent-decoded spellings, plus the first segment of
+    /// a nested reference. Cost O(page text bytes); no I/O.
+    pub fn asset_refs(&self) -> std::collections::HashSet<String> {
+        let mut names = std::collections::HashSet::new();
         for page in &self.pages {
-            crate::asset_refs::collect_document_export_names(&page.document, &mut names);
+            crate::asset_refs::collect_document_asset_refs(&page.document, &mut names);
         }
         names
     }

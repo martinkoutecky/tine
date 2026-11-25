@@ -101,20 +101,23 @@ Stamp-invisible in-place writes and changes after this final observation can
 still race the move. Only set-aside files are read and parsed again; they are
 not added to backlinks or query indexes.
 
-Which files a note keeps alive, and which files export copies, combine two
-answers, and neither removes a name the other gives. The first is the
-collector's own (`crates/tine-core/src/asset_refs.rs`): parser-accepted link
-targets split after `assets/` under raw and percent-decoded spellings, plus
-the deliberately loose plaintext mentions of `assets/` (property values,
+Which files a note keeps alive combines two answers, and neither removes a
+name the other gives. The first is the collector's own
+(`crates/tine-core/src/asset_refs.rs`, `collect_asset_refs`): parser-accepted
+link targets split after `assets/` under raw and percent-decoded spellings,
+plus the deliberately loose plaintext mentions of `assets/` (property values,
 raw HTML and Hiccup, code), which may keep extra files but never drop one.
 The second is the one link-target owner
 (`crates/tine-core/src/local_target.rs`), asked for every Markdown link and
 image embed, Org link and `img` macro URL the parser reports; its attachment
 is added (a folder literally written `assets`, in any case, the name after it
-decoded once). Liveness keeps both answers; export copies what the first
-answer copied (the decoded spelling, without folder markers) plus every owner
-attachment. Until the reader asks the same owner, the collector's own answer
+decoded once), with its first folder. The orphan list and the trash recheck
+compare names exactly, so the added names can only keep a file off the
+unused list. Until the reader asks the same owner, the collector's own answer
 stays the base, so no change to the owner can make a shown file unused.
+Export does not ask the owner yet: it copies the collector's own answer (the
+decoded spelling, without folder markers), until a later step makes export
+and the reader ask the owner together.
 
 The guard and the inventory answer parsed pages from an in-memory
 asset-reference index of the published view (per page, the names the same

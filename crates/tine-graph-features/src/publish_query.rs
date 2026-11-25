@@ -506,16 +506,10 @@ fn app_files(
     Ok(())
 }
 
-/// The asset names publication copies: the collector's own answer as it was
-/// copied before the link-target owner (the decoded spelling of each, without
-/// the directory markers), plus every attachment the owner names, as it names
-/// it (never decoded again), unless another copied name lies under it. Never
-/// fewer names than the collector's answer alone. Pure; O(names × path depth).
-pub(crate) fn publication_asset_names(names: tine_core::asset_refs::ExportNames) -> Vec<String> {
-    let tine_core::asset_refs::ExportNames {
-        collected: mut names,
-        targets,
-    } = names;
+/// The asset names publication copies, from the collector's candidates: the
+/// decoded spelling of each, without the directory markers. Pure; O(names ×
+/// path depth).
+pub(crate) fn publication_asset_names(mut names: HashSet<String>) -> Vec<String> {
     // The orphan scanner keeps raw and decoded URL spellings. A browser
     // decodes the URL, so copy only the decoded name when both were seen.
     let encoded: Vec<_> = names
@@ -539,21 +533,6 @@ pub(crate) fn publication_asset_names(names: tine_core::asset_refs::ExportNames)
             }
         }
     }
-    // The owner's attachments are already file names. A link to a folder
-    // (`assets/sub/`) names no file, so an owner name that another name lies
-    // under is not copied; nothing above is removed for it.
-    let folders: HashSet<&str> = names
-        .iter()
-        .chain(&targets)
-        .flat_map(|name| Path::new(name).ancestors().skip(1))
-        .filter_map(Path::to_str)
-        .collect();
-    let owned: Vec<String> = targets
-        .iter()
-        .filter(|name| !folders.contains(name.as_str()))
-        .cloned()
-        .collect();
-    names.extend(owned);
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
     names
