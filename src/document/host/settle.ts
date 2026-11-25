@@ -16,11 +16,27 @@ export interface SettleOptions {
 
 export type SettleScope = readonly string[] | "all";
 
+/** Why a barrier failed: the host refused to publish these files (each needs the
+ * user: a conflict, a save or index publication that keeps failing); it gave no
+ * answer (a debt query, a failed wait call, a refusal naming no file); work kept
+ * arriving for every round; or the window has no binding (a retired client, or
+ * edits typed before any client bound). */
+export type Unsettled =
+  | { kind: "stuck"; files: readonly string[] }
+  | { kind: "no-answer" }
+  | { kind: "busy" }
+  | { kind: "unbound" };
+
 /** True only when the scope's local work is drained, every version the host took
  * from it (and every debt the host owes in it) has published, the asset writes
  * it waits for have finished, and none of that changed across the barrier.
  * Reaching the round bound with new work is false; an empty scope is true. */
 export async function settle(client: HostClient, scope: SettleScope, options: SettleOptions = {}): Promise<boolean> {
+  return await unsettled(client, scope, options) === null;
+}
+
+/** `settle`'s answer with its reason: null when settled, else why not. */
+export async function unsettled(client: HostClient, scope: SettleScope, options: SettleOptions = {}): Promise<Unsettled | null> {
   // The host proves a witness only on a page it holds (§4.4): the barrier is
   // an operation targeting its pages, so it holds them open (B-Q2). Otherwise
   // the window's own publication answer may close a page nothing else holds
@@ -36,11 +52,15 @@ export async function settle(client: HostClient, scope: SettleScope, options: Se
   }
 }
 
-async function rounds(client: HostClient, scope: SettleScope, options: SettleOptions): Promise<boolean> {
+/** The window has no binding to settle through. */
+export const UNBOUND: Unsettled = { kind: "unbound" };
+const NO_ANSWER: Unsettled = { kind: "no-answer" };
+
+async function rounds(client: HostClient, scope: SettleScope, options: SettleOptions): Promise<Unsettled | null> {
   // Today's `flushAll` bound (E96): four rounds.
   for (let round = 0; round < 4; round += 1) {
     // A retired client's binding ended: nothing it drains is this graph's (I-20).
-    if (client.retired) return false;
+    if (client.retired) return UNBOUND;
     if (options.assets) await Promise.all(client.assets.pending());
     // The work identity is taken after the asset wait, so references those
     // writes added are drained in this round; later work changes it.
@@ -53,19 +73,20 @@ async function rounds(client: HostClient, scope: SettleScope, options: SettleOpt
     // names it instead.
     const taken = client.needs(names);
     const owed = await client.owed(paths);
-    if (!owed) return false;
+    if (!owed) return NO_ANSWER;
     const needs = merge(taken, owed, options.witness);
     if (needs.length) {
       await client.saveNow(needs.map((need) => need.key));
-      if (!await client.published(needs)) return false;
+      const published = await client.publication(needs);
+      if (published !== true) return published.length ? { kind: "stuck", files: published } : client.retired ? UNBOUND : NO_ANSWER;
     }
     const after = await client.owed(paths);
-    if (!after) return false;
+    if (!after) return NO_ANSWER;
     // Final synchronous proof: nothing below awaits, so no edit, answer, asset
     // write or host debt can arrive between this check and the caller's next step.
-    if (!client.retired && quiescent(client, scope, start, needs, after, options)) return true;
+    if (!client.retired && quiescent(client, scope, start, needs, after, options)) return null;
   }
-  return false;
+  return client.retired ? UNBOUND : { kind: "busy" };
 }
 
 function pathsOf(client: HostClient, names: readonly string[]): string[] {
