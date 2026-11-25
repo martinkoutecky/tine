@@ -290,7 +290,7 @@ impl ProductionIo {
         if self.check_path(dir).is_err() {
             return (None, None);
         }
-        let id = directory_id(dir);
+        let id = crate::watch::directory_identity(dir);
         #[cfg(feature = "test-faults")]
         if count {
             crate::cost_counters::fsync();
@@ -310,7 +310,7 @@ impl ProductionIo {
         path: &Path,
         read: Result<crate::watch::Stamp, WitnessStep>,
         synced: &BTreeMap<PathBuf, ChainSync>,
-        now: &mut BTreeMap<PathBuf, Option<(u64, u64)>>,
+        now: &mut BTreeMap<PathBuf, Option<u128>>,
     ) -> SourceWitness {
         let result = read.and_then(|read| {
             let mut weak = cfg!(windows);
@@ -321,11 +321,13 @@ impl ProductionIo {
                     Some((Some(Err(_)), _)) => return Err(WitnessStep::DirectorySync),
                     Some((None, _)) | None => return Err(WitnessStep::Containment),
                 }
+                // An identity is evidence only when both lookups answered
+                // and agree: a failed lookup or a non-directory fails.
                 let id = synced[dir].1;
                 let after = *now
                     .entry(dir.to_path_buf())
-                    .or_insert_with(|| directory_id(dir));
-                if id != after {
+                    .or_insert_with(|| crate::watch::directory_identity(dir));
+                if id.is_none() || id != after {
                     return Err(WitnessStep::Replaced);
                 }
             }
@@ -609,7 +611,9 @@ fn read_published(path: &Path) -> io::Result<Option<(crate::watch::Stamp, crate:
 /// `bytes` both times and the two stamps equal (an in-place overwrite
 /// between them is detected; one in the same clock tick that restores the
 /// size is the accepted limit L1). Windows opens the handle for writing,
-/// which its flush needs. Returns the stamp after the reread.
+/// which its flush needs. The reads compare bytes and stamps only: they
+/// use the bounded reader and compute no revision. Returns the stamp after
+/// the reread.
 fn witness_file(path: &Path, bytes: &[u8]) -> Result<crate::watch::Stamp, WitnessStep> {
     use std::io::Seek;
     #[cfg(windows)]
@@ -619,7 +623,8 @@ fn witness_file(path: &Path, bytes: &[u8]) -> Result<crate::watch::Stamp, Witnes
     let mut file = file.map_err(|_| WitnessStep::Open)?;
     #[cfg(test)]
     WITNESS_READS.with(|reads| reads.set(reads.get() + 1));
-    let (first, _) = read_open(&mut file).map_err(|_| WitnessStep::Read)?;
+    let (first, _) =
+        crate::model::read_parse_open_file(&mut file).map_err(|_| WitnessStep::Read)?;
     let read = (file.metadata().ok())
         .and_then(|meta| crate::watch::stamp_from_metadata(&meta))
         .ok_or(WitnessStep::Read)?;
@@ -632,7 +637,8 @@ fn witness_file(path: &Path, bytes: &[u8]) -> Result<crate::watch::Stamp, Witnes
     file.rewind().map_err(|_| WitnessStep::Reread)?;
     #[cfg(test)]
     WITNESS_READS.with(|reads| reads.set(reads.get() + 1));
-    let (second, _) = read_open(&mut file).map_err(|_| WitnessStep::Reread)?;
+    let (second, _) =
+        crate::model::read_parse_open_file(&mut file).map_err(|_| WitnessStep::Reread)?;
     let reread = (file.metadata().ok())
         .and_then(|meta| crate::watch::stamp_from_metadata(&meta))
         .ok_or(WitnessStep::Reread)?;
@@ -650,9 +656,6 @@ thread_local! {
     /// Graph directory syncs asked for (`sync_graph_directory`), for cost
     /// tests.
     pub(super) static DIR_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// Directory identities taken for a witness chain (`directory_id`), for
-    /// cost tests.
-    pub(super) static DIR_IDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Run once just before the witness's step (another program acting
     /// between two of its steps).
     pub(super) static WITNESS_HOOK: std::cell::RefCell<Option<WitnessHook>> =
@@ -678,27 +681,10 @@ fn witness_hook(step: WitnessStep) {
     }
 }
 
-/// A directory's identity for the witness's chain (Unix device and inode;
-/// none elsewhere): a directory replaced while its chain was synced makes
-/// the witness fail.
-fn directory_id(dir: &Path) -> Option<(u64, u64)> {
-    #[cfg(test)]
-    DIR_IDS.with(|ids| ids.set(ids.get() + 1));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        fs::metadata(dir).ok().map(|meta| (meta.dev(), meta.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-        None
-    }
-}
-
 /// One directory's sync in a witness chain: its result and its identity
-/// when synced. `None` result: the directory failed the containment check.
-type ChainSync = (Option<io::Result<DirectoryWitness>>, Option<(u64, u64)>);
+/// when synced (`watch::directory_identity`). `None` result: the directory
+/// failed the containment check.
+type ChainSync = (Option<io::Result<DirectoryWitness>>, Option<u128>);
 
 /// A synced temporary file for `path`. The host's writes and syncs are
 /// counted where the transaction's are (`cost_counters`, I-25, Q-P2b-2), by

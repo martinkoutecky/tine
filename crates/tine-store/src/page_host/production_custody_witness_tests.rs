@@ -277,15 +277,13 @@ fn a_source_overwritten_in_place_during_its_witness_keeps_custody() {
     assert!(drafted(&f, OLD));
 }
 
-/// Reopen: the path is replaced by another file with the same bytes
-/// after the chain's syncs (a reopen): the final check sees another file,
-/// so the witness fails. The plain witness flushes once and reads twice.
 /// A launch with no decided source is develop's directory pass: no
 /// directory identity is taken and no evidence kept; with one decided
 /// source, only its chain's directories are identified.
 #[test]
 fn a_launch_without_decided_sources_takes_no_witness_evidence() {
-    use crate::page_host::production::{DIR_IDS, DIR_SYNCS};
+    use crate::page_host::production::DIR_SYNCS;
+    use crate::watch::DIRECTORY_IDENTITIES as DIR_IDS;
     let root = tempfile::tempdir().unwrap();
     let (graph, app) = (root.path().join("graph"), root.path().join("app"));
     let trash = graph.join("logseq/.tine-trash/pages");
@@ -314,6 +312,9 @@ fn a_launch_without_decided_sources_takes_no_witness_evidence() {
     assert_eq!(DIR_SYNCS.with(std::cell::Cell::get), plain);
 }
 
+/// Reopen: the path is replaced by another file with the same bytes
+/// after the chain's syncs (a reopen): the final check sees another file,
+/// so the witness fails. The plain witness flushes once and reads twice.
 #[test]
 fn the_witness_fails_when_the_path_names_another_file_afterwards() {
     let mut f = fixture();
@@ -495,4 +496,81 @@ fn launch_witness_cost_for_1000_pairs_under_4_directories() {
     assert_eq!(develop, (5, 0, 1000));
     assert_eq!(candidate, (5, 1000, 3000));
     assert_eq!(per_source, (5 + 2 * 1000, 1000, 3000));
+}
+
+/// Launch's witness evidence for a decided pair: (witness reads, file
+/// fsyncs, directory identities) taken by `run`.
+fn witness_cost<T>(run: impl FnOnce() -> T) -> (T, (u64, u64, u64)) {
+    use crate::atomic_file::FILE_SYNCS;
+    use crate::watch::DIRECTORY_IDENTITIES;
+    WITNESS_READS.with(|reads| reads.set(0));
+    FILE_SYNCS.with(|syncs| syncs.set(0));
+    DIRECTORY_IDENTITIES.with(|ids| ids.set(0));
+    let out = run();
+    let cost = (
+        WITNESS_READS.with(std::cell::Cell::get),
+        FILE_SYNCS.with(std::cell::Cell::get),
+        DIRECTORY_IDENTITIES.with(std::cell::Cell::get),
+    );
+    (out, cost)
+}
+
+/// A decided pair whose source still holds its preimage: Use Disk on A
+/// while the root's sync fails, with C replaced outside (not certified),
+/// retains it.
+fn decided_retained() -> Fixture {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    replace_outside(&f, "c.md", OLD);
+    fail_root(&mut f);
+    f.send("a.md", RequestKind::Discard);
+    assert_eq!(
+        state(&f, "a.md"),
+        (PairPhase::Retained, PairChoice::SourceDisk)
+    );
+    f
+}
+
+/// E1 with an unreadable receiver: the pair stays Retained whatever the
+/// witness would say, so launch takes no witness evidence for it (no
+/// witness read, file flush or directory identity; develop's two endpoint
+/// reads remain).
+#[test]
+fn a_launch_with_a_matching_source_and_an_unreadable_receiver_takes_no_witness_evidence() {
+    let f = decided_retained();
+    unreadable(&f, "c.md");
+    let (f, cost) = witness_cost(|| reopen(f));
+    assert_eq!(state(&f, "a.md").0, PairPhase::Retained);
+    assert_eq!(cost, (0, 0, 0));
+}
+
+/// E1 with an absent receiver: a missing file is a successful read, so
+/// launch witnesses the matching source (two reads, one flush, the chain's
+/// identity taken and rechecked) and a healthy witness cancels.
+#[test]
+fn a_launch_with_a_matching_source_and_an_absent_receiver_witnesses_and_cancels() {
+    let f = decided_retained();
+    fs::remove_file(f.graph.join("c.md")).unwrap();
+    let (f, cost) = witness_cost(|| reopen(f));
+    assert_eq!(state(&f, "a.md").0, PairPhase::Cancelled);
+    assert_eq!((cost.0, cost.1), (2, 1));
+    assert_eq!(
+        cost.2, 2,
+        "the graph root, when synced and at the final check"
+    );
+}
+
+/// A chain directory's identity is evidence only when both lookups
+/// answer and agree: a failed lookup (both times) fails the witness, where
+/// `None == None` would have passed it.
+#[test]
+fn a_failed_directory_identity_lookup_fails_the_witness() {
+    let mut f = fixture();
+    let root = f.graph.clone();
+    crate::watch::IDENTITY_FAULTS.with(|faults| faults.borrow_mut().insert(root));
+    let witness = f.host.fs.source_witnessed("a.md", &bytes(OLD));
+    crate::watch::IDENTITY_FAULTS.with(|faults| faults.borrow_mut().clear());
+    assert_eq!(witness, SourceWitness::Failed(WitnessStep::Replaced));
+    assert_eq!(witness_failures(&f, "replaced"), 1);
 }

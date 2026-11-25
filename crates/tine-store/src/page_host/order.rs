@@ -193,6 +193,16 @@ pub(super) struct Pair {
     pub choice: PairChoice,
 }
 
+/// A decided pair launch judges (`Order::launch_judged`): its place
+/// (operation name, pair index) and both endpoints' read results.
+pub(super) struct Judged<'a> {
+    pub name: &'a str,
+    pub index: usize,
+    pub pair: &'a Pair,
+    pub source: &'a Text,
+    pub receiver: &'a Text,
+}
+
 /// A paired operation whose durable draft is on disk: its pairs, every
 /// page it names, and the decision records that retire after it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -634,29 +644,56 @@ impl Order {
         }
     }
 
-    /// Launch: each decided pair's phase from its endpoints' disk bytes
-    /// (`reads`), judged by `judge` (the pair, the source's and the
-    /// receiver's bytes): whether the source durably holds the original
+    /// Launch: each decided pair's phase. A pair `launch_judged` lists is
+    /// judged by `judge` (the pair, the source's and the receiver's bytes):
+    /// whether the source durably holds the original
     /// (`Host::source_original`) and whether the receiver is certified
-    /// (`Host::receiver_certified`). A failed read keeps custody.
+    /// (`Host::receiver_certified`). Any other decided pair (a read failed)
+    /// keeps custody.
     pub fn decided_phases(
         &mut self,
         reads: &BTreeMap<PageKey, Option<Text>>,
         mut judge: impl FnMut(&Pair, &Text, &Text) -> (Original, bool),
     ) {
+        let judged: Vec<(String, usize, PairPhase)> = (self.launch_judged(reads))
+            .map(|j| {
+                let (original, certified) = judge(j.pair, j.source, j.receiver);
+                let phase = cancel_phase(original, j.source, certified, true);
+                (j.name.to_owned(), j.index, phase)
+            })
+            .collect();
         for op in self.paired.values_mut() {
             for pair in op.pairs.iter_mut().filter(|p| p.choice != PairChoice::None) {
-                let read = |key: &PageKey| reads.get(key).cloned().flatten();
-                let phase = match (read(&pair.source), read(&pair.receiver)) {
-                    (Some(source), Some(receiver)) => {
-                        let (original, certified) = judge(pair, &source, &receiver);
-                        cancel_phase(original, &source, certified, true)
-                    }
-                    _ => PairPhase::Retained,
-                };
-                pair.phase = phase;
+                pair.phase = PairPhase::Retained;
             }
         }
+        for (name, index, phase) in judged {
+            self.paired.get_mut(&name).unwrap().pairs[index].phase = phase;
+        }
+    }
+
+    /// Launch: the decided pairs E1 judges, with their two read results:
+    /// those whose source and receiver reads (`reads`, one per
+    /// `decided_pages` key) both succeeded, an absent file included. The
+    /// one answer for launch's witness schedule (`launch_witnesses`) and
+    /// its phases (`decided_phases`).
+    pub fn launch_judged<'a>(
+        &'a self,
+        reads: &'a BTreeMap<PageKey, Option<Text>>,
+    ) -> impl Iterator<Item = Judged<'a>> + 'a {
+        self.paired.iter().flat_map(move |(name, op)| {
+            (op.pairs.iter().enumerate())
+                .filter(|(_, p)| p.choice != PairChoice::None)
+                .filter_map(move |(index, pair)| {
+                    Some(Judged {
+                        name,
+                        index,
+                        pair,
+                        source: reads.get(&pair.source)?.as_ref()?,
+                        receiver: reads.get(&pair.receiver)?.as_ref()?,
+                    })
+                })
+        })
     }
 
     /// Both endpoints of every decided pair (launch reads them once).
@@ -667,18 +704,19 @@ impl Order {
             .collect()
     }
 
-    /// Each decided pair's source (once) whose launch read `bytes` gives
-    /// `Some` (given the source and its preimage): launch witnesses those
+    /// The sources launch witnesses, each once with its read bytes: those
+    /// of a pair `launch_judged` lists whose bytes are its preimage, the
+    /// only pairs whose phase the witness can change. Launch witnesses them
     /// in its one directory pass (`HostIo::graph_launch`).
-    pub fn decided_sources(
+    pub fn launch_witnesses(
         &self,
-        mut bytes: impl FnMut(&PageKey, &Text) -> Option<Text>,
+        reads: &BTreeMap<PageKey, Option<Text>>,
     ) -> Vec<(PageKey, Text)> {
         let mut seen = BTreeSet::new();
-        self.pairs()
-            .filter(|(_, p)| p.choice != PairChoice::None)
-            .filter_map(|(_, p)| Some((p.source.clone(), bytes(&p.source, &p.preimage)?)))
-            .filter(|(source, _)| seen.insert(source.clone()))
+        (self.launch_judged(reads))
+            .filter(|j| source_present(&j.pair.preimage, j.source))
+            .filter(|j| seen.insert(&j.pair.source))
+            .map(|j| (j.pair.source.clone(), j.source.clone()))
             .collect()
     }
 
@@ -1504,5 +1542,48 @@ mod tests {
         assert!(o.touches(&BTreeSet::from(["s1".to_string()])));
         o.discarded("d2");
         assert!(o.gates.is_empty(), "no move left: the order ends");
+    }
+
+    /// Two decided pairs on one source whose bytes hold the preimage, one
+    /// receiver unreadable and one readable: launch schedules the source's
+    /// witness once (eligibility per pair, then once per source), as with
+    /// both pairs judged; with both receivers unreadable, not at all.
+    #[test]
+    fn a_source_with_one_unreadable_and_one_readable_receiver_is_witnessed_once() {
+        let text: Text = Some(Arc::from(&b"- a"[..]));
+        let mut order = Order::default();
+        for (name, receiver) in [("op1", "r1"), ("op2", "r2")] {
+            let pair = Pair {
+                member: 0,
+                source_member: 1,
+                receiver: receiver.into(),
+                source: "s".into(),
+                image: text.clone(),
+                preimage: text.clone(),
+                phase: PairPhase::Retained,
+                choice: PairChoice::SourceDisk,
+            };
+            let op = PairedOp {
+                id: [0; 16],
+                pairs: vec![pair],
+                pages: BTreeSet::from([receiver.into(), "s".into()]),
+                decisions: BTreeMap::new(),
+                unreadable: false,
+            };
+            order.adopt(name.into(), op);
+        }
+        let mut reads = BTreeMap::from([
+            ("s".to_string(), Some(text.clone())),
+            ("r1".to_string(), None),
+            ("r2".to_string(), Some(text.clone())),
+        ]);
+        let once = vec![("s".to_string(), text)];
+        assert_eq!(order.launch_witnesses(&reads), once);
+        // Both pairs judged (an absent receiver reads): still once.
+        reads.insert("r1".into(), Some(None));
+        assert_eq!(order.launch_witnesses(&reads), once);
+        reads.insert("r1".into(), None);
+        reads.insert("r2".into(), None);
+        assert!(order.launch_witnesses(&reads).is_empty());
     }
 }

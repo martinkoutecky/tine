@@ -461,14 +461,11 @@ impl<F: HostIo> Host<F> {
             })
             .collect();
         // The launch's one directory pass (the graph's keys) also witnesses
-        // every decided source that holds its preimage: the sources' file
-        // steps, then each shared directory synced once, then their final
-        // checks. Launch's best-effort syncs of other directories prove
-        // nothing about a source on their own.
-        let sources = self.order.decided_sources(|source, preimage| {
-            let bytes = reads.get(source).cloned().flatten()?;
-            order::source_present(preimage, &bytes).then_some(bytes)
-        });
+        // each source launch judges that holds its preimage: the sources'
+        // file steps, then each shared directory synced once, then their
+        // final checks. Launch's best-effort syncs of other directories
+        // prove nothing about a source on their own.
+        let sources = self.order.launch_witnesses(&reads);
         let pages = self.keys.iter().cloned().collect();
         let witnessed: BTreeMap<PageKey, SourceWitness> = sources
             .iter()

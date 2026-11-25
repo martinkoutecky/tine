@@ -786,14 +786,52 @@ const WITNESS_CALLERS: [&str; 4] = [
     "save.rs::advance_save_locked",
     "io.rs::graph_launch",
 ];
-const PRESENT_ASKERS: [&str; 2] = [ORIGINAL_ANSWERER, "logical.rs::adopt_pairing"];
-/// One producer of a witness chain directory's evidence (containment,
-/// identity, sync): `chain_evidence`, shared by the direct witness and
-/// launch's pass; `witness_end` rereads the identity to compare.
-const CHAIN_EVIDENCE: [&str; 2] = [
+const PRESENT_ASKERS: [&str; 2] = [ORIGINAL_ANSWERER, "order.rs::launch_witnesses"];
+/// One producer per piece of launch and witness evidence, each called only
+/// by its listed consumers: launch's judged pairs (both endpoint reads
+/// succeeded; `launch_judged`, asked by its witness schedule and its
+/// phases), the witness's file steps (`witness_file` within
+/// `witness_start`, then `witness_end`; direct and launch), and a chain
+/// directory's containment, identity and sync (`chain_evidence`; direct
+/// and launch).
+const SOLE_PRODUCERS: [(&str, &[&str]); 5] = [
+    (
+        "launch_judged(",
+        &["order.rs::decided_phases", "order.rs::launch_witnesses"],
+    ),
+    ("witness_file(", &["production.rs::witness_start"]),
+    (
+        "witness_start(",
+        &[
+            "production.rs::graph_launch",
+            "production.rs::source_witnessed",
+        ],
+    ),
+    (
+        "witness_end(",
+        &[
+            "production.rs::graph_launch",
+            "production.rs::source_witnessed",
+        ],
+    ),
+    (
+        "chain_evidence(",
+        &["production.rs::sync_chain", "production.rs::graph_launch"],
+    ),
+];
+/// A directory's OS identity has one function, the watcher's
+/// (`watch::directory_identity`); in the page host only `chain_evidence`
+/// takes it and `witness_end` rereads it to compare.
+const IDENTITY_CALLERS: [&str; 2] = [
     "production.rs::chain_evidence",
     "production.rs::witness_end",
 ];
+/// The page host's one other OS metadata extraction: the trash chain's
+/// settled-state check, a different question (the graph root's binding
+/// lives outside the page host).
+const METADATA_EXT_USERS: [&str; 1] = ["production.rs::chain_ids"];
+/// The witness's reads compare bytes and stamps only: no revision.
+const WITNESS_READER: &str = "production.rs::witness_file";
 /// Every function that names an `Original` value, with the only text it
 /// may name: the answerer constructs them, `holds` defines D or W, and Use
 /// Disk's E2 receiver read tests for U.
@@ -848,10 +886,25 @@ fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
                 "{function} asks the source witness outside a decider"
             ));
         }
-        if flat.contains("directory_id(") && !CHAIN_EVIDENCE.contains(&function.as_str()) {
-            out.push(format!(
-                "{function} takes a witness directory's identity itself"
-            ));
+        for (producer, callers) in SOLE_PRODUCERS {
+            if flat.contains(producer) && !callers.contains(&function.as_str()) {
+                out.push(format!(
+                    "{function} calls `{producer}` outside its consumers"
+                ));
+            }
+        }
+        if flat.contains("directory_identity(") && !IDENTITY_CALLERS.contains(&function.as_str()) {
+            out.push(format!("{function} takes a directory's identity"));
+        }
+        if flat.contains("MetadataExt") && !METADATA_EXT_USERS.contains(&function.as_str()) {
+            out.push(format!("{function} extracts OS metadata itself"));
+        }
+        if function == WITNESS_READER
+            && ["FileRev", "read_open(", "read_observed("]
+                .iter()
+                .any(|rev| flat.contains(rev))
+        {
+            out.push(format!("{function} computes a revision"));
         }
         if flat.contains("Original::") {
             match ORIGINAL_READERS
@@ -862,6 +915,26 @@ fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
                 Some((_, only))
                     if flat.matches("Original::").count() == 1 && flat.contains(only) => {}
                 _ => out.push(format!("{function} reads a source witness's result itself")),
+            }
+        }
+    }
+    for (producer, callers) in SOLE_PRODUCERS {
+        for caller in callers {
+            if !calls
+                .get(*caller)
+                .is_some_and(|b| squashed(b).contains(producer))
+            {
+                out.push(format!("{caller} no longer calls `{producer}`"));
+            }
+        }
+    }
+    for (file, source) in files {
+        let parsed = syn::parse_file(source).expect("Rust source must parse");
+        for item in &parsed.items {
+            if let syn::Item::Use(item) = item {
+                if item.to_token_stream().to_string().contains("MetadataExt") {
+                    out.push(format!("{file} imports `MetadataExt` for every function"));
+                }
             }
         }
     }
@@ -888,8 +961,36 @@ fn one_function_answers_each_superseding_question() {
     // byte-only anchoring at publication and in a restoration, a restoration
     // whose failed witness retains (head's E5·U), Use Disk on a source that
     // skips the receiver read for a failed witness (head's E2·U), a second
-    // copy of the phase set.
+    // copy of the phase set; a custody-local directory identity (the base's
+    // `directory_id`), an inline identity extraction in `chain_evidence`, a
+    // discarded revision in the witness's reads, and launch's schedule or
+    // phases judging pairs without `launch_judged`.
     let mutants = [
+        (
+            "production.rs",
+            "/// One directory's sync in a witness chain",
+            "fn directory_id(dir: &Path) -> Option<u128> {\n    crate::watch::directory_identity(dir)\n}\n/// One directory's sync in a witness chain",
+        ),
+        (
+            "production.rs",
+            "let id = crate::watch::directory_identity(dir);",
+            "let id = { use std::os::unix::fs::MetadataExt; fs::metadata(dir).ok().map(|m| ((m.dev() as u128) << 64) | m.ino() as u128) };",
+        ),
+        (
+            "production.rs",
+            "    if first != bytes {",
+            "    let _ = crate::FileRev::from_bytes(&first);\n    if first != bytes {",
+        ),
+        (
+            "order.rs",
+            "Vec<(String, usize, PairPhase)> = (self.launch_judged(reads))",
+            "Vec<(String, usize, PairPhase)> = (self.decided_pairs_read(reads))",
+        ),
+        (
+            "order.rs",
+            "        (self.launch_judged(reads))\n            .filter(|j| source_present(",
+            "        (self.decided_pairs(reads))\n            .filter(|j| source_present(",
+        ),
         (
             "save.rs",
             "!order::source_present(preimage, bytes)",

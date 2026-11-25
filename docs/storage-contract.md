@@ -1398,7 +1398,8 @@ from the scanned drafts before any recovered save or choice.
   each directory of the file's chain once, from the graph root down,
   recording each directory's identity first. Finally check that the path
   still names that same unchanged file and that every directory is still the
-  one recorded. The answer is **durable** (D), **weak** (W: a directory sync
+  one recorded (the watcher's directory identity; a lookup that fails, or
+  finds no directory, fails the witness). The answer is **durable** (D), **weak** (W: a directory sync
   reports the save path's tolerated "unsupported" set, as on NFS, FUSE or
   Android shared storage, or the platform is Windows, whose graph-folder
   sync is no flush) or **failed** (U, naming its step: containment, open,
@@ -1423,8 +1424,11 @@ from the scanned drafts before any recovered save or choice.
   its certified image holds the pair. A witness that keeps failing leaves
   the pair retained, its draft kept and its pages editable, until a witness
   succeeds or the receiver certifies (accepted: no other exit).
-  Launch shares one directory pass: the file steps of each decided source
-  whose bytes match, then the launch's own directory pass extended with
+  Launch witnesses only where the result can change the pair: a source whose
+  bytes match, of a decided pair whose two reads both succeeded (an absent
+  receiver counts as read; an unreadable one keeps the pair retained with no
+  witness), each source once. It shares one directory pass: those sources'
+  file steps, then the launch's own directory pass extended with
   those sources' chains, then the final checks. So a launch syncs the same
   directories as before plus one fsync per witnessed file. Measured for
   1,000 decided pairs under 4 shared page directories (Linux ext4, release
