@@ -1290,3 +1290,151 @@ fn git_sync_tls_names_all_five_targets() {
         "compile_error!(\"git sync declares a TLS transport for each shipped target only\")"
     ));
 }
+
+/// A graph at `root` with `files` tracked assets, a hundred per folder, and
+/// no attribute file.
+fn attribute_repo(root: &Path, files: usize) -> Repository {
+    let repo = init(root);
+    commit(&repo, "- base\n");
+    let mut index = repo.index().unwrap();
+    for n in 0..files {
+        let path = format!("assets/d{}/f{n}.svg", n / 100);
+        fs::create_dir_all(root.join(&path).parent().unwrap()).unwrap();
+        fs::write(root.join(&path), "<svg/>\n").unwrap();
+        index.add_path(Path::new(&path)).unwrap();
+    }
+    index.write().unwrap();
+    repo
+}
+
+/// The sync admission check's answer, attribute lookups and `.gitattributes`
+/// probes.
+fn sync_check(root: &Path) -> (Result<(), Outcome>, (usize, usize)) {
+    let repo = config_checked(root).unwrap_or_else(|e| panic!("{e:?}"));
+    attr_counts::take();
+    let result = check_paths(&repo);
+    (result, attr_counts::take())
+}
+
+use super::super::git_run::{attr_counts, shared_attribute_files};
+
+#[test]
+fn sync_check_without_attribute_files_costs_no_lookup_per_file() {
+    // #1034: every fetch and push asked Git for six attributes of every
+    // tracked file (minutes on Android). With no attribute file anywhere no
+    // lookup can answer anything; one probe per folder replaces them all.
+    for (files, folders) in [(50, 1), (500, 5)] {
+        let dir = tempdir();
+        let repo = attribute_repo(dir.path(), files);
+        let (result, counts) = sync_check(dir.path());
+        assert_eq!(result, Ok(()));
+        // The work tree root, pages, assets and its folders, and the folders
+        // of the sample graph paths that hold no file (journals, logseq).
+        let expected = if shared_attribute_files(&repo) {
+            // This machine has its own attribute file (Git for Windows
+            // ships one): every file is asked, as before.
+            (6 * (files + 1 + 6), 0)
+        } else {
+            (0, 5 + folders)
+        };
+        assert_eq!(counts, expected, "{files} files");
+    }
+}
+
+#[test]
+fn sync_still_refuses_conversion_from_every_attribute_source() {
+    let refuses = |root: &Path, path: &str| {
+        let (result, _) = sync_check(root);
+        assert!(
+            matches!(&result, Err(Outcome::Refused(m)) if m.contains("conversion") && m.contains(path)),
+            "{path}: {result:?}"
+        );
+    };
+    // Untracked, in a folder of tracked files.
+    let dir = tempdir();
+    attribute_repo(dir.path(), 20);
+    fs::write(
+        dir.path().join("assets/d0/.gitattributes"),
+        "f13.svg eol=lf\n",
+    )
+    .unwrap();
+    refuses(dir.path(), "assets/d0/f13.svg");
+    // Untracked, in a folder only a sample graph path names.
+    let dir = tempdir();
+    attribute_repo(dir.path(), 20);
+    fs::create_dir(dir.path().join("journals")).unwrap();
+    fs::write(dir.path().join("journals/.gitattributes"), "*.md text\n").unwrap();
+    refuses(dir.path(), "journals/a.md");
+    // Staged, then deleted from the work tree: Git reads the index's copy.
+    let dir = tempdir();
+    let repo = attribute_repo(dir.path(), 20);
+    fs::write(dir.path().join("assets/d0/.gitattributes"), "f7.svg crlf\n").unwrap();
+    let mut index = repo.index().unwrap();
+    index
+        .add_path(Path::new("assets/d0/.gitattributes"))
+        .unwrap();
+    index.write().unwrap();
+    fs::remove_file(dir.path().join("assets/d0/.gitattributes")).unwrap();
+    refuses(dir.path(), "assets/d0/f7.svg");
+    // The repository's info/attributes.
+    let dir = tempdir();
+    let repo = attribute_repo(dir.path(), 20);
+    fs::create_dir_all(repo.path().join("info")).unwrap();
+    fs::write(
+        repo.path().join("info/attributes"),
+        "f3.svg working-tree-encoding=UTF-16\n",
+    )
+    .unwrap();
+    refuses(dir.path(), "assets/d0/f3.svg");
+    // core.attributesFile, outside the work tree.
+    let dir = tempdir();
+    let repo = attribute_repo(&dir.path().join("graph"), 20);
+    fs::write(dir.path().join("attributes"), "f5.svg ident\n").unwrap();
+    repo.config()
+        .unwrap()
+        .set_str(
+            "core.attributesFile",
+            dir.path().join("attributes").to_str().unwrap(),
+        )
+        .unwrap();
+    refuses(&dir.path().join("graph"), "assets/d0/f5.svg");
+    // core.autocrlf, with no attribute file.
+    let dir = tempdir();
+    let repo = attribute_repo(dir.path(), 20);
+    repo.config()
+        .unwrap()
+        .set_str("core.autocrlf", "true")
+        .unwrap();
+    assert!(
+        matches!(config_checked(dir.path()), Err(Outcome::Refused(m)) if m.contains("core.autocrlf"))
+    );
+    // An attribute file that converts nothing: every file is still asked.
+    let dir = tempdir();
+    attribute_repo(dir.path(), 20);
+    fs::write(dir.path().join(".gitattributes"), "*.svg binary\n").unwrap();
+    let (result, (lookups, _)) = sync_check(dir.path());
+    assert_eq!(result, Ok(()));
+    assert_eq!(
+        lookups,
+        6 * (20 + 1 + 6),
+        "20 assets, pages/a.md, six samples"
+    );
+}
+
+/// The #1034 shape on this machine: 25,000 tracked files, no attribute file.
+/// Android itself is not measured here.
+#[test]
+#[ignore = "measurement: cargo test -p tine --lib sync_check_measure_25k -- --ignored --nocapture"]
+fn sync_check_measure_25k() {
+    let dir = tempdir();
+    attribute_repo(dir.path(), 25_000);
+    for _ in 0..3 {
+        let started = Instant::now();
+        let (result, (lookups, probes)) = sync_check(dir.path());
+        assert_eq!(result, Ok(()));
+        eprintln!(
+            "25k check_paths: {lookups} attribute lookups, {probes} .gitattributes probes, {:?}",
+            started.elapsed()
+        );
+    }
+}
