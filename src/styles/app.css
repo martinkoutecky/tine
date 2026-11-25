@@ -1474,7 +1474,9 @@ html[data-system-insets="native-viewport"] {
   align-items: center;
   gap: 8px;
 }
-.page-title-actions:has(> .page-carry-actions) { margin-inline-start: auto; }
+/* A journal's group (it holds the carry buttons) ends the title's row; once it wraps it starts the next row, as
+   every title's group does: a row's only item sits at its start. */
+.page-title-row:has(> .page-title-actions > .page-carry-actions) { justify-content: space-between; }
 .page-title-actions > :is(.page-carry-actions, .tag-table-toggle, .page-actions-trigger, .page-share-btn, .fav-star) {
   --reveal: var(--title-actions-shown, 0);
 }

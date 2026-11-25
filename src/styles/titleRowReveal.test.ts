@@ -122,6 +122,18 @@ describe("one rule decides when the page title's actions show (GH #1025)", () =>
     for (const rule of RULES.filter((r) => r.selectors.some((sel) => subject(sel) === ".page-title-actions")))
       expect(declaration(rule.body, "display") ?? "flex").toBe("flex");
   });
+
+  // A margin of `auto` on the group would also push it to the end of the row it wraps onto (seen at 390px with a
+  // long journal title). The row spreads its two items instead, and a wrapped row's only item sits at its start.
+  it("a journal's group ends the title's row, and starts the next row once it wraps", () => {
+    const spread = RULES.filter((r) => declaration(r.body, "justify-content") === "space-between" && r.selectors.some((s) => /^\.page-title-row(:has\([^)]*\))?$/.test(s)));
+    expect(spread.map((r) => r.selectors)).toEqual([[".page-title-row:has(> .page-title-actions > .page-carry-actions)"]]);
+    for (const r of RULES) {
+      if (!r.selectors.some((s) => /^\.page-(title|carry)-actions\b/.test(subject(s)))) continue;
+      expect(declaration(r.body, "margin-inline-start"), r.selectors.join(", ")).not.toBe("auto");
+      expect(declaration(r.body, "margin-left"), r.selectors.join(", ")).not.toBe("auto");
+    }
+  });
 });
 
 describe("title-row layers", () => {
