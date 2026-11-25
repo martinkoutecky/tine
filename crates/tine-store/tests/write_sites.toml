@@ -755,26 +755,6 @@ mutations = "DirectoryCreation::new=1, durability::sync_directory_entry=1"
 
 [[site]]
 file = "crates/tine-store/src/page_host/production.rs"
-fn = "ProductionIo::graph_launch"
-domain = "graph"
-guard = "crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path"
-test = "crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp"
-oracle = true
-note = "Host graph path rechecked at I/O; directory creation is unbounded (A-ROOT-BOUND). Helper rows are reached by phases but are not themselves HostIo methods."
-mutations = "durability::sync_directory_witness=1"
-
-[[site]]
-file = "crates/tine-store/src/page_host/production.rs"
-fn = "ProductionIo::graph_sync"
-domain = "graph"
-guard = "crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path"
-test = "crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp"
-oracle = false
-note = "Host graph path rechecked at I/O; directory creation is unbounded (A-ROOT-BOUND). Helper rows are reached by phases but are not themselves HostIo methods."
-mutations = "durability::sync_directory_witness=1"
-
-[[site]]
-file = "crates/tine-store/src/page_host/production.rs"
 fn = "ProductionIo::page_rename"
 domain = "graph"
 guard = "crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path"
@@ -812,6 +792,26 @@ test = "crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_i
 oracle = true
 note = "Host graph path rechecked at I/O; directory creation is unbounded (A-ROOT-BOUND). Helper rows are reached by phases but are not themselves HostIo methods."
 mutations = ".graph_directory=1, no_replace::move_file_noreplace=1"
+
+[[site]]
+file = "crates/tine-store/src/page_host/production.rs"
+fn = "ProductionIo::sync_graph_directory"
+domain = "graph"
+guard = "crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path"
+test = "crates/tine-store/src/page_host/production_guard_tests.rs#l8_01_actual_io_rechecks_after_admission_and_after_temp"
+oracle = false
+note = "The graph directory sync of graph_launch, graph_sync and source_witnessed (one helper, so tests can plant a per-directory fault); each caller checks the path first. Helper rows are reached by phases but are not themselves HostIo methods."
+mutations = "durability::sync_directory_witness=1"
+
+[[site]]
+file = "crates/tine-store/src/page_host/production.rs"
+fn = "witness_file"
+domain = "graph"
+guard = "crates/tine-store/src/page_host/production_guard.rs#ProductionIo::check_path"
+test = "crates/tine-store/src/page_host/production_custody_witness_tests.rs#the_witness_fails_when_the_path_names_another_file_afterwards"
+oracle = false
+note = "The source witness's file steps (read, fsync, reread on one handle); writes no bytes. Windows opens the handle for write only because its flush needs it. Its one caller, witness_start, checks the path first."
+mutations = ".write=1, OpenOptions::new=1, atomic_file::sync_file_handle=1"
 
 [[site]]
 file = "crates/tine-store/src/page_host/production.rs"

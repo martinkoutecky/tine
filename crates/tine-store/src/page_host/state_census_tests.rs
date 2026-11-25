@@ -763,6 +763,84 @@ const SUPERSEDED_ANSWERER: &str = "order.rs::superseded";
 /// newer text's publication.
 const PREIMAGE_ANSWERER: &str = "order.rs::source_present";
 
+/// One producer of source evidence and one answerer of "does this source
+/// hold its pair's original text" (fix-launch-custody): the
+/// source witness (`HostIo::source_witnessed`, and launch's shared pass
+/// `HostIo::graph_launch`) is called only by the custody deciders, each of
+/// which hands it to `Host::source_original`, the only function that maps a
+/// witness to D/W/U (`Original`). The byte match (`source_present`) is asked
+/// only there and by launch, which witnesses only matching sources. The
+/// phase rules stay develop's: they read an `Original` only through
+/// `holds()` (D or W, develop's byte match), except Use Disk on a source,
+/// which tolerates an unreadable receiver only for a failed witness (U).
+const ORIGINAL_ANSWERER: &str = "save.rs::source_original";
+const ORIGINAL_DECIDERS: [&str; 3] = [
+    "logical.rs::adopt_pairing",
+    "order.rs::discard",
+    "save.rs::advance_save_locked",
+];
+/// The trait's default launch pass asks the per-source witness.
+const WITNESS_CALLERS: [&str; 4] = [
+    "logical.rs::adopt_pairing",
+    "order.rs::discard",
+    "save.rs::advance_save_locked",
+    "io.rs::graph_launch",
+];
+const PRESENT_ASKERS: [&str; 2] = [ORIGINAL_ANSWERER, "order.rs::launch_witnesses"];
+/// One producer per piece of launch and witness evidence, each called only
+/// by its listed consumers: launch's judged pairs (both endpoint reads
+/// succeeded; `launch_judged`, asked by its witness schedule and its
+/// phases), the witness's file steps (`witness_file` within
+/// `witness_start`, then `witness_end`; direct and launch), and a chain
+/// directory's containment, identity and sync (`chain_evidence`; direct
+/// and launch).
+const SOLE_PRODUCERS: [(&str, &[&str]); 5] = [
+    (
+        "launch_judged(",
+        &["order.rs::decided_phases", "order.rs::launch_witnesses"],
+    ),
+    ("witness_file(", &["production.rs::witness_start"]),
+    (
+        "witness_start(",
+        &[
+            "production.rs::graph_launch",
+            "production.rs::source_witnessed",
+        ],
+    ),
+    (
+        "witness_end(",
+        &[
+            "production.rs::graph_launch",
+            "production.rs::source_witnessed",
+        ],
+    ),
+    (
+        "chain_evidence(",
+        &["production.rs::sync_chain", "production.rs::graph_launch"],
+    ),
+];
+/// A directory's OS identity has one function, the watcher's
+/// (`watch::directory_identity`); in the page host only `chain_evidence`
+/// takes it and `witness_end` rereads it to compare.
+const IDENTITY_CALLERS: [&str; 2] = [
+    "production.rs::chain_evidence",
+    "production.rs::witness_end",
+];
+/// The page host's one other OS metadata extraction: the trash chain's
+/// settled-state check, a different question (the graph root's binding
+/// lives outside the page host).
+const METADATA_EXT_USERS: [&str; 1] = ["production.rs::chain_ids"];
+/// The witness's reads compare bytes and stamps only: no revision.
+const WITNESS_READER: &str = "production.rs::witness_file";
+/// Every function that names an `Original` value, with the only text it
+/// may name: the answerer constructs them, `holds` defines D or W, and Use
+/// Disk's E2 receiver read tests for U.
+const ORIGINAL_READERS: [(&str, &str); 3] = [
+    (ORIGINAL_ANSWERER, ""),
+    ("order.rs::holds", ""),
+    ("order.rs::discard", "original==Original::Failed=>false"),
+];
+
 /// A `==`/`!=` whose operand ends in `preimage` (`x . preimage`, `* p .
 /// preimage`) in a body's token text.
 fn compares_preimage(body: &str) -> bool {
@@ -797,6 +875,74 @@ fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
         if compares_preimage(body) && function != PREIMAGE_ANSWERER {
             out.push(format!("{function} compares bytes with a preimage"));
         }
+        let flat = squashed(body);
+        if flat.contains("source_present(") && !PRESENT_ASKERS.contains(&function.as_str()) {
+            out.push(format!("{function} matches a source's preimage itself"));
+        }
+        if (flat.contains(".source_witnessed(") || flat.contains(".graph_launch("))
+            && !WITNESS_CALLERS.contains(&function.as_str())
+        {
+            out.push(format!(
+                "{function} asks the source witness outside a decider"
+            ));
+        }
+        for (producer, callers) in SOLE_PRODUCERS {
+            if flat.contains(producer) && !callers.contains(&function.as_str()) {
+                out.push(format!(
+                    "{function} calls `{producer}` outside its consumers"
+                ));
+            }
+        }
+        if flat.contains("directory_identity(") && !IDENTITY_CALLERS.contains(&function.as_str()) {
+            out.push(format!("{function} takes a directory's identity"));
+        }
+        if flat.contains("MetadataExt") && !METADATA_EXT_USERS.contains(&function.as_str()) {
+            out.push(format!("{function} extracts OS metadata itself"));
+        }
+        if function == WITNESS_READER
+            && ["FileRev", "read_open(", "read_observed("]
+                .iter()
+                .any(|rev| flat.contains(rev))
+        {
+            out.push(format!("{function} computes a revision"));
+        }
+        if flat.contains("Original::") {
+            match ORIGINAL_READERS
+                .iter()
+                .find(|(f, _)| *f == function.as_str())
+            {
+                Some((_, "")) => {}
+                Some((_, only))
+                    if flat.matches("Original::").count() == 1 && flat.contains(only) => {}
+                _ => out.push(format!("{function} reads a source witness's result itself")),
+            }
+        }
+    }
+    for (producer, callers) in SOLE_PRODUCERS {
+        for caller in callers {
+            if !calls
+                .get(*caller)
+                .is_some_and(|b| squashed(b).contains(producer))
+            {
+                out.push(format!("{caller} no longer calls `{producer}`"));
+            }
+        }
+    }
+    for (file, source) in files {
+        let parsed = syn::parse_file(source).expect("Rust source must parse");
+        for item in &parsed.items {
+            if let syn::Item::Use(item) = item {
+                if item.to_token_stream().to_string().contains("MetadataExt") {
+                    out.push(format!("{file} imports `MetadataExt` for every function"));
+                }
+            }
+        }
+    }
+    for decider in ORIGINAL_DECIDERS {
+        let asks = calls.get(decider).map(|b| squashed(b));
+        if !asks.is_some_and(|b| b.contains("Self::source_original(")) {
+            out.push(format!("{decider} no longer asks `source_original`"));
+        }
     }
     out
 }
@@ -809,18 +955,66 @@ fn one_function_answers_each_superseding_question() {
     let (_, calls) = census(&files);
     assert!(calls[SUPERSEDED_ANSWERER].contains(SUPERSEDED_PHASES));
     assert!(compares_preimage(&calls[PREIMAGE_ANSWERER]));
-    // Its mutants: the base's inline anchoring at publication, an inline
-    // preimage match in a restoration, a second copy of the phase set.
+    let original = squashed(&calls[ORIGINAL_ANSWERER]);
+    assert!(original.contains("source_present(") && original.contains("witness()"));
+    // Its mutants: an inline preimage match in the answerer, the base's
+    // byte-only anchoring at publication and in a restoration, a restoration
+    // whose failed witness retains (head's E5·U), Use Disk on a source that
+    // skips the receiver read for a failed witness (head's E2·U), a second
+    // copy of the phase set; a custody-local directory identity (the base's
+    // `directory_id`), an inline identity extraction in `chain_evidence`, a
+    // discarded revision in the witness's reads, and launch's schedule or
+    // phases judging pairs without `launch_judged`.
     let mutants = [
         (
-            "save.rs",
-            "order::anchored(&preimage, &job.bytes, certified)",
-            "job.bytes == preimage || certified",
+            "production.rs",
+            "/// One directory's sync in a witness chain",
+            "fn directory_id(dir: &Path) -> Option<u128> {\n    crate::watch::directory_identity(dir)\n}\n/// One directory's sync in a witness chain",
+        ),
+        (
+            "production.rs",
+            "let id = crate::watch::directory_identity(dir);",
+            "let id = { use std::os::unix::fs::MetadataExt; fs::metadata(dir).ok().map(|m| ((m.dev() as u128) << 64) | m.ino() as u128) };",
+        ),
+        (
+            "production.rs",
+            "    if first != bytes {",
+            "    let _ = crate::FileRev::from_bytes(&first);\n    if first != bytes {",
         ),
         (
             "order.rs",
-            "source_present(&pair.preimage, bytes)",
-            "bytes.is_some() && pair.preimage == *bytes",
+            "Vec<(String, usize, PairPhase)> = (self.launch_judged(reads))",
+            "Vec<(String, usize, PairPhase)> = (self.decided_pairs_read(reads))",
+        ),
+        (
+            "order.rs",
+            "        (self.launch_judged(reads))\n            .filter(|j| source_present(",
+            "        (self.decided_pairs(reads))\n            .filter(|j| source_present(",
+        ),
+        (
+            "save.rs",
+            "!order::source_present(preimage, bytes)",
+            "!(bytes.is_some() && bytes == preimage)",
+        ),
+        (
+            "save.rs",
+            "let original = Self::source_original(&preimage, &job.bytes, || {",
+            "let original = if order::source_present(&preimage, &job.bytes) { order::Original::Durable } else { order::Original::No }; let _unused = (|| {",
+        ),
+        (
+            "save.rs",
+            "Self::source_original(preimage, &job.bytes, || {",
+            "order::source_present(preimage, &job.bytes).then_some(order::Original::Durable).unwrap_or(order::Original::No); (|| {",
+        ),
+        (
+            "order.rs",
+            "                    && original(&pair.preimage).holds()\n                {\n                    pair.phase = PairPhase::Cancelled;",
+            "                    && original(&pair.preimage) != Original::No\n                {\n                    pair.phase = if original(&pair.preimage) == Original::Failed { PairPhase::Retained } else { PairPhase::Cancelled };",
+        ),
+        (
+            "order.rs",
+            "            } else if original.holds() {\n                false",
+            "            } else if original != Original::No {\n                false",
         ),
         (
             "order.rs",

@@ -625,6 +625,30 @@
   run mMUnownedDelete = init.then(if (MUTANT == "MUnownedDelete") renLoaded.then(crash).then(launchWithClaim(false))
       .then(save(2)).then(save(1)).then(flushDel(0)) else noop).expect(ok)
 
+  // ---- s3.6: the source witness is an input to the phase rules.
+  // Durable matching source, a failing witness (root EIO), divergent receiver: Retained, at the choice and at
+  // every launch while the fault lasts (no exit: accepted); a launch once it clears cancels.
+  action failedWitnessChoice = renLoaded.then(extWrite(2, 3)).then(witnessFault(0, true)).then(open(2)).then(discard(2))
+  val failedWitnessRetained = s.pairs.nth(0).phase == "retained" and s.pairs.nth(0).decision == "cancelled"
+    and s.disk.get(0) == 1 and s.stable.get(0) == 1 and s.disk.get(2) == 3
+  run ownFailedWitnessRetains = init.then(failedWitnessChoice).expect(failedWitnessRetained and ok)
+    .then(crash).then(launch).expect(failedWitnessRetained and ok)
+    .then(witnessFault(0, false)).then(crash).then(launch)
+    .expect(s.pairs.nth(0).phase == "cancelled" and s.disk.get(0) == 1 and ok)
+  // A matching source whose bytes were not yet durable: a successful witness makes them durable and cancels.
+  action unstableWitnessChoice = renLoaded.then(extWriteD(0, 3, true)).then(extWriteD(0, 1, false))
+    .then(extWrite(2, 3)).then(open(2)).then(discard(2))
+  // (A weak witness proves the bytes but makes nothing durable.)
+  val witnessedStable = if (RACES.contains("weak")) 3 else 1
+  val unstableWitnessCancels = s.pairs.nth(0).phase == "cancelled" and s.disk.get(0) == 1 and s.stable.get(0) == witnessedStable
+  run ownUnstableWitnessCancels = init.then(renLoaded).then(extWriteD(0, 3, true)).then(extWriteD(0, 1, false))
+    .expect(s.stable.get(0) == 3 and ok).then(extWrite(2, 3)).then(open(2)).then(discard(2))
+    .expect(unstableWitnessCancels and ok).then(powerK(Set())).then(launch).expect(s.disk.get(0) == witnessedStable and ok)
+  run mMTrustFailedWitness = init.then(if (MUTANT == "MTrustFailedWitness") failedWitnessChoice else noop)
+    .expect(MUTANT != "MTrustFailedWitness" or failedWitnessRetained)
+  run mMSkipWitnessDurability = init.then(if (MUTANT == "MSkipWitnessDurability") unstableWitnessChoice else noop)
+    .expect(MUTANT != "MSkipWitnessDurability" or unstableWitnessCancels)
+
   // ---- s3.6: a plain creating save keeps input while its slot is occupied.
   action plainCreate = open(2).then(typeIn(2, 3))
   run ownPlainSlotArrived = init.then(plainCreate).then(extClaim(2, true))
