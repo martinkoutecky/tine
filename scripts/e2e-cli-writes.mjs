@@ -19,7 +19,8 @@ ensurePrivateSessionBus();
 const APP = path.resolve(process.env.TINE_APP || "target/debug/tine");
 // GH #1011: a hint names the command the program was started as (the launcher execs the binary under its own path).
 const BINARY = path.resolve(process.env.TINE_APP_BINARY || APP);
-const COMMAND = path.basename(BINARY).replace(/\.exe$/i, "");
+const plainName = (file) => (/^[A-Za-z0-9._][A-Za-z0-9._-]*$/.test(file) ? file : "tine"); // the program's own rule
+const COMMAND = plainName(path.basename(BINARY));
 const TMP = path.resolve(process.env.E2E_TMP_DIR || `artifacts/cli-native-${process.pid}`);
 assert(!fs.existsSync(TMP), "use a fresh artifact directory");
 const GRAPH = path.join(TMP, "graph");
@@ -90,31 +91,42 @@ async function pageProperties(owner) {
 // GH #1011: the Beta's Linux packages install the program as `tine-beta`. Started under another name, the usage
 // line (this process) and a refusal's hint (the serve owner it starts) name that command, never a literal `tine`.
 function hintsNameTheStartedCommand() {
-  const dir = path.join(TMP, "named"), graph = path.join(dir, "graph"), named = path.join(dir, "tine-other");
+  const dir = path.join(TMP, "named"), graph = path.join(dir, "graph"), ext = path.extname(BINARY);
+  const named = path.join(dir, `tine-other${ext}`), spaced = path.join(dir, `tine other${ext}`);
   for (const sub of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, sub), { recursive: true });
-  fs.copyFileSync(BINARY, named, fs.constants.COPYFILE_FICLONE);
-  fs.chmodSync(named, 0o755);
-  const run = (args, input = "") => {
-    const r = spawnSync(named, args, { env: { ...env, TINE_GRAPH: graph }, input, encoding: "utf8", timeout: 60_000 });
+  const run = (app, args, input = "") => {
+    const r = spawnSync(app, args, { env: { ...env, TINE_GRAPH: graph }, input, encoding: "utf8", timeout: 60_000 });
     return { code: r.status, out: r.stdout || "", err: r.stderr || "" };
   };
   try {
-    const help = run(["export", "query", "--help"]);
-    assert.equal(help.code, 0, help.err);
-    assert(help.out.includes("tine-other export query"), help.out);
-    assert(!/\btine export query\b/.test(help.out), help.out);
-    const created = run(["page", "create", "Named", "--graph", graph, "--json"]);
+    for (const copy of [named, spaced]) { fs.copyFileSync(BINARY, copy, fs.constants.COPYFILE_FICLONE); fs.chmodSync(copy, 0o755); }
+    const name = `tine-other${ext}`;
+    // clap's own usage line and Tine's `export query` override print one name.
+    for (const [args, usage] of [[["--help"], `Usage: ${name} `], [["page", "show", "--help"], `Usage: ${name} page show`], [["export", "query", "--help"], `Usage: ${name} export query`]]) {
+      const help = run(named, args);
+      assert.equal(help.code, 0, help.err);
+      assert(help.out.includes(usage), `${args.join(" ")}: ${help.out}`);
+      assert(!/Usage: tine /.test(help.out), help.out);
+    }
+    // A name that is not one plain word is not a command to paste: both say `tine`.
+    for (const args of [["--help"], ["export", "query", "--help"]]) {
+      const help = run(spaced, args);
+      assert.equal(help.code, 0, help.err);
+      assert(/Usage: tine /.test(help.out) && !help.out.includes("tine other"), `${args.join(" ")}: ${help.out}`);
+    }
+    const created = run(named, ["page", "create", "Named", "--graph", graph, "--json"]);
     assert.equal(created.code, 0, created.err);
-    const refusal = run(["add", "--page", "Named", "-", "--graph", graph, "--json"], "- tags:: technical\n");
+    const refusal = run(named, ["add", "--page", "Named", "-", "--graph", graph, "--json"], "- tags:: technical\n");
     assert.equal(refusal.code, 6, refusal.out + refusal.err);
     const message = JSON.parse(refusal.err).error.message;
-    assert(message.includes("tine-other prop set --page"), message);
+    assert(message.includes(`${name} prop set --page`), message);
     assert(!message.includes("use tine prop"), message);
   } finally {
-    run(["serve", "--stop", graph]);
-    fs.rmSync(named, { force: true });
+    const stop = fs.existsSync(named) ? run(named, ["serve", "--stop", graph]) : { code: 0 };
+    if (stop.code !== 0) console.error(`named: the owner of ${graph} did not stop (exit ${stop.code}): ${stop.err}`);
+    for (const copy of [named, spaced]) fs.rmSync(copy, { force: true });
   }
-  steps.push("named: usage and a refusal's hint name the command the program was started as");
+  steps.push("named: usage lines and a refusal's hint print the name the program was started as; an unpasteable name prints tine");
 }
 try {
   hintsNameTheStartedCommand();

@@ -756,3 +756,20 @@ fn checked_in_man_pages_are_generated_from_the_cli_schema() {
         );
     }
 }
+
+// GH #1011: clap prints the name it is given, at every depth.
+#[test]
+fn gh1011_clap_prints_the_one_program_name() {
+    let argv = |args: &[&str]| {
+        args.iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>()
+    };
+    let printed = |args: &[&str]| parse_as("tine-other", &argv(args)).unwrap_err().to_string();
+    // argv[0] is ignored once the name is given.
+    assert!(printed(&["/usr/bin/tine", "--help"]).contains("Usage: tine-other "));
+    assert!(printed(&["tine", "page", "show", "--help"]).contains("Usage: tine-other page show"));
+    let error = printed(&["tine", "page", "no-such-verb"]);
+    assert!(error.contains("Usage: tine-other page"), "{error}");
+    assert!(!error.contains("Usage: tine "), "{error}");
+}

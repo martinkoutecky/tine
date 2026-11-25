@@ -1,9 +1,11 @@
-//! The command a printed hint tells the user to run (GH #1011).
+//! The program's name in everything it prints (GH #1011): usage lines, help,
+//! parse errors and the hints that tell the user what to run next.
 //!
-//! A hint names the program as this process was started: the file name of
-//! `argv[0]`, the rule clap's usage lines already follow. The Beta's Linux
-//! packages install the program as `tine-beta`, so a literal `tine` in a hint
-//! named a command that is absent there, or the stable program.
+//! One answer: the file name of `argv[0]` when it is one plain word, otherwise
+//! `tine`. clap is given this name (`cli::dispatch`), so its usage lines and
+//! Tine's hints cannot disagree. The Beta's Linux packages install the program
+//! as `tine-beta`; a literal `tine` in a hint named a command that is absent
+//! there, or the stable program.
 
 use std::sync::OnceLock;
 
@@ -16,7 +18,7 @@ pub(crate) fn command_name() -> &'static str {
 }
 
 /// Record the name from the arguments the command line is about to parse.
-/// Called once per process, before any hint can be printed.
+/// Called once per process, before clap or a hint can print it.
 #[cfg(desktop)]
 pub(crate) fn set_command_name(argv0: Option<&std::ffi::OsStr>) {
     if let Some(name) = command_name_from(argv0) {
@@ -24,20 +26,18 @@ pub(crate) fn set_command_name(argv0: Option<&std::ffi::OsStr>) {
     }
 }
 
-/// The file name of `argv[0]`; on Windows without its `.exe`, so hints read
-/// there as they always did. `None` (the caller keeps `tine`) for an absent,
-/// empty or non-UTF-8 name.
+/// The file name of `argv[0]` if it is one word that needs no quoting: ASCII
+/// letters, digits, `.`, `_` and `-`, not starting with `-`. `None` (the caller keeps
+/// `tine`) for anything else: a space, a quote, a name that is not UTF-8.
 #[cfg(desktop)]
 fn command_name_from(argv0: Option<&std::ffi::OsStr>) -> Option<String> {
     let name = std::path::Path::new(argv0?).file_name()?.to_str()?;
-    #[cfg(windows)]
-    let name = match name.len().checked_sub(4) {
-        Some(stem) if name.is_char_boundary(stem) && name[stem..].eq_ignore_ascii_case(".exe") => {
-            &name[..stem]
-        }
-        _ => name,
-    };
-    (!name.is_empty()).then(|| name.to_owned())
+    let plain = !name.is_empty()
+        && !name.starts_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    plain.then(|| name.to_owned())
 }
 
 #[cfg(all(test, desktop))]
@@ -46,23 +46,30 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
-    fn a_hint_names_the_file_name_the_process_was_started_under() {
+    fn the_name_is_the_started_file_name_when_it_is_one_plain_word() {
         let name = |argv0: &str| command_name_from(Some(OsStr::new(argv0)));
         assert_eq!(name("tine").as_deref(), Some("tine"));
         assert_eq!(name("/usr/bin/tine-beta").as_deref(), Some("tine-beta"));
         assert_eq!(name("./target/debug/tine").as_deref(), Some("tine"));
-        assert_eq!(name(""), None);
-        assert_eq!(name("/"), None);
-        assert_eq!(command_name_from(None), None);
-        #[cfg(windows)]
-        {
-            assert_eq!(
-                name(r"C:\Program Files\Tine\tine.exe").as_deref(),
-                Some("tine")
-            );
-            assert_eq!(name("Tine-Beta.EXE").as_deref(), Some("Tine-Beta"));
-            assert_eq!(name(".exe"), None);
+        // As clap always printed it on Windows.
+        assert_eq!(name("tine.exe").as_deref(), Some("tine.exe"));
+        assert_eq!(name("my_tine.2").as_deref(), Some("my_tine.2"));
+        // Not one word that needs no quoting: the caller keeps `tine`.
+        for odd in [
+            "",
+            "/",
+            "Tine Beta",
+            "/opt/t/tine's",
+            "ti\"ne",
+            "tine\tb",
+            "-tine",
+            "tin\u{e9}",
+            "a;b",
+            "$t",
+        ] {
+            assert_eq!(name(odd), None, "{odd:?}");
         }
+        assert_eq!(command_name_from(None), None);
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
