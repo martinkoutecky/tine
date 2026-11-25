@@ -17,7 +17,7 @@ import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { graphConfigUnreadable } from "../graphConfig";
 import { changed } from "../changeKeys";
-import { PageLoadError, createPinnedPathRecovery, refusedPageOpen, routeAdoptsRead, type PinnedPathRefusal } from "./pageLoadRecovery";
+import { PageLoadError, createPinnedPathRecovery, openHeldRoute, refusedPageOpen, refusedPathRead, routeAdoptsRead, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableAvailabilityResource, createTagTableResource } from "../tagTable";
@@ -576,10 +576,7 @@ export function PageView(): JSX.Element {
               rewritePageTargetAcrossPanes(from, to);
               return;
             }
-            if (r.path && refusedPageOpen("route", r, dto, readSource)) {
-              pathRefusal = dto ? "mismatch" : "missing";
-              throw new Error("The selected physical page is no longer available at that path.");
-            }
+            if (r.path && refusedPageOpen("route", r, dto, readSource)) return refusedPathRead(dto, readSource, (refusal) => { pathRefusal = refusal; });
             // Core page identity is Unicode-case-insensitive while display names
             // preserve their original spelling. Alias-map warmup normally
             // canonicalizes before navigation; this adoption also covers an early
@@ -604,6 +601,7 @@ export function PageView(): JSX.Element {
               throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
             return true;
           });
+          if (result.kind === "current" && result.value === "held-absent") pathRefusal = await openHeldRoute(r, owned);
           const current = loadedPage(r.name);
           if (result.kind === "current" ? !result.value : !current || current.kind !== r.pageKind || (!!r.path && current.id !== r.path)) return;
         }

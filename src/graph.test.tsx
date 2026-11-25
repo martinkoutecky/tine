@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderEnglish, type UiText } from "./i18n";
 import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
+import type { Unsettled } from "./document";
 import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 
 const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
@@ -96,7 +97,14 @@ async function loadHarness(
     frozen = true;
     return () => { frozen = false; };
   });
-  const flushAll = vi.fn(async () => true);
+  // `flushAll`'s answer for the switch: true, false (develop's unnamed failure)
+  // or the barrier's reason (`flushAllUnsettled`).
+  const flushAll = vi.fn(async (): Promise<boolean | Unsettled> => true);
+  const flushAllUnsettled = vi.fn(async (): Promise<Unsettled | null> => {
+    const flushed = await flushAll();
+    return flushed === true ? null : flushed === false ? { kind: "no-answer" } : flushed;
+  });
+  const openFileAgain = vi.fn();
   const resetFrozen: boolean[] = [];
   const resetStore = vi.fn(() => { resetFrozen.push(frozen); });
 
@@ -141,7 +149,7 @@ async function loadHarness(
     activatePdfOwnership,
   }));
   vi.doMock("./document", () => ({
-    resetStore, flushAll, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
+    resetStore, flushAllUnsettled, flushAll: async () => await flushAllUnsettled() === null, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
     createPage,
@@ -157,6 +165,7 @@ async function loadHarness(
   vi.doMock("./router", () => ({
     resetTabsToJournals,
     openPage,
+    openFileAgain,
     openJournals: vi.fn(),
     route: () => ({ kind: "journals" }),
     sameRoute: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
@@ -188,7 +197,7 @@ async function loadHarness(
   return {
     loadGraphPath, switchGraph, createNewGraph, chooseNewGraphParent, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, createPage, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, resetFrozen, isFrozen, tryFreezeGraphRewrite,
-    applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows,
+    applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows, openFileAgain,
   };
 }
 
@@ -986,6 +995,63 @@ describe("an edit typed while a graph switch is in flight (og A, 20B open item 5
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(META.root);
     const { toasts } = await import("./toasts");
     expect(toasts().at(-1)).toMatchObject({ kind: "error", message: expect.stringContaining("couldn't be saved") });
+  });
+});
+
+// tine#1041: a refused switch says what it refused for. Pages the host would
+// not publish are named by path (three, then a count), and Open opens the first
+// one that is a path; every other reason keeps the fixed text and no action.
+describe("a refused graph switch names its pages (tine#1041)", () => {
+  const stuck = (...keys: string[]): Unsettled => ({ kind: "stuck", keys });
+  async function refusedSwitch(check: "first" | "late", reason: Unsettled) {
+    const harness = await loadHarness(null);
+    // Open names the page by the store's file-name decoding (wasm).
+    await (await import("./render/parse")).initParser();
+    await harness.loadGraphPath(META.root);
+    if (check === "first") harness.flushAll.mockResolvedValueOnce(reason);
+    else harness.flushAll.mockResolvedValueOnce(true).mockResolvedValueOnce(reason);
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.loadGraph).toHaveBeenCalledOnce();
+    const { toasts } = await import("./toasts");
+    return { harness, toast: toasts().at(-1)! };
+  }
+
+  it.each(["first", "late"] as const)("the %s switch check names a stuck page and offers Open on it", async (check) => {
+    const { harness, toast } = await refusedSwitch(check, stuck("pages/Repro 964.md"));
+    expect(toast).toMatchObject({ kind: "error", message: expect.stringContaining("pages/Repro 964.md") });
+    expect(toast.message).not.toContain("resolve conflicts");
+    expect(toast.action).toBeDefined();
+    expect(toastLabel(toast.action!.label)).toBe("Open");
+    toast.action!.run();
+    expect(harness.openFileAgain).toHaveBeenCalledWith("pages/Repro 964.md", "Repro 964");
+  });
+
+  it("names only the refused keys, three of them and a count, and opens the first path", async () => {
+    const { harness, toast } = await refusedSwitch("first", stuck("pages/Z.md", "pages/Y.md", "journals/2026_11_25.md", "pages/W.md"));
+    expect(toast.message).toContain("pages/Z.md, pages/Y.md, journals/2026_11_25.md, and 1 more");
+    expect(toast.message).not.toContain("pages/W.md");
+    toast.action!.run();
+    expect(harness.openFileAgain).toHaveBeenCalledWith("pages/Z.md", "Z");
+  });
+
+  it("names a key that is not a path (an opaque host key) without Open", async () => {
+    const { toast } = await refusedSwitch("first", stuck("pages/a.md\u00001"));
+    expect(toast.message).toContain("pages/a.md");
+    expect(toast.message).not.toContain("\u0000");
+    expect(toast.action).toBeUndefined();
+  });
+
+  it.each([
+    ["no answer", { kind: "no-answer" }],
+    ["still busy", { kind: "busy" }],
+    ["unbound", { kind: "unbound" }],
+  ] as const)("%s: develop's text, no action", async (_label, reason) => {
+    for (const check of ["first", "late"] as const) {
+      const { toast } = await refusedSwitch(check, reason);
+      expect(toast).toMatchObject({ kind: "error", message: expect.stringContaining("resolve conflicts before switching graphs") });
+      expect(toast.action).toBeUndefined();
+      vi.resetModules();
+    }
   });
 });
 

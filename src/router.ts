@@ -1387,6 +1387,18 @@ export function openFile(
   focusedRouterInstance().openFile(path, name, pageKind, opts);
 }
 
+/** A request that a refused route pinned to `path` load again (`openFileAgain`). */
+const [pinnedPathRetry, setPinnedPathRetry] = createSignal<{ path: string } | null>(null, { equals: false });
+export { pinnedPathRetry };
+
+/** `openFile`, and a route already pinned to `path` that was refused loads
+ * again: navigating to the active route is a no-op, yet the action means "show
+ * it now" (a refused switch's Open, tine#1041). */
+export function openFileAgain(path: string, name: string, pageKind: "journal" | "page" = "page") {
+  openFile(path, name, pageKind);
+  setPinnedPathRetry({ path });
+}
+
 export function focusBlock(id: string | null) {
   focusedRouterInstance().focusBlock(id);
 }

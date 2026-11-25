@@ -122,6 +122,9 @@ export interface OwedPage {
 
 /** The host's newest indexed own save for a requested key; null rev is deletion. */
 export interface PublishedRevision { key: string; version: number; rev: string | null }
+/** A publication wait refused for these needed keys (each conflicted, or its
+ * save or index publication keeps failing). */
+export interface PublicationRefused { refused: string[] }
 
 /** One `pages_published` entry: the key, the version needed, and optionally a
  * block id the published bytes must contain (the block-ref witness, Q2). */
@@ -156,10 +159,11 @@ export interface HostPort {
   /** Make these keys' saves due now (a scheduling hint; no answer). */
   saveNow(session: number, keys: readonly string[]): Promise<void>;
   /** Actual own-publication evidence once every entry is indexed at ≥ its version;
-   * a clean read or released key may have no own-publication evidence. False on
-   * a terminal notice for a needed key or once the session is not current; null
+   * a clean read or released key may have no own-publication evidence. The
+   * needed keys on a terminal notice for them; false, a refusal naming no key,
+   * once the session is not current, the host is down, or the call failed; null
    * when one bounded wait (≤ 5 s) passed first: the client asks again. */
-  waitPublished(session: number, needs: readonly PublishedNeed[]): Promise<PublishedRevision[] | false | null>;
+  waitPublished(session: number, needs: readonly PublishedNeed[]): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   /** Publication debt; `paths` (graph-relative files) filters through the host's
    * page identity, null lists all. Bounded by held pages; no filesystem scan.
    * False when there is no answer (the session is not current, or the read

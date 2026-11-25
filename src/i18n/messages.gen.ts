@@ -1133,6 +1133,7 @@ export interface MessageArgs {
   "graph-open-failure-retry": {};
   "graph-open-graph": {};
   "graph-open-other-app": {};
+  "graph-open-page": {};
   "graph-page-already-exists-merge-into": { "from": string | number; "to": string | number };
   "graph-page-s-still-have-edits-that-are": { "count": number; "pages": string | number };
   "graph-pdf-changes-couldn-t-be-saved-the": {};
@@ -1164,6 +1165,7 @@ export interface MessageArgs {
   "graph-row-menu-show-in-folder": {};
   "graph-session-couldn-t-save-the-journal-template-setting": { "error": string | number };
   "graph-some-pages-couldn-t-be-saved-resolve": {};
+  "graph-switch-refused-pages": { "more": number; "pages": string | number };
   "graph-this-graph-s-assets-folder-points-outside-the": { "assetsDirectory": string | number };
   "graph-tine-left-unreadable-crash-recovery-file-s-in-place": { "count": number; "files": string | number };
   "graph-tine-needs-a-folder-on-the-device-s": {};

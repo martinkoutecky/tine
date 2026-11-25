@@ -1163,7 +1163,8 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
                 key: key.clone(),
                 version: v3,
                 rev: Some(FileRev::from_bytes(b"- target\n- more\n")),
-            }]
+            }],
+            vec![]
         ),
         "a skipped version returns the revision actually published"
     );
@@ -1912,6 +1913,9 @@ mod path_tests;
 #[path = "binding_window_tests.rs"]
 mod window;
 
+#[path = "binding_adopted_draft_tests.rs"]
+mod adopted_draft_tests;
+
 /// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
 /// consumer is the page's only index writer. The reviewer's schedule: the
 /// host has not observed disk B yet (another transaction holds the page's
@@ -2458,6 +2462,53 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     live.host.stop();
 }
 
+/// tine#1041: a refused wait names the needed keys its own tests matched,
+/// and only those. In one batch `pages/A.md` publishes and `pages/Z.md` is
+/// conflicted: the refusal carries `Z` alone, so the window's switch refusal
+/// names and opens `Z`, never `A`.
+#[test]
+fn wait_published_refusal_names_only_the_keys_that_refused() {
+    let live = Live::new(&[("pages/A.md", "- a\n"), ("pages/Z.md", "- z\n")]);
+    live.submits_wait();
+    let (a, page) = live.open("pages/A.md");
+    let id = live.submit(&a, "- a two\n", page.version, None).unwrap();
+    let va = live.answer(&a, id).answer.unwrap().version;
+    let (z, page) = live.open("pages/Z.md");
+    let id = live.submit(&z, "- mine\n", page.version, None).unwrap();
+    let vz = live.answer(&z, id).answer.unwrap().version;
+    fs::write(live.root.join(&z), "- theirs\n").unwrap();
+    let needs = [(a.clone(), va, None), (z.clone(), vz, None)];
+    assert_eq!(
+        live.host
+            .wait_published(live.host.session(), &needs, Duration::from_secs(20)),
+        (PageOperation::Refused, vec![], vec![z.clone()]),
+        "the refusal names the conflicted key only"
+    );
+    live.until_published(&[(a.clone(), va, None)]);
+    assert_eq!(live.disk(&a), "- a two\n");
+    live.host.stop();
+}
+
+/// tine#1041 (tine#1033's shape): a needed page whose save keeps failing is
+/// named by the refusal.
+#[test]
+fn wait_published_refusal_names_a_page_whose_save_keeps_failing() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.faults(super::io::Phase::PageTemp, 10_000);
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    let version = live.answer(&key, id).answer.unwrap().version;
+    assert_eq!(
+        live.host.wait_published(
+            live.host.session(),
+            &[(key.clone(), version, None)],
+            Duration::from_secs(20)
+        ),
+        (PageOperation::Refused, vec![], vec![key.clone()]),
+    );
+    live.host.stop();
+}
+
 /// REVIEW-3b-P2b R3: with real taken debt (a version whose save keeps
 /// failing), a publication wait is Refused once nothing will publish it: the
 /// driver ended, the host went down, or its state is poisoned (failure, not a
@@ -2480,9 +2531,9 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     ended.host.driver.join();
     assert!(ended.host.driver.shared.ended());
     assert_eq!(
-        ended.host.wait_published(session, &needs, bound).0,
-        PageOperation::Refused,
-        "an ended driver publishes nothing"
+        ended.host.wait_published(session, &needs, bound),
+        (PageOperation::Refused, vec![], vec![]),
+        "an ended driver publishes nothing, and its refusal names no key"
     );
 
     let down = Live::new(&[("pages/a.md", "- one\n")]);
@@ -2493,9 +2544,9 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
         .shared
         .with_state_for_tests(|state| state.progress.host.stop());
     assert_eq!(
-        down.host.wait_published(session, &needs, bound).0,
-        PageOperation::Refused,
-        "a host that is down publishes nothing"
+        down.host.wait_published(session, &needs, bound),
+        (PageOperation::Refused, vec![], vec![]),
+        "a host that is down publishes nothing, and its refusal names no key"
     );
     down.host.stop();
 

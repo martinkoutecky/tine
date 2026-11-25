@@ -4,9 +4,37 @@ import { t, msg } from "../i18n";
 import { changed, pageChangeKey } from "../changeKeys";
 import { graphOwner, readOwned, type Owner } from "../owned";
 import { backend } from "../backend";
-import type { Route } from "../router";
+import { pinnedPathRetry, type Route } from "../router";
 import type { PageRead, PageReadSource } from "../types";
 import { recordDiagnostic } from "../debug";
+import { openHeldPage } from "../document";
+
+/** Where a path route's store read found no file (the route and its retry probe
+ * both ask): a `held-absent` read proved the path names a page the host holds,
+ * so the host is asked once for its draft (tine#1041). Any other read, including
+ * `held-unindexed`, whose identity against the held keys is unproved, keeps the
+ * refusal without asking the host. True when the route can show the held draft. */
+export function openHeldRead(r: Extract<Route, { kind: "page" }>, dto: PageRead | null, source: PageReadSource | null): Promise<boolean> {
+  return !dto && source === "held-absent" && r.path ? openHeldPage(r.path, r.name, r.pageKind) : Promise.resolve(false);
+}
+
+const MISSING_AT_PATH = "The selected physical page is no longer available at that path.";
+
+/** A path route's refused read inside its admitted read: records the refusal and
+ * throws it, except a `held-absent` read with no page, which the route admits and
+ * then opens with `openHeldRoute` (the host is asked after admission). */
+export function refusedPathRead(dto: PageRead | null, source: PageReadSource | null, refuse: (refusal: PinnedPathRefusal) => void): "held-absent" {
+  refuse(dto ? "mismatch" : "missing");
+  if (!dto && source === "held-absent") return "held-absent";
+  throw new Error(MISSING_AT_PATH);
+}
+
+/** The path route after an admitted `held-absent` read: resolves once the held
+ * draft is shown (nothing left to refuse), else throws develop's refusal. */
+export async function openHeldRoute(r: Extract<Route, { kind: "page" }>, owned: () => boolean): Promise<undefined> {
+  if (await openHeldRead(r, null, "held-absent") && owned()) return undefined;
+  throw new Error(MISSING_AT_PATH);
+}
 
 /** Compare the exact selection once. A refusal records which comparisons failed and
  *  the read's source, never its identity operands; a matching answer records nothing.
@@ -77,6 +105,11 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
     const at = refusedAt();
     if (at !== null && publication() !== at) retry();
   });
+  createEffect(() => {
+    const asked = pinnedPathRetry();
+    const r = untrack(route);
+    if (asked && untrack(refusedAt) !== null && r.kind === "page" && r.path === asked.path) retry();
+  });
   return {
     begin(): string | null {
       setRefusedAt(null);
@@ -104,6 +137,10 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
           const dto = result.value;
           if (refusal === "unreadable" || routeAdoptsRead(r, dto) || !refusedPageOpen("probe", r, dto, source, seen)) {
             retry();
+            return;
+          }
+          if (await openHeldRead(r, dto, source)) {
+            if (owner()) retry();
             return;
           }
         } catch {

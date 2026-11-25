@@ -430,6 +430,12 @@
       "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; tens-of-thousands scale and filter cost are measured in unit tests and the scale screenshot; phone drawer completion has component coverage."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh1041-switch-draft.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After a forced quit leaves a conflicted draft of a page deleted on disk, and the app reopens on another page, a graph switch is refused with a toast that names that page and offers Open; Open shows the held draft with Keep mine and Use disk version; Keep mine writes it to the page's path, and the switch then goes through with the other graph unchanged.","blocking":true,"authority":"GH #1041; UI-GH1041-SWITCH-REFUSED-HOST-ONLY-DRAFT"}],
+      "acceptableVariations": ["Toast wording beyond naming the page's path, toast and banner layout, draft, save and render latency."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; orphan adoption as the way in (host tests cover it); Use disk version, held-unindexed reads and other refusal reasons are covered by unit and render tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-all-graphs.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
       "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],

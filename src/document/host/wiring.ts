@@ -25,21 +25,21 @@ import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
-import { aliasDraftBlocks, appendAliasDraft, emptyPage, pageToDto, replaceLandedAliasDraft } from "../convert";
+import { aliasDraftBlocks, appendAliasDraft, emptyPage, formatOfFile, pageToDto, replaceLandedAliasDraft } from "../convert";
 import { isBlockMoving } from "../edits/moves";
 import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, pageReadOnly, setPageId } from "../model";
 import { ownerPath } from "../../pageIndex";
-import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, loadRoutedPage, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
 import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
-import { settle, unpublishedAfterDrain } from "./settle";
+import { settle, unpublishedAfterDrain, unsettled, type Unsettled } from "./settle";
 import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
 import { refreshReadsIdle, resetRefreshReads } from "../../refreshReads";
 
@@ -226,6 +226,28 @@ async function refreshLoadedHostPages(c: HostClient): Promise<void> {
   const releases = names.map(name => c.acquire(name));
   try { await c.drain(names); }
   finally { for (const release of releases) release(); }
+}
+
+/** A path route's `held-absent` read (tine#1041): the store proved `path`
+ * names a page the host holds with no published file (a recovered draft whose
+ * file is gone). Load `name` pinned to `path` and open it with the host once,
+ * as the adoption refresh above does. True when the host answered with its held
+ * draft, now installed with its conflict state (the whole-page choices);
+ * false, with nothing left loaded, when there is no binding, `name` holds
+ * another file, or the host holds no draft there. One Open/Close, only on that
+ * read; a page already showing the draft costs nothing. */
+export async function openHeldPage(path: string, name: string, kind: PageKind): Promise<boolean> {
+  const c = host();
+  if (!c || !bound) return false;
+  const loaded = pageByName(name);
+  if (loaded && loaded.id !== path) return false;
+  if (loaded && c.conflicted(name)) return true;
+  if (!loaded && loadRoutedPage({ ...emptyPage(name, kind, formatOfFile(path)), id: path })) return false;
+  const release = c.acquire(name);
+  try { await c.drain([name]); } finally { release(); }
+  if (host() === c && c.conflicted(name)) return true;
+  if (!loaded && pageByName(name)?.id === path) forgetPage(name);
+  return false;
 }
 
 // The binding's page client and its baseline/tombstone state end with the
@@ -683,11 +705,21 @@ export async function flushPage(name: string): Promise<boolean> {
   return settle(c, [name], { noConflict: true });
 }
 
+const FLUSH_ALL = { assets: true, noConflict: true } as const;
+
 /** Every page's input and the tracked asset writes, published (switch, restore, print). */
 export async function flushAll(): Promise<boolean> {
   const c = host();
   if (!c) return early.size === 0;
-  return settle(c, "all", { assets: true, noConflict: true });
+  return settle(c, "all", FLUSH_ALL);
+}
+
+/** `flushAll`'s barrier with its reason (a graph switch names what it refused
+ * for): null when everything published, else why not. */
+export function flushAllUnsettled(): Promise<Unsettled | null> {
+  const c = host();
+  if (!c) return Promise.resolve(early.size === 0 ? null : { kind: "unbound" });
+  return unsettled(c, "all", FLUSH_ALL);
 }
 
 /** A block reference's target (§8, Q2): published bytes that contain `witness`. */
