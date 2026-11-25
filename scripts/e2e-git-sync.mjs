@@ -20,6 +20,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { BLOCK_EDITOR } from "./lib/e2e-block-editor.mjs";
 
 const run = path.resolve(process.env.E2E_ARTIFACT_DIR || "artifacts/git-sync/native", `run-${Date.now()}`);
 const shots = process.env.E2E_SCREENSHOT_DIR ? path.resolve(process.env.E2E_SCREENSHOT_DIR) : run;
@@ -97,14 +98,14 @@ async function syncNow(expected) {
     timeout: 30_000, interval: 250, timeoutMsg: `Sync now never ended "${expected}": ${JSON.stringify(gitSetting())}` });
 }
 async function editFirstBlock(text) {
-  await browser.waitUntil(() => browser.execute(() => {
+  await browser.waitUntil(() => browser.execute((editor) => {
     const content = document.querySelector(".page .ls-block .block-content-wrapper");
     if (!(content instanceof HTMLElement)) return false;
     content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
     content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
     content.click();
-    return document.activeElement instanceof HTMLTextAreaElement;
-  }), { timeout: 10_000, interval: 300, timeoutMsg: "the first block's editor did not open" });
+    return !!document.activeElement?.matches(editor);
+  }, BLOCK_EDITOR), { timeout: 10_000, interval: 300, timeoutMsg: "the first block's editor did not open" });
   await browser.keys(["End"]);
   for (const key of text) await browser.keys([key]);
   await browser.keys("Escape");
