@@ -1,4 +1,5 @@
 import { isHTMLElementNode } from "../windowRealm";
+import { BLOCK_SURFACE_ATTR } from "../contextMenuPolicy";
 // Interactive targets that must NOT enter edit on mousedown (mirrors OG's
 // target-forbidden-edit?). Their own handlers run on click, so entering edit
 // first would swap the DOM out from under them.
@@ -23,6 +24,10 @@ export const FORBID_EDIT_SELECTOR = [
   // The embed owns its whole surface, including gaps between nested rows.
   // Nested editors remain allowed: their own host does not contain this ancestor.
   ".embed-block",
+  // A query's results draw other blocks: a press on their blank space (a row's
+  // padding, the gap between rows or pages) belongs to the row there or to
+  // nobody, never to the host query (GH #1000), as for the menu (GH #726).
+  `[${BLOCK_SURFACE_ATTR}]`,
   // DTO result rows own source actions (including preamble promotion on click).
   // A query host must not replace them with its editor on the earlier press.
   ".ref-block",

@@ -82,3 +82,30 @@ describe("forbidsEditEntry: mounted CodeMirror editors", () => {
     expect(forbidsEditEntry(press(host, host.querySelector(`.${className}`)!, 5, 5))).toBe(true);
   });
 });
+
+describe("forbidsEditEntry: a query's results surface (GH #1000)", () => {
+  // host (query) > results region > result row > its own content host
+  function queryHost() {
+    const host = document.createElement("div");
+    host.innerHTML = '<div class="query-header">Query</div><div class="query-results-region" data-block-surface="query">'
+      + '<div class="ls-block"><div class="block-main"><div class="block-content-wrapper"><div class="block-content">result</div></div></div></div></div>';
+    document.body.append(host);
+    return { host, row: host.querySelector(".block-main")!, content: host.querySelector(".block-content")!, header: host.querySelector(".query-header")! };
+  }
+
+  it("a press on blank space in the results never edits the query host", () => {
+    const { host, row } = queryHost();
+    expect(forbidsEditEntry(press(host, row, 5, 5))).toBe(true);
+    expect(forbidsEditEntry(press(host, host.querySelector(".query-results-region")!, 5, 5))).toBe(true);
+  });
+
+  it("the result row's own handler still takes a press on its text", () => {
+    const { content } = queryHost();
+    expect(forbidsEditEntry(press(content, content, 5, 5))).toBe(false);
+  });
+
+  it("the query's header still edits the query", () => {
+    const { host, header } = queryHost();
+    expect(forbidsEditEntry(press(host, header, 5, 5))).toBe(false);
+  });
+});
