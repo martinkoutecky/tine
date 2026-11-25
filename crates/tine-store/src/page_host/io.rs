@@ -41,6 +41,55 @@ pub(super) enum Witness {
     Unsupported,
 }
 
+/// A paired source's durability witness (`HostIo::source_witnessed`): the
+/// one producer of source evidence, mapped to D/W/U by
+/// `Host::source_original`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SourceWitness {
+    /// One handle read, flushed and reread the file unchanged, every
+    /// directory from its own up to the graph root synced, and the path
+    /// still names that file afterwards.
+    Durable,
+    /// As `Durable`, but a directory sync reported `Unsupported` (NFS,
+    /// FUSE, Android shared storage), or the chain is a Windows one, where a
+    /// graph directory sync is no flush: the save path's weak witness.
+    Weak,
+    /// A step failed: custody is kept.
+    Failed(WitnessStep),
+}
+
+/// The witness step that failed (one `storage_diag` record each).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum WitnessStep {
+    /// The file or a directory of its chain failed the graph containment
+    /// check.
+    Containment,
+    /// The file could not be opened (Windows: for writing, which its flush
+    /// needs: a read-only attribute, an ACL or a sharing denial).
+    Open,
+    /// The first read or its metadata call failed.
+    Read,
+    /// The file's own flush failed.
+    FileSync,
+    /// The reread or its metadata call failed.
+    Reread,
+    /// The bytes were not the expected ones, or the file changed between
+    /// the read and the reread.
+    Changed,
+    /// A directory sync of the chain failed.
+    DirectorySync,
+    /// After the chain sync the path no longer names the same unchanged
+    /// file.
+    Replaced,
+}
+
+impl WitnessStep {
+    /// The step's `storage_diag` counter (`SOURCE_WITNESS_STEPS` names it).
+    pub(super) fn index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ErrorKind {
     Io,
@@ -109,8 +158,21 @@ pub(super) trait HostIo {
     fn folded_keys(&self, _key: &str) -> Vec<String> {
         Vec::new()
     }
-    /// Best effort only; it is not a publication or promise.
-    fn graph_launch(&mut self, _pages: &std::collections::BTreeSet<String>) {}
+    /// Best effort only; it is not a publication or promise. Launch's one
+    /// directory pass also witnesses the decided `sources` (page, the bytes
+    /// launch read, each its pair's preimage): every source's file steps
+    /// first, one handle at a time, then one sync of each directory of
+    /// `pages` and `sources` up to the graph root, then each source's final
+    /// metadata check. The answer per source is `source_witnessed`'s.
+    fn graph_launch(
+        &mut self,
+        _pages: &std::collections::BTreeSet<String>,
+        sources: &[(String, Text)],
+    ) -> Vec<SourceWitness> {
+        (sources.iter())
+            .map(|(page, bytes)| self.source_witnessed(page, bytes))
+            .collect()
+    }
     /// Release only this save's unpublished temporary vehicle at completion.
     fn page_finish(&mut self, _page: &str) {}
     fn read_page(&mut self, page: &str) -> IoResult<Text>;
@@ -134,17 +196,17 @@ pub(super) trait HostIo {
     /// profile (the model certifies on bytes there), never weaker; only
     /// the conformance ledger implements the model's exemption.
     fn durable_page(&mut self, page: &str) -> bool;
-    /// A durability witness for a paired source's current file, read as
-    /// `bytes` (`Host::source_original`, asked only when those are its
-    /// pair's preimage): the file at the path still holds `bytes`, and its
-    /// directory entry and every ancestor's up to the graph root can no
-    /// longer be reverted by a power cut. Production syncs that whole chain
-    /// now, at every custody decision, so a failed sync (at launch or since)
-    /// is carried forward and never forgotten, and an own save that synced
-    /// only the page's own directory does not pay an ancestor's debt. No
-    /// page-wide "published since launch" bit: the answer is about this
-    /// file. Rare: only custody decisions on a matching source ask it.
-    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool;
+    /// A durability witness for a paired source's current file, expected
+    /// to hold `bytes` (`Host::source_original` asks only when those are its
+    /// pair's preimage): one handle reads the file, takes its metadata,
+    /// flushes it, rereads it and takes its metadata again (equal bytes and
+    /// stamps); then every directory from the file's own up to the graph
+    /// root is synced, root first; then the path must still name that
+    /// unchanged file. Asked anew at every custody decision, so a failed
+    /// step is never forgotten and an own save that synced only the page's
+    /// own directory pays no ancestor's debt. Every failure gets one
+    /// `storage_diag` record naming its step.
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> SourceWitness;
     /// The host no longer needs `page`'s durability witness (it is no
     /// receiver of an unresolved pair): drop it, so the adapter's witnesses
     /// stay bounded by the unresolved pairs and are not one per page ever

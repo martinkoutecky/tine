@@ -161,28 +161,29 @@ impl<F: HostIo> Host<F> {
         bytes == image && fs.durable_page(receiver)
     }
 
-    /// The one answer to "does this source durably hold its pair's
-    /// original text" (the model's `sourcePresent`), read as `bytes`: they
-    /// are the admitted `preimage` (`order::source_present`), and the very
-    /// file holding them has a durability witness
-    /// (`HostIo::source_witnessed`: its directory entries up to the graph
-    /// root synced now, the file unchanged meanwhile). Matching bytes whose
-    /// directory sync failed, at launch or since, anchor nothing: a power
-    /// cut may still drop them, so the operation draft keeps custody. Every
-    /// custody decision asks this: launch's decided phases, Use Disk's
-    /// phase, and a paired source's publication (disarm and restoration).
+    /// The one answer to "does this source hold its pair's original text"
+    /// (the model's `sourcePresent`), read as `bytes`: they are the admitted
+    /// `preimage` (`order::source_present`), and `witness` (the one source
+    /// evidence producer, `HostIo::source_witnessed`, or launch's shared pass
+    /// `HostIo::graph_launch`) found that very file flushed and its
+    /// directory entries up to the graph root synced (D), or the weak
+    /// witness of a filesystem without directory sync (W). A failed step
+    /// (U) anchors nothing: a power cut may still drop or revert the file.
+    /// The witness runs only for matching bytes. Every custody decision asks
+    /// this: launch's decided phases, Use Disk's phase, and a paired
+    /// source's publication (disarm and restoration).
     pub(super) fn source_original(
-        fs: &mut F,
-        source: &str,
         preimage: &Text,
         bytes: &Text,
+        witness: impl FnOnce() -> SourceWitness,
     ) -> order::Original {
         if !order::source_present(preimage, bytes) {
-            order::Original::No
-        } else if fs.source_witnessed(source, bytes) {
-            order::Original::Durable
-        } else {
-            order::Original::Unwitnessed
+            return order::Original::No;
+        }
+        match witness() {
+            SourceWitness::Durable => order::Original::Durable,
+            SourceWitness::Weak => order::Original::Weak,
+            SourceWitness::Failed(_) => order::Original::Failed,
         }
     }
 
@@ -606,8 +607,13 @@ impl<F: HostIo> Host<F> {
                             }
                             Err(_) => false,
                         };
-                        let original =
-                            Self::source_original(&mut self.fs, &key, &preimage, &job.bytes);
+                        // The full witness on the slot, never `job.bytes`
+                        // plus a stamp: another program may have written the
+                        // file in place since the rename.
+                        let fs = &mut self.fs;
+                        let original = Self::source_original(&preimage, &job.bytes, || {
+                            fs.source_witnessed(&key, &job.bytes)
+                        });
                         let anchored = order::anchored(original, certified);
                         if let Some(name) = self.order.disarm(&key, anchored) {
                             self.repair_op(&name);
@@ -615,7 +621,9 @@ impl<F: HostIo> Host<F> {
                     }
                     let fs = &mut self.fs;
                     let restored = (self.order).restored(&key, |preimage| {
-                        Self::source_original(fs, &key, preimage, &job.bytes)
+                        Self::source_original(preimage, &job.bytes, || {
+                            fs.source_witnessed(&key, &job.bytes)
+                        })
                     });
                     for name in restored {
                         self.repair_op(&name);

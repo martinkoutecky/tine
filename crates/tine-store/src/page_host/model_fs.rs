@@ -3,7 +3,10 @@
 //! persist independently at a power cut, constrained only by single-move
 //! atomicity and A4 rule 5. Each HostIo call is a sequence of system calls, and
 //! `Fault::Cut` lands between any two of them (REVIEW-2b-r2 R1).
-use super::io::{DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
+use super::io::{
+    DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, SourceWitness, Witness,
+    WitnessStep,
+};
 use super::Text;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -92,6 +95,10 @@ pub(super) struct ModelFs {
     /// a `trash_sync` in this incarnation, so later ones sync only the trash
     /// directory (production `trash_chain`, GH3 step 2). Lost at a crash.
     pub chain_witnessed: bool,
+    /// Pages whose custody source witness fails at this step (a failing
+    /// directory sync up to the root, a denied flush open): the model's
+    /// witness input, until removed.
+    pub(super) witness_faults: BTreeMap<String, WitnessStep>,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -616,7 +623,11 @@ impl HostIo for ModelFs {
     /// latest namespace operation, and every existing trash chain entry,
     /// becomes durable where the witness is. Trash payload names are left
     /// alone: making them durable here would also claim their data.
-    fn graph_launch(&mut self, pages: &BTreeSet<String>) {
+    fn graph_launch(
+        &mut self,
+        pages: &BTreeSet<String>,
+        sources: &[(String, Text)],
+    ) -> Vec<SourceWitness> {
         if !self.weak_graph && self.env.root == RootState::Bound {
             self.sourced.extend(pages.iter().cloned());
             for dir in CHAIN {
@@ -625,6 +636,9 @@ impl HostIo for ModelFs {
                 }
             }
         }
+        (sources.iter())
+            .map(|(page, bytes)| self.source_witnessed(page, bytes))
+            .collect()
     }
 
     fn page_finish(&mut self, page: &str) {
@@ -770,14 +784,29 @@ impl HostIo for ModelFs {
         self.weak_graph || self.witnessed.get(page) == Some(&(epoch, current))
     }
 
-    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool {
-        // The model's `sourcePresent`: the bytes are what a power cut keeps
-        // (`stable`), or the graph is weak, where bytes certify. The model
-        // syncs no graph page at launch, so it never witnesses more than
-        // production, which syncs the chain at the decision.
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> SourceWitness {
+        // The model's witness input (`storage-s36.qnt` `witnessOf`): a
+        // planted failure (`witness_faults`, a failing directory or file
+        // sync), or bytes that are not the expected ones, fail it; a weak
+        // graph gives the weak witness (bytes certify, nothing becomes
+        // durable); otherwise the witness flushed the file and synced its
+        // chain, so its bytes become what a power cut keeps.
         let key = format!("graph/{page}");
-        self.files.get(&key).cloned() == *bytes
-            && (self.weak_graph || self.stable.get(&key).cloned() == *bytes)
+        if self.files.get(&key).cloned() != *bytes || bytes.is_none() {
+            return SourceWitness::Failed(WitnessStep::Changed);
+        }
+        if self.env.root != RootState::Bound {
+            return SourceWitness::Failed(WitnessStep::Containment);
+        }
+        if let Some(step) = self.witness_faults.get(page) {
+            return SourceWitness::Failed(*step);
+        }
+        if self.weak_graph {
+            return SourceWitness::Weak;
+        }
+        set(&mut self.stable, &key, bytes.clone());
+        self.volatile.remove(&key);
+        SourceWitness::Durable
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {

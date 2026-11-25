@@ -8,6 +8,9 @@
 //! not stepped through), so every cut below is "stop stepping here".
 use super::*;
 
+#[path = "production_custody_witness_tests.rs"]
+mod production_custody_witness_tests;
+
 const OLD: &str = "- old\n";
 const REF: &str = "- see [[A]]\n";
 const REWRITTEN: &str = "- see [[C]]\n";
@@ -1122,7 +1125,7 @@ fn a_use_disk_on_the_source_with_an_unreadable_receiver_keeps_custody() {
 
 /// A graph whose filesystem offers no directory sync (NFS, FUSE): the
 /// source gets the same weak witness the save path and the receiver get
-/// there (a decision the fix-launch-custody receipt hands back). The
+/// there (W, which every rule treats as develop's byte match). The
 /// decision still syncs the chain, and a failure would keep custody; an
 /// Unsupported answer does not keep it forever.
 #[test]

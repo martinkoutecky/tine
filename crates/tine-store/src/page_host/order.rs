@@ -667,6 +667,21 @@ impl Order {
             .collect()
     }
 
+    /// Each decided pair's source (once) whose launch read `bytes` gives
+    /// `Some` (given the source and its preimage): launch witnesses those
+    /// in its one directory pass (`HostIo::graph_launch`).
+    pub fn decided_sources(
+        &self,
+        mut bytes: impl FnMut(&PageKey, &Text) -> Option<Text>,
+    ) -> Vec<(PageKey, Text)> {
+        let mut seen = BTreeSet::new();
+        self.pairs()
+            .filter(|(_, p)| p.choice != PairChoice::None)
+            .filter_map(|(_, p)| Some((p.source.clone(), bytes(&p.source, &p.preimage)?)))
+            .filter(|(source, _)| seen.insert(source.clone()))
+            .collect()
+    }
+
     /// A decision this code does not act on: block the operation's
     /// destructive step.
     pub fn block(&mut self, name: &str, decision: String) {
@@ -736,6 +751,14 @@ impl Order {
                 (!moves.is_empty() && !versions.is_empty()).then(|| Gates::new(moves, versions))
             })
             .collect()
+    }
+
+    /// The phase and choice of the (first) pair whose source is `source`.
+    #[cfg(test)]
+    pub fn source_state(&self, source: &str) -> Option<(PairPhase, PairChoice)> {
+        (self.pairs())
+            .find(|(_, p)| p.source == source)
+            .map(|(_, p)| (p.phase, p.choice))
     }
 
     /// What `source`'s removal may do now.
@@ -850,12 +873,11 @@ impl Order {
     }
 
     /// The source's own save published: a pair awaiting its guarded
-    /// restoration settles as cancelled once the source durably holds the
-    /// preimage again (`original`, given the preimage:
-    /// `Host::source_original`). The preimage back without that witness
-    /// (a directory sync up to the graph root failed) occupies the slot
-    /// while custody is still owed: the pair is retained. Returns the
-    /// operations that changed.
+    /// restoration settles as cancelled once the source holds the preimage
+    /// again (`original`, given the preimage: `Host::source_original`, with
+    /// a durable or weak witness). A failed witness leaves the pair awaiting
+    /// its restoration, as other bytes do. Returns the operations that
+    /// changed.
     pub fn restored(
         &mut self,
         source: &str,
@@ -864,15 +886,13 @@ impl Order {
         let mut changed = vec![];
         for (name, op) in &mut self.paired {
             for pair in &mut op.pairs {
-                if pair.source != source || pair.phase != PairPhase::Restore {
-                    continue;
+                if pair.source == source
+                    && pair.phase == PairPhase::Restore
+                    && original(&pair.preimage).holds()
+                {
+                    pair.phase = PairPhase::Cancelled;
+                    changed.push(name.clone());
                 }
-                pair.phase = match original(&pair.preimage) {
-                    Original::Durable => PairPhase::Cancelled,
-                    Original::Unwitnessed => PairPhase::Retained,
-                    Original::No => continue,
-                };
-                changed.push(name.clone());
             }
         }
         changed
@@ -1029,29 +1049,39 @@ pub(super) fn source_present(preimage: &Text, source: &Text) -> bool {
 }
 
 /// Whether a source holds its pair's original text, as the one answerer
-/// `Host::source_original` judges it (the model's `sourcePresent`: the
-/// bytes on disk are the preimage, and a power cut cannot revert them).
+/// `Host::source_original` judges it (the model's `sourcePresent`), from
+/// the source's bytes and its durability witness (`HostIo::source_witnessed`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Original {
-    /// The preimage, in a file whose directory entries up to the graph root
-    /// are durable: it anchors the original text.
+    /// The preimage, and the witness flushed that very file and synced its
+    /// directory entries up to the graph root (D).
     Durable,
-    /// The preimage, but without that witness (a directory sync failed): a
-    /// power cut may still drop the file, so it anchors nothing and the
-    /// operation draft keeps custody.
-    Unwitnessed,
+    /// The preimage on a filesystem that offers no directory sync, or a
+    /// Windows chain (W): the bytes rule every save there already gets.
+    Weak,
+    /// The preimage, but a witness step failed (U): a power cut may still
+    /// drop or revert the file, so it anchors nothing.
+    Failed,
     /// Other bytes, or no file.
     No,
 }
 
+impl Original {
+    /// The source anchors the original text (D or W; develop's byte match).
+    pub(super) fn holds(self) -> bool {
+        matches!(self, Self::Durable | Self::Weak)
+    }
+}
+
 /// The one answer to "is a pair's original text still anchored outside its
 /// operation draft" (the model's `sourcePresent or certified`): the source
-/// durably holds its preimage (`original`: `Host::source_original`), or the
-/// receiver is certified (`certified`: `Host::receiver_certified`). Launch
-/// and Use Disk ask it through `cancel_phase`; a published newer source
-/// text asks it directly (`Order::disarm`'s `anchored`).
+/// holds its preimage with a durable or weak witness (`original`:
+/// `Host::source_original`), or the receiver is certified (`certified`:
+/// `Host::receiver_certified`). Launch and Use Disk ask it through
+/// `cancel_phase`; a published newer source text asks it directly
+/// (`Order::disarm`'s `anchored`).
 pub(super) fn anchored(original: Original, certified: bool) -> bool {
-    original == Original::Durable || certified
+    original.holds() || certified
 }
 
 /// Where a decided pair's original text stands (the model's
@@ -1125,24 +1155,31 @@ impl<F: HostIo> Host<F> {
             let Ok(source) = source else {
                 return self.refused(request, key, Refusal::ReadFailed);
             };
-            let original =
-                Self::source_original(&mut self.fs, &chosen.source, &chosen.preimage, &source);
-            let receiver = if chosen.on_receiver {
-                Ok(bytes.clone())
-            } else if original != Original::No {
-                // The source holds the original: its slot is taken, so the
-                // phase is Cancelled (durable) or Retained (unwitnessed)
-                // whatever the receiver holds; an unreadable receiver must not
-                // refuse the choice (review of 454a4381a, B2).
-                Ok(None)
+            let fs = &mut self.fs;
+            let original = Self::source_original(&chosen.preimage, &source, || {
+                fs.source_witnessed(&chosen.source, &source)
+            });
+            // Develop's receiver evidence: on the source, a held original
+            // (D or W) needs no receiver read; otherwise the receiver is
+            // read, and a certified one still cancels. Only a failed witness
+            // (U) tolerates an unreadable receiver: the choice is recorded
+            // as Retained, keeping the draft, instead of being refused.
+            let certified = if chosen.on_receiver {
+                Self::receiver_certified(&mut self.fs, &chosen.receiver, &bytes, &chosen.image)
+            } else if original.holds() {
+                false
             } else {
-                self.fs.read_page(&chosen.receiver)
+                match self.fs.read_page(&chosen.receiver) {
+                    Ok(receiver) => Self::receiver_certified(
+                        &mut self.fs,
+                        &chosen.receiver,
+                        &receiver,
+                        &chosen.image,
+                    ),
+                    Err(_) if original == Original::Failed => false,
+                    Err(_) => return self.refused(request, key, Refusal::ReadFailed),
+                }
             };
-            let Ok(receiver) = receiver else {
-                return self.refused(request, key, Refusal::ReadFailed);
-            };
-            let certified =
-                Self::receiver_certified(&mut self.fs, &chosen.receiver, &receiver, &chosen.image);
             let phase = cancel_phase(original, &source, certified, chosen.removed);
             let written = self.write_decision(key, chosen, phase);
             self.repair_op(&chosen.name);

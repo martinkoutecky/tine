@@ -763,16 +763,37 @@ const SUPERSEDED_ANSWERER: &str = "order.rs::superseded";
 /// newer text's publication.
 const PREIMAGE_ANSWERER: &str = "order.rs::source_present";
 
-/// One answerer of "does this source durably hold its pair's original
-/// text" (fix-launch-custody): `Host::source_original` alone asks the byte
-/// match (`source_present`) and the file's durability witness
-/// (`source_witnessed`); every custody decision asks it: launch's decided
-/// phases, Use Disk, and a paired source's publication.
+/// One producer of source evidence and one answerer of "does this source
+/// hold its pair's original text" (fix-launch-custody): the
+/// source witness (`HostIo::source_witnessed`, and launch's shared pass
+/// `HostIo::graph_launch`) is called only by the custody deciders, each of
+/// which hands it to `Host::source_original`, the only function that maps a
+/// witness to D/W/U (`Original`). The byte match (`source_present`) is asked
+/// only there and by launch, which witnesses only matching sources. The
+/// phase rules stay develop's: they read an `Original` only through
+/// `holds()` (D or W, develop's byte match), except Use Disk on a source,
+/// which tolerates an unreadable receiver only for a failed witness (U).
 const ORIGINAL_ANSWERER: &str = "save.rs::source_original";
 const ORIGINAL_DECIDERS: [&str; 3] = [
     "logical.rs::adopt_pairing",
     "order.rs::discard",
     "save.rs::advance_save_locked",
+];
+/// The trait's default launch pass asks the per-source witness.
+const WITNESS_CALLERS: [&str; 4] = [
+    "logical.rs::adopt_pairing",
+    "order.rs::discard",
+    "save.rs::advance_save_locked",
+    "io.rs::graph_launch",
+];
+const PRESENT_ASKERS: [&str; 2] = [ORIGINAL_ANSWERER, "logical.rs::adopt_pairing"];
+/// Every function that names an `Original` value, with the only text it
+/// may name: the answerer constructs them, `holds` defines D or W, and Use
+/// Disk's E2 receiver read tests for U.
+const ORIGINAL_READERS: [(&str, &str); 3] = [
+    (ORIGINAL_ANSWERER, ""),
+    ("order.rs::holds", ""),
+    ("order.rs::discard", "original==Original::Failed=>false"),
 ];
 
 /// A `==`/`!=` whose operand ends in `preimage` (`x . preimage`, `* p .
@@ -810,10 +831,26 @@ fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
             out.push(format!("{function} compares bytes with a preimage"));
         }
         let flat = squashed(body);
-        if (flat.contains("source_present(") || flat.contains(".source_witnessed("))
-            && function != ORIGINAL_ANSWERER
+        if flat.contains("source_present(") && !PRESENT_ASKERS.contains(&function.as_str()) {
+            out.push(format!("{function} matches a source's preimage itself"));
+        }
+        if (flat.contains(".source_witnessed(") || flat.contains(".graph_launch("))
+            && !WITNESS_CALLERS.contains(&function.as_str())
         {
-            out.push(format!("{function} judges a source's original itself"));
+            out.push(format!(
+                "{function} asks the source witness outside a decider"
+            ));
+        }
+        if flat.contains("Original::") {
+            match ORIGINAL_READERS
+                .iter()
+                .find(|(f, _)| *f == function.as_str())
+            {
+                Some((_, "")) => {}
+                Some((_, only))
+                    if flat.matches("Original::").count() == 1 && flat.contains(only) => {}
+                _ => out.push(format!("{function} reads a source witness's result itself")),
+            }
         }
     }
     for decider in ORIGINAL_DECIDERS {
@@ -834,9 +871,11 @@ fn one_function_answers_each_superseding_question() {
     assert!(calls[SUPERSEDED_ANSWERER].contains(SUPERSEDED_PHASES));
     assert!(compares_preimage(&calls[PREIMAGE_ANSWERER]));
     let original = squashed(&calls[ORIGINAL_ANSWERER]);
-    assert!(original.contains("source_present(") && original.contains(".source_witnessed("));
+    assert!(original.contains("source_present(") && original.contains("witness()"));
     // Its mutants: an inline preimage match in the answerer, the base's
-    // byte-only anchoring at publication and in a restoration, a second
+    // byte-only anchoring at publication and in a restoration, a restoration
+    // whose failed witness retains (head's E5·U), Use Disk on a source that
+    // skips the receiver read for a failed witness (head's E2·U), a second
     // copy of the phase set.
     let mutants = [
         (
@@ -846,13 +885,23 @@ fn one_function_answers_each_superseding_question() {
         ),
         (
             "save.rs",
-            "Self::source_original(&mut self.fs, &key, &preimage, &job.bytes)",
-            "if order::source_present(&preimage, &job.bytes) { order::Original::Durable } else { order::Original::No }",
+            "let original = Self::source_original(&preimage, &job.bytes, || {",
+            "let original = if order::source_present(&preimage, &job.bytes) { order::Original::Durable } else { order::Original::No }; let _unused = (|| {",
         ),
         (
             "save.rs",
-            "Self::source_original(fs, &key, preimage, &job.bytes)",
-            "if order::source_present(preimage, &job.bytes) { order::Original::Durable } else { order::Original::No }",
+            "Self::source_original(preimage, &job.bytes, || {",
+            "order::source_present(preimage, &job.bytes).then_some(order::Original::Durable).unwrap_or(order::Original::No); (|| {",
+        ),
+        (
+            "order.rs",
+            "                    && original(&pair.preimage).holds()\n                {\n                    pair.phase = PairPhase::Cancelled;",
+            "                    && original(&pair.preimage) != Original::No\n                {\n                    pair.phase = if original(&pair.preimage) == Original::Failed { PairPhase::Retained } else { PairPhase::Cancelled };",
+        ),
+        (
+            "order.rs",
+            "            } else if original.holds() {\n                false",
+            "            } else if original != Original::No {\n                false",
         ),
         (
             "order.rs",

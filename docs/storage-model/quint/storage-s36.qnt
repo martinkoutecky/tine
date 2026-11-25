@@ -110,7 +110,7 @@ module storage {
   pure val RACES: Set[str] = Set("crash", "power")
   // Deliberately broken variants, to show the properties catch losses. "none" is the spec.
   pure val MUTANT: str = "none"
-  // SWEEP-MUTS: {'MRN1': 'base', 'MRN2': 'base', 'MRN3': 'base', 'MRN4': 'base', 'MRN5': 'base', 'MTS': 'base', 'MDT': 'base', 'MC': 'base', 'MC1': 'R1', 'MQ': 'base', 'MLS': 'base', 'MLO': 'base', 'MCL': 'base', 'MX': 'base', 'MST': 'base', 'MWA': 'base', 'MOD': 'base', 'MIS': 'base', 'MDQ': 'base', 'MRB': 'base', 'MRE': 'base', 'MAK': 'base', 'MDO': 'base', 'MBD': 'base', 'MDA': 'base', 'MDE': 'base', 'MDD': 'base', 'MDF': 'base', 'MRD': 'base', 'MPR': 'base', 'MCV': 'base', 'MRF': 'base', 'MEX': 'base', 'MAC': 'base', 'MAN': 'base', 'MAM': 'base', 'MNS': 'base', 'MRH': 'base', 'MNC': 'base', 'MPD': 'base', 'MForgetChoice': 'base', 'MForgetGates': 'base', 'MSkipPrecheck': 'base', 'MSkipPostcheck': 'base', 'MNoResave': 'base', 'MDropRetained': 'base', 'MRejectRetainedSwitch': 'base', 'MForgetTouches': 'base', 'MSkipDecision': 'base', 'MKeepSettled': 'base', 'MDoubleOwner': 'base', 'MUnownedDelete': 'base', 'MOverlapMoves': 'base', 'MSharedChoice': 'base', 'MDropSibling': 'base', 'MDropShared': 'base', 'MRewriteOnFailure': 'base', 'MDropPreimage': 'base', 'MUseLaunchBytes': 'base'}
+  // SWEEP-MUTS: {'MRN1': 'base', 'MRN2': 'base', 'MRN3': 'base', 'MRN4': 'base', 'MRN5': 'base', 'MTS': 'base', 'MDT': 'base', 'MC': 'base', 'MC1': 'R1', 'MQ': 'base', 'MLS': 'base', 'MLO': 'base', 'MCL': 'base', 'MX': 'base', 'MST': 'base', 'MWA': 'base', 'MOD': 'base', 'MIS': 'base', 'MDQ': 'base', 'MRB': 'base', 'MRE': 'base', 'MAK': 'base', 'MDO': 'base', 'MBD': 'base', 'MDA': 'base', 'MDE': 'base', 'MDD': 'base', 'MDF': 'base', 'MRD': 'base', 'MPR': 'base', 'MCV': 'base', 'MRF': 'base', 'MEX': 'base', 'MAC': 'base', 'MAN': 'base', 'MAM': 'base', 'MNS': 'base', 'MRH': 'base', 'MNC': 'base', 'MPD': 'base', 'MForgetChoice': 'base', 'MForgetGates': 'base', 'MSkipPrecheck': 'base', 'MSkipPostcheck': 'base', 'MNoResave': 'base', 'MDropRetained': 'base', 'MRejectRetainedSwitch': 'base', 'MForgetTouches': 'base', 'MSkipDecision': 'base', 'MKeepSettled': 'base', 'MDoubleOwner': 'base', 'MUnownedDelete': 'base', 'MOverlapMoves': 'base', 'MSharedChoice': 'base', 'MDropSibling': 'base', 'MDropShared': 'base', 'MRewriteOnFailure': 'base', 'MDropPreimage': 'base', 'MUseLaunchBytes': 'base', 'MTrustFailedWitness': 'base', 'MSkipWitnessDurability': 'base'}
   // s3.4 additionally tests the isolated C3 mutant in the ordinary sweep.
   // SWEEP-CONTROL: {}
   // TLC bounds (tlc2.py rewrites these three lines).
@@ -163,7 +163,10 @@ module storage {
     gates: List[Gate],             // running renames' orders, in install order
     pairs: List[Pair],             // pairs with the same admission version share one vehicle
     owners: Set[int],              // 0 is this host; 1 is another claimant of the same namespace
-    draftOK: bool
+    draftOK: bool,
+    // s3.6: paths whose source witness fails (an error at its file read, fsync, reread or a directory sync).
+    // An environment fault: it can come and go, and Tine sees only the failed witness.
+    unwitnessed: Set[int]
   }
   var s: Sys
 
@@ -289,9 +292,26 @@ module storage {
     val image = pair.records.get(pair.dst).bytes
     sys.disk.get(pair.dst) == image and (sys.stable.get(pair.dst) == image or RACES.contains("weak"))
   }
+  // The source witness: read the file, fsync it, reread it on the same handle, then sync its directory chain.
+  // It fails (U) on a faulted path, whatever the bytes; MTrustFailedWitness trusts the matching bytes anyway.
+  pure def witnessFails(sys: Sys, p: int): bool = sys.unwitnessed.contains(p) and MUTANT != "MTrustFailedWitness"
+  // A strong witness of the preimage makes those bytes durable (its fsync and directory syncs); a weak one
+  // (directory sync unsupported) proves the bytes only; a failed one proves nothing. MSkipWitnessDurability
+  // drops the transition, so a previously unstable source can never cancel.
+  pure def witnessSource(sys: Sys, pair: Pair): Sys = {
+    val bytes = sys.disk.get(pair.src)
+    if (bytes != pair.records.get(pair.src).base or sys.unwitnessed.contains(pair.src) or RACES.contains("weak")
+        or MUTANT == "MSkipWitnessDurability") sys
+    else { ...sys, stable: sys.stable.set(pair.src, bytes) }
+  }
+  pure def witnessSources(sys: Sys, chosen: Pair => bool): Sys =
+    sys.pairs.foldl(sys, (acc, pair) => if (chosen(pair)) witnessSource(acc, pair) else acc)
+  // S in {D, W}: the bytes match and the witness did not fail. On a strong filesystem only a durable source
+  // counts; witnessSource made a witnessed one durable.
   pure def sourcePresent(sys: Sys, pair: Pair): bool = {
     val preimage = pair.records.get(pair.src).base
-    sys.disk.get(pair.src) == preimage and (sys.stable.get(pair.src) == preimage or RACES.contains("weak"))
+    sys.disk.get(pair.src) == preimage and not(witnessFails(sys, pair.src))
+      and (sys.stable.get(pair.src) == preimage or RACES.contains("weak"))
   }
   pure def restorable(sys: Sys, pair: Pair): bool =
     sys.disk.get(pair.src) == ABSENT and sys.trash.get(pair.src).contains(pair.records.get(pair.src).base)
@@ -323,7 +343,10 @@ module storage {
         (((pair.decision == "cancelled" and Set(pair.src, pair.dst).contains(p)) or
           (Set("sourceDisk", "disarmed").contains(pair.decision) and pair.src == p)) and originalRecord(sys, pair, p)))) NODRAFT
     else sys.drafts.get(p)
-  pure def decideDisk(sys: Sys, p: int, src: int): Sys =
+  pure def decideDisk(sys0: Sys, p: int, src: int): Sys = {
+    // E2/E3: the decided pairs' sources are witnessed before their phase is read.
+    val sys = witnessSources(sys0, pair => ((pair.dst == p and pair.src == src) and (unresolved(pair) or pair.decision == "sourceDisk"))
+      or (sourcePair(pair, p) and pair.decision == "none"))
     { ...sys, pairs: mapPairs(sys.pairs, pair => {
         val shared = MUTANT == "MSharedChoice" and sys.pairs.foldl(false, (found, sibling) =>
           found or (sibling.vehicle == pair.vehicle and sibling.dst == p and sibling.src == src))
@@ -332,7 +355,7 @@ module storage {
         else if (sourcePair(pair, p) and pair.decision == "none")
           { ...pair, phase: cancelPhase(sys, pair, false), decision: "sourceDisk" }
         else pair
-      }) }
+      }) } }
   pure def resumePair(sys: Sys, p: int): Sys =
     { ...sys, pairs: mapPairs(sys.pairs, pair => {
         if (pair.dst == p and certified(sys, pair)) {
@@ -342,7 +365,9 @@ module storage {
         } else pair
       }) }
   pure def publishedPair(sys: Sys, p: int, bytes: int): Sys = {
-    val read = resumePair(sys, p)
+    // E4/E5: a published source is witnessed in full on its slot before it disarms or ends a restoration.
+    val read = witnessSources(resumePair(sys, p), pair => sourcePair(pair, p) and bytes != ABSENT
+      and Set("armed", "held", "restore").contains(pair.phase))
     { ...read, pairs: mapPairs(read.pairs, pair => {
         if (not(sourcePair(pair, p))) pair
         else if (bytes == ABSENT and pair.phase == "armed") {
@@ -422,7 +447,7 @@ module storage {
     s' = { alive: true, claimed: Set(), disk: initDisk, stable: initDisk,
       drafts: PAGES.mapBy(_ => NODRAFT), trash: PAGES.mapBy(_ => Set()), trashStable: PAGES.mapBy(_ => Set()), pages: PAGES.mapBy(_ => NOPAGE), job: NOJOB,
       w: PAGES.mapBy(_ => NOW), mb: PAGES.mapBy(_ => NOMAIL), up: List(), gates: List(),
-      pairs: List(), owners: Set(0), draftOK: true },
+      pairs: List(), owners: Set(0), draftOK: true, unwitnessed: Set() },
     g' = { vc: 0, promise: PAGES.mapBy(_ => NOPROMISE), ext: PAGES.mapBy(_ => 0),
       wrote: PAGES.mapBy(_ => Set()), owed: Set(), guard: false,
       seen: PAGES.mapBy(_ => Set()), mine: Set(), opRead: PAGES.mapBy(_ => Set()), removed: PAGES.mapBy(_ => Set()), delDurable: PAGES.mapBy(_ => Set()),
@@ -913,6 +938,11 @@ module storage {
   action extClaim(p: int, present: bool): bool = all { s.claimed.contains(p) != present,
     commit({ ...s, claimed: if (present) s.claimed.union(Set(p)) else s.claimed.exclude(Set(p)) }, g, "extClaim") }
 
+  // s3.6: the source witness at path p starts or stops failing (an I/O error at any of its steps). It can
+  // happen while Tine is down; the path's bytes are unchanged.
+  action witnessFault(p: int, on: bool): bool = all { s.unwitnessed.contains(p) != on,
+    commit({ ...s, unwitnessed: if (on) s.unwitnessed.union(Set(p)) else s.unwitnessed.exclude(Set(p)) }, g, "witnessFault") }
+
   action crash = all { s.alive, RACES.contains("crash"), commit(down(s), gDown(g), "crash") }
 
   // The window reloads (webview crash, reload) while the backend runs on. Its unsent input is lost (never
@@ -967,10 +997,13 @@ module storage {
         .map(p => (src, p, gt.vers.get(p), dst)) else Set()
       obl.union(afterDst).union(afterRef)
     })
+  pure def decidedPair(pair: Pair): bool = Set("cancelled", "sourceDisk", "disarmed").contains(pair.decision)
   action launchWithClaim(claim: bool): bool = all { not(s.alive),
     val owners = if (claim and (s.owners == Set() or MUTANT == "MDoubleOwner")) s.owners.union(Set(0)) else s.owners
-    val live = { ...s, alive: true, pages: restored, owners: owners, pairs: mapPairs(s.pairs, pair => {
-      if (Set("cancelled", "sourceDisk", "disarmed").contains(pair.decision)) { ...pair, phase: cancelPhase(s, pair, true) }
+    // E1: one launch pass witnesses every decided pair's source.
+    val ws = witnessSources(s, decidedPair)
+    val live = { ...ws, alive: true, pages: restored, owners: owners, pairs: mapPairs(s.pairs, pair => {
+      if (decidedPair(pair)) { ...pair, phase: cancelPhase(ws, pair, true) }
       else pair
     }) }
     val gates = recoveredGates(live)
@@ -1038,6 +1071,8 @@ module storage {
     nondet keep = PAGES.powerset().oneOf() powerK(keep),
     // s3.4: a name claimant on another path can arrive between planning and admission.
     nondet p = PAGES.oneOf() nondet present = BOOLS.oneOf() extClaim(p, present),
+    // s3.6: a source witness can fail at any time, independently of the bytes.
+    nondet p = PAGES.oneOf() nondet on = BOOLS.oneOf() witnessFault(p, on),
     // s3
     nondet p = PAGES.oneOf() any { opDelete(p), flushDel(p), load(p) },
     nondet src = PAGES.oneOf() nondet dst = PAGES.oneOf() nondet refs = PAGES.exclude(Set(src, dst)).powerset().oneOf()

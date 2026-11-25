@@ -540,7 +540,9 @@ fn m3_partial_replan_refusal_retains_root_sync_until_restoration() {
 fn launch_sync_error_is_reported_best_effort_without_refusing_graph_saves() {
     let mut f = Fixture::new();
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.fs.graph_launch(&BTreeSet::from(["a.md".into()]));
+    f.host
+        .fs
+        .graph_launch(&BTreeSet::from(["a.md".into()]), &[]);
     assert_eq!(
         f.host.fs.launch_warnings,
         vec![(f.graph.clone(), io::ErrorKind::Other)]

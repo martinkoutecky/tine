@@ -4,7 +4,7 @@
 //! API witnesses, not power-cut evidence. Power and speculative `.fail()` forks
 //! stay ModelFs-only, explicitly excluded by the corpus selector below.
 use super::*;
-use crate::page_host::io::{DraftStatus, IoResult, MoveResult, Witness};
+use crate::page_host::io::{DraftStatus, IoResult, MoveResult, SourceWitness, Witness};
 use crate::page_host::production::ProductionIo;
 use std::fs;
 use std::io;
@@ -96,6 +96,19 @@ struct NativeFs {
 }
 
 impl NativeFs {
+    /// A source witness's native answer, which the ledger's model of the
+    /// same input must match: both hold the original (D or W: a weak
+    /// ledger graph over a strong native one), or both failed.
+    fn agree(&self, page: &str, native: SourceWitness, ledger: SourceWitness) -> SourceWitness {
+        let failed = |w: SourceWitness| matches!(w, SourceWitness::Failed(_));
+        assert_eq!(
+            failed(native),
+            failed(ledger),
+            "source witness of {page}: native {native:?}, ledger {ledger:?}"
+        );
+        native
+    }
+
     fn check_readable(&self) {
         for p in 0..self.count {
             let twin = self.graph.join(format!("{p:04}.org"));
@@ -316,8 +329,18 @@ impl HostIo for NativeFs {
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
         self.native.page_twin(page)
     }
-    fn graph_launch(&mut self, pages: &BTreeSet<String>) {
-        self.native.graph_launch(pages);
+    fn graph_launch(
+        &mut self,
+        pages: &BTreeSet<String>,
+        sources: &[(String, Text)],
+    ) -> Vec<SourceWitness> {
+        let native = self.native.graph_launch(pages, sources);
+        (sources.iter().zip(native))
+            .map(|((page, bytes), native)| {
+                let ledger = self.ledger.source_witnessed(page, bytes);
+                self.agree(page, native, ledger)
+            })
+            .collect()
     }
     fn page_finish(&mut self, page: &str) {
         self.ledger.page_finish(page);
@@ -363,12 +386,12 @@ impl HostIo for NativeFs {
         );
         ledger
     }
-    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> bool {
-        // The native adapter pays the chain's syncs now, so it may witness
-        // a file the model's launch left unstable; the ledger's answer is
-        // the refined model's, as for `durable_page`.
-        let _ = self.native.source_witnessed(page, bytes);
-        self.ledger.source_witnessed(page, bytes)
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> SourceWitness {
+        // The native witness is the answer; the ledger models the same
+        // witness input (and a durable witness's flush), so it must agree.
+        let native = self.native.source_witnessed(page, bytes);
+        let ledger = self.ledger.source_witnessed(page, bytes);
+        self.agree(page, native, ledger)
     }
     fn release_durable(&mut self, page: &str) {
         // Only the native witness is bounded; the ledger's is the model's
@@ -704,4 +727,55 @@ fn native_committed_scenarios_in_four_profiles() {
 #[test]
 fn native_vehicle_recovery_scenarios_in_four_profiles() {
     super::tests::vehicle_scenarios_through_host::<NativeFs>();
+}
+
+/// The s3.6 model's two source-witness traces (`ownFailedWitnessRetains`,
+/// `ownUnstableWitnessCancels`), as the phase rule's inputs: the native
+/// witness is the answer and the ledger's model of the same input agrees.
+#[test]
+fn s36_source_witness_traces_native_and_ledger() {
+    use crate::page_host::io::WitnessStep;
+    let decide = |fs: &mut NativeFs, receiver: Text| {
+        let (page, preimage) = (key(0), text(1));
+        let bytes = fs.read_page(&page).unwrap();
+        let original = Host::<NativeFs>::source_original(&preimage, &bytes, || {
+            fs.source_witnessed(&page, &bytes)
+        });
+        // The receiver's divergent bytes are no certified image.
+        let certified = receiver == text(1);
+        order::cancel_phase(original, &bytes, certified, false)
+    };
+    // 1. A durable matching source, a failing root sync, a divergent receiver: Retained.
+    let mut fs = NativeFs::fresh("base", 3);
+    fs.external(&key(2), text(3), true);
+    let root = fs.graph.clone();
+    fs.native
+        .sync_faults
+        .insert(root.clone(), io::ErrorKind::Other);
+    fs.ledger
+        .witness_faults
+        .insert(key(0), WitnessStep::DirectorySync);
+    assert_eq!(
+        fs.ledger.stable.get(&format!("graph/{}", key(0))).cloned(),
+        text(1)
+    );
+    assert_eq!(decide(&mut fs, text(3)), order::PairPhase::Retained);
+    // ... and once the fault clears, the same choice cancels.
+    fs.native.sync_faults.remove(&root);
+    fs.ledger.witness_faults.remove(&key(0));
+    assert_eq!(decide(&mut fs, text(3)), order::PairPhase::Cancelled);
+
+    // 2. The matching bytes are not yet durable: a successful witness makes them so, and cancels.
+    let mut fs = NativeFs::fresh("base", 3);
+    fs.external(&key(0), text(3), true);
+    fs.external(&key(0), text(1), false);
+    fs.external(&key(2), text(3), true);
+    let stable = format!("graph/{}", key(0));
+    assert_eq!(fs.ledger.stable.get(&stable).cloned(), text(3));
+    assert_eq!(decide(&mut fs, text(3)), order::PairPhase::Cancelled);
+    assert_eq!(
+        fs.ledger.stable.get(&stable).cloned(),
+        text(1),
+        "the witness's durability transition"
+    );
 }

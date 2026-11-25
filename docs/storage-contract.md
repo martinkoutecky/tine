@@ -1389,24 +1389,64 @@ from the scanned drafts before any recovered save or choice.
   create publish it, refused over an occupied slot, a claimant or twin, or
   unsaved text, and that publication cancels the pair. The window does not
   offer restoration yet (follow-up): the draft keeps custody meanwhile.
-- A source anchors its original text only while it **durably** holds it
-  (`Host::source_original`, the one answerer; REG-LAUNCH-CUSTODY-SECOND-CUT):
-  its bytes are the admitted text *and* that very file is witnessed. The
-  decision syncs the file's directory and every ancestor up to the graph
-  root, then checks the path still names the file it read. Launch's
-  best-effort directory syncs prove nothing by themselves, and a save that
-  syncs only its own directory pays no ancestor's debt; there is no
-  page-wide "published since launch" bit. A sync that fails keeps custody
-  (the pair is **retained**, its draft kept, and the next decision syncs
-  again), so a crash after a restoring publication's rename and before its
-  directory sync, then a launch whose sync fails, can no longer release the
-  only durable copy of the original. Every custody decision asks it:
-  launch's decided phases, Use Disk, and a paired source's publication
-  (newer text, a restoration). On a filesystem that offers no directory
-  sync (NFS, FUSE, Android shared storage: the save path's tolerated set)
-  the source gets the same weak witness its saves and receivers already get
-  there. Cost: one read, two metadata calls and one sync per directory of
-  the chain, only at a custody decision on a source whose bytes match.
+- A source anchors its original text only while a **source witness** of that
+  very file succeeds (`HostIo::source_witnessed`; `Host::source_original` is
+  the one answerer; REG-LAUNCH-CUSTODY-SECOND-CUT). Recipe: on one handle,
+  read the file and stat it, fsync it, reread it and stat it again (on
+  Windows the handle opens for read and write, which its flush needs). Both
+  reads must equal the admitted text and both stamps must agree. Then sync
+  each directory of the file's chain once, from the graph root down,
+  recording each directory's identity first. Finally check that the path
+  still names that same unchanged file and that every directory is still the
+  one recorded. The answer is **durable** (D), **weak** (W: a directory sync
+  reports the save path's tolerated "unsupported" set, as on NFS, FUSE or
+  Android shared storage, or the platform is Windows, whose graph-folder
+  sync is no flush) or **failed** (U, naming its step: containment, open,
+  read, file sync, reread, changed, directory sync or replaced). Each failed
+  witness adds one `storage_diag` count under `custodySourceWitnessFailed`,
+  keyed by step. D and W anchor exactly where matching bytes did before (W
+  is today's weak-filesystem behaviour). Other bytes, an absent slot and an
+  unreadable source keep their earlier rules. A failed witness anchors
+  nothing; the next decision witnesses again:
+
+  | Decision | D or W | U (failed witness) |
+  |---|---|---|
+  | Launch, a decided pair | cancelled | retained |
+  | Use Disk on the source | cancelled, receiver not read | reads the receiver: certified → cancelled; readable but not certified, or unreadable → retained (the choice is recorded, not refused) |
+  | Use Disk on the receiver | cancelled | certified receiver → cancelled, else retained |
+  | Newer text published on the source | disarmed | certified receiver → disarmed, else retained |
+  | A restoration's publication | cancelled | stays restore |
+
+  A publication runs the full witness on its slot, never its own published
+  bytes plus a stamp. At the receiver's pre-check a read error fails the
+  save and leaves the pair's phase as it was; a readable receiver without
+  its certified image holds the pair. A witness that keeps failing leaves
+  the pair retained, its draft kept and its pages editable, until a witness
+  succeeds or the receiver certifies (accepted: no other exit).
+  Launch shares one directory pass: the file steps of each decided source
+  whose bytes match, then the launch's own directory pass extended with
+  those sources' chains, then the final checks. So a launch syncs the same
+  directories as before plus one fsync per witnessed file. Measured for
+  1,000 decided pairs under 4 shared page directories (Linux ext4, release
+  build, `launch_witness_cost_for_1000_pairs_under_4_directories`): before,
+  5 directory syncs, 0 file fsyncs, 1,000 reads, 45 ms; now, 5 directory
+  syncs, 1,000 file fsyncs, 3,000 reads, 82 ms; a separate witness per
+  source would take 2,005 directory syncs (102 ms). Outside launch a custody
+  decision on a matching source costs one fsync, two reads and one sync per
+  chain directory.
+
+  Accepted limits. The trust model covers crashes, torn writes, disk errors,
+  sync delivery, external editors and honest concurrent instances. It does
+  not cover a program that rearranges the namespace, or swaps a file, inside
+  the witness's own window. So nothing is designed against these three,
+  like the same-tick limit M3-1:
+
+  | Limit | What gets past the witness | Why it is accepted |
+  |---|---|---|
+  | L1, same-tick write and restore | Another program persists other bytes and puts the admitted text back in the cache within one timestamp tick, before the reread: both reads and both stamps agree. | A rewrite inside one stamp tick, timed to the witness, is outside the trust model (as M3-1). |
+  | L2, directory swap across the parent sync | A page directory is moved out for its parent's sync and moved back before it is opened: every identity matches, but the sync covered a namespace without the entry. | Rearranging the namespace inside the witness's window is outside the trust model. |
+  | L3, publication with a replaced temp | After Tine's rename and before its read-back, the synced file is replaced by an identical unflushed one. This now affects only a receiver's certification: a source's publication runs the full witness. | Replacing a just-renamed file inside Tine's own window is outside the trust model. |
+
 - A decision this code does not act on (reviewed text `1`, or superseding
   input `2` on a receiver) or an unreadable or mismatched decision naming a
   readable paired operation blocks that operation's source removals and

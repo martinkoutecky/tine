@@ -460,16 +460,32 @@ impl<F: HostIo> Host<F> {
                 (key, bytes)
             })
             .collect();
+        // The launch's one directory pass (the graph's keys) also witnesses
+        // every decided source that holds its preimage: the sources' file
+        // steps, then each shared directory synced once, then their final
+        // checks. Launch's best-effort syncs of other directories prove
+        // nothing about a source on their own.
+        let sources = self.order.decided_sources(|source, preimage| {
+            let bytes = reads.get(source).cloned().flatten()?;
+            order::source_present(preimage, &bytes).then_some(bytes)
+        });
+        let pages = self.keys.iter().cloned().collect();
+        let witnessed: BTreeMap<PageKey, SourceWitness> = sources
+            .iter()
+            .map(|(page, _)| page.clone())
+            .zip(self.fs.graph_launch(&pages, &sources))
+            .collect();
         // No durability witness survives a relaunch, so a receiver whose
         // bytes match certifies nothing here: the pair restores or retains,
         // and its operation draft keeps the source's admitted text.
-        // A source whose bytes match anchors the original text only with
-        // a durability witness of that file (`source_original`): launch's
-        // best-effort directory syncs prove nothing on their own.
         let fs = &mut self.fs;
         (self.order).decided_phases(&reads, |pair, source, receiver| {
+            let witness = || {
+                (witnessed.get(&pair.source).copied())
+                    .unwrap_or(SourceWitness::Failed(WitnessStep::Changed))
+            };
             (
-                Self::source_original(fs, &pair.source, &pair.preimage, source),
+                Self::source_original(&pair.preimage, source, witness),
                 Self::receiver_certified(fs, &pair.receiver, receiver, &pair.image),
             )
         });
