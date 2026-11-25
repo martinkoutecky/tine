@@ -45,6 +45,11 @@ html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-
   padding: 0;
 }
 
+/* The centred column takes no part in the row's free space (app.css). */
+html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-main > :last-child {
+  margin-inline-end: 0;
+}
+
 html[data-theme-journal-header="editorial"] .page-title-row.journal-today .journal-title {
   max-width: 100%;
   margin: 4px 0 8px;

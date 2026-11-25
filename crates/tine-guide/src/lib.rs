@@ -1247,11 +1247,11 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn touch_screens_show_every_page_title_button() {
+    fn phones_show_every_page_title_button() {
         // GH #1025: no hover on a phone, so the title's buttons are always there, as one group, menu last.
         let mobile = include_str!("templates/platforms-and-mobile.md");
-        assert!(mobile.contains("**A page title's buttons always show on a touch screen.**"));
-        assert!(mobile.contains("together on the next line under a long title, with **⋯** last"));
+        assert!(mobile.contains("**A page title's buttons always show on a phone or tablet.**"));
+        assert!(mobile.contains("move as one group below a long title, with **⋯** last"));
     }
 
     #[test]

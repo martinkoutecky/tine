@@ -1464,19 +1464,20 @@ html[data-system-insets="native-viewport"] {
   initial-value: 0;
 }
 
-/* The title's actions are one group: on the title's row when it fits, else together on the next row (GH #1025).
-   One rule says when they show: on a device with hover, while the pointer or focus is in the title row; without
+/* The title's actions are one group: on the title's row when all of it fits there (its gap is the row's, so it
+   fits exactly when its buttons would), else as one group on the next row (GH #1025). A group wider than a row
+   wraps inside itself. One rule says when they show: on a device with hover, while the pointer or focus is in the title row; without
    hover, always. Each action takes that answer as its --reveal (which does not inherit); a state that must stay
    in view (a starred page, a shown table, an open menu) sets --reveal: 1 below. */
 .page-title-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: inherit;
 }
-/* A journal's group (it holds the carry buttons) ends the title's row; once it wraps it starts the next row, as
-   every title's group does: a row's only item sits at its start. */
-.page-title-row:has(> .page-title-actions > .page-carry-actions) { justify-content: space-between; }
+/* A journal's group (it holds the carry buttons) ends a row it shares and starts a row of its own: the row's free
+   space goes after the item before the group (the title, or Today's task summary), which stays where it was. */
+.page-title-row:has(> .page-title-actions > .page-carry-actions) > .page-title-main > :last-child { margin-inline-end: auto; }
 .page-title-actions > :is(.page-carry-actions, .tag-table-toggle, .page-actions-trigger, .page-share-btn, .fav-star) {
   --reveal: var(--title-actions-shown, 0);
 }

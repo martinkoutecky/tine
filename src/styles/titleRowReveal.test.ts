@@ -119,16 +119,27 @@ describe("one rule decides when the page title's actions show (GH #1025)", () =>
   it("the actions are one wrapping flex group, not layout-neutral", () => {
     expect(declaration(baseRule(".page-title-actions"), "display")).toBe("flex");
     expect(declaration(baseRule(".page-title-actions"), "flex-wrap")).toBe("wrap");
+    // The group is exactly as wide as its buttons would be as items of the row, so it leaves the title's row at
+    // the width where the first of them would have.
+    for (const rule of RULES.filter((r) => r.selectors.some((sel) => subject(sel) === ".page-title-actions")))
+      expect(declaration(rule.body, "gap") ?? "inherit").toBe("inherit");
     for (const rule of RULES.filter((r) => r.selectors.some((sel) => subject(sel) === ".page-title-actions")))
       expect(declaration(rule.body, "display") ?? "flex").toBe("flex");
   });
 
-  // A margin of `auto` on the group would also push it to the end of the row it wraps onto (seen at 390px with a
-  // long journal title). The row spreads its two items instead, and a wrapped row's only item sits at its start.
-  it("a journal's group ends the title's row, and starts the next row once it wraps", () => {
-    const spread = RULES.filter((r) => declaration(r.body, "justify-content") === "space-between" && r.selectors.some((s) => /^\.page-title-row(:has\([^)]*\))?$/.test(s)));
-    expect(spread.map((r) => r.selectors)).toEqual([[".page-title-row:has(> .page-title-actions > .page-carry-actions)"]]);
+  // One rule places a journal's group: the row's free space goes after the item before the group (the title, or
+  // Today's task summary). So the group ends a row it shares and starts a row of its own, and the summary stays
+  // beside the title. A margin of `auto` on the group would push it to the end of its own row too, and spreading
+  // the row's items would move the summary to the middle of a wide row.
+  it("the group of a journal with carry buttons ends a row it shares and starts a row of its own", () => {
+    const journalRow = ".page-title-row:has(> .page-title-actions > .page-carry-actions)";
+    const freeSpace = RULES.filter((r) => declaration(r.body, "margin-inline-end") === "auto" && r.selectors.some((s) => s.includes(".page-title-main")));
+    expect(freeSpace.map((r) => r.selectors)).toEqual([[`${journalRow} > .page-title-main > :last-child`]]);
+    // The editorial Today header is a centred column, not a row: it takes no part in that.
+    const editorial = 'html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-main > :last-child';
+    expect(RULES.filter((r) => r.selectors.includes(editorial)).map((r) => declaration(r.body, "margin-inline-end"))).toEqual(["0"]);
     for (const r of RULES) {
+      if (r.selectors.some((s) => /^\.page-title-row\b/.test(s) && !s.includes(" "))) expect(declaration(r.body, "justify-content"), r.selectors.join(", ")).toBeNull();
       if (!r.selectors.some((s) => /^\.page-(title|carry)-actions\b/.test(subject(s)))) continue;
       expect(declaration(r.body, "margin-inline-start"), r.selectors.join(", ")).not.toBe("auto");
       expect(declaration(r.body, "margin-left"), r.selectors.join(", ")).not.toBe("auto");
