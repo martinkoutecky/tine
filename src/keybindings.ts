@@ -558,11 +558,11 @@ const COMMANDS: CommandDef[] = [
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: msg("command-editor-indent"), scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: msg("command-editor-outdent"), scope: "editor" },
-  // OG's defaults. Super+arrow (the old "meta+up" binding) is grabbed by most
-  // Linux compositors for window tiling, so it never reached the app. On macOS
-  // Option+Shift+Up/Down selects to the paragraph's edge (GH #1040).
-  { id: "editor/move-block-up", binding: isMac ? "mod+shift+up" : "alt+shift+up", label: msg("command-editor-move-block-up"), scope: "editor" },
-  { id: "editor/move-block-down", binding: isMac ? "mod+shift+down" : "alt+shift+down", label: msg("command-editor-move-block-down"), scope: "editor" },
+  // OG's non-Mac default (alt+shift+arrow). Super+arrow (the old "meta+up"
+  // binding) is grabbed by most Linux compositors for window tiling, so it never
+  // reached the app.
+  { id: "editor/move-block-up", binding: "alt+shift+up", label: msg("command-editor-move-block-up"), scope: "editor" },
+  { id: "editor/move-block-down", binding: "alt+shift+down", label: msg("command-editor-move-block-down"), scope: "editor" },
   { id: "editor/collapse", binding: "mod+up", label: msg("command-editor-collapse"), scope: "editor" },
   { id: "editor/expand", binding: "mod+down", label: msg("command-editor-expand"), scope: "editor" },
   { id: "editor/select-block-up", binding: "shift+up", label: msg("command-editor-select-block-up"), scope: "editor" },

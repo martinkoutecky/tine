@@ -2,7 +2,7 @@
 import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
-import { copyLineDown, copyLineUp, cursorLineDown, cursorLineUp, defaultKeymap } from "@codemirror/commands";
+import { cursorLineDown, cursorLineUp, defaultKeymap } from "@codemirror/commands";
 import { ctrlArrowAlias } from "../ctrlArrowAlias";
 import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, rawToWrite, setRaw, type OutlineScope, type PendingEdit } from "../document";
 import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor, type CaretPos } from "../editorController";
@@ -59,13 +59,6 @@ import { effectiveHeadingLevel } from "../render/facets";
 import { parserReady } from "../render/parse";
 import { blockDirAttr } from "../render/textDirection";
 import "./cm6-editor.css";
-
-const blockKeymap = keymap.of([...defaultKeymap.filter(binding => binding.run !== copyLineUp && binding.run !== copyLineDown),
-  // GH #986: macOS has Ctrl-p / Ctrl-n in defaultKeymap; Logseq binds them everywhere.
-  { linux: "Ctrl-p", win: "Ctrl-p", run: cursorLineUp }, { linux: "Ctrl-n", win: "Ctrl-n", run: cursorLineDown },
-  // GH #1040: on macOS Option+Shift+Up/Down is the system's paragraph selection, as in the textarea.
-  { linux: "Shift-Alt-ArrowUp", win: "Shift-Alt-ArrowUp", run: copyLineUp },
-  { linux: "Shift-Alt-ArrowDown", win: "Shift-Alt-ArrowDown", run: copyLineDown }]);
 
 export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const owner = getOwner();
@@ -330,7 +323,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         spellcheck.of(EditorView.contentAttributes.of({ spellcheck: String(spellcheckEnabled()) })),
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
         EditorView.contentAttributes.of({ "data-cm6-editor": props.id, "aria-label": "" }),
-        blockKeymap, cm6EmptyCaret(),
+        keymap.of([...defaultKeymap,
+          // GH #986: macOS has Ctrl-p / Ctrl-n in defaultKeymap; Logseq binds them everywhere.
+          { linux: "Ctrl-p", win: "Ctrl-p", run: cursorLineUp }, { linux: "Ctrl-n", win: "Ctrl-n", run: cursorLineDown }]), cm6EmptyCaret(),
         EditorView.domEventHandlers({
           focus: () => { noteSurfaceFocused(props.surface); registerCommandBridge(); return false; },
           blur: (event, v) => {

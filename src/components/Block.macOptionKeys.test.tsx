@@ -17,11 +17,12 @@ import type { ShortcutBinding } from "../shortcutBindings";
 import * as router from "../router";
 import { Block } from "./Block";
 
-// GH #1040: on a Mac, Option with an arrow, a letter or Shift+Up/Down is the
-// text system's (word motion, paragraph selection, typed symbols such as ¬ or ∑).
-// The default keymap follows Logseq's Mac chords for the commands that used to
-// take those keys: Back/Forward are Cmd+[ / Cmd+], the Emacs motions are on
-// Control, and Move block up/down is Cmd+Shift+Up/Down.
+// GH #1040: on a Mac, Option with a left/right arrow or a letter is the text
+// system's (word motion, typed symbols such as ¬ or ∑). The default keymap
+// follows Logseq's Mac chords for the commands that used to take those keys:
+// Back/Forward are Cmd+[ / Cmd+], and the Emacs motions are on Control. Move
+// block keeps Option+Shift+Up/Down, so Cmd+Shift+Up/Down (select to the start
+// or end) stays with the editor.
 
 beforeAll(() => initParser());
 
@@ -72,8 +73,8 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1040 macOS Option keys stay 
     ["Option+Left", { key: "ArrowLeft", code: "ArrowLeft", altKey: true }],
     ["Option+Right", { key: "ArrowRight", code: "ArrowRight", altKey: true }],
     ["Option+Shift+Left", { key: "ArrowLeft", code: "ArrowLeft", altKey: true, shiftKey: true }],
-    ["Option+Shift+Up", { key: "ArrowUp", code: "ArrowUp", altKey: true, shiftKey: true }],
-    ["Option+Shift+Down", { key: "ArrowDown", code: "ArrowDown", altKey: true, shiftKey: true }],
+    ["Cmd+Shift+Up", { key: "ArrowUp", code: "ArrowUp", metaKey: true, shiftKey: true }],
+    ["Cmd+Shift+Down", { key: "ArrowDown", code: "ArrowDown", metaKey: true, shiftKey: true }],
     // US layout symbols; a non-Latin symbol is matched by its physical letter.
     ["Option+L (¬)", { key: "¬", code: "KeyL", altKey: true }],
     ["Option+K (˚)", { key: "˚", code: "KeyK", altKey: true }],
@@ -89,7 +90,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1040 macOS Option keys stay 
     expect(pageByName("Mac keys")!.roots).toEqual([FIRST, SECOND, THIRD]);
     if (!init.key.startsWith("Arrow")) expect(editor.selection()).toEqual([6, 6]);
     // The textarea leaves the key to the system; CodeMirror runs its own Mac
-    // word motion and selection for Option+arrows, which consumes the event.
+    // word motion and selection for these arrows, which consumes the event.
     if (kind === "textarea") expect(event.defaultPrevented).toBe(false);
   });
 
@@ -105,12 +106,21 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1040 macOS Option keys stay 
     expect(editor.value()).toBe(TEXT);
   });
 
-  it("Control+Shift+B moves back a word, Cmd+Shift+Up moves the block up, and Control+L clears it (Logseq's Mac keys)", async () => {
+  it("Option+Shift+Up and Option+Shift+Down move the block, as on every platform", async () => {
+    const editor = mount();
+    editor.keydown({ key: "ArrowUp", code: "ArrowUp", altKey: true, shiftKey: true });
+    await vi.waitFor(() => expect(pageByName("Mac keys")!.roots).toEqual([SECOND, FIRST, THIRD]));
+    editor.keydown({ key: "ArrowDown", code: "ArrowDown", altKey: true, shiftKey: true });
+    await vi.waitFor(() => expect(pageByName("Mac keys")!.roots).toEqual([FIRST, SECOND, THIRD]));
+    editor.keydown({ key: "ArrowDown", code: "ArrowDown", altKey: true, shiftKey: true });
+    await vi.waitFor(() => expect(pageByName("Mac keys")!.roots).toEqual([FIRST, THIRD, SECOND]));
+    expect(doc.byId[SECOND].raw).toBe(TEXT);
+  });
+
+  it("Control+Shift+B moves back a word and Control+L clears the block (Logseq's Mac keys)", async () => {
     const editor = mount();
     editor.keydown({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true });
     await vi.waitFor(() => expect(editor.selection()).toEqual([0, 0]));
-    editor.keydown({ key: "ArrowUp", code: "ArrowUp", metaKey: true, shiftKey: true });
-    await vi.waitFor(() => expect(pageByName("Mac keys")!.roots).toEqual([SECOND, FIRST, THIRD]));
     editor.keydown({ key: "l", code: "KeyL", ctrlKey: true });
     await vi.waitFor(() => expect(doc.byId[SECOND].raw).toBe(""));
   });

@@ -19,7 +19,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   semantics and caret preservation — no reflow on indent/outdent; arrow nav
   respects *visual* wrapped rows.
 - Collapse/expand, zoom into a block (with breadcrumb), drag-to-reorder, move
-  up/down (`Alt+Shift+↑/↓`; `Cmd+Shift+↑/↓` on macOS).
+  up/down (`Alt+Shift+↑/↓`).
 - Multi-block selection → move / indent / cut / copy; the viewport follows the
   active end as you extend past the top/bottom edge. `Mod+Enter` cycles every
   selected task independently as one undoable edit.
