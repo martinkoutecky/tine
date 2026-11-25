@@ -113,16 +113,19 @@ pub(super) enum PairPhase {
     /// receiver not exact: the admitted preimage is selectable for guarded
     /// restoration (`Host::restore_source`), the operation draft keeps it.
     Restore,
-    /// A durable Use Disk left neither endpoint anchoring the source's
-    /// original text, and no restoration is possible now (its slot is
-    /// occupied): the operation draft keeps the preimage as custody.
+    /// A durable Use Disk, or newer source text, left neither endpoint
+    /// anchoring the source's original text, and no restoration is possible
+    /// now (its slot is occupied): the operation draft keeps the preimage as
+    /// custody, and the original removal stays disarmed.
     Retained,
     /// A decision this code cannot act on (unreadable, or a choice of a
     /// later slice), or a draft store that is down: the destructive step
     /// stays blocked; nothing settles.
     Blocked,
-    /// The source took newer text (its own save published it): the removal
-    /// is superseded, as for an ordinary page. Owes nothing.
+    /// The source took newer text (its own save published it, after its
+    /// durable superseding choice) while the original text is anchored (the
+    /// newer text is the preimage, or the receiver is certified): the
+    /// removal is superseded, as for an ordinary page. Owes nothing.
     Disarmed,
 }
 
@@ -151,6 +154,9 @@ pub(super) enum PairChoice {
     SourceDisk,
     /// Use Disk on the receiver: the move is cancelled.
     ReceiverDisk,
+    /// Newer editor input on the source replaces its removal (the
+    /// superseding decision, durable before that input publishes).
+    Superseded,
 }
 
 /// Which endpoint of a pair a Use Disk chose (`Order::use_disk`).
@@ -194,7 +200,9 @@ pub(super) struct PairedOp {
     pub id: [u8; 16],
     pub pairs: Vec<Pair>,
     pub pages: BTreeSet<PageKey>,
-    pub decisions: BTreeSet<String>,
+    /// Decision vehicle names, with the decision when this code acts on it
+    /// (a settlement rewrite carries a sibling's decision to its new draft).
+    pub decisions: BTreeMap<String, Option<drafts::Decision>>,
     /// A decision this code cannot act on blocks the operation: only a
     /// durable Use Disk on a receiver releases a blocked pair then.
     pub unreadable: bool,
@@ -222,7 +230,7 @@ impl PairedOp {
                 })
                 .collect(),
             pages: records.iter().map(|r| r.page.clone()).collect(),
-            decisions: BTreeSet::new(),
+            decisions: BTreeMap::new(),
             unreadable: false,
         }
     }
@@ -431,6 +439,36 @@ impl Order {
         self.paired.insert(name, op);
     }
 
+    /// A settlement rewrite of `old` made its new draft `new` (with
+    /// `records` and the remapped `pairs`) and its surviving pairs'
+    /// `decisions` durable: those pairs move to `new` with their phase and
+    /// choice, before `old`'s unlink starts. `old` keeps only the retired
+    /// pair, which leaves with it.
+    pub fn rewrite(
+        &mut self,
+        old: &str,
+        new: String,
+        id: [u8; 16],
+        records: &[Record],
+        pairs: &[(u32, u32)],
+        decisions: BTreeMap<String, Option<drafts::Decision>>,
+    ) {
+        let Some(prev) = self.paired.get_mut(old) else {
+            return;
+        };
+        let mut op = PairedOp::new(id, records, pairs);
+        for pair in &mut op.pairs {
+            let same = |p: &Pair| p.receiver == pair.receiver && p.source == pair.source;
+            if let Some(at) = prev.pairs.iter().position(same) {
+                let moved = prev.pairs.remove(at);
+                pair.phase = moved.phase;
+                pair.choice = moved.choice;
+            }
+        }
+        op.decisions = decisions;
+        self.paired.insert(new, op);
+    }
+
     /// Its operation vehicle is durably gone: nothing more is owed.
     pub fn forget(&mut self, name: &str) {
         self.paired.remove(name);
@@ -438,6 +476,15 @@ impl Order {
 
     pub fn paired(&self, name: &str) -> Option<&PairedOp> {
         self.paired.get(name)
+    }
+
+    /// The live pair with these endpoints in any operation (a conformance
+    /// projection across a settlement rewrite).
+    #[cfg(test)]
+    pub fn live_pair(&self, receiver: &str, source: &str) -> Option<&Pair> {
+        self.pairs()
+            .map(|(_, p)| p)
+            .find(|p| p.receiver == receiver && p.source == source)
     }
 
     /// `key` is the receiver of an unresolved pair, whose checks ask for its
@@ -473,7 +520,7 @@ impl Order {
             op.pairs.iter().find_map(|p| {
                 let on_receiver = p.receiver == key
                     && match p.choice {
-                        PairChoice::None => {
+                        PairChoice::None | PairChoice::Superseded => {
                             p.phase.unresolved()
                                 && (unwitnessed
                                     || p.phase != PairPhase::Armed
@@ -518,7 +565,7 @@ impl Order {
         name: &str,
         member: u32,
         phase: Option<PairPhase>,
-        decision: Option<String>,
+        decision: Option<(String, drafts::Decision)>,
     ) {
         if let Some(op) = self.paired.get_mut(name) {
             for pair in &mut op.pairs {
@@ -532,7 +579,60 @@ impl Order {
                 pair.choice = choice;
                 pair.phase = phase.unwrap_or(PairPhase::Cancelled);
             }
-            op.decisions.extend(decision);
+            op.decisions
+                .extend(decision.map(|(name, d)| (name, Some(d))));
+        }
+    }
+
+    /// The one answer to "which pair's removal does newer text on `source`
+    /// supersede now": its unresolved pair, while that removal may still
+    /// run (Armed, or Held before the source moved). Both questions below
+    /// ask it: whether a superseding decision must be made durable before
+    /// the text saves (`supersedes`), and which pair the published text
+    /// disarms or retains (`disarming`, `disarm`).
+    fn superseded(&self, source: &str) -> Option<(&String, &PairedOp, &Pair)> {
+        let (name, pair) = self.active(source)?;
+        matches!(
+            pair.phase,
+            PairPhase::Armed | PairPhase::Held { removed: false }
+        )
+        .then(|| (name, &self.paired[name], pair))
+    }
+
+    /// The superseded pair (`superseded`) whose superseding decision is not
+    /// known durable yet (its choice is still None): newer text saved on
+    /// `source` first writes that decision (`Host::start_save`). As
+    /// (vehicle name, request id, source member).
+    pub fn supersedes(&self, source: &str) -> Option<(String, [u8; 16], u32)> {
+        self.superseded(source)
+            .filter(|(_, _, p)| p.choice == PairChoice::None)
+            .map(|(name, op, p)| (name.clone(), op.id, p.source_member))
+    }
+
+    /// A superseding decision on `member` (a source) of `name` may be on
+    /// disk: its vehicle is registered (it retires with the operation, and
+    /// a settlement rewrite carries it). Only a decision known durable
+    /// (`durable`: its write reached Present, or launch read it) gives the
+    /// pair its Superseded choice; an uncertain write leaves the choice
+    /// None, so the next save writes the decision again before its text
+    /// may publish. The phase is unchanged until the newer text publishes
+    /// (`disarm`), or launch decides it.
+    pub fn decide_superseded(
+        &mut self,
+        name: &str,
+        member: u32,
+        decision: (String, drafts::Decision),
+        durable: bool,
+    ) {
+        if let Some(op) = self.paired.get_mut(name) {
+            if durable {
+                for pair in op.pairs.iter_mut().filter(|p| p.source_member == member) {
+                    if pair.choice == PairChoice::None {
+                        pair.choice = PairChoice::Superseded;
+                    }
+                }
+            }
+            op.decisions.insert(decision.0, Some(decision.1));
         }
     }
 
@@ -577,7 +677,7 @@ impl Order {
                     pair.phase = PairPhase::Blocked;
                 }
             }
-            op.decisions.insert(decision);
+            op.decisions.insert(decision, None);
             op.unreadable = true;
         }
     }
@@ -614,16 +714,23 @@ impl Order {
 
     /// Launch: the order of each adopted operation over its held pages,
     /// with its uncancelled moves (none when every pair was cancelled).
+    /// The order covers the endpoints of those moves and the operation's
+    /// referrers, never the endpoints of a resolved or retained pair.
     pub fn recovered_gates(&self, pages: &BTreeMap<PageKey, Page>) -> Vec<Gates> {
         self.paired
             .values()
             .filter_map(|op| {
-                let moves: Vec<_> = (op.pairs.iter())
-                    .filter(|p| p.phase.gated())
+                let gated: Vec<_> = (op.pairs.iter()).filter(|p| p.phase.gated()).collect();
+                let moves: Vec<_> = (gated.iter())
                     .filter(|p| pages.contains_key(&p.receiver) || pages.contains_key(&p.source))
                     .map(|p| (p.receiver.clone(), p.source.clone()))
                     .collect();
+                let endpoint = |key: &PageKey, pairs: &[&Pair]| {
+                    pairs.iter().any(|p| &p.receiver == key || &p.source == key)
+                };
+                let all: Vec<_> = op.pairs.iter().collect();
                 let versions: BTreeMap<PageKey, u64> = (op.pages.iter())
+                    .filter(|key| endpoint(key, &gated) || !endpoint(key, &all))
                     .filter_map(|key| Some((key.clone(), pages.get(key)?.version)))
                     .collect();
                 (!moves.is_empty() && !versions.is_empty()).then(|| Gates::new(moves, versions))
@@ -661,19 +768,47 @@ impl Order {
         self.resolve(source, PairPhase::Settled)
     }
 
-    /// `source` published newer text before its removal: the removal is
-    /// superseded (the newer text's own draft was durable before that save).
-    /// A source already moved keeps its custody: its original text stays in
-    /// the draft until the receiver is exact again.
-    pub fn disarm(&mut self, source: &str) -> Option<String> {
-        let pending = |p: &Pair| {
-            matches!(
-                p.phase,
-                PairPhase::Armed | PairPhase::Held { removed: false }
+    /// The pair whose removal newer text on `source` supersedes now
+    /// (`superseded`), as (vehicle name, receiver, image, preimage): its
+    /// receiver is read to place the original text (`disarm`).
+    pub fn disarming(&self, source: &str) -> Option<(String, PageKey, Text, Text)> {
+        self.superseded(source).map(|(name, _, p)| {
+            (
+                name.clone(),
+                p.receiver.clone(),
+                p.image.clone(),
+                p.preimage.clone(),
             )
+        })
+    }
+
+    /// `source` published newer text before its removal (the model's
+    /// `publishedPair`): the removal is superseded. Its superseding choice
+    /// was durable before that save (`supersedes`), so no relaunch replays
+    /// the removal. When the original text is anchored (`anchored`, the
+    /// module's `anchored` over the published text) the pair is
+    /// disarmed; else it is retained, and the operation draft keeps the
+    /// admitted preimage as the only copy of that text. A source already
+    /// moved keeps its custody: its original text stays in the draft until
+    /// the receiver is exact again.
+    pub fn disarm(&mut self, source: &str, anchored: bool) -> Option<String> {
+        self.superseded(source)?;
+        let phase = if anchored {
+            PairPhase::Disarmed
+        } else {
+            PairPhase::Retained
         };
-        self.active(source).filter(|(_, p)| pending(p))?;
-        self.resolve(source, PairPhase::Disarmed)
+        let name = self.resolve(source, phase)?;
+        // `resolve` found the pair by source; it is no longer unresolved
+        // only when disarmed, so look it up by name.
+        if let Some(op) = self.paired.get_mut(&name) {
+            for pair in op.pairs.iter_mut().filter(|p| p.source == source) {
+                if pair.phase == phase && pair.choice == PairChoice::None {
+                    pair.choice = PairChoice::Superseded;
+                }
+            }
+        }
+        Some(name)
     }
 
     fn resolve(&mut self, source: &str, phase: PairPhase) -> Option<String> {
@@ -723,8 +858,7 @@ impl Order {
             for pair in &mut op.pairs {
                 if pair.source == source
                     && pair.phase == PairPhase::Restore
-                    && bytes.is_some()
-                    && pair.preimage == *bytes
+                    && source_present(&pair.preimage, bytes)
                 {
                     pair.phase = PairPhase::Cancelled;
                     changed.push(name.clone());
@@ -742,7 +876,7 @@ impl Order {
             .find(|(_, p)| {
                 p.source == key
                     && matches!(p.phase, PairPhase::Restore | PairPhase::Retained)
-                    && p.choice != PairChoice::None
+                    && matches!(p.choice, PairChoice::SourceDisk | PairChoice::ReceiverDisk)
                     && p.preimage.is_some()
             })
             .map(|(name, p)| (name.clone(), p.preimage.clone()))
@@ -877,17 +1011,33 @@ impl Order {
     }
 }
 
+/// The source holds its admitted text, the pair's preimage (the model's
+/// `sourcePresent`, given the source's bytes): an absent source holds none.
+pub(super) fn source_present(preimage: &Text, source: &Text) -> bool {
+    source.is_some() && source == preimage
+}
+
+/// The one answer to "is a pair's original text still anchored outside its
+/// operation draft" (the model's `sourcePresent or certified`): the source
+/// holds its preimage (`source_present`), or the receiver is certified
+/// (`certified`: `Host::receiver_certified`). Launch and Use Disk ask it
+/// through `cancel_phase`; a published newer source text asks it directly
+/// (`Order::disarm`'s `anchored`).
+pub(super) fn anchored(preimage: &Text, source: &Text, certified: bool) -> bool {
+    source_present(preimage, source) || certified
+}
+
 /// Where a decided pair's original text stands (the model's
-/// `cancelPhase`): anchored by the source's preimage on disk or by the
-/// certified receiver (cancelled); else restorable from its preimage when
-/// the source's slot is free after its removal (`removed`); else custody.
+/// `cancelPhase`): anchored (`anchored`) cancels the pair; else it is
+/// restorable from its preimage when the source's slot is free after its
+/// removal (`removed`); else custody.
 pub(super) fn cancel_phase(
     preimage: &Text,
     source: &Text,
     certified: bool,
     removed: bool,
 ) -> PairPhase {
-    if (source.is_some() && source == preimage) || certified {
+    if anchored(preimage, source, certified) {
         PairPhase::Cancelled
     } else if source.is_none() && removed {
         PairPhase::Restore
@@ -946,7 +1096,7 @@ impl<F: HostIo> Host<F> {
                     None => self.fs.read_page(&chosen.source),
                 };
                 (source, Ok(bytes.clone()))
-            } else if bytes.is_some() && bytes == chosen.preimage {
+            } else if source_present(&chosen.preimage, &bytes) {
                 (Ok(bytes.clone()), Ok(None))
             } else {
                 (Ok(bytes.clone()), self.fs.read_page(&chosen.receiver))
@@ -983,14 +1133,70 @@ impl<F: HostIo> Host<F> {
     /// that may have reached the disk decides the pair in `Order` (at
     /// `phase`): a removal is never the result of an uncertain choice.
     fn write_decision(&mut self, key: &str, chosen: &order::Chosen, phase: PairPhase) -> bool {
+        let (stage, decision) = self.decision_vehicle(
+            key,
+            &chosen.name,
+            chosen.id,
+            chosen.member,
+            drafts::Choice::TakeDisk,
+        );
+        // Absent is durably absent; any other stage may leave it on disk.
+        if stage != Stage::Absent {
+            self.order
+                .decide(&chosen.name, chosen.member, Some(phase), Some(decision));
+        }
+        stage == Stage::Present
+    }
+
+    /// Newer text on `key`, the source of a pair that may still remove it,
+    /// is about to save (`Host::start_save`): write its superseding choice
+    /// (the decision's choice `2`, with the text) through the guarded
+    /// vehicle path first, so no relaunch replays the removal over it. True
+    /// when there is nothing to write or it is durable. A write that may
+    /// have reached the disk registers its vehicle but leaves the choice
+    /// None (`Order::decide_superseded`): the save waits, and its retry
+    /// writes the decision again until one is known durable.
+    pub(super) fn write_superseding(&mut self, key: &str, page: &Page) -> bool {
+        let Some((name, id, member)) = self.order.supersedes(key) else {
+            return true;
+        };
+        let choice = drafts::Choice::Text {
+            superseding: true,
+            version: page.version,
+            base: page.base.clone(),
+            bytes: page.buf.clone(),
+        };
+        let (stage, decision) = self.decision_vehicle(key, &name, id, member, choice);
+        // Absent is durably absent; any other stage may leave it on disk,
+        // but only Present lets the text publish over the removal.
+        if stage != Stage::Absent {
+            let durable = stage == Stage::Present;
+            self.order
+                .decide_superseded(&name, member, decision, durable);
+        }
+        stage == Stage::Present
+    }
+
+    /// One decision vehicle on endpoint `key` (`member`) of paired operation
+    /// `name` (`id`), written now: fresh no-replace name, temp, fsync,
+    /// rename, private-directory sync. Its last stage, its file name and
+    /// body; a draft error when it is not durable.
+    fn decision_vehicle(
+        &mut self,
+        key: &str,
+        name: &str,
+        id: [u8; 16],
+        member: u32,
+        choice: drafts::Choice,
+    ) -> (Stage, (String, drafts::Decision)) {
         self.wseq = self.wseq.checked_add(1).expect("draft sequence exhausted");
         let decision = drafts::Decision {
-            op: chosen.id,
-            member: chosen.member,
+            op: id,
+            member,
             wseq: self.wseq,
-            choice: drafts::Choice::TakeDisk,
+            choice,
         };
-        let file = drafts::decision_vehicle(key, &chosen.id, chosen.member);
+        let file = drafts::decision_vehicle(key, &id, member);
         let mut vehicle = Vehicle::write_decision(file.clone(), &decision);
         // Bounded: temp, rename, up to three syncs, cleanup unlink and sync.
         for _ in 0..8 {
@@ -1000,21 +1206,15 @@ impl<F: HostIo> Host<F> {
             vehicle.advance(&mut self.fs);
         }
         self.sync_drafts();
-        let durable = vehicle.stage == Stage::Present;
-        // Absent is durably absent; any other stage may leave it on disk.
-        if vehicle.stage != Stage::Absent {
-            self.order
-                .decide(&chosen.name, chosen.member, Some(phase), Some(file));
-        }
-        if !durable {
+        if vehicle.stage != Stage::Present {
             self.events.push(Event::DraftError {
-                effect: chosen.name.clone(),
+                effect: name.into(),
                 pages: BTreeSet::from([key.into()]),
                 refresh: None,
                 failures: vehicle.failures,
             });
         }
-        durable
+        (vehicle.stage, (file, decision))
     }
 
     /// Restore `key`'s admitted preimage after its pair's Use Disk left the

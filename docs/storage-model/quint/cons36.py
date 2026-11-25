@@ -38,7 +38,9 @@ def compare(case):
 if __name__ == '__main__':
     text = (run.ROOT / 'storage-s35.qnt').read_text()
     mutants = ast.literal_eval(re.search(r'// SWEEP-MUTS: (\{.*\})', text).group(1))
-    cases = [(profile, mutant) for mutant in ['none', *mutants] for profile in run.PROFILES]
+    singleton = (run.ROOT / 'scenarios-s35.inc').read_text()
+    selected = [m for m in mutants if re.search(rf'\brun m{m}\b', singleton)]
+    cases = [(profile, mutant) for mutant in ['none', *selected] for profile in run.PROFILES]
     assert len(cases) == 204
     with ProcessPoolExecutor(max_workers=4) as pool:
         total = 0

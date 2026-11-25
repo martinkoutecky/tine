@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).parent))
-from generate import SCENARIO_SHA, SHA  # noqa: E402
+from generate import SCENARIO_SHA, SHA, VEHICLE_SCENARIO_SHA  # noqa: E402
 
 
 def digest(path: Path) -> str:
@@ -38,11 +38,15 @@ def main() -> int:
     for name in ("scenarios.json", "traces.json", "witnesses.json"):
         pins[f"fixture {name}"] = json.loads((fixtures / name).read_text())["model_sha256"]
     failures = [f"{name}: {sha}" for name, sha in pins.items() if sha != SHA]
+    scenario_fixture = json.loads((fixtures / "scenarios.json").read_text())
     scenarios = {
         "canonical scenarios-s35.inc": digest(model_dir / "scenarios-s35.inc"),
-        "fixture scenarios.json": json.loads((fixtures / "scenarios.json").read_text())["scenario_sha256"],
+        "fixture scenarios.json": scenario_fixture["scenario_sha256"],
     }
     failures += [f"{name}: {sha}" for name, sha in scenarios.items() if sha != SCENARIO_SHA]
+    vehicle = digest(model_dir / "scenarios-vehicle-recovery.inc")
+    if vehicle != VEHICLE_SCENARIO_SHA or scenario_fixture["vehicle_scenario_sha256"] != VEHICLE_SCENARIO_SHA:
+        failures.append(f"vehicle scenarios: {vehicle}")
     if failures:
         print(f"model pins disagree (generate.py pins model {SHA}, scenarios {SCENARIO_SHA}):")
         for failure in failures:

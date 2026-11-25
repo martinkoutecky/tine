@@ -1338,8 +1338,19 @@ from the scanned drafts before any recovered save or choice.
   offers none to wait for). Bytes another program wrote, or a write a power
   cut may still revert, hold the removal like different bytes. The second
   check does not surface the receiver's read; its next observation does. An
-  exact, witnessed receiver observed later resumes the pair. A source that
-  publishes newer text of its own supersedes its removal and disarms the pair.
+  exact, witnessed receiver observed later resumes the pair.
+- **Newer text on a source** whose pair may still remove it supersedes the
+  removal. Before that text's save starts, a decision record with choice `2`
+  (superseding input: the page version, its base and the text) is written
+  through the draft vehicle path, so no relaunch replays the removal over
+  the newer file; while draft I/O is down, or when that write fails, the save
+  waits. When the save publishes, the pair is **disarmed** if the original
+  text is still anchored (the newer text equals it, or the receiver holds its
+  certified image), else **retained**: the newer file stays, the operation
+  draft keeps the source's admitted text as its only copy, the original
+  removal stays disarmed across relaunch while sibling pairs continue, and the
+  operation's pages stay held (no chaining). A launch recovers neither the
+  source's deletion record nor a removal for such a pair.
   One host check answers whether a receiver holds its certified image (equal
   bytes plus the witness), and every pair decision asks it: both removal
   checks, a held pair's resumption, Use Disk's choice and phase, and a
@@ -1377,20 +1388,49 @@ from the scanned drafts before any recovered save or choice.
   create publish it, refused over an occupied slot, a claimant or twin, or
   unsaved text, and that publication cancels the pair. The window does not
   offer restoration yet (follow-up): the draft keeps custody meanwhile.
-- A decision this code does not act on (reviewed text `1`, superseding input
-  `2`) or an unreadable or mismatched decision naming a readable paired
-  operation blocks that operation's source removals and raises a draft error;
+- A decision this code does not act on (reviewed text `1`, or superseding
+  input `2` on a receiver) or an unreadable or mismatched decision naming a
+  readable paired operation blocks that operation's source removals and
+  raises a draft error;
   it stays in place, never quarantined. A malformed paired operation draft is
   quarantined intact like any unreadable vehicle. A launch whose draft
   directory sync fails blocks every source removal until a successful draft
   store Retry or a later launch; the Retry re-arms them in place.
-- Retirement: the paired draft retires whole once each pair is settled or
-  cancelled and no page is at risk: superseded page drafts first, then the
-  operation draft, then its decisions. A paired record a newer vehicle
-  superseded counts as history then. A later operation never absorbs a
-  paired draft: its records never leave their pair as standalone page
-  drafts. A decision left by a crash after its operation is durably absent
-  is removed at launch.
+- Retirement: the paired draft retires whole once each pair is settled,
+  cancelled or disarmed and no page is at risk: superseded page drafts first,
+  then the operation draft, then its decisions. A paired record a newer
+  vehicle superseded counts as history then. A retained pair is unresolved,
+  so whole retirement never releases the only copy of the original text. A
+  later operation never absorbs a paired draft: its records never leave their
+  pair as standalone page drafts. A decision left by a crash after its
+  operation is durably absent is removed at launch.
+- **Settlement rewrite.** When one pair of an operation with several settles
+  (its second receiver check passed), is cancelled (Use Disk) or is disarmed,
+  its source becomes a draft candidate and the operation draft is rewritten
+  without that pair and its two endpoint records; the other pairs, their
+  decisions and the shared referrer records stay. The rename primitive never
+  replaces a file, so the rewrite is a fresh `op-<uuid>.draft` (same format,
+  member indexes renumbered) plus a copy of each surviving pair's decision
+  under the new request id, each through the draft vehicle path, and only
+  then are the original draft and its decisions unlinked (directory sync
+  each). The rewrite commits at that unlink: a failure or a crash before it
+  leaves the original draft byte-identical, and a launch that finds a paired
+  draft holding a strict subset of another's records ignores it as an
+  uncommitted rewrite and removes it. A crash after it reinstalls only the
+  remaining pairs. The operation's pages are busy while it runs. It runs only
+  once no page of the operation owes the publication of its record: while
+  the operation is still being saved its pairs settle in turn and the draft
+  retires whole, so a rename of many pages costs no rewrite, and one stalled
+  pair (held, retained or waiting on a choice) no longer keeps its finished
+  siblings' records. Nor for an operation with a decision this code does not
+  act on. The last pair leaves through whole
+  retirement (unlink and directory sync). Cost per rewrite: one private write
+  of the remaining records (file fsync and directory sync), one unlink and
+  directory sync for the original, plus one decision copy (write) and one
+  decision unlink per decision; no graph read, IPC or render. The new draft
+  is the old one less the settled pair's two records and one index pair:
+  with 1,000-byte texts and one referrer, 6,132 bytes become 4,098 for a
+  2-pair operation and 12,234 become 10,200 for a 5-pair one, one file each.
 - A paired source's removal takes its destructive step only while draft I/O
   is up; while it is down (`draft_status` names why) the removal waits.
 - **Ownership (call 21).** The graph's owner lock is the only serializer of
