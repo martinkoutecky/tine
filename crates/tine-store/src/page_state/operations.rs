@@ -1,5 +1,5 @@
 //! Quint s3 page operations; pure rules, no storage wiring.
-use super::order::touches;
+use super::order::{gate_obligations, touches};
 use super::*;
 use std::collections::BTreeMap;
 
@@ -121,8 +121,7 @@ pub(super) fn op_rename(
         // s3.2: the order over the pages this rename changes, and the
         // obligations the ghost holds it to.
         s.gates.push(Gate {
-            dst,
-            src,
+            moves: BTreeSet::from([(dst, src)]),
             vers: (0..versions.len())
                 .map(|p| if all3.contains(&p) { versions[p] } else { NONE })
                 .collect(),
@@ -188,7 +187,7 @@ pub(super) fn op_rename(
         g.bad.insert("rename-clobbered-target".into());
     }
     if full {
-        install_pair(&mut s, dst, src, &all3);
+        install_pairs(&mut s, &BTreeMap::from([(dst, src)]), &all3, versions[0]);
     }
     commit(x, s, g, if full { "opRename" } else { "opRenameRefs" })
 }
@@ -232,26 +231,36 @@ pub(super) fn op_apply(
     dst: i64,
     src: i64,
 ) -> Option<State> {
+    let moves = match (dst, src) {
+        (NONE, NONE) => BTreeMap::new(),
+        (NONE, _) | (_, NONE) => return None,
+        (dst, src) => BTreeMap::from([(dst as usize, src as usize)]),
+    };
+    op_apply_moves(x, eff, plan, &moves)
+}
+
+pub(super) fn op_apply_moves(
+    x: &State,
+    eff: &BTreeMap<usize, Text>,
+    plan: &BTreeMap<usize, Text>,
+    moves: &BTreeMap<usize, usize>,
+) -> Option<State> {
     let ps: BTreeSet<usize> = eff.keys().copied().collect();
-    let mv = dst != NONE;
+    let sources: BTreeSet<_> = moves.values().copied().collect();
     let stale = ps
         .iter()
         .any(|p| plan.get(p).is_none_or(|t| op_cur(&x.s, *p) != *t));
     let claimed_creates = ps
         .iter()
         .any(|p| plan.get(p) == Some(&ABSENT) && eff[p] != ABSENT && x.s.claimed.contains(p));
-    let shape = if mv {
-        let (d, s) = (dst as usize, src as usize);
-        src != NONE
-            && dst != src
-            && ps.contains(&d)
-            && ps.contains(&s)
-            && eff[&s] == ABSENT
-            && eff[&d] != ABSENT
-            && plan.get(&s).is_some_and(|t| *t != ABSENT)
-    } else {
-        src == NONE
-    };
+    let disjoint = sources.len() == moves.len() && moves.keys().all(|dst| !sources.contains(dst));
+    let shape = (disjoint || x.config.mutant("MOverlapMoves"))
+        && moves
+            .keys()
+            .all(|dst| eff.get(dst).is_some_and(|t| *t != ABSENT))
+        && sources.iter().all(|src| {
+            eff.get(src) == Some(&ABSENT) && plan.get(src).is_some_and(|t| *t != ABSENT)
+        });
     if !x.s.alive
         || !can_draft(&x.s)
         || ps.is_empty()
@@ -283,24 +292,19 @@ pub(super) fn op_apply(
         }
         s.pages[p] = np;
     }
-    if mv {
-        let (d, sr) = (dst as usize, src as usize);
-        install_pair(&mut s, d, sr, &ps);
+    if !moves.is_empty() {
+        install_pairs(&mut s, moves, &ps, versions[0]);
+        let gate = Gate {
+            moves: moves.iter().map(|(&dst, &src)| (dst, src)).collect(),
+            vers: (0..versions.len())
+                .map(|p| if ps.contains(&p) { versions[p] } else { NONE })
+                .collect(),
+            open: ps.clone(),
+        };
+        g.obl.extend(gate_obligations(&gate));
         if !x.config.mutant("MAM") {
-            s.gates.push(Gate {
-                dst: d,
-                src: sr,
-                vers: (0..versions.len())
-                    .map(|p| if ps.contains(&p) { versions[p] } else { NONE })
-                    .collect(),
-                open: ps.clone(),
-            });
+            s.gates.push(gate);
         }
-        for &r in ps.iter().filter(|r| **r != d && **r != sr) {
-            g.obl.insert((r, d, versions[d], d));
-            g.obl.insert((sr, r, versions[r], d));
-        }
-        g.obl.insert((sr, d, versions[d], d));
     }
     g.vc = *versions.last().unwrap();
     g.mine = ps.iter().copied().filter(|p| op_clean(&x.s, *p)).collect();
@@ -311,9 +315,11 @@ pub(super) fn op_apply(
         }
     }
     unrename(&mut g.renamed, &ps.iter().copied().collect::<Vec<_>>());
-    if mv && x.s.disk[src as usize] != ABSENT {
-        g.renamed.insert((src as usize, dst as usize));
-    }
+    g.renamed.extend(
+        moves
+            .iter()
+            .filter_map(|(&dst, &src)| (x.s.disk[src] != ABSENT).then_some((src, dst))),
+    );
     for (&p, &t) in eff {
         g.wrote[p].insert((t, versions[p]));
         g.promise[p] = ack(&g.promise[p], t, versions[p], false, 0);

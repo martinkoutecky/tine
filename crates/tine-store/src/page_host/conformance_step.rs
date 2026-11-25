@@ -2,6 +2,31 @@
 //! then the observed successor compared with the oracle's (`finish`).
 use super::*;
 
+fn observed_gate_obligations(gate: &Value) -> BTreeSet<(usize, usize, i64, usize)> {
+    let moves: BTreeSet<(usize, usize)> = serde_json::from_value(gate["moves"].clone()).unwrap();
+    let open: BTreeSet<usize> = serde_json::from_value(gate["open"].clone()).unwrap();
+    let receivers: BTreeSet<_> = moves.iter().map(|&(dst, _)| dst).collect();
+    let sources: BTreeSet<_> = moves.iter().map(|&(_, src)| src).collect();
+    let version = |p: usize| gate["vers"][p].as_i64().unwrap();
+    let mut obligations = BTreeSet::new();
+    for (dst, src) in moves {
+        if open.contains(&dst) {
+            obligations.extend(
+                open.difference(&receivers)
+                    .map(|&p| (p, dst, version(dst), dst)),
+            );
+        }
+        if open.contains(&src) {
+            obligations.extend(
+                open.iter()
+                    .filter(|p| !receivers.contains(p) && !sources.contains(p))
+                    .map(|&p| (src, p, version(p), dst)),
+            );
+        }
+    }
+    obligations
+}
+
 impl<F: ConformanceIo> Driver<F> {
     pub(super) fn step(&mut self, name: &str, args: &[Value]) -> bool {
         self.host.fs.physical().assert_no_escapes();
@@ -35,7 +60,8 @@ impl<F: ConformanceIo> Driver<F> {
         let prepare_operations = self.prepare_operations
             || (self.refinement_schedule
                 && (self.queued_refusals > 0 || self.occupied_refusals > 0));
-        if prepare_operations && self.host.alive && matches!(name, "opApply" | "opApplyPacked") {
+        let apply = matches!(name, "opApply" | "opApplyPacked" | "opApplyMoves");
+        if prepare_operations && self.host.alive && apply {
             for p in apply_args(name, args).0.into_keys() {
                 if !self.host.pages.contains_key(&key(p)) {
                     assert!(self.step("load", &[json!(p)]));
@@ -294,9 +320,33 @@ impl<F: ConformanceIo> Driver<F> {
                 self.compare("terminated twin save suffix stutter");
                 return self.accept_stutter(kind, name);
             }
-            if matches!(name, "opApply" | "opApplyPacked") {
+            if name == "pairRewrite" {
                 let before = self.untouched();
-                let (eff, plan, dst, src) = apply_args(name, args);
+                let src = args[0].as_u64().unwrap() as usize;
+                // The host's retirement entry first refreshes a page that
+                // owes its own draft (the model's separate `draftSync`), so
+                // there the refusal is that no pair of it may leave.
+                let refresh = self.host.pages.get(&key(src)).is_some_and(|p| p.risk)
+                    && self.oracle.next("draftSync", &[json!(src)]).is_some();
+                if refresh {
+                    assert!(
+                        !self.host.rewritable(&key(src)),
+                        "host offers a rewrite of a pair the oracle retains"
+                    );
+                } else {
+                    let disposition = self.host.begin_draft_retiring(&key(src));
+                    assert_ne!(
+                        disposition,
+                        Disposition::Pending,
+                        "host begins retirement of a pair the oracle retains"
+                    );
+                }
+                self.assert_untouched(&before, name);
+            } else if apply {
+                let before = self.untouched();
+                let (eff, plan, moves) = apply_args(name, args);
+                let endpoints: BTreeSet<_> =
+                    moves.iter().flat_map(|&(dst, src)| [dst, src]).collect();
                 let oracle = self.oracle.state();
                 let dirty = eff.keys().find(|&&p| {
                     let page = &oracle["s"]["pages"][p];
@@ -307,9 +357,10 @@ impl<F: ConformanceIo> Driver<F> {
                 });
                 let expected = if let Some(&p) = dirty {
                     ApplyRefusal::Unsaved(PageId::from(key(p)))
-                } else if eff
-                    .keys()
-                    .any(|p| plan.get(p) != Some(&label(&self.host.pages[&key(*p)].buf)))
+                } else if endpoints.len() != moves.len() * 2
+                    || eff
+                        .keys()
+                        .any(|p| plan.get(p) != Some(&label(&self.host.pages[&key(*p)].buf)))
                     || eff.iter().any(|(p, t)| {
                         *t != ABSENT && plan.get(p) == Some(&ABSENT) && self.claims().contains(p)
                     })
@@ -323,7 +374,7 @@ impl<F: ConformanceIo> Driver<F> {
                 {
                     ApplyRefusal::Busy
                 } else {
-                    panic!("unclassified opApply refusal: {eff:?} {plan:?} {dst}/{src}");
+                    panic!("unclassified opApply refusal: {eff:?} {plan:?} {moves:?}");
                 };
                 let result = self.apply_admission(name, args);
                 self.mutate_refusal(name);
@@ -372,6 +423,7 @@ impl<F: ConformanceIo> Driver<F> {
                     name,
                     "opApply"
                         | "opApplyPacked"
+                        | "opApplyMoves"
                         | "opDelete"
                         | "opRename"
                         | "opRenamePacked"
@@ -382,11 +434,11 @@ impl<F: ConformanceIo> Driver<F> {
             }
             return false;
         }
-        if matches!(name, "opApply" | "opApplyPacked") {
+        if apply {
             let before = self.untouched();
             let result = self.apply_admission(name, args);
             if let Err(refusal) = result {
-                let (eff, plan, _, _) = apply_args(name, args);
+                let (eff, plan, _) = apply_args(name, args);
                 if matches!(refusal, ApplyRefusal::Unsaved(_)) {
                     // apply_admission independently checked the entire set against
                     // oracle dirty-or-pending input, including every dirty page.
@@ -591,6 +643,39 @@ impl<F: ConformanceIo> Driver<F> {
                 self.compare("draft pending");
                 self.drain(name, args, old_inc, old_version);
                 return true;
+            }
+            "pairRewrite" => {
+                let disposition = self.host.begin_draft_retiring(&key(p));
+                if disposition == Disposition::Pending {
+                    if b(1) {
+                        self.compare("settlement rewrite pending");
+                        self.drain(name, args, old_inc, old_version);
+                        return true;
+                    }
+                    let phase = if self.host.worker.as_ref().unwrap().task.bytes.is_some() {
+                        Phase::DraftTemp
+                    } else {
+                        Phase::DraftUnlink
+                    };
+                    self.host.fs.physical_mut().inject(phase, [Fault::Before]);
+                    for _ in 0..200 {
+                        self.host.advance_draft();
+                        if self
+                            .host
+                            .worker
+                            .as_ref()
+                            .is_some_and(|worker| worker.failures > 0)
+                        {
+                            break;
+                        }
+                        self.compare("settlement rewrite before failed write");
+                    }
+                    assert!(self
+                        .host
+                        .worker
+                        .as_ref()
+                        .is_some_and(|worker| worker.failures > 0));
+                }
             }
             "opDelete" => {
                 assert_eq!(self.host.delete(&key(p)), Disposition::Pending);
@@ -809,26 +894,27 @@ impl<F: ConformanceIo> Driver<F> {
                     "discard" => {
                         // A running rename's unwitnessed destination: its
                         // Discard may also revert the source.
-                        let partner = before["s"]["gates"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|gt| {
-                                gt["dst"] == p && gt["open"].as_array().unwrap().contains(&json!(p))
-                            })
-                            .map(|gt| gt["src"].as_u64().unwrap() as usize)
-                            // Or a durable pair's receiver (model `partner`):
-                            // the source revert is checked by its version.
-                            .or_else(|| {
-                                before["s"]["pairs"]
-                                    .as_array()
-                                    .unwrap()
-                                    .iter()
-                                    .find_map(|pair| {
-                                        (pair["dst"] == p)
-                                            .then(|| pair["src"].as_u64().unwrap() as usize)
+                        let partner =
+                            before["s"]["gates"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .filter(|gt| gt["open"].as_array().unwrap().contains(&json!(p)))
+                                .find_map(|gt| {
+                                    gt["moves"].as_array().unwrap().iter().find_map(|m| {
+                                        (m[0] == p).then(|| m[1].as_u64().unwrap() as usize)
                                     })
-                            });
+                                })
+                                // Or a durable pair's receiver (model `partner`):
+                                // the source revert is checked by its version.
+                                .or_else(|| {
+                                    before["s"]["pairs"].as_array().unwrap().iter().find_map(
+                                        |pair| {
+                                            (pair["dst"] == p)
+                                                .then(|| pair["src"].as_u64().unwrap() as usize)
+                                        },
+                                    )
+                                });
                         if actual["pages"][p]["ver"] != before["s"]["pages"][p]["ver"] {
                             for p in [Some(p), partner].into_iter().flatten() {
                                 let page = &actual["pages"][p];
@@ -846,8 +932,21 @@ impl<F: ConformanceIo> Driver<F> {
                                     g["promise"][p]["ver"] = page["ver"].clone();
                                 }
                             }
-                            let cancels = obl.iter().any(|o| o.1 == p && o.3 == p);
-                            obl.retain(|o| !(o.0 == p || o.1 == p || (cancels && o.3 == p)));
+                            let cancelled = partner.filter(|&src| {
+                                actual["pairs"].as_array().unwrap().iter().any(|pair| {
+                                    pair["dst"] == p
+                                        && pair["src"] == src
+                                        && pair["decision"] == "cancelled"
+                                }) || (obl.iter().any(|o| o.1 == p && o.3 == p)
+                                    && !actual["gates"].as_array().unwrap().iter().any(|gt| {
+                                        gt["moves"].as_array().unwrap().contains(&json!([p, src]))
+                                    }))
+                            });
+                            obl.retain(|o| {
+                                !(o.0 == p
+                                    || o.1 == p
+                                    || cancelled.is_some_and(|src| o.0 == src || o.3 == p))
+                            });
                             tag = "uDiscard";
                         } else {
                             tag = "uDiscardFail";
@@ -859,25 +958,23 @@ impl<F: ConformanceIo> Driver<F> {
                 }
             }
             "opDelete" | "opRename" | "opRenamePacked" | "opRenameRaw" | "opApply"
-            | "opApplyPacked" => {
+            | "opApplyPacked" | "opApplyMoves" => {
                 for i in 0..self.windows.len() {
                     if before["s"]["pages"][i] != actual["pages"][i] {
                         mine.insert(i);
                     }
                 }
                 // The pages whose rename history the step ends, and the
-                // (src, dst) of the order it may install: an apply's are its
-                // effect pages (the model's `unrename(ps)`) and its move.
+                // moves of the order it may install.
                 let (ends, moved) = match name {
-                    "opDelete" => (vec![p], None),
-                    "opApply" | "opApplyPacked" => {
-                        let (eff, _, dst, src) = apply_args(name, args);
-                        let moved = (dst != NONE).then_some((src as usize, dst as usize));
+                    "opDelete" => (vec![p], vec![]),
+                    "opApply" | "opApplyPacked" | "opApplyMoves" => {
+                        let (eff, _, moved) = apply_args(name, args);
                         (eff.into_keys().collect(), moved)
                     }
                     _ => {
                         let q = args[1].as_u64().unwrap() as usize;
-                        (vec![p, q], Some((p, q)))
+                        (vec![p, q], vec![(q, p)])
                     }
                 };
                 renamed.retain(|r| !(ends.contains(&r.0) || ends.contains(&r.1)));
@@ -886,21 +983,14 @@ impl<F: ConformanceIo> Driver<F> {
                 // misversioned gate diverges from the model's ghost.
                 let gates = actual["gates"].as_array().unwrap();
                 let grew = gates.len() > before["s"]["gates"].as_array().unwrap().len();
-                if let Some((src, dst)) = moved.filter(|_| grew) {
+                if grew && !moved.is_empty() {
                     let gt = gates.last().unwrap();
-                    assert_eq!(
-                        (gt["src"].as_u64(), gt["dst"].as_u64()),
-                        (Some(src as u64), Some(dst as u64))
-                    );
-                    let ver = |k: usize| gt["vers"][k].as_i64().unwrap();
-                    let open: BTreeSet<usize> = serde_json::from_value(gt["open"].clone()).unwrap();
-                    for &r in open.iter().filter(|&&r| r != src && r != dst) {
-                        obl.insert((r, dst, ver(dst), dst));
-                        obl.insert((src, r, ver(r), dst));
-                    }
-                    obl.insert((src, dst, ver(dst), dst));
-                    if before["s"]["disk"][src] != ABSENT {
-                        renamed.insert((src, dst));
+                    assert_eq!(gt["moves"], json!(moved));
+                    obl.extend(observed_gate_obligations(gt));
+                    for (dst, src) in moved {
+                        if before["s"]["disk"][src] != ABSENT {
+                            renamed.insert((src, dst));
+                        }
                     }
                 }
             }
@@ -934,19 +1024,7 @@ impl<F: ConformanceIo> Driver<F> {
             "saveFail" => g["guard"] = json!(false),
             "launch" => {
                 for gate in actual["gates"].as_array().unwrap() {
-                    let src = gate["src"].as_u64().unwrap() as usize;
-                    let dst = gate["dst"].as_u64().unwrap() as usize;
-                    let open: BTreeSet<usize> =
-                        serde_json::from_value(gate["open"].clone()).unwrap();
-                    let version = |p| gate["vers"][p].as_i64().unwrap();
-                    for &p in &open {
-                        if p != dst && open.contains(&dst) {
-                            obl.insert((p, dst, version(dst), dst));
-                        }
-                        if p != dst && p != src && open.contains(&src) {
-                            obl.insert((src, p, version(p), dst));
-                        }
-                    }
+                    obl.extend(observed_gate_obligations(gate));
                 }
             }
             "extWrite" | "extWriteD" => {

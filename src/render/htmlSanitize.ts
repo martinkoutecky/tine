@@ -1,7 +1,7 @@
 import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
 import { deferAnchorHref, hasWebUrlPrefix, previewResourceDecision } from "../linkSchemePolicy";
-import { color_only_style } from "./wasm/lsdoc_wasm.js";
+import { color_only_styles } from "./wasm/lsdoc_wasm.js";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
 // apply to raw inline/block HTML embedded in a Markdown/Org block.
@@ -35,7 +35,7 @@ export const RAW_HTML_TAGS = policy.tags;
 
 /** Attributes that survive, across all allowed tags. Note the absence of
  *  `style` here (positioning/tracking; colour declarations are carried over
- *  separately, see `color_only_style`), `autoplay`, and any `on*` handler.
+ *  separately, see `colorOnlyStyles`), `autoplay`, and any `on*` handler.
  *  `controls` exposes user-driven playback; `loop`/`muted` retain playback
  *  state without starting it; `preload` is the browser's media fetch hint;
  *  `poster` is the video placeholder; `type` lets `<source>` advertise its
@@ -55,6 +55,28 @@ export const RAW_HTML_ATTRS = policy.browser.attributes;
 // shared note can recolor text but never position, resize, hide or fetch anything.
 // The rule is the export sanitizer's (`color_only_style` in tine-core's html_sanitize,
 // through wasm), so the app and a published page keep the same declarations.
+
+/** The colour declarations each `style` value keeps ("" if none), in order: one
+ *  wasm call for all of them, equal values computed once. Values travel as one
+ *  string plus UTF-16 lengths (no separator an attribute value could contain).
+ *  O(total bytes). */
+export function colorOnlyStyles(values: readonly string[]): string[] {
+  if (values.length === 0) return [];
+  const slot = new Map<string, number>();
+  const unique: string[] = [];
+  const index = values.map((value) => {
+    let i = slot.get(value);
+    if (i === undefined) slot.set(value, (i = unique.push(value) - 1));
+    return i;
+  });
+  const lengths = Uint32Array.from(unique, (value) => value.length);
+  const keptLengths = new Uint32Array(unique.length);
+  const joined = color_only_styles(unique.join(""), lengths, keptLengths);
+  const kept: string[] = [];
+  let at = 0;
+  for (const n of keptLengths) kept.push(joined.slice(at, (at += n)));
+  return index.map((i) => kept[i]);
+}
 
 /** True if `src` is a local filesystem path (not a web / data / blob URL). */
 function isLocalSrc(src: string): boolean {
@@ -118,10 +140,10 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   // DOMPurify runs IN_PLACE, so surviving elements keep identity: capture the colour
   // declarations first and put them back on whatever survives.
   const colors = new Map<Element, string>();
-  for (const element of root.querySelectorAll("[style]")) {
-    const kept = color_only_style(element.getAttribute("style") ?? "");
-    if (kept) colors.set(element, kept);
-  }
+  const styled = [...root.querySelectorAll("[style]")];
+  colorOnlyStyles(styled.map((element) => element.getAttribute("style") ?? "")).forEach((kept, i) => {
+    if (kept) colors.set(styled[i], kept);
+  });
   DOMPurify.sanitize(root, {
     ALLOWED_TAGS: RAW_HTML_TAGS,
     ALLOWED_ATTR: RAW_HTML_ATTRS,

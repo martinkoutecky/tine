@@ -54,9 +54,11 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "52a474a903c21a0a1bb8f0c8c53536de3a5a053a58c9de7b06fa20204837955b"
+SHA = "b2423457e3580604422586328d8c6ff8b30f0f4f718b5884a88c3105f1ca3d13"
 SCENARIO_SHA = "bf9605a64f6a0f1ea7b9d2984191a7865ba0997df25f6990ceaf1324ee8c4960"
 SCENARIO_COUNT = 206
+VEHICLE_SCENARIO_SHA = "31890c96af88efae6b984b67853bdd6425426aa9444b9ef8323560c16984793c"
+VEHICLE_PAGES = 5
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
@@ -78,7 +80,6 @@ def scenarios(source):
         body = source[m.end():matches[i+1].start() if i+1 < len(matches) else len(source)].strip()
         definitions[n] = (re.findall(r"(\w+)\s*:", params or ""), parse(body))
         if kind == "run": runs.append(n)
-    assert len(runs) == SCENARIO_COUNT
     def predicate(e):
         if isinstance(e, list): return [predicate(a) for a in e]
         if not isinstance(e, tuple): return e
@@ -117,6 +118,27 @@ def command(args, log, env):
     r = subprocess.run([*map(str, args)], text=True, capture_output=True, env=env)
     log.write_text(r.stdout+r.stderr)
     return r
+
+
+def scenario_outcomes(quint, model, source, work, suffix, profile, mutant, reuse, env):
+    path = work / f"{profile}-{mutant}{suffix}.qnt"
+    path.write_text(model.replace("  // @@SCENARIOS@@", source))
+    log = work / f"scenarios-{profile}-{mutant}{suffix}.log"
+    if not reuse:
+        result = command([quint, "test", path, "--backend", "typescript", "--max-samples", "1",
+                          "--verbosity", "2", "--match", "^(max|own|q|m)[A-Z]"], log, env)
+        assert result.returncode in [0, 1], log.read_text()
+    out = log.read_text()
+    statuses = {n: "pass" for n in re.findall(r"ok (\w+) passed", out)}
+    errors = re.findall(r"\n\s+\d+\) (\w+):\n\s+Error \[(QNT\d+)\]: ([^\n]*)", out)
+    for name, code, message in errors:
+        # A disabled action can prevent reaching an expect, without evaluating its predicate.
+        if code == "QNT508" and message.startswith('Cannot continue to "expect"'):
+            statuses[name] = "disabled"
+        else:
+            statuses[name] = {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled",
+                              "QNT511": "false"}.get(code, code)
+    return statuses
 
 def decode(v):
     if isinstance(v, list): return [decode(x) for x in v]
@@ -193,6 +215,11 @@ def main():
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     source = args.scenario_source.read_text()
     assert hashlib.sha256(source.encode()).hexdigest() == SCENARIO_SHA
+    vehicle_source = (args.model_dir / "scenarios-vehicle-recovery.inc").read_text()
+    assert hashlib.sha256(vehicle_source.encode()).hexdigest() == VEHICLE_SCENARIO_SHA
+    singleton = scenarios(source)
+    vehicles = scenarios(vehicle_source)
+    assert len(singleton) == SCENARIO_COUNT and singleton.keys().isdisjoint(vehicles)
     muts = ast.literal_eval(re.search(r"// SWEEP-MUTS: (\{.*\})", model).group(1))
     quint = args.quint or args.model_dir.parent/"model/tools/node_modules/.bin/quint"
     env = {**os.environ, "TMPDIR": str(work)}
@@ -201,28 +228,22 @@ def main():
     for p, m in jobs:
         text = re.sub(r"pure val RACES: Set\[str\] = .*", f"pure val RACES: Set[str] = {PROFILES[p]}", model, count=1)
         text = re.sub(r'pure val MUTANT: str = ".*"', f'pure val MUTANT: str = "{m}"', text, count=1)
-        path = work/f"{p}-{m}.qnt"; path.write_text(text.replace("  // @@SCENARIOS@@", source))
-        log = work/f"scenarios-{p}-{m}.log"
-        if not (args.reuse or args.reuse_scenarios):
-            result = command([quint, "test", path, "--backend", "typescript", "--max-samples", "1", "--verbosity", "2", "--match", "^(max|own|q|m)[A-Z]"], log, env)
-            assert result.returncode in [0, 1], log.read_text()
-        out = log.read_text()
-        statuses = {n: "pass" for n in re.findall(r"ok (\w+) passed", out)}
-        errors = re.findall(r"\n\s+\d+\) (\w+):\n\s+Error \[(QNT\d+)\]: ([^\n]*)", out)
-        for name, code, message in errors:
-            # Quint also uses QNT508 when a disabled action prevents reaching
-            # a later expectation. No predicate ran in that case.
-            if code == "QNT508" and message.startswith('Cannot continue to "expect"'):
-                statuses[name] = "disabled"
-            else:
-                statuses[name] = {"QNT508": "assertion", "QNT507": "disabled", "QNT513": "disabled", "QNT511": "false"}.get(code, code)
-        assert len(statuses) == SCENARIO_COUNT, (p, m, len(statuses), out)
+        reuse = args.reuse or args.reuse_scenarios
+        statuses = scenario_outcomes(quint, text, source, work, "", p, m, reuse, env)
+        assert statuses.keys() == singleton.keys(), (p, m, statuses.keys() ^ singleton.keys())
+        if m == "none" or "m" + m in vehicles:
+            expanded = text.replace("pure val PAGES = Set(0, 1, 2)",
+                                    "pure val PAGES = Set(" + ", ".join(map(str, range(VEHICLE_PAGES))) + ")")
+            extra = scenario_outcomes(quint, expanded, vehicle_source, work, "-vehicle", p, m, reuse, env)
+            assert extra.keys() == vehicles.keys(), (p, m, extra.keys() ^ vehicles.keys())
+            statuses.update(extra)
         assert m != "none" or set(statuses.values()) == {"pass"}
         assert m == "none" or statuses["m"+m] == "assertion"
         outcomes.append({"profile": p, "mutant": m, "outcomes": statuses})
         print(f"scenario oracle {p}/{m}: {len(statuses)}", flush=True)
-    data = {"model_sha256": SHA, "scenario_sha256": hashlib.sha256(source.encode()).hexdigest(), "scenarios": scenarios(source), "oracles": outcomes}
-    assert all(set(o["outcomes"]) == set(data["scenarios"]) for o in outcomes)
+    data = {"model_sha256": SHA, "scenario_sha256": SCENARIO_SHA, "vehicle_scenario_sha256": VEHICLE_SCENARIO_SHA,
+            "scenario_pages": dict.fromkeys(vehicles, VEHICLE_PAGES), "scenarios": {**singleton, **vehicles},
+            "oracles": outcomes}
     (fixture/"scenarios.json").write_text(json.dumps(data, separators=(",", ":"))+"\n")
     traces = []
     seeds = {p: str(20261009 + i * 7919) for i, p in enumerate(PROFILES)}

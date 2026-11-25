@@ -484,6 +484,9 @@ fn all_s3_scenarios_in_four_profiles() {
     {
         let profile = oracle["profile"].as_str().unwrap();
         for (name, program) in fixture["scenarios"].as_object().unwrap() {
+            if !fixture["scenario_pages"][name].is_null() {
+                continue;
+            }
             let mut driver = Driver::new(profile, 3);
             let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 driver.program(program.as_array().unwrap())
@@ -527,6 +530,57 @@ fn all_s3_scenarios_in_four_profiles() {
         (8162, 11446, 4, 0, 0, 8)
     );
     eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers / {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames");
+}
+
+pub(super) fn vehicle_scenarios_through_host<F: ConformanceIo>() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/s2/scenarios.json")).unwrap();
+    assert_eq!(fixture["model_sha256"], Oracle::model_sha());
+    let mut comparisons = 0;
+    let mut mismatches = Vec::new();
+    for (name, pages) in fixture["scenario_pages"].as_object().unwrap() {
+        let program = fixture["scenarios"][name].as_array().unwrap();
+        for oracle in fixture["oracles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["mutant"] == "none")
+        {
+            let profile = oracle["profile"].as_str().unwrap();
+            let mut driver = Driver::<F>::new_with_io(profile, pages.as_u64().unwrap() as usize);
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.program(program)));
+            let expected = oracle["outcomes"][name].as_str().unwrap();
+            let observed = match result {
+                Ok(outcome) => outcome.err().unwrap_or("pass").to_owned(),
+                Err(panic) => panic.downcast_ref::<String>().cloned().unwrap_or_else(|| {
+                    panic
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .unwrap_or("host replay panicked")
+                        .to_owned()
+                }),
+            };
+            if observed != expected {
+                mismatches.push(format!(
+                    "{profile}/{name}: expected {expected}, observed {observed}"
+                ));
+            }
+            comparisons += 1;
+        }
+    }
+    assert_eq!(comparisons, 60);
+    assert!(
+        mismatches.is_empty(),
+        "{} host divergences\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn vehicle_recovery_scenarios_in_four_profiles() {
+    vehicle_scenarios_through_host::<ModelFs>();
 }
 
 #[test]

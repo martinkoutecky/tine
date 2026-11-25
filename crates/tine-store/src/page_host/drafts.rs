@@ -78,15 +78,30 @@ pub(super) enum Choice {
     /// `0`: take disk (Use Disk). On the receiver it cancels the move, on
     /// the source its removal.
     TakeDisk,
-    /// `1`: reviewed text; `2`: superseding editor input. Decoded and
-    /// validated here, acted on by no code yet: an operation with one
-    /// blocks its destructive step.
+    /// `1`: reviewed text; `2`: superseding editor input. Superseding
+    /// input on a source is the durable choice that its newer text replaces
+    /// the removal (written before that text publishes); reviewed text, or
+    /// either on a receiver, is acted on by no code yet: an operation with
+    /// one blocks its destructive step.
     Text {
         superseding: bool,
         version: u64,
         base: Base,
         bytes: Text,
     },
+}
+
+impl Choice {
+    /// `2`: newer editor input published over a source's removal.
+    pub fn superseding(&self) -> bool {
+        matches!(
+            self,
+            Choice::Text {
+                superseding: true,
+                ..
+            }
+        )
+    }
 }
 
 /// One extended or legacy draft body.
@@ -303,6 +318,11 @@ pub(super) struct Scan {
     pub blocking: BTreeMap<String, String>,
     /// Readable decisions whose operation is durably absent: cleanup only.
     pub stale_decisions: BTreeSet<String>,
+    /// Paired operation drafts that copy a strict subset of another paired
+    /// draft's records: a settlement rewrite whose original is still on
+    /// disk, so it is not committed. Neither recovered nor adopted; cleanup
+    /// only (the original keeps every obligation).
+    pub rewrites: BTreeSet<String>,
 }
 
 /// `p-<page-hash>-<nonce>-<op-uuid>-<member>.draft`: (op uuid, member).
@@ -392,6 +412,26 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
     result
         .pairs
         .retain(|name, _| result.files.contains_key(name));
+    // A settlement rewrite commits when its original's unlink is durable;
+    // until then the original is the operation. Records are equal only as
+    // copies (one write sequence each), so only a rewrite is a strict subset.
+    let rewrites: Vec<String> = (result.pairs.keys())
+        .filter(|name| {
+            let records = &result.files[*name];
+            result.pairs.keys().any(|other| {
+                let original = &result.files[other];
+                other != *name
+                    && original.len() > records.len()
+                    && records.iter().all(|r| original.contains(r))
+            })
+        })
+        .cloned()
+        .collect();
+    for name in rewrites {
+        result.files.remove(&name);
+        result.pairs.remove(&name);
+        result.rewrites.insert(name);
+    }
     // Cross-check each decision with its operation: filename, id, member
     // (a receiver's or a source's index, its page the name's hash) and
     // sequence.
@@ -423,7 +463,10 @@ pub(super) fn scan(files: Vec<(String, Vec<u8>)>) -> Scan {
         match body {
             Ok(Body::Decision(d)) if matches(&d) => {
                 result.max_wseq = result.max_wseq.max(d.wseq);
-                if d.choice != Choice::TakeDisk {
+                // Take disk on either endpoint, or superseding input on a
+                // source, is acted on; anything else blocks the operation.
+                let source = pairs.iter().any(|&(_, source)| source == member);
+                if !(d.choice == Choice::TakeDisk || source && d.choice.superseding()) {
                     result.blocking.insert(name.clone(), vehicle);
                 }
                 result.decisions.insert(name, d);

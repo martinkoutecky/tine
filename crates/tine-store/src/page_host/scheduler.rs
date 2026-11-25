@@ -284,14 +284,14 @@ impl Driver {
                 "opDelete" => assert_eq!(self.host.delete(&key(p)), Disposition::Waiting),
                 "opRename" => assert_eq!(self.rename_operation(name, args), Disposition::Waiting),
                 "opApply" => {
-                    let (eff, plan, dst, src) = apply_args(name, args);
+                    let (eff, plan, moves) = apply_args(name, args);
                     let effects = eff
                         .iter()
                         .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
                         .collect();
-                    let moves: Vec<_> = (dst != NONE)
-                        .then(|| (key(dst as usize), key(src as usize)))
+                    let moves: Vec<_> = moves
                         .into_iter()
+                        .map(|(dst, src)| (key(dst), key(src)))
                         .collect();
                     assert_eq!(self.host.apply(&effects, &moves), Disposition::Waiting);
                 }

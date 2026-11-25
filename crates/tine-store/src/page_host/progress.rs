@@ -609,7 +609,13 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         let draft = host.draft_of(key);
         let differs = match host.pages.get(key).filter(|page| page.risk) {
             Some(page) => !draft.is_some_and(|r| r.holds(page)),
-            None => draft.is_some() && !host.pair_retains(key) && (stopping || !host.op_waits(key)),
+            // A resolved pair's source is a candidate for its settlement
+            // rewrite while its operation still waits for a sibling.
+            None => {
+                draft.is_some()
+                    && (host.rewritable(key)
+                        || !host.pair_retains(key) && (stopping || !host.op_waits(key)))
+            }
         };
         if differs {
             drafted.insert(key.into());
@@ -929,24 +935,16 @@ impl Reference {
                 .filter(|(key, version)| logical::owes(host.pages.get(*key), **version))
                 .map(|(key, _)| key.clone())
                 .collect();
-            let held = host.order.holds(name);
-            live_ops.insert(
-                name.clone(),
-                LiveOp {
-                    versions,
-                    owed,
-                    held,
-                },
-            );
+            live_ops.insert(name.clone(), LiveOp { versions, owed });
         }
         assert_eq!(
             host.live_ops, live_ops,
             "RENAME-COST reference: live operation vehicles"
         );
         let op_waits = |key: &PageKey| {
-            live_ops
-                .values()
-                .any(|op| op.versions.contains_key(key) && op.waits())
+            (live_ops.iter()).any(|(name, op)| {
+                op.versions.contains_key(key) && logical::waits(&host.order, name, op)
+            })
         };
         let drafted: BTreeSet<_> = if host.alive {
             let candidates = self.pages.keys().chain(self.logical.keys());
@@ -954,8 +952,8 @@ impl Reference {
                 Some(page) => !self.logical.get(*key).is_some_and(|r| r.holds(page)),
                 None => {
                     self.logical.contains_key(*key)
-                        && !host.pair_retains(key)
-                        && (p.stopping.is_some() || !op_waits(key))
+                        && (host.rewritable(key)
+                            || !host.pair_retains(key) && (p.stopping.is_some() || !op_waits(key)))
                 }
             };
             candidates.filter(differs).cloned().collect()
