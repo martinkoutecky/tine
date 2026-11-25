@@ -4,6 +4,7 @@ import { blockRef, resolveBlockRef, resolveGuideBlockRef } from "./document";
 import { graphEpoch } from "./graphSession";
 import { changeKeyHasConsumers, onChangeKeyAcquired, onChangeKeyReleased, onChangeKeysFlushed } from "./changeKeys";
 import { clearOnBindingInvalidated } from "./binding";
+import { isQuickCaptureWindow } from "./windowRole";
 import { createComputed, createRoot } from "solid-js";
 import { graphOwner, readOwned } from "./owned";
 import type { RefGroup } from "./types";
@@ -176,8 +177,10 @@ function flush() {
  *  (its owner is stale); a block whose key advances during the lookup is asked
  *  again, so a save of the target never reads as absent. `undefined` means a
  *  failed read, reported through uiFailure and evicted so a later request can
- *  retry. */
+ *  retry; a window granted no graph read (Quick Capture) answers it at once,
+ *  without asking or reporting. */
 export function resolveBlockBatched(id: string): Promise<RefGroup | null | undefined> {
+  if (isQuickCaptureWindow()) return Promise.resolve(undefined);
   ensureCacheRev();
   const hit = cache.get(id);
   if (hit) {
