@@ -1538,6 +1538,8 @@ fn a_users_file_that_looks_like_a_temp_is_committed() {
         "assets/.report.1.18446744073709551616.restore.tmp",
         "assets/.tine-restore-01-2.tmp",
         "assets/.tine-tx-1-18446744073709551616.tmp",
+        // A stamp past `Duration::MAX.as_millis()` (model check of c897398d8).
+        "assets/.tine-tx-18446744073709551616000-1.tmp",
     ];
     const TINE: &[&str] = &[
         "pages/.a.md.4242.17.tmp",
@@ -1586,46 +1588,134 @@ fn a_users_file_that_looks_like_a_temp_is_committed() {
     }
 }
 
-/// Review of 5582895519, RN3: a temp a released build committed is no part
-/// of the next tip, whether the user removed the leftover or not, beside a
-/// real edit or alone, as the other left-out entries are.
+/// Temps a released build committed (tagged, fixed, a temp of a fixed one,
+/// legacy), as the candidate-tree tests below share them.
+const COMMITTED_TEMPS: &[&str] = &[
+    "pages/.a.md.4242.17.tmp",
+    "pages/.a.md.4242.18.new.tmp",
+    "assets/.a.png.4242.21.capture.tmp",
+    "assets/.tine-tx-1759000000000-1.tmp",
+    "assets/.tine-restore-4242-3.tmp",
+    "assets/..tine-tx-1759000000000-1.tmp.4242.22.capture.tmp",
+    "assets/.scan.pdf.123.7.import.tmp",
+    "pages/.Page.md.123.7.projection.tmp",
+];
+
+/// Review of 5582895519, RN3, as the state model amends it: a temp a released
+/// build committed leaves the tip once it is gone from disk, beside a real
+/// edit or alone, committed like any deletion; one still on disk keeps
+/// `HEAD`'s entry (review of c897398d8, B1).
 #[test]
-fn a_committed_tine_temp_leaves_the_tip_at_the_next_autocommit() {
-    const COMMITTED: &[&str] = &[
-        "pages/.a.md.4242.17.tmp",
-        "pages/.a.md.4242.18.new.tmp",
-        "assets/.a.png.4242.21.capture.tmp",
-        "assets/.tine-tx-1759000000000-1.tmp",
-        "assets/.tine-restore-4242-3.tmp",
-        "assets/..tine-tx-1759000000000-1.tmp.4242.22.capture.tmp",
-        "assets/.scan.pdf.123.7.import.tmp",
-        "pages/.Page.md.123.7.projection.tmp",
-    ];
+fn a_committed_tine_temp_leaves_the_tip_once_deleted_from_disk() {
     for edit in [true, false] {
         let mut files: Vec<(&str, &str)> = vec![("pages/a.md", "- a\n")];
-        files.extend(COMMITTED.iter().map(|path| (*path, "half a save")));
+        files.extend(COMMITTED_TEMPS.iter().map(|path| (*path, "half a save")));
         let f = fixture(&files);
-        for path in COMMITTED {
+        for path in COMMITTED_TEMPS {
             assert!(at_head(&f.repo, path).is_some(), "fixture: {path}");
         }
         // The user deletes half of the leftovers; the rest stay on disk.
-        for path in COMMITTED.iter().step_by(2) {
+        for path in COMMITTED_TEMPS.iter().step_by(2) {
             fs::remove_file(f.work.join(path)).unwrap();
         }
         if edit {
             write(&f.work, "pages/a.md", "- edited\n");
         }
-        commit_now(&f.work, MESSAGE).unwrap();
-        for path in COMMITTED {
-            assert_eq!(at_head(&f.repo, path), None, "edit {edit}: {path}");
+        assert!(matches!(
+            commit_now(&f.work, MESSAGE).unwrap(),
+            Outcome::Committed(_)
+        ));
+        for (i, path) in COMMITTED_TEMPS.iter().enumerate() {
+            let expected = (i % 2 == 1).then(|| "half a save".to_string());
+            assert_eq!(at_head(&f.repo, path), expected, "edit {edit}: {path}");
         }
         let page = if edit { "- edited\n" } else { "- a\n" };
         assert_eq!(at_head(&f.repo, "pages/a.md").as_deref(), Some(page));
+        assert!(dirty(&f.repo).is_empty(), "{:?}", dirty(&f.repo));
         // A second autocommit finds nothing left to do.
         let tip = f.repo.head().unwrap().target();
-        commit_now(&f.work, MESSAGE).unwrap();
+        assert_eq!(commit_now(&f.work, MESSAGE).unwrap(), Outcome::Clean);
         assert_eq!(f.repo.head().unwrap().target(), tip, "edit {edit}");
     }
+}
+
+/// Review of c897398d8, B1: a temp a released build committed and still on
+/// disk never changes the tree. A clean checkout stays clean (no
+/// scratch-only commit, which turned a fast-forward pull into Diverged), and
+/// beside a real edit the temp keeps `HEAD`'s blob even when its bytes on
+/// disk changed.
+#[test]
+fn a_committed_tine_temp_still_on_disk_never_changes_the_tree() {
+    let mut files: Vec<(&str, &str)> = vec![("pages/a.md", "- a\n")];
+    files.extend(COMMITTED_TEMPS.iter().map(|path| (*path, "half a save")));
+    let f = fixture(&files);
+    let tip = f.repo.head().unwrap().target();
+    assert_eq!(commit_now(&f.work, MESSAGE).unwrap(), Outcome::Clean);
+    assert_eq!(f.repo.head().unwrap().target(), tip);
+
+    for path in COMMITTED_TEMPS {
+        write(&f.work, path, "another half save");
+    }
+    assert_eq!(commit_now(&f.work, MESSAGE).unwrap(), Outcome::Clean);
+    assert_eq!(f.repo.head().unwrap().target(), tip);
+
+    write(&f.work, "pages/a.md", "- edited\n");
+    commit_now(&f.work, MESSAGE).unwrap();
+    assert_eq!(
+        at_head(&f.repo, "pages/a.md").as_deref(),
+        Some("- edited\n")
+    );
+    for path in COMMITTED_TEMPS {
+        assert_eq!(
+            at_head(&f.repo, path).as_deref(),
+            Some("half a save"),
+            "{path}"
+        );
+    }
+}
+
+/// Model check of c897398d8: what another git program staged for a temp is
+/// dropped from the candidate tree while the file is on disk. `git add -f`
+/// of an untracked temp, and a staged modification or removal of a tracked
+/// one, then a page edit: the commit holds `HEAD`'s entry, or its absence.
+#[test]
+fn a_staged_tine_temp_keeps_heads_entry_in_the_commit() {
+    let f = fixture(&[
+        ("pages/a.md", "- a\n"),
+        ("assets/.a.png.4242.21.capture.tmp", "committed"),
+        ("pages/.a.md.4242.17.tmp", "committed"),
+    ]);
+    write(&f.work, "assets/.b.png.4242.30.capture.tmp", "half a save");
+    write(&f.work, "assets/.a.png.4242.21.capture.tmp", "staged edit");
+    let mut index = f.repo.index().unwrap();
+    // `git add -f`: the temp is staged as a new file.
+    index
+        .add_path(Path::new("assets/.b.png.4242.30.capture.tmp"))
+        .unwrap();
+    index
+        .add_path(Path::new("assets/.a.png.4242.21.capture.tmp"))
+        .unwrap();
+    // `git rm --cached`: the tracked temp stays on disk.
+    index
+        .remove_path(Path::new("pages/.a.md.4242.17.tmp"))
+        .unwrap();
+    index.write().unwrap();
+    write(&f.work, "pages/a.md", "- edited\n");
+
+    commit_now(&f.work, MESSAGE).unwrap();
+    assert_eq!(
+        at_head(&f.repo, "pages/a.md").as_deref(),
+        Some("- edited\n")
+    );
+    assert_eq!(at_head(&f.repo, "assets/.b.png.4242.30.capture.tmp"), None);
+    assert_eq!(
+        at_head(&f.repo, "assets/.a.png.4242.21.capture.tmp").as_deref(),
+        Some("committed")
+    );
+    assert_eq!(
+        at_head(&f.repo, "pages/.a.md.4242.17.tmp").as_deref(),
+        Some("committed")
+    );
 }
 
 #[test]

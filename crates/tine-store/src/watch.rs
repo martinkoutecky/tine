@@ -361,6 +361,11 @@ fn collect_with_revs(root: &Path, config: &tine_core::Config) -> HashMap<PathBuf
 /// reaches the graph only through a rename that is reported itself (the
 /// target's own event: a page is reread, `config.edn` and `custom.css` raise
 /// their flags, anything else takes the full diff), so the temp is no change.
+/// Only the event's own path is read: a file inside a temp-shaped folder is
+/// judged by its own name. An event on such a folder itself is skipped without
+/// a `stat`: every name in the set starts with a dot, and the graph inventory
+/// never walks a dot-folder, so the full diff it would take finds nothing
+/// (the asset watcher, which does walk dot-folders, walks this one).
 fn atomic_temp(path: &Path) -> bool {
     path.file_name()
         .and_then(|part| part.to_str())
@@ -2087,6 +2092,46 @@ mod tests {
         pending.add(Ok(event), &root, &config);
         assert!(!pending.paths.contains(&hidden));
         assert!(pending.paths.contains(&visible));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Model check of c897398d8: the temp rule is for files. A page inside a
+    /// folder named like a temp is not taken for scratch by its own name; the
+    /// exact route and the full inventory give it the same answer (the
+    /// graph's dot-folder policy, as for any hidden folder), and a page beside
+    /// it is reported.
+    #[test]
+    fn a_page_inside_a_temp_shaped_folder_gets_one_answer() {
+        let root = crate::test_support::fresh_dir("tine-temp-folder-watch-");
+        let folder = root.join("pages/.A.md.4242.21.capture.tmp");
+        fs::create_dir_all(&folder).unwrap();
+        let inside = folder.join("B.md");
+        let beside = root.join("pages/C.md");
+        fs::write(&inside, "- inside\n").unwrap();
+        fs::write(&beside, "- beside\n").unwrap();
+        let config = tine_core::Config::default();
+        let files = collect(&root, &config);
+        let event = notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )),
+            paths: vec![inside.clone(), beside.clone()],
+            attrs: Default::default(),
+        };
+        assert_eq!(
+            incremental_paths(&event),
+            Some(vec![inside.clone(), beside.clone()]),
+            "the folder's name does not make its page scratch"
+        );
+        let mut pending = Pending::default();
+        pending.add(Ok(event), &root, &config);
+        assert_eq!(
+            pending.paths.contains(&inside),
+            files.contains_key(&inside),
+            "exact route and inventory disagree"
+        );
+        assert!(pending.paths.contains(&beside));
+        assert!(files.contains_key(&beside));
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -105,8 +105,9 @@ const PID_MAX: u128 = u32::MAX as u128;
 /// The largest sequence a writer formats: every temp sequence is an `AtomicU64`.
 const SEQ_MAX: u128 = u64::MAX as u128;
 /// The largest millisecond stamp `trash_stamp` formats: `Duration::as_millis`
-/// is a `u128`.
-const MILLIS_MAX: u128 = u128::MAX;
+/// of the longest `Duration` (a `u128` type, but no writer gets past this;
+/// model check of c897398d8).
+const MILLIS_MAX: u128 = std::time::Duration::MAX.as_millis();
 
 /// Whether `part` is an unsigned integer of at most `max` exactly as the
 /// writers format one (`{}` of a `u32`, `u64` or `u128`): decimal digits, no
@@ -732,6 +733,9 @@ pub(crate) const TEMP_LOOK_ALIKES: &[&str] = &[
     ".report.1.18446744073709551616.restore.tmp",
     ".tine-restore-01-2.tmp",
     ".tine-tx-1-18446744073709551616.tmp",
+    // A stamp past `Duration::MAX.as_millis()` (model check of c897398d8).
+    ".tine-tx-18446744073709551616000-1.tmp",
+    ".tine-tx-340282366920938463463374607431768211455-1.tmp",
     ".a.md.1.2new.tmp",
     ".a.md.1.2.new.new.tmp",
     ".a.md.1.02.tmp",
@@ -767,6 +771,10 @@ pub(crate) fn tine_temp_names(target: &str) -> Vec<String> {
     names.push(format!(".{target}.0.0.new.tmp"));
     for (kind, unique) in [
         (FixedTempKind::Tx, "1759000000000-1"),
+        (
+            FixedTempKind::Tx,
+            "18446744073709551615999-18446744073709551615",
+        ),
         (FixedTempKind::Restore, "4294967295-18446744073709551615"),
     ] {
         let fixed = fixed_temp_name(kind, unique);
@@ -1001,6 +1009,9 @@ mod tests {
             ("18446744073709551615", SEQ_MAX, true),
             ("18446744073709551616", SEQ_MAX, false),
             ("18446744073709551616", MILLIS_MAX, true),
+            ("18446744073709551615999", MILLIS_MAX, true),
+            ("18446744073709551616000", MILLIS_MAX, false),
+            ("340282366920938463463374607431768211455", MILLIS_MAX, false),
             ("340282366920938463463374607431768211456", MILLIS_MAX, false),
             ("", SEQ_MAX, false),
             ("00", SEQ_MAX, false),
@@ -1031,8 +1042,14 @@ mod tests {
             FixedTempKind::Tx,
             "1759000000000-1"
         )));
-        // A millisecond stamp is a `u128`: past `u64` is still one.
+        // A millisecond stamp is a `u128`: past `u64` is still one, up to
+        // `Duration::MAX.as_millis()`, the most a writer can format.
         assert!(is_temp_name(".tine-tx-18446744073709551616-0.tmp"));
+        assert!(is_temp_name(".tine-tx-18446744073709551615999-0.tmp"));
+        assert!(!is_temp_name(".tine-tx-18446744073709551616000-0.tmp"));
+        assert!(!is_temp_name(
+            ".tine-tx-340282366920938463463374607431768211455-1.tmp"
+        ));
         let tx = fixed_temp_name(FixedTempKind::Restore, "12-3");
         assert!(is_temp_name(&tx));
         let stage = temp_path(&Path::new("/g").join(&tx), 1, TempTag::New);

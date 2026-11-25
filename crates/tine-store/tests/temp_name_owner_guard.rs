@@ -113,3 +113,60 @@ fn only_atomic_file_recognises_tine_temp_names() {
         violations.join("\n")
     );
 }
+
+/// One answer to the separate question "is this asset path inside restore
+/// recovery" (review of c897398d8, B2): `asset_watch::in_restore_recovery`,
+/// next to the folder constant. Its callers (asset watcher, restore admission,
+/// restore's walk, the restore baseline) only ask it. A comparison with the
+/// folder's name anywhere else is a second answerer.
+#[test]
+fn only_one_predicate_answers_restore_recovery_membership() {
+    const RECOVERY_OWNER: &str = "crates/tine-store/src/asset_watch.rs";
+    const NEEDLES: &[&str] = &[
+        "== ASSET_RECOVERY",
+        "ASSET_RECOVERY ==",
+        "\".tine-restore-recovery\"",
+    ];
+    let _integration_guard = crate::integration_lock();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for crate_dir in fs::read_dir(repo.join("crates")).unwrap().flatten() {
+        let src = crate_dir.path().join("src");
+        if src.is_dir() {
+            sources(&src, &mut files);
+        }
+    }
+    sources(&repo.join("src-tauri/src"), &mut files);
+    let mut owner_lines = 0;
+    let mut violations = Vec::new();
+    for file in files {
+        let rel = file
+            .strip_prefix(&repo)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = fs::read_to_string(&file).unwrap();
+        for (line_no, line) in production_lines(&text) {
+            let code = line.split("//").next().unwrap_or("").trim();
+            if !NEEDLES.iter().any(|needle| code.contains(needle)) {
+                continue;
+            }
+            if rel == RECOVERY_OWNER {
+                owner_lines += 1;
+            } else {
+                violations.push(format!("{rel}:{line_no}: {code}"));
+            }
+        }
+    }
+    // The constant and the predicate's one comparison.
+    assert_eq!(
+        owner_lines, 2,
+        "the guard no longer sees the predicate in {RECOVERY_OWNER}"
+    );
+    assert!(
+        violations.is_empty(),
+        "restore-recovery membership is computed outside {RECOVERY_OWNER}; call \
+         `asset_watch::in_restore_recovery`. Found:\n{}",
+        violations.join("\n")
+    );
+}
