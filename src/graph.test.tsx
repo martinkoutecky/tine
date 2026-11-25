@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderEnglish, type UiText } from "./i18n";
 import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
+import type { Unsettled } from "./document";
 import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 
 const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
@@ -96,7 +97,13 @@ async function loadHarness(
     frozen = true;
     return () => { frozen = false; };
   });
-  const flushAll = vi.fn(async () => true);
+  // `flushAll`'s answer for the switch: true, false (develop's unnamed failure)
+  // or the barrier's reason (`flushAllUnsettled`).
+  const flushAll = vi.fn(async (): Promise<boolean | Unsettled> => true);
+  const flushAllUnsettled = vi.fn(async (): Promise<Unsettled | null> => {
+    const flushed = await flushAll();
+    return flushed === true ? null : flushed === false ? { kind: "no-answer" } : flushed;
+  });
   const resetFrozen: boolean[] = [];
   const resetStore = vi.fn(() => { resetFrozen.push(frozen); });
 
@@ -141,7 +148,7 @@ async function loadHarness(
     activatePdfOwnership,
   }));
   vi.doMock("./document", () => ({
-    resetStore, flushAll, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
+    resetStore, flushAllUnsettled, flushAll: async () => await flushAllUnsettled() === null, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
     createPage,
@@ -986,6 +993,70 @@ describe("an edit typed while a graph switch is in flight (og A, 20B open item 5
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(META.root);
     const { toasts } = await import("./toasts");
     expect(toasts().at(-1)).toMatchObject({ kind: "error", message: expect.stringContaining("couldn't be saved") });
+  });
+});
+
+// tine#1041: a refused switch says what it refused for. Pages the host would
+// not publish are named by the files the host gave (three, then a count), with
+// no action on the notice; every other reason keeps the fixed text.
+describe("a refused graph switch names its pages (tine#1041)", () => {
+  const stuck = (...files: string[]): Unsettled => ({ kind: "stuck", files });
+  async function refusedSwitch(check: "first" | "late", reason: Unsettled) {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    if (check === "first") harness.flushAll.mockResolvedValueOnce(reason);
+    else harness.flushAll.mockResolvedValueOnce(true).mockResolvedValueOnce(reason);
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.loadGraph).toHaveBeenCalledOnce();
+    const { toasts } = await import("./toasts");
+    return { toast: toasts().at(-1)! };
+  }
+
+  it.each(["first", "late"] as const)("the %s switch check names a stuck page, with no action", async (check) => {
+    const { toast } = await refusedSwitch(check, stuck("pages/Repro 964.md"));
+    expect(toast).toMatchObject({ kind: "error", message: expect.stringContaining("pages/Repro 964.md") });
+    expect(toast.message).not.toContain("resolve conflicts");
+    expect(toast.action).toBeUndefined();
+  });
+
+  it("names only the refused files, three of them and a count", async () => {
+    const { toast } = await refusedSwitch("first", stuck("pages/Z.md", "pages/Y.md", "journals/2026_11_25.md", "pages/W.md"));
+    expect(toast.message).toContain("pages/Z.md, pages/Y.md, journals/2026_11_25.md, and 1 more");
+    expect(toast.message).not.toContain("pages/W.md");
+    expect(toast.action).toBeUndefined();
+  });
+
+  // Which file a page key stands for is the host's answer: the notice shows
+  // what it was given and reads nothing out of it.
+  it("shows the host's file names as given", async () => {
+    const { toast } = await refusedSwitch("first", stuck("pages/b.md", "pages/a b\u00001.md"));
+    expect(toast.message).toContain("pages/b.md, pages/a b\u00001.md");
+    expect(toast.action).toBeUndefined();
+  });
+
+  it("the same refusal again is the same notice with a count, as before", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.flushAll.mockResolvedValue(stuck("pages/a.md"));
+    await harness.loadGraphPath("/tmp/other-graph");
+    await harness.loadGraphPath("/tmp/other-graph");
+    const { toasts } = await import("./toasts");
+    const named = toasts().filter((toast) => toast.message.includes("pages/a.md"));
+    expect(named).toHaveLength(1);
+    expect(named[0].count).toBe(2);
+  });
+
+  it.each([
+    ["no answer", { kind: "no-answer" }],
+    ["still busy", { kind: "busy" }],
+    ["unbound", { kind: "unbound" }],
+  ] as const)("%s: develop's text, no action", async (_label, reason) => {
+    for (const check of ["first", "late"] as const) {
+      const { toast } = await refusedSwitch(check, reason);
+      expect(toast).toMatchObject({ kind: "error", message: expect.stringContaining("resolve conflicts before switching graphs") });
+      expect(toast.action).toBeUndefined();
+      vi.resetModules();
+    }
   });
 });
 
