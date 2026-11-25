@@ -674,6 +674,36 @@ try {
   });
   if (filed.split(CANCELLED).length !== 2) throw new Error("the capture after a cancelled composition was filed more than once");
   console.log("PASS: Quick Capture filed its text after a composition cancelled by losing native focus (synthetic composition events, real focus loss)");
+
+  // UI-CAPTURE-TYPED-SPELLING: a title typed in another spelling of an
+  // existing page's name (`home` for pages/Home.md) files into that page's
+  // file, as a link with that text opens it, and creates no second file.
+  const SPELLED = "spelled-title-ok";
+  const homePath = `${GRAPH}/pages/Home.md`;
+  const spelledReopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(spelledReopen, 5_000);
+  spelledReopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(restartedCapture);
+  await expectAutocompleteValue("", "the capture editor was not empty after the last filing");
+  await browser.$(".capture-title").click();
+  for (const key of "home") await browser.keys([key]);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".capture-title")?.value === "home"), {
+    timeout: 5_000, timeoutMsg: "the capture title did not take the typed spelling",
+  });
+  await browser.keys(["Enter"]);
+  for (const key of SPELLED) await browser.keys([key]);
+  await expectAutocompleteValue(SPELLED, "the capture editor did not take the text after the title");
+  await browser.keys(["Control", "Shift", "Enter"]);
+  const home = await waitForFileText(homePath, text => text.includes(SPELLED)).catch(async (error) => {
+    const page = await browser.execute(() => document.body.innerText).catch(() => "?");
+    throw new Error(`${error.message}; capture window text: ${JSON.stringify(page)}`);
+  });
+  if (home.split(SPELLED).length !== 2) throw new Error("the capture to another spelling of Home was filed more than once");
+  if (!home.includes("DONE capture focus fixture")) throw new Error("the capture to another spelling of Home lost the page's earlier text");
+  const strays = fs.readdirSync(`${GRAPH}/pages`).filter(name => name !== "Home.md" && name.toLowerCase() === "home.md");
+  if (strays.length) throw new Error(`the capture to another spelling created a second file: ${JSON.stringify(strays)}`);
+  console.log("PASS: a capture titled with another spelling of an existing page filed into that page's file");
   console.log("PASS: a window-manager close request hid Quick Capture with its draft and the next --capture showed it again");
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
 } catch (error) {
