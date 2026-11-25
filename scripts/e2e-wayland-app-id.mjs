@@ -127,29 +127,30 @@ try {
     stdio: ["ignore", stdout, stderr],
   });
 
+  // GTK first advertises the process's own name, whatever the build or a launcher
+  // called it. What counts is the ID the window carries when its first buffer is shown.
+  const read = () => {
+    const wire = fs.existsSync(clientLog) ? fs.readFileSync(clientLog, "utf8") : "";
+    const ids = [...wire.matchAll(/set_app_id\("([^"]*)"\)/g)];
+    return { wire, ids, firstBufferAt: ids.length ? wire.indexOf(".attach(", ids[0].index) : -1 };
+  };
   await waitFor(
-    () =>
-      (fs.existsSync(clientLog) && fs.readFileSync(clientLog, "utf8").includes(`set_app_id("${APP_ID}")`)) ||
-      client.exitCode !== null,
+    () => {
+      const { ids, firstBufferAt } = read();
+      return (firstBufferAt >= 0 && ids.some((id) => id[1] === APP_ID)) || client.exitCode !== null;
+    },
     20_000,
-    `Tine never advertised ${APP_ID} on the Wayland wire`,
+    `Tine never showed a window under ${APP_ID} on the Wayland wire`,
   );
   fs.closeSync(stdout);
   fs.closeSync(stderr);
-  const wire = fs.readFileSync(clientLog, "utf8");
-  if (client.exitCode !== null && !wire.includes(`set_app_id("${APP_ID}")`)) {
-    throw new Error(`Tine exited ${client.exitCode} before advertising its app ID:\n${wire.slice(-4_000)}`);
+  const { wire, ids, firstBufferAt } = read();
+  if (firstBufferAt < 0) {
+    throw new Error(`Tine exited ${client.exitCode} before its window's first buffer:\n${wire.slice(-4_000)}`);
   }
-
-  // GTK first advertises the executable's name; a packaged Beta's is not "tine" (tine#1011).
-  const fallbackAt = wire.indexOf(`set_app_id("${path.basename(app)}")`);
-  const tineAt = wire.indexOf(`set_app_id("${APP_ID}")`);
-  const firstBufferAt = wire.indexOf(".attach(", fallbackAt);
-  if (fallbackAt < 0 || tineAt < fallbackAt) {
-    throw new Error("Wayland trace does not show Tine overriding GTK's executable-name fallback");
-  }
-  if (firstBufferAt >= 0 && tineAt > firstBufferAt) {
-    throw new Error("Tine advertised its application ID only after the first visible buffer");
+  const shown = ids.filter((id) => id.index < firstBufferAt).at(-1)[1];
+  if (shown !== APP_ID) {
+    throw new Error(`the window's first buffer is shown under app ID ${shown}, not ${APP_ID}`);
   }
 
   const desktop = path.join(dataHome, `applications/${APP_ID}.desktop`);
@@ -159,7 +160,7 @@ try {
 
   fs.writeFileSync(
     path.join(out, "result.json"),
-    `${JSON.stringify({ app, appId: APP_ID, fallbackOverridden: true, beforeFirstBuffer: true }, null, 2)}\n`,
+    `${JSON.stringify({ app, appId: APP_ID, advertised: ids.map((id) => id[1]), beforeFirstBuffer: true }, null, 2)}\n`,
   );
   console.log(`Wayland app ID OK: ${APP_ID} before the first visible buffer`);
 } finally {

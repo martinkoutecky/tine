@@ -5,12 +5,11 @@ icon:: ⚡
 - ## What it looks like
 	- ![The quick-capture window — note the optional page-title field at the top](../assets/quick-capture.png)
 - ## Set it up (one time)
-	- **Tine does not register a system-wide hotkey itself.** The shortcut belongs to your operating system, and it only has to run one command: **`tine --capture`** (or `tine capture`). If Tine is already running, that command opens the capture box in the running instance; if not, Tine starts and opens it. This is also why pressing **Ctrl+Shift+Enter** (**Cmd+Shift+Enter** on a Mac) in another app does nothing: that key is **Quick-capture: file to today's journal** under Keyboard shortcuts, and it works *inside* the capture box to file what you typed.
+	- **Tine does not register a system-wide hotkey itself.** The shortcut belongs to your operating system, and it only has to run one command: **`tine --capture`** (or `tine capture`). For Tine Beta installed from a Linux `.deb` or `.rpm` package the command is `tine-beta`: type `tine-beta` wherever this page says `tine` (with stable Tine installed too, `tine` would open stable Tine's capture box). If Tine is already running, that command opens the capture box in the running instance; if not, Tine starts and opens it. This is also why pressing **Ctrl+Shift+Enter** (**Cmd+Shift+Enter** on a Mac) in another app does nothing: that key is **Quick-capture: file to today's journal** under Keyboard shortcuts, and it works *inside* the capture box to file what you typed.
 	- **Linux** — bind a custom keyboard shortcut in your desktop environment that runs `tine --capture`:
 		- **GNOME** — Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → **+**. Command: `tine --capture`. Pick a key like **Super+N**.
 		- **KDE** — System Settings → Shortcuts → Add → Command/URL. Command: `tine --capture`.
 		- **Other desktops** — add a custom keyboard shortcut that runs `tine --capture`. Use the binary's full path if it isn't on your `PATH`.
-		- **Tine Beta from a `.deb` or `.rpm` package** — its command is `tine-beta`, so the shortcut runs `tine-beta --capture`. (`tine --capture` would open stable Tine's capture box, if stable is installed.)
 		- The shortcut only runs a command, so it does not depend on X11 or Wayland global-shortcut support.
 	- **Windows** — give a shortcut to Tine a hotkey:
 		- 1. Open the Start menu, right-click **Tine**, choose **Open file location**. A folder with the Tine shortcut opens.

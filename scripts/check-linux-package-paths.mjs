@@ -24,14 +24,10 @@ const packagesIn = (arg) => (fs.statSync(arg).isDirectory()
  * whether it is a directory. Two packages may share a directory, nothing else.
  */
 function files(file) {
+  // The name list and the long list come in the same order; a link's target appears only in the long one.
+  const tar = (flags) => run("sh", ["-c", `dpkg-deb --fsys-tarfile "$1" | tar ${flags}`, "sh", file]).split("\n").filter(Boolean);
   const entries = file.endsWith(".deb")
-    ? run("dpkg-deb", ["-c", file]).split("\n").filter(Boolean).map((line) => {
-      // "<mode> <owner>/<group> <size> <date> <time> <name>[ -> target | link to target]"
-      const [, mode, rest] = line.match(/^(\S+)\s+\S+\s+\d+\s+\S+\s+\S+\s+(.*)$/);
-      const name = mode[0] === "l" ? rest.slice(0, rest.lastIndexOf(" -> "))
-        : mode[0] === "h" ? rest.slice(0, rest.lastIndexOf(" link to ")) : rest;
-      return [name, mode[0] === "d"];
-    })
+    ? ((types) => tar("-t").map((name, index) => [name, types[index][0] === "d"]))(tar("-tv"))
     : run("rpm", ["-qp", "--queryformat", "[%{FILEMODES:perms} %{FILENAMES}\n]", file])
       .split("\n").filter(Boolean).map((line) => [line.slice(line.indexOf(" ") + 1), line[0] === "d"]);
   return new Map(entries.map(([name, directory]) => [name.replace(/^\.?\//, "").replace(/\/$/, ""), directory]));

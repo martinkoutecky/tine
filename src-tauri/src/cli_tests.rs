@@ -751,10 +751,7 @@ fn checked_in_man_pages_are_generated_from_the_cli_schema() {
     let packaged = include_str!("../tauri.conf.json");
     for (name, _) in MAN_PAGES {
         assert!(
-            packaged
-                .matches(&format!("\": \"../docs/{name}\""))
-                .count()
-                == 2,
+            packaged.matches(&format!("\": \"../docs/{name}\"")).count() == 2,
             "{name} must ship in both the deb and the rpm package"
         );
     }
