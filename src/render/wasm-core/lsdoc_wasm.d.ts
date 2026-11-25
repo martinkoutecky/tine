@@ -185,10 +185,13 @@ export function builtin_macro(name: string): string;
 export function canonical_group_field(value: string): string | undefined;
 
 /**
- * The colour declarations a note's `style` keeps in rendered output ("" if
- * none): the export sanitizer's rule, so app and export agree. O(value bytes).
+ * The colour declarations each note `style` keeps in rendered output ("" if
+ * none): the export sanitizer's rule, so app and export agree. One call per
+ * sanitized fragment: `values` concatenated with their UTF-16 `lengths` in;
+ * the kept declarations concatenated out, their UTF-16 lengths written to
+ * `kept_lengths` (the same count as `lengths`). O(total bytes).
  */
-export function color_only_style(value: string): string;
+export function color_only_styles(values: string, lengths: Uint32Array, kept_lengths: Uint32Array): string;
 
 /**
  * The same own-property discriminator that editor_text uses to hide comment metadata.
@@ -586,7 +589,7 @@ export interface InitOutput {
     readonly browsergraph_version: (a: number, b: number, c: number) => bigint;
     readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
-    readonly color_only_style: (a: number, b: number) => [number, number];
+    readonly color_only_styles: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];

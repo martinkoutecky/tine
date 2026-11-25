@@ -103,23 +103,32 @@ function __tine_raw_canonical_group_field(value) {
 }
 
 /**
- * The colour declarations a note's `style` keeps in rendered output ("" if
- * none): the export sanitizer's rule, so app and export agree. O(value bytes).
- * @param {string} value
+ * The colour declarations each note `style` keeps in rendered output ("" if
+ * none): the export sanitizer's rule, so app and export agree. One call per
+ * sanitized fragment: `values` concatenated with their UTF-16 `lengths` in;
+ * the kept declarations concatenated out, their UTF-16 lengths written to
+ * `kept_lengths` (the same count as `lengths`). O(total bytes).
+ * @param {string} values
+ * @param {Uint32Array} lengths
+ * @param {Uint32Array} kept_lengths
  * @returns {string}
  */
-function __tine_raw_color_only_style(value) {
-    let deferred2_0;
-    let deferred2_1;
+function __tine_raw_color_only_styles(values, lengths, kept_lengths) {
+    let deferred4_0;
+    let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(values, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.color_only_style(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
+        const ptr1 = passArray32ToWasm0(lengths, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = passArray32ToWasm0(kept_lengths, wasm.__wbindgen_malloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.color_only_styles(ptr0, len0, ptr1, len1, ptr2, len2, kept_lengths);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -1432,6 +1441,9 @@ function __wbg_get_imports() {
             const ret = typeof(v) === 'boolean' ? v : undefined;
             return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
         },
+        __wbg___wbindgen_copy_to_typed_array_c5728021fabd0236: function(arg0, arg1, arg2) {
+            new Uint8Array(arg2.buffer, arg2.byteOffset, arg2.byteLength).set(getArrayU8FromWasm0(arg0, arg1));
+        },
         __wbg___wbindgen_is_null_6d937fbfb6478470: function(arg0) {
             const ret = arg0 === null;
             return ret;
@@ -1550,6 +1562,11 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
 let cachedDataViewMemory0 = null;
 function getDataViewMemory0() {
     if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
@@ -1560,6 +1577,14 @@ function getDataViewMemory0() {
 
 function getStringFromWasm0(ptr, len) {
     return decodeText(ptr >>> 0, len);
+}
+
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -1581,6 +1606,13 @@ function handleError(f, args) {
 
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function passArray32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getUint32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passArrayJsValueToWasm0(array, malloc) {
@@ -1671,6 +1703,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;
@@ -1841,7 +1874,7 @@ export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __ti
 export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
 export const builtin_macro = __tineGuard("builtin_macro", __tine_raw_builtin_macro);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
-export const color_only_style = __tineGuard("color_only_style", __tine_raw_color_only_style);
+export const color_only_styles = __tineGuard("color_only_styles", __tine_raw_color_only_styles);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
