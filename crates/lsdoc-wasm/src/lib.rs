@@ -62,6 +62,13 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
     tine_core::query::view::canonical_group_token(value).map(str::to_owned)
 }
 
+/// The colour declarations a note's `style` keeps in rendered output ("" if
+/// none): the export sanitizer's rule, so app and export agree. O(value bytes).
+#[wasm_bindgen]
+pub fn color_only_style(value: &str) -> String {
+    tine_core::html_sanitize::color_only_style(value)
+}
+
 use tine_outline::page_filename;
 
 /// The native file-format answer, including mixed-case Org extensions.

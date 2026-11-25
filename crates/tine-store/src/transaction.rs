@@ -1436,8 +1436,10 @@ impl<'a> PagePlan<'a> {
                         Content::Bytes(bytes) => Expected::Bytes(bytes.clone()),
                         Content::Stream { source, max_bytes } => {
                             source.seek(SeekFrom::Start(0)).map_err(failed)?;
-                            let stage =
-                                path.with_file_name(format!(".tine-tx-{}.tmp", trash_stamp()));
+                            let stage = path.with_file_name(crate::atomic_file::fixed_temp_name(
+                                "tx",
+                                &trash_stamp(),
+                            ));
                             self.check_write_target(&stage).map_err(failed)?;
                             if let Err(error) = atomic_copy_file_new(source, &stage, *max_bytes) {
                                 if crate::directory_durability::is_directory_sync_failure(&error) {

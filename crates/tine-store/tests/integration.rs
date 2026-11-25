@@ -92,6 +92,9 @@ mod b_tail_filename_guard;
 #[path = "bench_events_off.rs"]
 mod bench_events_off;
 
+#[path = "cb1_temp_recipe.rs"]
+mod cb1_temp_recipe;
+
 #[path = "c3w_long_names.rs"]
 mod c3w_long_names;
 

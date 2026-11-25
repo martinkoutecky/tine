@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
+use tine_core::html_sanitize::safe_export_url;
 use tine_core::lsdoc::ast::{Block, Inline, Url};
 use tine_core::model::{BlockPreview, Format, PageKind, RefGroup};
 use tine_core::projection::{block_to_bounded_dto, subtree_node_count};
@@ -423,41 +424,6 @@ fn fragment(s: &str) -> String {
     out
 }
 
-/// Closed URL policy for navigable content in a static export. External links
-/// are limited to ordinary web/contact schemes; graph assets and local export
-/// links may use a relative path or fragment. Scheme-like and network-path
-/// references do not fall through to the relative case.
-fn safe_export_url(url: &str) -> Option<&str> {
-    let url = url.trim();
-    if url.is_empty()
-        || url.bytes().any(|b| b == 0 || b.is_ascii_control())
-        || url.starts_with("//")
-        || url.starts_with('\\')
-        || url.contains('\\')
-    {
-        return None;
-    }
-    let first_delimiter = url.find(['/', '?', '#']).unwrap_or(url.len());
-    if let Some(colon) = url.find(':').filter(|colon| *colon < first_delimiter) {
-        let scheme = &url[..colon];
-        if !scheme.bytes().enumerate().all(|(i, b)| {
-            if i == 0 {
-                b.is_ascii_alphabetic()
-            } else {
-                b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
-            }
-        }) {
-            return None;
-        }
-        return matches!(
-            scheme.to_ascii_lowercase().as_str(),
-            "http" | "https" | "mailto" | "tel"
-        )
-        .then_some(url);
-    }
-    Some(url)
-}
-
 fn safe_media_url(url: &str) -> Option<&str> {
     let safe = safe_export_url(url)?;
     let lower = safe.to_ascii_lowercase();
@@ -675,9 +641,11 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
             let _ = take_to_close(html, &mut i, "span");
             if let Some(raw_esc) = tag_attr(inner, "data-raw") {
                 // Sanitize to the shared allowlist and emit LIVE (mirrors the app's
-                // DOMPurify pass — see html_sanitize). Handlers/`style`/`<script>`/
-                // `<iframe>` are stripped; the surviving markup is already safe, so it
-                // is pushed verbatim (NOT re-escaped).
+                // DOMPurify pass — see html_sanitize). Typed HTML and transcribed
+                // Hiccup (`body_html`) both arrive here. Handlers, `<script>`,
+                // `<iframe>` and all but colour declarations of `style` are stripped;
+                // the surviving markup is already safe, so it is pushed verbatim
+                // (NOT re-escaped).
                 out.push_str(&tine_core::html_sanitize::sanitize(&unescape(raw_esc)));
             }
             continue;
@@ -892,6 +860,60 @@ fn body_blocks_with_queries(
     (blocks, queries)
 }
 
+/// lsdoc's canonical skeleton for a block body, with every Hiccup vector turned
+/// into raw HTML first. lsdoc transcribes the vector; `decorate` then sends that
+/// HTML through `html_sanitize::sanitize` like typed HTML, so export emits note
+/// markup through one allowlist (the app's: colours survive, positioning, forms,
+/// handlers and ids do not). A vector lsdoc refuses keeps its inert escaped
+/// literal. Search text and other AST readers still see the Hiccup node.
+/// O(body nodes) plus one lsdoc render per Hiccup vector.
+fn body_html(blocks: &mut [Block], org: bool) -> String {
+    let opts = render_opts(org);
+    let transcribe = |v: &str| {
+        let html = tine_core::lsdoc::render_html(
+            &[Block::Hiccup {
+                v: v.to_string(),
+                span: None,
+            }],
+            &opts,
+        );
+        let literal = format!(
+            "<span class=\"ast-hiccup\">{}</span>",
+            v.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+        );
+        (html != literal).then_some(html)
+    };
+    let _: Result<(), std::convert::Infallible> = render_query_source::visit_nodes(
+        blocks,
+        |block| {
+            if let Block::Hiccup { v, span } = block {
+                if let Some(text) = transcribe(v) {
+                    *block = Block::RawHtml {
+                        text,
+                        span: span.take(),
+                    };
+                }
+            }
+        },
+        |inlines| {
+            for inline in inlines {
+                if let Inline::Hiccup { v, span } = inline {
+                    if let Some(text) = transcribe(v) {
+                        *inline = Inline::InlineHtml {
+                            text,
+                            span: span.take(),
+                        };
+                    }
+                }
+            }
+            Ok(())
+        },
+    );
+    tine_core::lsdoc::render_html(blocks, &opts)
+}
+
 pub(crate) fn parsed_body(raw: &str, org: bool) -> Vec<Block> {
     let mut parsed = tine_core::render::parse_block(raw, org);
     if !org {
@@ -1092,11 +1114,7 @@ fn emit_block_inner(raw: &str, org: bool, out: &mut String, ctx: &Ctx, depth: u8
         "<div class=\"b\">"
     });
     emit_header_facets(blk.marker(), blk.priority(), out);
-    let body = decorate(
-        &tine_core::lsdoc::render_html(&body_blocks(raw, org), &render_opts(org)),
-        ctx,
-        depth,
-    );
+    let body = decorate(&body_html(&mut body_blocks(raw, org), org), ctx, depth);
     out.push_str(&body);
     out.push_str("</div>");
     emit_trailer_facets(&blk, raw, &blk.properties(), ctx.hidden_props(), out);
@@ -1519,7 +1537,7 @@ fn render_block(
         out.push_str("</pre></li>");
         return;
     }
-    let blocks = body_blocks(b.raw(), b.is_org());
+    let mut blocks = body_blocks(b.raw(), b.is_org());
     // BEGIN_QUERY is a static-site feature. The print context deliberately has
     // no public-page capability (`pages: None`) and retains its prior rendering
     // and whole-graph query behavior.
@@ -1621,7 +1639,7 @@ fn render_block(
             });
             if sheet.is_none() {
                 out.push_str(&decorate(
-                    &tine_core::lsdoc::render_html(&blocks, &render_opts(b.is_org())),
+                    &body_html(&mut blocks, b.is_org()),
                     ctx,
                     0,
                 ));
@@ -2526,11 +2544,7 @@ mod tests {
             query_cache: None,
             pages: None,
         };
-        decorate(
-            &tine_core::lsdoc::render_html(&body_blocks(raw, false), &render_opts(false)),
-            &ctx,
-            0,
-        )
+        decorate(&body_html(&mut body_blocks(raw, false), false), &ctx, 0)
     }
     fn search_text(raw: &str) -> String {
         ast_plain_text(&body_blocks(raw, false))
@@ -2599,6 +2613,151 @@ mod tests {
         assert!(!bad.contains("onerror"), "{bad}");
         // A paired <script> IS raw HTML to mldoc; the sanitizer drops it.
         assert!(!render_body("<script>steal()</script>", &no_refs()).contains("steal()"));
+    }
+
+    /// The shared fixture cases that carry a Hiccup vector, with the equivalent
+    /// HTML and the case's `mustContain` needles.
+    pub(crate) fn hiccup_sanitize_cases() -> Vec<(String, String, String, Vec<String>)> {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/html-sanitize-cases.json"))
+                .expect("fixtures parse");
+        let cases: Vec<_> = cases["cases"]
+            .as_array()
+            .expect("cases")
+            .iter()
+            .filter_map(|c| {
+                Some((
+                    c["name"].as_str()?.to_owned(),
+                    c["hiccup"].as_str()?.to_owned(),
+                    c["input"].as_str()?.to_owned(),
+                    c["mustContain"]
+                        .as_array()?
+                        .iter()
+                        .filter_map(|n| Some(n.as_str()?.to_owned()))
+                        .collect(),
+                ))
+            })
+            .collect();
+        assert!(!cases.is_empty(), "no Hiccup fixture case");
+        cases
+    }
+
+    /// Hiccup reaches a published page through the same sanitizer as typed HTML:
+    /// positioning, handlers and forms go, colour declarations stay (as in the app).
+    #[test]
+    fn hiccup_export_equals_the_shared_sanitizer() {
+        for (name, hiccup, html, must_contain) in hiccup_sanitize_cases() {
+            let want = tine_core::html_sanitize::sanitize(&html);
+            for needle in &must_contain {
+                assert!(
+                    want.contains(needle.as_str()),
+                    "[{name}] {needle:?}: {want}"
+                );
+            }
+            assert_eq!(render_body(&hiccup, &no_refs()), want, "[{name}]");
+            let inline = render_body(&format!("before {hiccup} after"), &no_refs());
+            assert!(inline.contains(&want), "[{name}] inline: {inline}");
+            assert!(!inline.contains("position:"), "[{name}] inline: {inline}");
+        }
+        // A vector lsdoc refuses keeps its escaped literal; nested vectors and
+        // attribute names cannot fake a decorate hook.
+        let refused = render_body("[:div [:script \"steal()\"]]", &no_refs());
+        assert!(!refused.contains("<script"), "{refused}");
+        assert!(
+            refused.contains("&lt;") || refused.contains("[:div"),
+            "{refused}"
+        );
+        let faked = render_body(
+            "[:a {:xhref \"https://ok\" :href \"file:///etc/passwd\"} \"x\"]",
+            &no_refs(),
+        );
+        assert!(!faked.contains("file:"), "{faked}");
+        let page = render_body(
+            "[:span.raw-html {:data-raw \"&lt;b onclick=x&gt;\"} \"y\"]",
+            &no_refs(),
+        );
+        assert!(
+            !page.contains("onclick") && !page.contains("data-raw"),
+            "{page}"
+        );
+        // The export's link rule still holds for Hiccup links.
+        for link in [
+            "[:a {:href \"//evil.example/x\"} \"x\"]",
+            "[:a {:href \"javascript:steal()\"} \"x\"]",
+            "[:a {:href \"file:///etc/passwd\"} \"x\"]",
+        ] {
+            let out = render_body(link, &no_refs());
+            assert!(!out.contains("href="), "{link}: {out}");
+        }
+        let ok = render_body("[:a {:href \"https://ok.example\"} \"x\"]", &no_refs());
+        assert!(ok.contains("href=\"https://ok.example\""), "{ok}");
+    }
+
+    /// One link rule in export: a destination is navigable through a Markdown
+    /// link, a raw-HTML anchor and a Hiccup anchor exactly when
+    /// `safe_export_url` accepts it, and an inert link keeps its text.
+    #[test]
+    fn every_note_link_obeys_the_export_link_rule() {
+        let destinations = [
+            "",
+            "\t",
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/\r/evil.example",
+            "//evil.example/x",
+            " //evil.example",
+            "\\\\evil.example",
+            "/\\evil.example",
+            "docs\\a.pdf",
+            "javascript:steal()",
+            "JaVaScRiPt:steal()",
+            "file:///etc/passwd",
+            "data:text/html,x",
+            "https://ok.example/a?b=1",
+            "mailto:someone@example.com",
+            "../assets/a.pdf",
+            "#b1",
+        ];
+        let mut wrong = Vec::new();
+        for dest in destinations {
+            let html_attr: String = dest
+                .chars()
+                .map(|c| match c {
+                    '\t' | '\n' | '\r' => format!("&#{};", c as u32),
+                    '"' => "&quot;".into(),
+                    c => c.to_string(),
+                })
+                .collect();
+            let edn: String = dest
+                .chars()
+                .map(|c| match c {
+                    '\t' => "\\t".into(),
+                    '\n' => "\\n".into(),
+                    '\r' => "\\r".into(),
+                    '\\' => "\\\\".into(),
+                    c => c.to_string(),
+                })
+                .collect();
+            let surfaces = [
+                ("markdown", format!("see [linktext]({dest}) end")),
+                (
+                    "raw-html",
+                    format!("see <a href=\"{html_attr}\">linktext</a> end"),
+                ),
+                (
+                    "hiccup",
+                    format!("see [:a {{:href \"{edn}\"}} \"linktext\"] end"),
+                ),
+            ];
+            let want = tine_core::html_sanitize::safe_export_url(dest).is_some();
+            for (surface, raw) in surfaces {
+                let out = render_body(&raw, &no_refs());
+                if out.contains("href=") != want || !out.contains("linktext") {
+                    wrong.push(format!("{dest:?} via {surface} (want {want}): {out}"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]

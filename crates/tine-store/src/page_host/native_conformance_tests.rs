@@ -274,9 +274,6 @@ impl ConformanceIo for NativeFs {
                         &self.graph.join(page),
                         bytes,
                         || Ok(()),
-                        || {},
-                        || {},
-                        || {},
                     )
                     .unwrap();
                 } else {

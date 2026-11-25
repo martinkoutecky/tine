@@ -4832,61 +4832,31 @@ pub(crate) fn atomic_write_with_check(
 ) -> io::Result<()> {
     #[cfg(test)]
     write_target::assert_checked_target(path);
-    crate::atomic_file::atomic_write_with_check(
-        path,
-        bytes,
-        check,
-        || {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::wrote(bytes.len());
-        },
-        || {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::fsync();
-        },
-        || {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::fsync();
-        },
-    )
+    crate::atomic_file::atomic_write_with_check(path, bytes, check)
 }
 
 /// Copy into a newly-created destination without replacing a path that appeared
-/// concurrently. Used by restore after the previous live inode has been moved to
-/// recovery: a sync writer that recreates the live name wins and the restore
-/// aborts instead of clobbering it.
+/// concurrently (temp tag `.restore`). Used by restore after the previous live
+/// inode has been moved to recovery: a sync writer that recreates the live name
+/// wins and the restore aborts instead of clobbering it.
 pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(test)]
     write_target::assert_checked_target(dst);
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    // A temp that fits whenever `dst` does (C3Y Y1: a 231–255-byte asset name).
-    let tmp =
-        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".restore");
-    let res = (|| {
-        let mut input = fs::File::open(src)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        std::io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
-        drop(output);
-        move_file_noreplace(&tmp, dst)?;
-        crate::directory_durability::sync_directory_entry(dir)?;
-        Ok(())
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
+    use crate::atomic_file::{Mode, PreparedWrite, Source};
+    let input = fs::File::open(src)?;
+    PreparedWrite::prepare(
+        dst,
+        Source::File(&input, u64::MAX),
+        Mode::Default,
+        ".restore",
+    )?
+    .publish_and_sync(true)
 }
 
 /// Copy from an already-open source capability into a new destination while
-/// enforcing a byte ceiling during the stream. This is the native-capture path:
-/// it avoids reopening an attacker-replaceable pathname and avoids whole-value
-/// Android/IPC/base64 amplification.
+/// enforcing a byte ceiling during the stream (temp tag `.capture`). This is
+/// the native-capture path: it avoids reopening an attacker-replaceable
+/// pathname and avoids whole-value Android/IPC/base64 amplification.
 pub(crate) fn atomic_copy_file_new(
     input: &mut fs::File,
     dst: &Path,
@@ -4894,34 +4864,14 @@ pub(crate) fn atomic_copy_file_new(
 ) -> io::Result<()> {
     #[cfg(test)]
     write_target::assert_checked_target(dst);
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    let tmp =
-        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".capture");
-    let res = (|| {
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        let mut limited = input.take(max_bytes.saturating_add(1));
-        let copied = io::copy(&mut limited, &mut output)?;
-        if copied > max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("capture exceeds {max_bytes} byte limit"),
-            ));
-        }
-        output.sync_all()?;
-        drop(output);
-        move_file_noreplace(&tmp, dst)?;
-        crate::directory_durability::sync_directory_entry(dir)?;
-        Ok(())
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
+    use crate::atomic_file::{Mode, PreparedWrite, Source};
+    PreparedWrite::prepare(
+        dst,
+        Source::File(input, max_bytes),
+        Mode::Default,
+        ".capture",
+    )?
+    .publish_and_sync(true)
 }
 
 #[cfg(test)]

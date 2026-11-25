@@ -19,8 +19,8 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, body_blocks, decorate, esc, esc_attr, publish_page_allowed, render_block,
-    render_facets, render_opts, render_outline_item, Ctx, PageAnchors, PrintOpts, RenderGraph,
+    ast_plain_text, body_blocks, body_html, decorate, esc, esc_attr, publish_page_allowed,
+    render_block, render_facets, render_outline_item, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -520,7 +520,7 @@ fn style_attr(bg: &Option<String>) -> String {
 fn inline(text: &str, ctx: &Ctx) -> String {
     decorate(
         // Cell text is the app's computed Markdown string, not a file block.
-        &tine_core::lsdoc::render_html(&body_blocks(text, false), &render_opts(false)),
+        &body_html(&mut body_blocks(text, false), false),
         ctx,
         0,
     )
