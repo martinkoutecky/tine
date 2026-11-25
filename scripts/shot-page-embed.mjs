@@ -56,7 +56,8 @@ try {
       const indent = left(bullet(sibling)) - left(bullet(parent));
       return [...document.querySelectorAll(".embed-block.embed-page")].map((embed) => {
         const host = embed.closest(".ls-block");
-        const root = embed.querySelector(":scope > .live-ref-group > .ls-block");
+        // The embedded page's first root, whatever wraps the group's rows.
+        const root = embed.querySelector(":scope > .live-ref-group .ls-block");
         return {
           title: embed.querySelector(".embed-page-header")?.textContent ?? null,
           expectedRootBullet: left(bullet(host)) + indent,
