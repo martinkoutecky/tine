@@ -4,7 +4,6 @@
 //! source of asset references.
 
 use super::publication_asset_names;
-use std::collections::HashSet;
 use tine_core::local_target::{local_target, Destination, Origin};
 use tine_core::lsdoc::ast::Inline;
 
@@ -33,10 +32,10 @@ fn expected_copy(row: &serde_json::Value) -> Vec<String> {
 }
 
 /// The shared local-target table (fixtures/local-target-cases.json): export
-/// copies exactly the attachment the owner names for each row (test 14: an
-/// HTTPS link copies nothing; test 17: an odd name copies exactly that file).
-/// The row's `today.export` records what export copied before it asked the
-/// owner; where that differs, the row must name the decision or rule.
+/// copies what it copied before it asked the owner (the row's
+/// `today.export`) plus the attachment the owner names (test 17: an odd name
+/// copies the named file). Where the owner's answer differs from
+/// `today.export`, the row must name the decision or rule.
 #[test]
 fn local_target_table_export() {
     let table: serde_json::Value =
@@ -45,18 +44,23 @@ fn local_target_table_export() {
     let mut failures = Vec::new();
     for row in table["rows"].as_array().unwrap() {
         let id = row["id"].as_str().unwrap();
-        let mut found = HashSet::new();
-        tine_core::asset_refs::collect_asset_targets(row["source"].as_str().unwrap(), &mut found);
+        let mut found = tine_core::asset_refs::ExportNames::default();
+        tine_core::asset_refs::collect_export_names(row["source"].as_str().unwrap(), &mut found);
         let copied = publication_asset_names(found);
         let kept = expected_copy(row);
+        let before: Vec<String> = serde_json::from_value(row["today"]["export"].clone()).unwrap();
+        // Exactly what export copied before it asked the owner, plus the
+        // owner's attachment: never fewer copies.
+        let mut want: Vec<String> = before.iter().chain(&kept).cloned().collect();
+        want.sort();
+        want.dedup();
         if record {
             println!("REC {}", serde_json::json!({"id": id, "export": copied}));
             continue;
         }
-        if copied != kept {
-            failures.push(format!("{id}: export {copied:?} != owner {kept:?}"));
+        if copied != want {
+            failures.push(format!("{id}: export {copied:?} != today + owner {want:?}"));
         }
-        let before: Vec<String> = serde_json::from_value(row["today"]["export"].clone()).unwrap();
         let differed = before != kept;
         if row["origin"] != "page-icon" && differed != !row["change"]["export"].is_null() {
             failures.push(format!(
@@ -68,10 +72,45 @@ fn local_target_table_export() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Export never copies fewer files than its collector-only answer: a raw HTML
+/// image after a comment or script that hides a quote, and a path written as a
+/// plain property value, are still copied (the loose `assets/` scan), as are
+/// the literal names a link spells.
+#[test]
+fn export_copies_what_it_copied_before_the_owner() {
+    let failures = [
+        (
+            r#"<div><!-- <img alt=" --><img src="../assets/real.png"></div>"#,
+            "real.png",
+        ),
+        (
+            r#"<div><script>var s = '<img alt="';</script><img src="../assets/real.png"></div>"#,
+            "real.png",
+        ),
+        (
+            r#"<div><style>a::after { content: '<img alt="'; }</style><img src="../assets/real.png"></div>"#,
+            "real.png",
+        ),
+        ("banner:: ../assets/x.jpg", "x.jpg"),
+        (r#"[x](assets/README "caption")"#, "README"),
+    ]
+    .into_iter()
+    .filter_map(|(text, name)| {
+        let mut found = tine_core::asset_refs::ExportNames::default();
+        tine_core::asset_refs::collect_export_names(text, &mut found);
+        let copied = publication_asset_names(found);
+        (!copied.iter().any(|copied| copied == name))
+            .then(|| format!("{text}: {name} not copied: {copied:?}"))
+    })
+    .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// Design tests 14-17 end to end, through the store: for a sole reference in
 /// each spelling, the orphan list leaves out exactly the file the reader
-/// shows, trash refuses it and publication copies it; an HTTPS link copies
-/// nothing; an odd name copies exactly the named file and not a look-alike.
+/// shows, trash refuses it and publication copies it; an odd name copies the
+/// named file. Export still copies what it copied before it asked the owner
+/// (here a same-named file for an HTTPS link), until the reader asks too.
 #[test]
 fn orphans_trash_and_export_see_the_file_the_reader_shows() {
     use crate::assets::{orphan_assets, trash_asset, TrashOutcome};
@@ -134,7 +173,7 @@ fn orphans_trash_and_export_see_the_file_the_reader_shows() {
             .collect();
     let mut expected: Vec<String> = shown
         .iter()
-        .chain(&["sub/nested.png"])
+        .chain(&["sub/nested.png", "web.png"])
         .map(|name| format!("assets/{name}"))
         .collect();
     expected.sort();

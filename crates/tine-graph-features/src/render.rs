@@ -274,19 +274,17 @@ impl PrintAssetBudget {
 fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     let graph = ctx.graph?;
     let budget_cell = ctx.print_asset_budget?;
-    // `src` is the image embed's destination; the link-target owner names the
-    // attachment it shows (the one export copies and trash keeps). Anything
-    // else (a remote or data URL, a drive or outside file) is refused (None),
-    // and the caller then emits the omission marker. The store validates
-    // traversal and symlinks.
-    let target = tine_core::local_target::local_target(
-        tine_core::local_target::Destination::Text(src),
-        tine_core::local_target::Origin::MdEmbed,
+    // Only local asset references inline; a remote/data URL is refused (None),
+    // and the caller then emits the omission marker.
+    if src.contains("://") || src.starts_with("data:") {
+        return None;
+    }
+    // Preserve the complete assets-relative identity, including PDF area-image
+    // subdirectories. The store validates traversal and symlinks after decoding.
+    let name = tine_core::asset_refs::percent_decode(
+        src.strip_prefix("../assets/")
+            .or_else(|| src.strip_prefix("assets/"))?,
     );
-    let name = target
-        .attachment()
-        .map(|name| name.as_str())
-        .filter(|name| !name.is_empty())?;
     let mut budget = budget_cell.borrow_mut();
     let admission_limit = budget.per_asset.min(budget.remaining);
     let bytes = graph.read_asset_limited(&name, admission_limit).ok()?;

@@ -508,11 +508,8 @@ fn normalize_drive(path: &str) -> String {
     out
 }
 
-/// A raw HTML or Hiccup resource attribute. An absolute local `<img src>` is
-/// read as a file; a relative one stays with the browser, and when it goes
-/// through a folder literally written `assets` it names that attachment, so
-/// orphans, trash and export count it as used (decided: files named only in
-/// raw HTML or Hiccup are used).
+/// Pending decision 5 (raw HTML and Hiccup resources): today only an absolute
+/// local `<img src>` is read; everything else stays with the browser.
 fn html_resource(src: &str) -> LocalTarget {
     let file = after_file_slashes(src);
     let local = src.starts_with('/') && !src.starts_with("//")
@@ -523,12 +520,6 @@ fn html_resource(src: &str) -> LocalTarget {
         return LocalTarget::of(match anchor_route(src) {
             AnchorRoute::Web => Route::Web,
             AnchorRoute::Drop | AnchorRoute::Defer | AnchorRoute::Mail => Route::Refused,
-            AnchorRoute::Relative => match attachment_name(js_trim(src)) {
-                Some(name) => Route::Attachment { name },
-                None => Route::Fragment {
-                    href: src.to_owned(),
-                },
-            },
             _ => Route::Fragment {
                 href: src.to_owned(),
             },

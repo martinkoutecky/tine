@@ -148,16 +148,23 @@ fn table_owner_and_collector() {
         if targets != expected {
             failures.push(format!("{id}: targets {targets:?} != owner {expected:?}"));
         }
-        // Liveness keeps that attachment, and never fewer names than before
+        // Liveness is exactly the earlier collector's names plus that
+        // attachment (and its first folder): never fewer names than before
         // the collector asked the owner.
         let before = strings(&row["today"]["collector"]);
-        let lost: Vec<&String> = before
-            .iter()
-            .chain(kept.iter())
-            .filter(|name| !found.contains(*name))
-            .collect();
-        if !lost.is_empty() {
-            failures.push(format!("{id}: liveness lost {lost:?} (now {collector:?})"));
+        let mut live: HashSet<String> = before.iter().cloned().collect();
+        for name in &kept {
+            live.insert(name.clone());
+            if let Some((folder, _)) = name.split_once('/') {
+                live.insert(folder.to_owned());
+            }
+        }
+        if found != live {
+            let mut want: Vec<&String> = live.iter().collect();
+            want.sort();
+            failures.push(format!(
+                "{id}: liveness {collector:?} != today + owner {want:?}"
+            ));
         }
         // The record is consistent: `change.liveness` names why the earlier
         // collector missed the owner's attachment.
@@ -173,15 +180,14 @@ fn table_owner_and_collector() {
 }
 
 /// The collector's prefilter skips the parse only where the owner can find
-/// no attachment: any case of `assets`, and raw HTML whose folder name is
-/// spelled with character references, which the reader decodes.
+/// no attachment: the owner reads a folder written `assets` in any case.
 #[test]
 fn collector_prefilter_admits_every_spelling_the_owner_reads() {
     for (text, name) in [
         ("![x](../ASSETS/a.png)", "a.png"),
         ("![x](../AsSeTs/b.png)", "b.png"),
-        (r#"<img src="../&#97;ssets/e.png"/>"#, "e.png"),
-        (r#"<video poster="../&#x41;SSETS/f.png"></video>"#, "f.png"),
+        ("{{img ../Assets/c.png, 200}}", "c.png"),
+        ("[[../ASSETS/d.png]]", "d.png"),
     ] {
         let mut targets = HashSet::new();
         crate::asset_refs::collect_asset_targets(text, &mut targets);
@@ -190,6 +196,39 @@ fn collector_prefilter_admits_every_spelling_the_owner_reads() {
         crate::asset_refs::collect_asset_refs(text, &mut live);
         assert!(live.contains(name), "{text}: {live:?}");
     }
+    // The prefilter reads long text in overlapping windows: a folder name at
+    // every offset around a window edge is still found.
+    for pad in 230..280 {
+        let text = format!("{}![x](../AsSeTs/e.png)", "x".repeat(pad));
+        let mut targets = HashSet::new();
+        crate::asset_refs::collect_asset_targets(&text, &mut targets);
+        assert_eq!(targets, HashSet::from(["e.png".to_owned()]), "pad {pad}");
+    }
+}
+
+/// A file the reader shows never becomes unused because the collector also
+/// asks the owner: the sole reference keeps every name the collector kept
+/// before (here the literal file names the native reader loads, which the
+/// owner decodes or reads as a graph file or a page), so the orphan list
+/// leaves it out and the trash recheck refuses it.
+#[test]
+fn liveness_keeps_the_names_the_collector_kept_before_the_owner() {
+    let failures = [
+        ("![x](../assets/my%20file(1).png)", "my%20file(1).png"),
+        ("![x](../assets/my%20file[1].png)", "my%20file[1].png"),
+        ("![x](../assets/my%20a|b.png)", "my%20a|b.png"),
+        ("![x](../myassets/x(1).png)", "x(1).png"),
+        (r#"[x](file:assets/report.png "caption")"#, "report.png"),
+        (r#"[x](assets/README "caption")"#, "README"),
+    ]
+    .into_iter()
+    .filter_map(|(text, shown)| {
+        let mut live = HashSet::new();
+        crate::asset_refs::collect_asset_refs(text, &mut live);
+        (!live.contains(shown)).then(|| format!("{text}: {shown} not kept in {live:?}"))
+    })
+    .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// Principle 2: pure and O(destination bytes). Times the owner alone over the

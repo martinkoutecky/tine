@@ -1,5 +1,5 @@
 {
-  "about": "One row per input of the local-target design's acceptance list, for every origin. 'owner' is what the one owner (crates/tine-core/src/local_target.rs) answers. 'today' is what the separate answerers did before they moved onto the owner: the renderer (rendered and clicked, desktop, graph root 'root'; it still answers this way), and the asset collector (orphans and trash) and export, which now ask the owner: export copies exactly the owner's attachment, and the collector keeps that attachment plus the loose plaintext mentions, never fewer names than 'today'. A page-icon row's collector and export read its value as the image embed it is written as. 'change' names the decision or rule behind each place the owner differs from 'today'; null means the same answer. Tests: src/render/localTarget.table.test.tsx, crates/tine-core/src/local_target_tests.rs, crates/tine-graph-features/src/publish_query_table_tests.rs.",
+  "about": "One row per input of the local-target design's acceptance list, for every origin. 'owner' is what the one owner (crates/tine-core/src/local_target.rs) answers; 'today' is what the separate answerers did before the collector and export also asked the owner: the renderer (rendered and clicked, desktop, graph root 'root'; it still answers this way), the asset collector (orphans and trash) and export. The collector now keeps 'today.collector' plus the owner's attachment alive, and export copies 'today.export' plus the owner's attachment: never fewer names than 'today'. 'change' names the decision or rule behind each place the owner differs from today; null means the same answer. Tests: src/render/localTarget.table.test.tsx, crates/tine-core/src/local_target_tests.rs, crates/tine-graph-features/src/publish_query_table_tests.rs.",
   "root": "/graph",
   "rows": [
     {
@@ -1598,9 +1598,9 @@
       "case": "5.16",
       "format": "md",
       "origin": "html-resource",
-      "source": "<img src=\"../assets/x.png\" />",
+      "source": "<img src=\"../assets/x.png\">",
       "dest": "../assets/x.png",
-      "owner": "attachment:x.png",
+      "owner": "fragment:../assets/x.png",
       "today": {
         "renderer": "browser",
         "collector": [
@@ -1613,7 +1613,7 @@
       "change": {
         "renderer": null,
         "liveness": null,
-        "export": null
+        "export": "decision 5: raw HTML and Hiccup resources"
       }
     },
     {
@@ -1623,7 +1623,7 @@
       "origin": "html-resource",
       "source": "<a href=\"../assets/x.pdf\">a</a>",
       "dest": "../assets/x.pdf",
-      "owner": "attachment:x.pdf",
+      "owner": "fragment:../assets/x.pdf",
       "today": {
         "renderer": "browser",
         "collector": [
@@ -1636,7 +1636,7 @@
       "change": {
         "renderer": null,
         "liveness": null,
-        "export": null
+        "export": "decision 5: raw HTML and Hiccup resources"
       }
     },
     {
@@ -1646,7 +1646,7 @@
       "origin": "html-resource",
       "source": "<video poster=\"../assets/p.png\"></video>",
       "dest": "../assets/p.png",
-      "owner": "attachment:p.png",
+      "owner": "fragment:../assets/p.png",
       "today": {
         "renderer": "browser",
         "collector": [
@@ -1659,7 +1659,7 @@
       "change": {
         "renderer": null,
         "liveness": null,
-        "export": null
+        "export": "decision 5: raw HTML and Hiccup resources"
       }
     },
     {
@@ -1707,7 +1707,7 @@
       "origin": "html-resource",
       "source": "[:img {:src \"../assets/x.png\"}]",
       "dest": "../assets/x.png",
-      "owner": "attachment:x.png",
+      "owner": "fragment:../assets/x.png",
       "today": {
         "renderer": "browser",
         "collector": [
@@ -1720,7 +1720,7 @@
       "change": {
         "renderer": null,
         "liveness": null,
-        "export": null
+        "export": "decision 5: raw HTML and Hiccup resources"
       }
     },
     {
