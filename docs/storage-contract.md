@@ -1647,9 +1647,12 @@ while the host owes it a save: a failed attempt (the notice), a conflict, or
 any version the host took from this window that has not published. That last
 is the client's one publication-debt predicate (`HostClient.owes`): a taken
 version no true `page_wait` answer has discharged. Only true discharges it.
-A false answer under a terminal notice (conflict, failed save, failed index
-publication) keeps the page while the notice stands. Any other false (a failed
-call, a host that ended) keeps it and asks again after a pause. A new session
+A refusal under a terminal notice (conflict, failed save, failed index
+publication) answers `{refused: keys}`, the needed keys whose own state
+refused, and only those; a refused graph switch names them (tine#1041). It
+keeps the page while the notice stands. Any other refusal answers false (a
+failed call, a stale session, a host that ended); it keeps the page and asks
+again after a pause. A new session
 or the client's retirement ends the debt with the page; retirement settles a
 pending wait false and asks no more. Every let-go path consults the predicate:
 the close, working-set eviction (`unsettledPages`), the recovery panel and

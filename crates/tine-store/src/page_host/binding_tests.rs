@@ -1913,9 +1913,6 @@ mod path_tests;
 #[path = "binding_window_tests.rs"]
 mod window;
 
-#[path = "binding_adopted_draft_tests.rs"]
-mod adopted_draft_tests;
-
 /// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
 /// consumer is the page's only index writer. The reviewer's schedule: the
 /// host has not observed disk B yet (another transaction holds the page's

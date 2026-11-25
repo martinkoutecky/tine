@@ -10,10 +10,9 @@ graph-graph-not-opened-its-external-assets-directory = 图谱未打开：其外�
 
 graph-some-pages-couldn-t-be-saved-resolve = 部分页面无法保存，请先解决冲突再切换图谱。
 graph-switch-refused-pages = { $more ->
-    [0] 以下页面的更改尚未保存，因此未切换图谱：{ $pages }。请打开页面解决。
-   *[other] 以下页面的更改尚未保存，因此未切换图谱：{ $pages }，以及另外 { $more } 个页面。请打开页面解决。
+    [0] 以下页面的更改尚未保存，因此未切换图谱：{ $pages }。
+   *[other] 以下页面的更改尚未保存，因此未切换图谱：{ $pages }，以及另外 { $more } 个页面。
     }
-graph-open-page = 打开
 
 graph-couldn-t-prepare-the-icloud-graph = 无法准备 iCloud 图谱。（{ $error }）
 

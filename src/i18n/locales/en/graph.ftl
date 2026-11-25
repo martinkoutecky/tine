@@ -8,10 +8,9 @@ graph-graph-not-opened-its-external-assets-directory = Graph not opened: its ext
 graph-some-pages-couldn-t-be-saved-resolve = Some pages couldn't be saved — resolve conflicts before switching graphs.
 # A refused graph switch names the pages whose changes are not saved. $pages is a comma-separated list of untranslated file paths; $more counts the ones not listed.
 graph-switch-refused-pages = { $more ->
-    [0] Changes to these pages aren't saved, so the graph was not switched: { $pages }. Open a page to resolve it.
-   *[other] Changes to these pages aren't saved, so the graph was not switched: { $pages }, and { $more } more. Open a page to resolve it.
+    [0] Changes to these pages aren't saved, so the graph was not switched: { $pages }.
+   *[other] Changes to these pages aren't saved, so the graph was not switched: { $pages }, and { $more } more.
     }
-graph-open-page = Open
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-couldn-t-prepare-the-icloud-graph = Couldn't prepare the iCloud graph. ({ $error })
 graph-tineoutline-can-only-open-folders-inside-on = { $app } can only open folders inside On My iPhone → { $app } or iCloud Drive → { $app }.

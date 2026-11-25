@@ -16,10 +16,10 @@ import { restartTine } from "./update";
 import { bindHost, resetStore, flushAllUnsettled, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
-import { resetTabsToJournals, openPage, openFileAgain, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
+import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePagesAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
-import { linkTargetName, setFileNameFormat } from "./render/pageRefs";
+import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
 import { setChangeSummaryBaseline } from "./changeSummary";
@@ -398,30 +398,27 @@ export async function loadGraphPath(
   }
 }
 
-/** Crash-draft storage the new host could not use (STEP3 §4): saves keep
- * working; Retry re-probes it, and drafts it found but could not list are
- * recovered at the next launch (M1, Q-P1-2), so the desktop offers Restart.
- * The pages whose text is not on disk yet are named at every open (SPEC-s2
- * §4.11): what launch recovered (STEP3 §9), and what a host kept from a
- * closed window still holds, with why (B-QA). */
 /** A switch refused by its barrier (tine#1041). Pages the host would not
- * publish are named by path, the first three and then a count, with Open on the
- * first key that is a path (a key holding NUL is an opaque host key and names
- * none). Every other reason (no answer, still busy, unbound, the CSS editor)
- * keeps the fixed text. */
+ * publish are named as the host spells their keys (a path; an opaque key, which
+ * holds NUL, by its spelling before the NUL), the first three and then a count.
+ * The notice has no action. Every other reason (no answer, still busy, unbound,
+ * the CSS editor) keeps the fixed text. */
 function switchRefused(reason: Unsettled | null): void {
   if (reason?.kind !== "stuck") {
     pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
     return;
   }
   const shown = reason.keys.slice(0, 3).map((key) => key.split("\0")[0]);
-  const path = reason.keys.find((key) => !key.includes("\0"));
-  const open = path ? () => openFileAgain(path, linkTargetName("file", path, "", false) ?? path) : null;
   // One toast per refusal text: a repeated attempt replaces it rather than stacking.
-  pushToastUnique(msg("graph-switch-refused-pages", { pages: shown.join(", "), more: reason.keys.length - shown.length }), "error",
-    open ? { action: { label: msg("graph-open-page"), run: open } } : {});
+  pushToastUnique(msg("graph-switch-refused-pages", { pages: shown.join(", "), more: reason.keys.length - shown.length }), "error");
 }
 
+/** Crash-draft storage the new host could not use (STEP3 §4): saves keep
+ * working; Retry re-probes it, and drafts it found but could not list are
+ * recovered at the next launch (M1, Q-P1-2), so the desktop offers Restart.
+ * The pages whose text is not on disk yet are named at every open (SPEC-s2
+ * §4.11): what launch recovered (STEP3 §9), and what a host kept from a
+ * closed window still holds, with why (B-QA). */
 function reportDraftStatus(status: DraftStatus | null): void {
   const unsaved = status?.unsaved ?? [];
   const recovered = unsaved.filter((page) => page.recovered);

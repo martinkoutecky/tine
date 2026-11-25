@@ -78,6 +78,11 @@ it("no client with early edits: refused as unbound, as before", async () => {
   expect(await flushAll()).toBe(false);
 });
 
+it("no client and no edits: settled, as before", async () => {
+  expect(await flushAllUnsettled()).toBeNull();
+  expect(await flushAll()).toBe(true);
+});
+
 it("every need published: settled, as before", async () => {
   await bindTestHost();
   vi.spyOn(backend(), "pageOwed").mockResolvedValueOnce([{ key: KEY, version: 2 }]).mockResolvedValue([]);

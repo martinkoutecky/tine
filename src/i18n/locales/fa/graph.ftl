@@ -5,10 +5,9 @@ graph-allow-external-assets-directory = اجازهٔ پوشهٔ پیوست بی�
 graph-graph-not-opened-its-external-assets-directory = گراف باز نشد: پوشهٔ پیوست بیرونی آن تأیید نشد ({ $assetsDirectory }).
 graph-some-pages-couldn-t-be-saved-resolve = برخی صفحه‌ها ذخیره نشدند؛ پیش از تغییر گراف، تعارض‌ها را حل کنید.
 graph-switch-refused-pages = { $more ->
-    [0] تغییرات این صفحه‌ها ذخیره نشده است، پس گراف عوض نشد: { $pages }. صفحه را باز کنید و مشکل را حل کنید.
-   *[other] تغییرات این صفحه‌ها ذخیره نشده است، پس گراف عوض نشد: { $pages }، و { $more } صفحهٔ دیگر. صفحه را باز کنید و مشکل را حل کنید.
+    [0] تغییرات این صفحه‌ها ذخیره نشده است، پس گراف عوض نشد: { $pages }.
+   *[other] تغییرات این صفحه‌ها ذخیره نشده است، پس گراف عوض نشد: { $pages }، و { $more } صفحهٔ دیگر.
     }
-graph-open-page = باز کردن
 graph-couldn-t-prepare-the-icloud-graph = گراف iCloud آماده نشد. ({ $error })
 graph-tineoutline-can-only-open-folders-inside-on = TineOutline فقط می‌تواند پوشه‌های درون On My iPhone → TineOutline یا iCloud Drive → TineOutline را باز کند.
 graph-pdf-changes-couldn-t-be-saved-the = تغییرات PDF ذخیره نشد؛ گراف کنونی همچنان باز است.

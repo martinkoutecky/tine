@@ -145,7 +145,6 @@ nextVisibleOrExtend
 node
 onBlockRawChanged  # why: outline window geometry keeps one raw-change listener per window, not one tracked computation per row (BIGLOAD-090b); batch-og-bigload-090b
 onPageRawChanged  # why: one comment index per surface follows raw edits of its pages with one listener per page, not one per block (GH #891 review round 3); batch-og-mc010-popup
-openHeldPage  # why: a path route opens a draft only the host holds, for a page with no file (tine#1041); batch-fix-1041
 orderedListMarker
 outdentBlock
 outdentSelection

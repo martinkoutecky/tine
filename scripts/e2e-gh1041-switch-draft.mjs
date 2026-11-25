@@ -3,8 +3,7 @@
 // conflicted draft of a page with no file), and the app is killed. Relaunched,
 // the host recovers the draft and owes it on every switch barrier, while no
 // window page names it. The switch must be refused with a toast that names the
-// page and offers Open; Open shows the held draft with its whole-page choices;
-// Keep mine writes it; then the switch to beta goes through.
+// page and carries no action, and the graph stays alpha.
 import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
@@ -15,7 +14,6 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { editorSelector } from "./lib/e2e-block-editor.mjs";
-import { waitForFileText } from "./e2e-file-poll.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
@@ -126,31 +124,18 @@ try {
   passed.push(stage);
   await kill();
 
-  stage = "relaunched on another page: the switch is refused, naming the page, with Open";
+  stage = "relaunched on another page: the refused switch names the page";
   await launch();
   await openPageByName(browser, "Notes");
   await switchToBeta();
-  await browser.waitUntil(async () => (await errorToasts()).some(t => t.text.includes(KEY) && t.actions.includes("Open")),
-    { timeout: 30_000, timeoutMsg: "the refused switch did not name the page with Open" });
+  await browser.waitUntil(async () => (await errorToasts()).some(t => t.text.includes(KEY)),
+    { timeout: 30_000, timeoutMsg: "the refused switch did not name the page" });
+  const named = (await errorToasts()).find(t => t.text.includes(KEY));
+  assert(named.actions.length === 0, `the notice has no action: ${JSON.stringify(named.actions)}`);
   assert(await graphName() === "alpha", "the switch went through over an unresolved draft");
-  passed.push(stage);
-
-  stage = "Open shows the held draft with its choices; Keep mine writes it";
-  await browser.execute(key => [...document.querySelectorAll(".toast")].find(t => t.querySelector(".toast-msg")?.textContent.includes(key))
-    ?.querySelector(".toast-action:not(.toast-copy)")?.click(), KEY);
-  await browser.waitUntil(() => browser.execute(() => document.querySelector(".page")?.textContent.includes("base mine")), { timeout: 20_000,
-    timeoutMsg: "Open did not show the held draft" });
-  const choices = await browser.execute(() => [...document.querySelectorAll(".conflict-banner button")].map(b => b.textContent.trim()));
-  assert(choices.includes("Keep mine") && choices.includes("Use disk version"), `choices: ${JSON.stringify(choices)}`);
-  await browser.execute(() => [...document.querySelectorAll(".conflict-banner button")].find(b => b.textContent.trim() === "Keep mine")?.click());
-  await waitForFileText(path.join(alpha, KEY), text => text.includes("base mine"), { timeoutMs: 30_000 });
-  passed.push(stage);
-
-  stage = "the switch goes through once the draft is resolved";
-  await switchToBeta();
-  await browser.waitUntil(async () => await graphName() === "beta", { timeout: 30_000, timeoutMsg: "the switch stayed refused after Keep mine" });
   assert(fs.readFileSync(path.join(beta, "pages/Notes.md"), "utf8") === "- Beta notes\n", "beta changed");
   passed.push(stage);
+
   fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "pass", testedCommit: commit, workingDiff: true, passed }, null, 2));
   console.log(`PASS: ${passed.join("; ")}. ${run}`);
 } catch (error) {

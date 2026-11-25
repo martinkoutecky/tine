@@ -104,7 +104,6 @@ async function loadHarness(
     const flushed = await flushAll();
     return flushed === true ? null : flushed === false ? { kind: "no-answer" } : flushed;
   });
-  const openFileAgain = vi.fn();
   const resetFrozen: boolean[] = [];
   const resetStore = vi.fn(() => { resetFrozen.push(frozen); });
 
@@ -165,7 +164,6 @@ async function loadHarness(
   vi.doMock("./router", () => ({
     resetTabsToJournals,
     openPage,
-    openFileAgain,
     openJournals: vi.fn(),
     route: () => ({ kind: "journals" }),
     sameRoute: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
@@ -197,7 +195,7 @@ async function loadHarness(
   return {
     loadGraphPath, switchGraph, createNewGraph, chooseNewGraphParent, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, createPage, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, resetFrozen, isFrozen, tryFreezeGraphRewrite,
-    applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows, openFileAgain,
+    applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows,
   };
 }
 
@@ -999,42 +997,36 @@ describe("an edit typed while a graph switch is in flight (og A, 20B open item 5
 });
 
 // tine#1041: a refused switch says what it refused for. Pages the host would
-// not publish are named by path (three, then a count), and Open opens the first
-// one that is a path; every other reason keeps the fixed text and no action.
+// not publish are named as the host spells them (three, then a count), with no
+// action on the notice; every other reason keeps the fixed text.
 describe("a refused graph switch names its pages (tine#1041)", () => {
   const stuck = (...keys: string[]): Unsettled => ({ kind: "stuck", keys });
   async function refusedSwitch(check: "first" | "late", reason: Unsettled) {
     const harness = await loadHarness(null);
-    // Open names the page by the store's file-name decoding (wasm).
-    await (await import("./render/parse")).initParser();
     await harness.loadGraphPath(META.root);
     if (check === "first") harness.flushAll.mockResolvedValueOnce(reason);
     else harness.flushAll.mockResolvedValueOnce(true).mockResolvedValueOnce(reason);
     await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
     expect(harness.api.loadGraph).toHaveBeenCalledOnce();
     const { toasts } = await import("./toasts");
-    return { harness, toast: toasts().at(-1)! };
+    return { toast: toasts().at(-1)! };
   }
 
-  it.each(["first", "late"] as const)("the %s switch check names a stuck page and offers Open on it", async (check) => {
-    const { harness, toast } = await refusedSwitch(check, stuck("pages/Repro 964.md"));
+  it.each(["first", "late"] as const)("the %s switch check names a stuck page, with no action", async (check) => {
+    const { toast } = await refusedSwitch(check, stuck("pages/Repro 964.md"));
     expect(toast).toMatchObject({ kind: "error", message: expect.stringContaining("pages/Repro 964.md") });
     expect(toast.message).not.toContain("resolve conflicts");
-    expect(toast.action).toBeDefined();
-    expect(toastLabel(toast.action!.label)).toBe("Open");
-    toast.action!.run();
-    expect(harness.openFileAgain).toHaveBeenCalledWith("pages/Repro 964.md", "Repro 964");
+    expect(toast.action).toBeUndefined();
   });
 
-  it("names only the refused keys, three of them and a count, and opens the first path", async () => {
-    const { harness, toast } = await refusedSwitch("first", stuck("pages/Z.md", "pages/Y.md", "journals/2026_11_25.md", "pages/W.md"));
+  it("names only the refused keys, three of them and a count", async () => {
+    const { toast } = await refusedSwitch("first", stuck("pages/Z.md", "pages/Y.md", "journals/2026_11_25.md", "pages/W.md"));
     expect(toast.message).toContain("pages/Z.md, pages/Y.md, journals/2026_11_25.md, and 1 more");
     expect(toast.message).not.toContain("pages/W.md");
-    toast.action!.run();
-    expect(harness.openFileAgain).toHaveBeenCalledWith("pages/Z.md", "Z");
+    expect(toast.action).toBeUndefined();
   });
 
-  it("names a key that is not a path (an opaque host key) without Open", async () => {
+  it("names a key that is not a path (an opaque host key) by its spelling", async () => {
     const { toast } = await refusedSwitch("first", stuck("pages/a.md\u00001"));
     expect(toast.message).toContain("pages/a.md");
     expect(toast.message).not.toContain("\u0000");

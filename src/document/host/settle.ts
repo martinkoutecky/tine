@@ -52,7 +52,8 @@ export async function unsettled(client: HostClient, scope: SettleScope, options:
   }
 }
 
-const UNBOUND: Unsettled = { kind: "unbound" };
+/** The window has no binding to settle through. */
+export const UNBOUND: Unsettled = { kind: "unbound" };
 const NO_ANSWER: Unsettled = { kind: "no-answer" };
 
 async function rounds(client: HostClient, scope: SettleScope, options: SettleOptions): Promise<Unsettled | null> {

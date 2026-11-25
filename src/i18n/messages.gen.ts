@@ -1133,7 +1133,6 @@ export interface MessageArgs {
   "graph-open-failure-retry": {};
   "graph-open-graph": {};
   "graph-open-other-app": {};
-  "graph-open-page": {};
   "graph-page-already-exists-merge-into": { "from": string | number; "to": string | number };
   "graph-page-s-still-have-edits-that-are": { "count": number; "pages": string | number };
   "graph-pdf-changes-couldn-t-be-saved-the": {};
