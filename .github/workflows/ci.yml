@@ -907,5 +907,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: window-size-${{ matrix.os }}
-          path: test-results/hosted-window-size
+          path: |
+            test-results/hosted-window-size
+            !test-results/hosted-window-size/**/*.exe
           if-no-files-found: warn

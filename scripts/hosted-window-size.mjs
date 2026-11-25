@@ -90,7 +90,8 @@ Add-Type -AssemblyName System.Windows.Forms
 switch ($Action) {
   "list" { [WsWin]::List([uint32]$Arg) | ForEach-Object { $_ } }
   "client" { [WsWin]::Client([IntPtr][long]$Arg) }
-  "nudge" { [WsWin]::Nudge([IntPtr][long]$Arg, [int]$Arg2) }
+  "grow" { [WsWin]::Nudge([IntPtr][long]$Arg, [int]$Arg2) }
+  "shrink" { [WsWin]::Nudge([IntPtr][long]$Arg, -[int]$Arg2) }
   "close" { [void][WsWin]::PostMessage([IntPtr][long]$Arg, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) }
   "info" {
     $s = [System.Windows.Forms.Screen]::PrimaryScreen
@@ -126,7 +127,8 @@ function clientSize(win) {
 }
 
 function nudge(win, dy) {
-  if (process.platform === "win32") { powershell("nudge", win.id, dy); return; }
+  // The direction is the action: PowerShell reads a negative number after -File as a parameter name.
+  if (process.platform === "win32") { powershell(dy < 0 ? "shrink" : "grow", win.id, Math.abs(dy)); return; }
   const { width, height } = clientSize(win);
   run("xdotool", ["windowsize", win.id, String(width), String(height + dy)]);
 }
