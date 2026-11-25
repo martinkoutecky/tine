@@ -547,7 +547,7 @@ it("#1035: an interval change answered after the person typed again keeps the ne
   }
 });
 
-it("#1035: a sign-in form belongs to the origin it was opened for; another origin gets empty fields", async () => {
+it("#1035: a sign-in form belongs to the origin it was opened for; another origin gets a fresh form", async () => {
   vi.useFakeTimers();
   try {
     let device = repo({ policy: "sync-on-demand", remote, signed_in: null, last: committed("aaaaaaaa") });
@@ -567,6 +567,13 @@ it("#1035: a sign-in form belongs to the origin it was opened for; another origi
     await poll(root, "cccccccc");
     expect(root.textContent).toContain("https://other.example");
     expect(root.querySelector<HTMLInputElement>("[data-git-username]")!.value).toBe("");
+    expect(root.querySelector<HTMLInputElement>("[data-git-token]")!.value).toBe("");
+    // An origin this device is signed in to: its own saved username, and never the other origin's token.
+    typeAsPerson(root.querySelector<HTMLInputElement>("[data-git-username]")!, "name-for-other");
+    typeAsPerson(root.querySelector<HTMLInputElement>("[data-git-token]")!, "token-for-other");
+    device = { ...device, remote: { name: "origin", url: "https://example.org:8443/me/notes.git", https_origin: "https://example.org:8443" }, signed_in: "saved-here", last: committed("dddddddd") };
+    await poll(root, "dddddddd");
+    expect(root.querySelector<HTMLInputElement>("[data-git-username]")!.value).toBe("saved-here");
     expect(root.querySelector<HTMLInputElement>("[data-git-token]")!.value).toBe("");
     dispose();
   } finally {

@@ -179,7 +179,7 @@ export function GitAutocommitSetting(): JSX.Element {
           <button class="settings-btn" data-git-sign-out onClick={signOut}>{t("git-settings-sign-out")}</button>{" "}
           <Show when={!signingIn()}><button class="settings-btn" data-git-sign-in-open onClick={() => setSigningIn(true)}>{t("git-settings-sign-in")}</button></Show>
         </>}</Show>
-        {/* The form belongs to the origin it was opened for: another origin gets empty fields, never this one's typed name and token. */}
+        {/* The form belongs to the origin it was opened for: another origin gets a fresh form (its own saved username if it has one, no token), never this one's typed name and token. */}
         <Show when={signingIn() && origin()} keyed>{(_origin) =>
           <form data-git-sign-in-form onSubmit={(e) => { e.preventDefault(); signIn(); }}>
             <div>{t("git-settings-sign-in-hint")}</div>
