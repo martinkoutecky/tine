@@ -413,7 +413,9 @@ pub(crate) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
             staged
         } else {
             let staged = repo.repo.find_tree(staged).map_err(failed)?;
-            let sub = staged.get_path(Path::new(&prefix)).ok().map(|e| e.id());
+            let sub = entry_at(&staged, Path::new(&prefix))
+                .map_err(|e| Unusable::Failed(format!("{prefix}: {}", e.message())))?
+                .map(|e| e.id());
             match sub {
                 Some(sub) => repo.tree_with(tip_tree.as_ref(), &prefix, Some(sub), 0o040000),
                 None => repo.tree_with(tip_tree.as_ref(), &prefix, None, 0o040000),
@@ -576,9 +578,9 @@ fn stage(
         }
         let full = workdir.join(path);
         match worktree_entry(&full).map_err(|e| Unusable::Failed(format!("{path}: {e}")))? {
-            None => {
-                let _ = index.remove_path(Path::new(path));
-            }
+            None => index
+                .remove_path(Path::new(path))
+                .map_err(|e| Unusable::Failed(format!("{path}: {}", e.message())))?,
             Some(meta) if !meta.is_file() => {}
             Some(meta) => {
                 if let Some(attr) = converting(&repo.repo, Path::new(path)).map_err(failed)? {
@@ -611,6 +613,21 @@ fn stage(
         keep_tip_for_scratch(&workdir, tip, index, &path)?;
     }
     Ok(())
+}
+
+/// `tree`'s entry at `path`: `None` only when git says the path is not there
+/// (`NotFound`, also when a parent is a file). An unreadable object is an
+/// error, never an absent entry: read as absent, it would commit the path, or
+/// the whole graph folder, as deleted.
+fn entry_at(
+    tree: &git2::Tree<'_>,
+    path: &Path,
+) -> Result<Option<git2::TreeEntry<'static>>, git2::Error> {
+    match tree.get_path(path) {
+        Ok(entry) => Ok(Some(entry)),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// What the worktree holds at a path git status lists: `None` when nothing is
@@ -651,13 +668,12 @@ fn keep_tip_for_scratch(
         .map_err(|e| Unusable::Failed(format!("{path}: {e}")))?
         // A folder where the temp was: the file is gone.
         .is_some_and(|meta| !meta.is_dir());
-    let entry = match tip.filter(|_| on_disk).map(|t| t.get_path(Path::new(path))) {
-        Some(Ok(entry)) => Some(entry),
-        None => None,
-        Some(Err(e)) if e.code() == git2::ErrorCode::NotFound => None,
-        // An unreadable object is not an absent entry.
-        Some(Err(e)) => return Err(Unusable::Failed(format!("{path}: {}", e.message()))),
-    };
+    let entry = tip
+        .filter(|_| on_disk)
+        .map(|t| entry_at(t, Path::new(path)))
+        .transpose()
+        .map_err(|e| Unusable::Failed(format!("{path}: {}", e.message())))?
+        .flatten();
     let kept = entry
         .filter(|e| e.kind() == Some(git2::ObjectType::Blob))
         .map(|e| (e.id(), e.filemode() as u32));

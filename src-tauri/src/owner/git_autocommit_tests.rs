@@ -1897,3 +1897,33 @@ fn an_unreadable_tip_entry_for_a_temp_fails_the_round() {
     ));
     assert_eq!(head(&Repository::open(&f.work).unwrap()).id(), before);
 }
+
+/// The graph is a folder deep in the repository and the index's tree cache
+/// names a folder object that is no longer readable. Read as "no graph
+/// subtree", the round would commit the whole graph folder as deleted.
+#[test]
+fn an_unreadable_graph_subtree_fails_the_round() {
+    let f = fixture(&[("notes/graph/pages/a.md", "- a\n"), ("notes/readme", "r\n")]);
+    // Another git program stages a change beside the graph and writes the
+    // index's tree cache, so the round reuses `notes`' object unread.
+    write(&f.work, "notes/readme", "r2\n");
+    let mut index = f.repo.index().unwrap();
+    index.add_path(Path::new("notes/readme")).unwrap();
+    let staged = f.repo.find_tree(index.write_tree().unwrap()).unwrap();
+    index.write().unwrap();
+    let notes = staged.get_path(Path::new("notes")).unwrap().id();
+    let notes = notes.to_string();
+    let objects = f.work.join(".git/objects");
+    fs::remove_file(objects.join(&notes[..2]).join(&notes[2..])).unwrap();
+    let before = head(&f.repo).id();
+
+    let result = commit_now(&f.work.join("notes/graph"), MESSAGE);
+    assert!(
+        matches!(&result, Err(Unusable::Failed(m)) if m.contains("notes/graph")),
+        "{result:?}"
+    );
+    let repo = Repository::open(&f.work).unwrap();
+    assert_eq!(head(&repo).id(), before);
+    let page = at_head(&repo, "notes/graph/pages/a.md");
+    assert_eq!(page.as_deref(), Some("- a\n"));
+}
