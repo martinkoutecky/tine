@@ -729,6 +729,86 @@ fn gh1017_reporter_or_join_over_dates_lists_each_branch_once() {
     }
 }
 
+/// GH #1017: a date disjunction runs only when each alternative is a scheduled
+/// date, a deadline, the journal day of the block's page or of a journal it
+/// references, on the one date variable, and that variable is used afterwards
+/// only by predicates. DataScript refuses every shape below or answers it
+/// differently, so Tine refuses it whole instead of listing rows.
+#[test]
+fn gh1017_date_disjunctions_outside_the_closed_list_are_refused() {
+    let _integration_guard = crate::integration_lock();
+    let graph = gh1017_graph("gh1017-refused", None);
+    let journal =
+        "(and (or [?h :block/page ?p] [?h :block/ref-pages ?p]) [?p :block/journal-day ?d])";
+    let refused = [
+        // An alternative that does not bind the date.
+        r#"(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/marker "TODO"])"#.to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] (and [?h :block/page ?p]))".to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/page ?p])".to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] (and))".to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/deadline])".to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/deadline _])".to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/deadline 20261201])".to_owned(),
+        "(or-join [?h ?d] [?h :block/scheduled ?d] (not [?h :block/deadline ?d]))".to_owned(),
+        // A scheduled arm whose date is private to an inner `or-join`.
+        "(or-join [?h ?d] (or-join [?h] [?h :block/scheduled ?d]) [?h :block/deadline ?d])"
+            .to_owned(),
+        "(or (or-join [?h] [?h :block/scheduled ?d]) [?h :block/deadline ?d])".to_owned(),
+        "(or-join [?h ?d] (and (or (or-join [?h] [?h :block/page ?p]) [?h :block/ref-pages ?p]) [?p :block/journal-day ?d]) [?h :block/deadline ?d])".to_owned(),
+        // A nested `and`.
+        "(or-join [?h ?d] (and (and [?h :block/page ?p] [?p :block/journal-day ?d])) [?h :block/deadline ?d])".to_owned(),
+        // Join vectors that are not the block and the date as plain variables.
+        format!("(or-join [[?h] ?d] {journal} [?h :block/scheduled ?d])"),
+        format!("(or-join [[?d] ?h] {journal} [?h :block/scheduled ?d])"),
+        format!("(or-join [?h [?d]] {journal} [?h :block/scheduled ?d])"),
+        // A predicate inside an arm.
+        "(or-join [?h ?d] (and [?h :block/scheduled ?d] [(< ?d ?next)]) [?h :block/deadline ?d])"
+            .to_owned(),
+        // A scheduled arm with a second constraint (a referenced journal).
+        "(or-join [?h ?d] (and [?h :block/scheduled ?d] [?h :block/ref-pages ?p] [?p :block/journal? true]) [?h :block/deadline ?d])".to_owned(),
+    ];
+    for group in &refused {
+        for after in ["", "[(< ?d ?next)]"] {
+            let (raws, result) = answer(
+                &graph,
+                &format!("{{:query [:find (pull ?h [*]) :in $ ?next :where [?h :block/marker \"TODO\"] {group} {after}] :inputs [:7d-after]}}"),
+            );
+            assert!(!result.supported, "{group} {after}: {raws:?}");
+            assert!(raws.is_empty(), "{group} {after}");
+            assert!(!result.ignored.is_empty(), "{group} {after}");
+        }
+    }
+
+    // A predicate on the date before the group: DataScript reports the date
+    // unbound. This includes the two-arm `or` that Tine ran before.
+    for group in [
+        format!("(or-join [?h ?d] {journal} [?h :block/scheduled ?d] [?h :block/deadline ?d])"),
+        "(or [?h :block/scheduled ?d] [?h :block/deadline ?d] [?h :block/scheduled ?d])".to_owned(),
+        "(or [?h :block/scheduled ?d] [?h :block/deadline ?d])".to_owned(),
+    ] {
+        let (raws, result) = answer(
+            &graph,
+            &format!("{{:query [:find (pull ?h [*]) :in $ ?next :where [?h :block/marker \"TODO\"] [(< ?d ?next)] {group}] :inputs [:7d-after]}}"),
+        );
+        assert!(!result.supported, "{group}: {raws:?}");
+        assert!(raws.is_empty(), "{group}");
+    }
+
+    // A numeric `:in` binding of the block variable: DataScript lists only
+    // that entity (none here), so the group does not run on every task.
+    for group in [
+        format!("(or-join [?h ?d] {journal} [?h :block/scheduled ?d] [?h :block/deadline ?d])"),
+        "(or [?h :block/scheduled ?d] [?h :block/deadline ?d])".to_owned(),
+    ] {
+        let (raws, result) = answer(
+            &graph,
+            &format!("{{:query [:find (pull ?h [*]) :in $ ?h ?next :where [?h :block/marker \"TODO\"] {group} [(< ?d ?next)]] :inputs [123456 :7d-after]}}"),
+        );
+        assert!(!result.supported, "{group}: {raws:?}");
+        assert!(raws.is_empty(), "{group}");
+    }
+}
+
 /// The reporter's surface: the entry read from `logseq/config.edn`
 /// `:default-queries :journals`, its macro body run as the journal does.
 #[test]

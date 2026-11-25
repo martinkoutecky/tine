@@ -145,6 +145,35 @@ pub(super) fn lower_named_page_query(
     ))
 }
 
+/// The date an alternative of a date disjunction binds: GH #1017's closed list.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DateKind {
+    /// `[?h :block/scheduled ?d]`
+    Scheduled,
+    /// `[?h :block/deadline ?d]`
+    Deadline,
+    /// `[?h :block/page ?p] [?p :block/journal-day ?d]`
+    JournalDay,
+    /// `[?h :block/ref-pages ?p] [?p :block/journal-day ?d]`
+    RefJournalDay,
+}
+
+/// One recognised alternative: its kind, its triples, the date variable, the
+/// page variable of a journal kind, and whether it adds `[?p :block/journal? true]`.
+struct DateAlternative<'a> {
+    kind: DateKind,
+    clauses: Vec<&'a Edn>,
+    date: &'a str,
+    page: Option<&'a str>,
+    journal_flag: bool,
+}
+
+/// Lower `(or B1 … Bn)` or `(or-join [?h ?d] B1 … Bn)` when every alternative
+/// is one of the four [`DateKind`]s on the same date variable and every other
+/// use of that variable is a predicate after the group. Anything else is left
+/// for the caller to report as unsupported, as DataScript refuses or answers
+/// it differently. One filter is lowered per kind present (at most four),
+/// each with the trailing predicates, so the work is linear in the query.
 pub(super) fn lower_date_disjunctions(
     groups: &[&Edn],
     taken: &std::collections::HashSet<usize>,
@@ -154,89 +183,59 @@ pub(super) fn lower_date_disjunctions(
     std::collections::HashMap<usize, (Filter, &'static str)>,
     std::collections::HashSet<usize>,
 ) {
-    let Some(find) = find else {
-        return Default::default();
-    };
     let mut lowered = std::collections::HashMap::new();
     let mut consumed = std::collections::HashSet::new();
+    let Some(find) = find.filter(|find| !inputs.contains_key(*find)) else {
+        return (lowered, consumed);
+    };
+    let mut users = None;
     for (index, group) in groups
         .iter()
         .enumerate()
         .filter(|(i, _)| !taken.contains(i))
     {
-        let Some([head, rest @ ..]) = list(group) else {
+        let Some(alternatives) = date_alternatives(group, find) else {
             continue;
         };
-        let (join, branches) = match (head.symbol(), rest) {
-            (Some("or"), branches) => (None, branches),
-            (Some("or-join"), [join, branches @ ..]) => match vector(join) {
-                Some(join) => (Some(join), branches),
-                None => continue,
-            },
-            _ => continue,
+        let date = alternatives[0].date;
+        let users = users.get_or_insert_with(|| variable_users(groups));
+        // The page of a journal kind joins nothing outside its group.
+        let private = |page: &str| {
+            !inputs.contains_key(page) && users.get(page).is_some_and(|u| u[..] == [index])
         };
-        // DataScript refuses an `or` whose branches bind different variables.
-        if branches.len() < 2 || (join.is_none() && !same_variables(branches)) {
+        if inputs.contains_key(date) || !alternatives.iter().filter_map(|a| a.page).all(private) {
             continue;
         }
-        let Some(alternatives) = branches
+        // DataScript binds the date inside the group: every other use of it
+        // must be a predicate that comes after the group.
+        let predicates = users[date]
             .iter()
-            .map(branch_alternatives)
-            .collect::<Option<Vec<_>>>()
-        else {
-            continue;
-        };
-        let alternatives = alternatives.into_iter().flatten().collect::<Vec<_>>();
-        let dates = alternatives
-            .iter()
-            .flatten()
-            .filter_map(|clause| match triple(clause)? {
-                (_, "block/scheduled" | "block/deadline" | "block/journal-day", Some(object)) => {
-                    variable(object)
-                }
-                _ => None,
-            })
-            .collect::<std::collections::BTreeSet<_>>();
-        let Some(&var) = dates.first().filter(|_| dates.len() == 1) else {
-            continue;
-        };
-        let mut joined = std::collections::BTreeSet::new();
-        join.unwrap_or_default()
-            .iter()
-            .for_each(|v| variables(v, &mut joined));
-        let join_ok = join.is_none_or(|join| {
-            join.len() == 2 && joined == std::collections::BTreeSet::from([find, var])
-        });
-        if inputs.contains_key(var) || !join_ok {
-            continue;
-        }
-        // Branch-local variables (the journal page) join nothing outside.
-        let mut local = std::collections::BTreeSet::new();
-        variables(group, &mut local);
-        if local.iter().any(|&other| {
-            other != find
-                && other != var
-                && groups_use(groups, other) != advanced_var_uses(group, other)
-        }) {
-            continue;
-        }
-        let predicates = groups
-            .iter()
-            .enumerate()
-            .filter(|(i, g)| *i != index && !taken.contains(i) && advanced_var_uses(g, var) > 0)
+            .copied()
+            .filter(|&i| i != index)
             .collect::<Vec<_>>();
-        if groups_use(groups, var) != advanced_var_uses(group, var) + predicates.len() {
+        if predicates
+            .iter()
+            .any(|&i| i < index || taken.contains(&i) || !is_predicate(groups[i]))
+        {
             continue;
         }
-        // Each alternative goes through the one lowerer of its shape, with the
-        // predicates that follow the group, so a block is listed when SOME
-        // branch's date passes them (DataScript's existential `or-join`).
+        // The union of a journal kind with and without `journal? true` is the
+        // kind without it, so each kind needs one filter.
+        let mut kinds: Vec<&DateAlternative> = Vec::new();
+        for alternative in &alternatives {
+            match kinds.iter_mut().find(|kind| kind.kind == alternative.kind) {
+                Some(kind) if kind.journal_flag && !alternative.journal_flag => *kind = alternative,
+                Some(_) => (),
+                None => kinds.push(alternative),
+            }
+        }
         let mut filters = Vec::new();
-        for clauses in &alternatives {
-            let local = clauses
+        for kind in &kinds {
+            let local = kind
+                .clauses
                 .iter()
                 .copied()
-                .chain(predicates.iter().map(|(_, g)| **g))
+                .chain(predicates.iter().map(|&i| groups[i]))
                 .collect::<Vec<_>>();
             let (parts, used) =
                 lower_attribute_patterns(&local, &Default::default(), Some(find), inputs);
@@ -245,37 +244,188 @@ pub(super) fn lower_date_disjunctions(
             }
             filters.push(Filter::and(parts.into_values().map(|(f, _)| f).collect()));
         }
-        if filters.len() == alternatives.len() {
+        if filters.len() == kinds.len() {
             lowered.insert(index, (Filter::or(filters), "scheduled-or-deadline"));
-            consumed.extend(predicates.into_iter().map(|(i, _)| i));
+            consumed.extend(predicates);
         }
     }
     (lowered, consumed)
 }
 
-/// A date branch as conjunctions of clauses: its `and`s opened and at most one
-/// inner `or` (GH #1017's `:block/page` or `:block/ref-pages`) expanded.
-fn branch_alternatives(branch: &Edn) -> Option<Vec<Vec<&Edn>>> {
-    let mut alternatives = vec![Vec::new()];
-    for clause in flatten_single_branch_groups(std::slice::from_ref(branch)) {
-        match list(clause) {
-            Some([head, options @ ..]) if head.symbol() == Some("or") => {
-                if alternatives.len() > 1 || options.len() < 2 || !same_variables(options) {
-                    return None;
-                }
-                let before = alternatives.pop()?;
-                for option in options {
-                    let mut clauses = before.clone();
-                    clauses.extend(flatten_single_branch_groups(std::slice::from_ref(option)));
-                    alternatives.push(clauses);
-                }
-            }
-            _ => alternatives
-                .iter_mut()
-                .for_each(|clauses| clauses.push(clause)),
+/// The recognised alternatives of a date disjunction on `find`, or `None`
+/// when the group's form or any alternative is outside the closed list.
+fn date_alternatives<'a>(group: &'a Edn, find: &str) -> Option<Vec<DateAlternative<'a>>> {
+    let [head, rest @ ..] = list(group)? else {
+        return None;
+    };
+    let (join, branches) = match head.symbol()? {
+        // DataScript refuses an `or` whose branches bind different variables.
+        "or" => (None, same_variables(rest).then_some(rest)?),
+        "or-join" => {
+            let [join, branches @ ..] = rest else {
+                return None;
+            };
+            let [first, second] = vector(join)? else {
+                return None;
+            };
+            (Some((variable(first)?, variable(second)?)), branches)
+        }
+        _ => return None,
+    };
+    if branches.len() < 2 {
+        return None;
+    }
+    let mut alternatives = Vec::new();
+    for branch in branches {
+        for clauses in branch_clauses(branch)? {
+            alternatives.push(date_alternative(clauses, find)?);
         }
     }
-    Some(alternatives)
+    let date = alternatives[0].date;
+    let joins_block_and_date =
+        |(a, b): (&str, &str)| (a, b) == (find, date) || (a, b) == (date, find);
+    (alternatives.iter().all(|a| a.date == date) && join.is_none_or(joins_block_and_date))
+        .then_some(alternatives)
+}
+
+/// A branch as its alternatives' triples: a triple, or one `and` of triples
+/// with at most one inner plain `or` whose options are single triples on the
+/// same variables. No alternative has more than three triples, so a longer
+/// `and` is refused before its inner `or` is expanded.
+fn branch_clauses(branch: &Edn) -> Option<Vec<Vec<&Edn>>> {
+    if vector(branch).is_some() {
+        return Some(vec![vec![branch]]);
+    }
+    let [head, clauses @ ..] = list(branch)? else {
+        return None;
+    };
+    if head.symbol() != Some("and") || clauses.len() > 3 {
+        return None;
+    }
+    let mut fixed = Vec::new();
+    let mut options = None;
+    for clause in clauses {
+        if vector(clause).is_some() {
+            fixed.push(clause);
+            continue;
+        }
+        let [head, inner @ ..] = list(clause)? else {
+            return None;
+        };
+        if head.symbol() != Some("or")
+            || options.is_some()
+            || inner.len() < 2
+            || !inner.iter().all(|option| vector(option).is_some())
+            || !same_variables(inner)
+        {
+            return None;
+        }
+        options = Some(inner);
+    }
+    Some(match options {
+        None => vec![fixed],
+        Some(options) => options
+            .iter()
+            .map(|option| fixed.iter().copied().chain([option]).collect())
+            .collect(),
+    })
+}
+
+/// Which [`DateKind`] these triples are exactly, visiting each twice at most.
+fn date_alternative<'a>(clauses: Vec<&'a Edn>, find: &str) -> Option<DateAlternative<'a>> {
+    let fact = |clause: &'a Edn| match triple(clause)? {
+        (subject, key, Some(object)) => Some((subject, key, object)),
+        _ => None,
+    };
+    let fresh = |object: &'a Edn| variable(object).filter(|var| *var != find);
+    if let [clause] = clauses[..] {
+        let (subject, key, object) = fact(clause)?;
+        let kind = match key {
+            "block/scheduled" => DateKind::Scheduled,
+            "block/deadline" => DateKind::Deadline,
+            _ => return None,
+        };
+        return (subject == find).then_some(DateAlternative {
+            kind,
+            date: fresh(object)?,
+            clauses,
+            page: None,
+            journal_flag: false,
+        });
+    }
+    if !(2..=3).contains(&clauses.len()) {
+        return None;
+    }
+    let mut link = None;
+    for &clause in &clauses {
+        let (subject, key, object) = fact(clause)?;
+        if subject == find {
+            if link.is_some() {
+                return None;
+            }
+            link = Some((key, fresh(object)?));
+        }
+    }
+    let (key, page) = link?;
+    let kind = match key {
+        "block/page" => DateKind::JournalDay,
+        "block/ref-pages" => DateKind::RefJournalDay,
+        _ => return None,
+    };
+    let (mut date, mut journal_flag) = (None, false);
+    for &clause in &clauses {
+        let (subject, key, object) = fact(clause)?;
+        match key {
+            _ if subject == find => (),
+            _ if subject != page => return None,
+            "block/journal-day" if date.is_none() => {
+                date = Some(fresh(object).filter(|var| *var != page)?);
+            }
+            "block/journal?" if !journal_flag && matches!(object, Edn::Bool(true)) => {
+                journal_flag = true;
+            }
+            _ => return None,
+        }
+    }
+    Some(DateAlternative {
+        kind,
+        date: date?,
+        clauses,
+        page: Some(page),
+        journal_flag,
+    })
+}
+
+/// `[(f …)]` or `(not [(f …)])`: a predicate clause, not a binding.
+fn is_predicate(group: &Edn) -> bool {
+    let group = match list(group) {
+        Some([head, inner]) if head.symbol() == Some("not") => inner,
+        _ => group,
+    };
+    matches!(vector(group), Some([call]) if list(call).is_some())
+}
+
+/// Each variable's groups, ascending, from one walk over the whole `:where`.
+fn variable_users<'a>(groups: &[&'a Edn]) -> std::collections::HashMap<&'a str, Vec<usize>> {
+    let mut users: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (index, group) in groups.iter().enumerate() {
+        let mut pending = vec![*group];
+        while let Some(value) = pending.pop() {
+            match value {
+                Edn::Vec(items) | Edn::List(items) | Edn::Set(items) => pending.extend(items),
+                Edn::Map(entries) => entries.iter().for_each(|(k, v)| pending.extend([k, v])),
+                _ => {
+                    if let Some(var) = variable(value) {
+                        let groups = users.entry(var).or_default();
+                        if groups.last() != Some(&index) {
+                            groups.push(index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    users
 }
 
 fn same_variables(branches: &[Edn]) -> bool {
