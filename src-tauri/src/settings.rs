@@ -51,7 +51,8 @@ pub(crate) fn settings_path_in(app_data: &std::path::Path) -> PathBuf {
 
 /// The one decoder of device-settings text. A leading UTF-8 byte-order mark
 /// (Windows tools add one) is not content, and a blank file is a fresh start
-/// (`None`); anything else must be JSON.
+/// (`None`); anything else must be JSON. The readers' size bound is on the file
+/// as stored, so the mark's three bytes count toward it.
 pub(crate) fn decode_settings(text: &str) -> serde_json::Result<Option<serde_json::Value>> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     if text.trim().is_empty() {
