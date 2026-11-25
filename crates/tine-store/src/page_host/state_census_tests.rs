@@ -839,3 +839,74 @@ fn one_function_answers_each_superseding_question() {
         );
     }
 }
+
+/// One answerer each for two questions the slice reviews found copied
+/// (rcd-complete, F7 and F5): "does this paired operation still owe a pair"
+/// is `PairedOp::owes` (`touches` asks it), and "mark the sources whose
+/// settlement-rewrite candidacy may have changed" is
+/// `mark_resolved_sources` (`repair_op` and `reindex_owed` call it).
+const OWES_ANSWERER: &str = "order.rs::owes";
+const OWES_TEST: &str = ".any(|p|p.phase.unresolved())";
+const RESOLVED_MARKER: &str = "logical.rs::mark_resolved_sources";
+const RESOLVED_SELECTION: &str = ".filter(|p|!p.phase.unresolved()).map(|p|p.source.clone())";
+
+/// A body's token text without whitespace, so a pattern matches however
+/// the token printer spaces it.
+fn squashed(body: &str) -> String {
+    body.split_whitespace().collect()
+}
+
+fn owner_violations(files: &BTreeMap<String, String>) -> Vec<String> {
+    let (_, calls) = census(files);
+    let mut out = Vec::new();
+    for (function, body) in &calls {
+        let body = squashed(body);
+        if body.contains(OWES_TEST) && function != OWES_ANSWERER {
+            out.push(format!("{function} inlines `PairedOp::owes`"));
+        }
+        if body.contains(RESOLVED_SELECTION) && function != RESOLVED_MARKER {
+            out.push(format!("{function} selects resolved sources itself"));
+        }
+    }
+    let calls_of = |function: &str| calls.get(function).map(|b| squashed(b));
+    if !calls_of("order.rs::touches").is_some_and(|b| b.contains(".owes()")) {
+        out.push("order.rs::touches no longer asks `owes`".into());
+    }
+    for caller in ["logical.rs::repair_op", "logical.rs::reindex_owed"] {
+        if !calls_of(caller).is_some_and(|b| b.contains("mark_resolved_sources(")) {
+            out.push(format!("{caller} no longer calls `mark_resolved_sources`"));
+        }
+    }
+    out
+}
+
+#[test]
+fn one_function_owns_owing_and_the_resolved_marking() {
+    let files = production_files(&page_host_dir());
+    let violations = owner_violations(&files);
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+    let (_, calls) = census(&files);
+    assert!(squashed(&calls[OWES_ANSWERER]).contains(OWES_TEST));
+    assert!(squashed(&calls[RESOLVED_MARKER]).contains(RESOLVED_SELECTION));
+    // Its mutants: the base's inline test in `touches`, and the base's
+    // second copy of the marking in `reindex_owed`.
+    let mutants = [
+        (
+            "order.rs",
+            "op.pages.contains(key) && op.owes()",
+            "op.pages.contains(key) && op.pairs.iter().any(|p| p.phase.unresolved())",
+        ),
+        (
+            "logical.rs",
+            "                self.mark_resolved_sources(&name);",
+            "                let resolved: Vec<PageKey> = (self.order.paired(&name).into_iter())\n                    .flat_map(|op| op.pairs.iter())\n                    .filter(|p| !p.phase.unresolved())\n                    .map(|p| p.source.clone())\n                    .collect();\n                for source in resolved {\n                    self.mark(&source);\n                }",
+        ),
+    ];
+    for (file, from, to) in mutants {
+        let mut files = files.clone();
+        let source = files.get_mut(file).unwrap();
+        assert!(source.contains(from), "mutant anchor {from}");
+        *source = source.replacen(from, to, 1);
+        assert!(!owner_violations(&files).is_empty(), "missed mutant {to}");
+    }
+}

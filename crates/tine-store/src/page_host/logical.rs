@@ -180,6 +180,13 @@ impl<F: HostIo> Host<F> {
         }
         // A resolved pair's source may now be its settlement rewrite's
         // draft candidate (`rewritable`), the operation still waiting.
+        self.mark_resolved_sources(name);
+    }
+
+    /// Mark the sources of paired operation `name`'s resolved pairs: their
+    /// settlement-rewrite candidacy (`rewritable`) may have changed. The one
+    /// writer of that marking, for `repair_op` and `reindex_owed`.
+    fn mark_resolved_sources(&mut self, name: &str) {
         let resolved: Vec<PageKey> = (self.order.paired(name).into_iter())
             .flat_map(|op| op.pairs.iter())
             .filter(|p| !p.phase.unresolved())
@@ -216,14 +223,7 @@ impl<F: HostIo> Host<F> {
             } else if idle != op.owed.is_empty() {
                 // Its resolved pairs' sources: rewrite candidates only
                 // while nothing of the operation is owed (`rewritable`).
-                let resolved: Vec<PageKey> = (self.order.paired(&name).into_iter())
-                    .flat_map(|op| op.pairs.iter())
-                    .filter(|p| !p.phase.unresolved())
-                    .map(|p| p.source.clone())
-                    .collect();
-                for source in resolved {
-                    self.mark(&source);
-                }
+                self.mark_resolved_sources(&name);
             }
         }
     }
