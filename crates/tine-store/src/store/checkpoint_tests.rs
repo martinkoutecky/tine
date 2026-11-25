@@ -1388,7 +1388,7 @@ fn a_killed_write_leaves_the_previous_checkpoint_usable() {
     let cp = dir.path().join("graph.bin");
     write_checkpoint(root.path(), &cp);
     // A crash mid-write leaves only a temp sibling (atomic_file's temp name).
-    let temp = crate::atomic_file::temp_path(&cp, 1, "crash");
+    let temp = crate::atomic_file::temp_path(&cp, 1, crate::atomic_file::TempTag::Replace);
     fs::write(&temp, b"TINECKPT partial").unwrap();
     let store = open_cp(root.path(), &cp);
     store.whole_graph_reconciled().unwrap();

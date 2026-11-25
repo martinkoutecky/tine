@@ -17,6 +17,46 @@ const NAME_MAX_BYTES: usize = 255;
 /// A temp name may always use this many bytes, even beside a short target.
 const TEMP_NAME_FLOOR: usize = 100;
 
+/// Every tag a current [`temp_path`] writer gives its temp, one per writer.
+/// The writers' list: a writer names its temp by a variant. [`parse_temp_name`]
+/// accepts exactly these suffixes and the shipped-only [`LEGACY_TEMP_TAGS`],
+/// so a user's file that only looks alike (`.report.2026.11.backup.tmp`) is
+/// never taken for Tine's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TempTag {
+    /// A replacing save ([`atomic_write_with_check`], the page host).
+    Replace,
+    /// A create-new publication ([`atomic_write_new`]).
+    New,
+    /// An owner-only write ([`atomic_write_private`]).
+    Private,
+    /// Restore's copy of a file into a new name.
+    Restore,
+    /// A streamed capture into a new name.
+    Capture,
+}
+
+impl TempTag {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Replace,
+        Self::New,
+        Self::Private,
+        Self::Restore,
+        Self::Capture,
+    ];
+
+    /// The text the tag puts before `.tmp`.
+    pub(crate) const fn suffix(self) -> &'static str {
+        match self {
+            Self::Replace => "",
+            Self::New => ".new",
+            Self::Private => ".private",
+            Self::Restore => ".restore",
+            Self::Capture => ".capture",
+        }
+    }
+}
+
 /// Same-directory temp for `path`: `.{name}.{pid}.{seq}{tag}.tmp`. Its name is
 /// never longer than `max(target name, TEMP_NAME_FLOOR)` bytes, so the temp fits
 /// whenever the target does (C3W W1 / L04: the name + ~20 bytes made every save
@@ -25,47 +65,165 @@ const TEMP_NAME_FLOOR: usize = 100;
 /// and a short extension is kept, so [`parse_temp_name`] still finds a page
 /// temp's extension; uniqueness comes from pid + seq alone. The only temp-name
 /// format in tine-store for a user-named target (C3Y Y1; guarded by
-/// `tests/c3y_derived_names_guard.rs`). The tags in use: `""` (a replacing
-/// save), `.new`, `.private`, `.restore`, `.capture`.
-pub(crate) fn temp_path(path: &Path, seq: u64, tag: &str) -> PathBuf {
+/// `tests/c3y_derived_names_guard.rs`). The tags: [`TempTag`].
+pub(crate) fn temp_path(path: &Path, seq: u64, tag: TempTag) -> PathBuf {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-    let suffix = format!(".{}.{seq}{tag}.tmp", std::process::id());
+    let suffix = format!(".{}.{seq}{}.tmp", std::process::id(), tag.suffix());
     let limit = fname.len().max(TEMP_NAME_FLOOR).min(NAME_MAX_BYTES);
     let (stem, ext) = split_short_ext(fname);
     dir.join(fit_name(".", stem, &format!("{ext}{suffix}"), limit))
 }
 
+/// Tags a shipped release's temp writer put before `.tmp` that no current
+/// writer does: parse-only, so the scratch a crash of that release left in a
+/// graph stays Tine's (review of 5582895519, B1). Found by reading every temp
+/// writer at every `v*` tag; each entry names the releases that wrote it and
+/// where. The pid is `std::process::id()` and the sequence an `AtomicU64` in
+/// all of them, as in [`temp_path`].
+const LEGACY_TEMP_TAGS: [&str; 4] = [
+    // Asset import copy, v0.3.0 to v0.7.0-beta.1: v0.3.0
+    // crates/tine-core/src/model.rs:3123, v0.5.0 crates/tine-core/src/model.rs:3954,
+    // v0.6.987 crates/tine-core/src/model/atomic_copy.rs:17, v0.7.0-beta.1
+    // crates/tine-store/src/model.rs:4849.
+    ".import",
+    // Expected-bytes replace, its staged copy, v0.6.985 to v0.6.987:
+    // crates/tine-core/src/filesystem_durability/atomic_fs.rs:220.
+    ".stage",
+    // Expected-bytes replace, its publication, v0.6.97 to v0.6.987: v0.6.97
+    // crates/tine-core/src/model.rs:23827, v0.6.987
+    // crates/tine-core/src/filesystem_durability/atomic_fs.rs:221.
+    ".publish",
+    // Projection page temp, v0.6.90 to v0.6.987: v0.6.90
+    // crates/tine-core/src/model.rs:29552, v0.6.987
+    // crates/tine-core/src/model/projection_rename.rs:12 (name made at :120).
+    ".projection",
+];
+
+/// The largest pid a writer formats: `std::process::id()` is a `u32`.
+const PID_MAX: u128 = u32::MAX as u128;
+/// The largest sequence a writer formats: every temp sequence is an `AtomicU64`.
+const SEQ_MAX: u128 = u64::MAX as u128;
+/// The largest millisecond stamp `trash_stamp` formats: `Duration::as_millis`
+/// of the longest `Duration` (a `u128` type, but no writer gets past this;
+/// model check of c897398d8).
+const MILLIS_MAX: u128 = std::time::Duration::MAX.as_millis();
+
+/// Whether `part` is an unsigned integer of at most `max` exactly as the
+/// writers format one (`{}` of a `u32`, `u64` or `u128`): decimal digits, no
+/// sign, no leading zero except `0` itself. `01` or a value past the writer's
+/// type is no name a writer makes (review of 5582895519, B2).
+fn writer_number(part: &str, max: u128) -> bool {
+    let canonical = part == "0" || part.bytes().next().is_some_and(|b| b != b'0');
+    canonical
+        && part.bytes().all(|b| b.is_ascii_digit())
+        && part.parse::<u128>().is_ok_and(|number| number <= max)
+}
+
 /// The one reader of [`temp_path`]'s names: `(target name, tag)` for
-/// `.{name}.{pid}.{seq}{tag}.tmp`, with numeric pid and seq and a tag of at
-/// most one dot-free component (`""` or `.new`). For a shortened temp the
-/// target name is the one the temp carries (the cut stem and its kept
-/// extension), not the full name: the cut is not reversible. Each watcher keeps
-/// its own folder scope. O(name length), no I/O.
-pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, &str)> {
+/// `.{name}.{pid}.{seq}{tag}.tmp`, with a name a file can have (not empty,
+/// `.` or `..`: a writer takes it from a file), pid and seq as the
+/// writers format them ([`writer_number`]) and a tag of [`TempTag::ALL`] or
+/// [`LEGACY_TEMP_TAGS`], nothing else. For a shortened temp the target name is
+/// the one the temp carries (the cut stem and its kept extension), not the
+/// full name: the cut is not reversible. Each watcher keeps its own folder
+/// scope. O(name length × 9), no I/O.
+/// A name a file can carry: what a temp writer's target name always is.
+fn is_file_name(name: &str) -> bool {
+    !matches!(name, "" | "." | "..")
+}
+
+pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, &'static str)> {
     let stem = name.strip_prefix('.')?.strip_suffix(".tmp")?;
-    let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-    let (before, last) = stem.rsplit_once('.')?;
-    let (before, seq, tag) = if numeric(last) {
-        (before, last, "")
-    } else {
-        let (rest, seq) = before.rsplit_once('.')?;
-        (rest, seq, &stem[before.len()..])
-    };
-    let (target, pid) = before.rsplit_once('.')?;
-    (numeric(seq) && numeric(pid) && !target.is_empty()).then_some((target, tag))
+    TempTag::ALL
+        .into_iter()
+        .map(TempTag::suffix)
+        .chain(LEGACY_TEMP_TAGS)
+        .find_map(|tag| {
+            let (before, seq) = stem.strip_suffix(tag)?.rsplit_once('.')?;
+            let (target, pid) = before.rsplit_once('.')?;
+            (writer_number(seq, SEQ_MAX) && writer_number(pid, PID_MAX) && is_file_name(target))
+                .then_some((target, tag))
+        })
+}
+
+/// The kinds of fixed-form temp, one per writer that makes one. The one list:
+/// [`fixed_temp_name`] spells a kind and [`is_fixed_temp_name`] accepts exactly
+/// these, so a user's `.tine-report.tmp` is never taken for Tine's. Both have
+/// kept their shape since they first shipped (`.tine-restore-{pid}-{seq}.tmp`
+/// from v0.5.10 src-tauri/src/backup.rs:832, `.tine-tx-{ms}-{seq}.tmp` from
+/// v0.7.0-beta.1 crates/tine-store/src/transaction.rs:1072), so no fixed shape
+/// is legacy-only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixedTempKind {
+    /// A streamed transaction's stage: `{ms}-{seq}` (`trash_stamp`).
+    Tx,
+    /// Restore's directory-handle copy: `{pid}-{seq}`.
+    Restore,
+}
+
+impl FixedTempKind {
+    pub(crate) const ALL: [Self; 2] = [Self::Tx, Self::Restore];
+
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Tx => "tx",
+            Self::Restore => "restore",
+        }
+    }
+
+    /// The largest first number of the unique part, by its writer's type.
+    const fn first_max(self) -> u128 {
+        match self {
+            Self::Tx => MILLIS_MAX,
+            Self::Restore => PID_MAX,
+        }
+    }
+}
+
+/// Whether `unique` has the shape `kind`'s writer gives it: `{first}-{seq}`,
+/// both [`writer_number`]s (a millisecond stamp or a pid, then a sequence).
+fn fixed_unique(kind: FixedTempKind, unique: &str) -> bool {
+    unique.split_once('-').is_some_and(|(first, seq)| {
+        writer_number(first, kind.first_max()) && writer_number(seq, SEQ_MAX)
+    })
 }
 
 /// The fixed-form temp `.tine-{kind}-{unique}.tmp`, for scratch that has no
 /// user-named target of its own (restore's directory-handle copy, a streamed
-/// transaction's stage). Never shortened: `kind` and `unique` are Tine's.
-pub(crate) fn fixed_temp_name(kind: &str, unique: &str) -> String {
-    format!(".tine-{kind}-{unique}.tmp")
+/// transaction's stage). `unique` is `{first}-{seq}` ([`fixed_unique`]). Never
+/// shortened: `kind` and `unique` are Tine's.
+pub(crate) fn fixed_temp_name(kind: FixedTempKind, unique: &str) -> String {
+    debug_assert!(fixed_unique(kind, unique), "{unique}");
+    format!(".tine-{}-{unique}.tmp", kind.word())
 }
 
-/// Whether `name` has [`fixed_temp_name`]'s form. O(name length), no I/O.
+/// Whether `name` is a [`fixed_temp_name`]: one of [`FixedTempKind::ALL`] and
+/// its writer's unique part, nothing else. O(name length), no I/O.
 pub(crate) fn is_fixed_temp_name(name: &str) -> bool {
-    name.starts_with(".tine-") && name.ends_with(".tmp")
+    let Some(body) = name
+        .strip_prefix(".tine-")
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    FixedTempKind::ALL.into_iter().any(|kind| {
+        body.strip_prefix(kind.word())
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|unique| fixed_unique(kind, unique))
+    })
+}
+
+/// Whether the file name `name` is Tine scratch: one this version or a
+/// shipped one could have written as a temp, i.e. a [`temp_path`] temp of any
+/// target with a current or legacy tag ([`parse_temp_name`]), or a
+/// [`fixed_temp_name`], numbers as the writers format them. The one answer:
+/// the graph and asset watchers, Git autocommit and pull resume (through the
+/// app's `device_io` copy of this file) only ask it. A user's file spelled
+/// exactly like one is taken as scratch: it is a name Tine writes. Guarded by
+/// `tests/temp_name_owner_guard.rs`. O(name length), no I/O.
+pub(crate) fn is_temp_name(name: &str) -> bool {
+    is_fixed_temp_name(name) || parse_temp_name(name).is_some()
 }
 
 /// A trash or conflict-copy name `{prefix}{name}` (prefix = stamp + reason)
@@ -321,7 +479,7 @@ impl PreparedWrite {
         target: &Path,
         source: Source<'_>,
         mode: Mode,
-        tag: &str,
+        tag: TempTag,
     ) -> io::Result<Self> {
         let options = temp_options(mode)?;
         let temporary = temp_path(target, TMP_SEQ.fetch_add(1, Ordering::Relaxed), tag);
@@ -503,7 +661,7 @@ pub(crate) fn sync_target_directory(dir: &Path) -> io::Result<()> {
 /// Create-new publication of `bytes` at `path` (temp tag `.new`): fails with
 /// `AlreadyExists` if a file appeared there after the caller's check.
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, ".new")?
+    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, TempTag::New)?
         .publish_and_sync(true)
 }
 
@@ -511,7 +669,7 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// temp tag `.private`). Only the app's `device_io` calls it.
 #[allow(dead_code)]
 pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Private, ".private")?
+    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Private, TempTag::Private)?
         .publish_and_sync(false)
 }
 
@@ -558,9 +716,82 @@ pub(crate) fn atomic_write_with_check(
     bytes: &[u8],
     check: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
-    let prepared = PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, "")?;
+    let prepared =
+        PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, TempTag::Replace)?;
     check()?;
     prepared.publish_and_sync(false)
+}
+
+/// User file names shaped like Tine's temps that no Tine version writes (an
+/// unknown or empty tag, an unknown, empty or malformed fixed kind, a glued
+/// sequence, a number no writer formats: a leading zero, a sign, a value past
+/// the writer's type): every caller of [`is_temp_name`] must leave them to the
+/// user. The acceptance names of the reviews of 6fb074e9f (B) and 5582895519
+/// (B2) lead. The table the watchers' and Git's tests share.
+#[cfg(test)]
+pub(crate) const TEMP_LOOK_ALIKES: &[&str] = &[
+    ".report.2026.11.backup.tmp",
+    // Targets no writer takes from a file (review of a7de52a73, B1).
+    "...1.2.new.tmp",
+    "....1.2.new.tmp",
+    "....1.2.import.tmp",
+    ".tine-report.tmp",
+    ".report.2026.11..tmp",
+    ".tine-.tmp",
+    ".report.01.2.new.tmp",
+    ".report.4294967296.2.private.tmp",
+    ".report.1.18446744073709551616.restore.tmp",
+    ".tine-restore-01-2.tmp",
+    ".tine-tx-1-18446744073709551616.tmp",
+    // A stamp past `Duration::MAX.as_millis()` (model check of c897398d8).
+    ".tine-tx-18446744073709551616000-1.tmp",
+    ".tine-tx-340282366920938463463374607431768211455-1.tmp",
+    ".a.md.1.2new.tmp",
+    ".a.md.1.2.new.new.tmp",
+    ".a.md.1.02.tmp",
+    ".a.md.+1.2.tmp",
+    ".a.md.1.2.import.new.tmp",
+    ".tine-tx-.tmp",
+    ".tine-tx-1.tmp",
+    ".tine-tx-1-x.tmp",
+    ".tine-tx-01-2.tmp",
+    ".tine-restore-4294967296-1.tmp",
+    ".tine-publish-1-2.tmp",
+];
+
+/// Every temp name Tine writes or a shipped version wrote beside `target` (a
+/// file name): one per [`TempTag`] from the writers' own name maker, one per
+/// [`LEGACY_TEMP_TAGS`] entry spelled as its release wrote it, one per
+/// [`FixedTempKind`] and a tagged temp of each, and the writers' largest
+/// numbers. The table the watchers' and Git's tests share.
+#[cfg(test)]
+pub(crate) fn tine_temp_names(target: &str) -> Vec<String> {
+    let name = |path: PathBuf| path.file_name().unwrap().to_str().unwrap().to_owned();
+    let dir = Path::new("/g");
+    let mut names: Vec<String> = TempTag::ALL
+        .into_iter()
+        .map(|tag| name(temp_path(&dir.join(target), 7, tag)))
+        .collect();
+    names.extend(
+        LEGACY_TEMP_TAGS
+            .iter()
+            .map(|tag| format!(".{target}.123.7{tag}.tmp")),
+    );
+    names.push(format!(".{target}.4294967295.18446744073709551615.tmp"));
+    names.push(format!(".{target}.0.0.new.tmp"));
+    for (kind, unique) in [
+        (FixedTempKind::Tx, "1759000000000-1"),
+        (
+            FixedTempKind::Tx,
+            "18446744073709551615999-18446744073709551615",
+        ),
+        (FixedTempKind::Restore, "4294967295-18446744073709551615"),
+    ] {
+        let fixed = fixed_temp_name(kind, unique);
+        names.push(name(temp_path(&dir.join(&fixed), 7, TempTag::Capture)));
+        names.push(fixed);
+    }
+    names
 }
 
 #[cfg(test)]
@@ -677,7 +908,7 @@ mod tests {
         for title in ["a".repeat(250), "漢".repeat(84), "漢".repeat(40)] {
             let target = Path::new("/g/pages").join(format!("{title}.md"));
             let name_len = target.file_name().unwrap().len();
-            for tag in ["", ".new"] {
+            for tag in [TempTag::Replace, TempTag::New] {
                 let tmp = temp_path(&target, u64::MAX, tag);
                 let tmp_name = tmp.file_name().unwrap().to_str().unwrap();
                 assert!(
@@ -689,12 +920,12 @@ mod tests {
                 assert_eq!(tmp.parent(), target.parent());
             }
         }
-        let short = temp_path(Path::new("/g/pages/A.md"), 7, ".import");
+        let short = temp_path(Path::new("/g/pages/A.md"), 7, TempTag::Capture);
         assert_eq!(
             short.file_name().unwrap().to_str().unwrap(),
-            format!(".A.md.{}.7.import.tmp", std::process::id())
+            format!(".A.md.{}.7.capture.tmp", std::process::id())
         );
-        let short = temp_path(Path::new("/g/pages/A.md"), 7, "");
+        let short = temp_path(Path::new("/g/pages/A.md"), 7, TempTag::Replace);
         assert_eq!(
             short.file_name().unwrap().to_str().unwrap(),
             format!(".A.md.{}.7.tmp", std::process::id())
@@ -735,17 +966,16 @@ mod tests {
     /// name when it fits, else the cut stem with the extension kept.
     #[test]
     fn parse_temp_name_reads_back_every_temp_path() {
-        let tags = ["", ".new", ".private", ".restore", ".capture"];
         let long = format!("{}.md", "漢".repeat(84));
         for name in ["A.md", "assets/x.png", "config.edn", long.as_str()] {
             let target = Path::new("/g/pages").join(name);
             let fname = target.file_name().unwrap().to_str().unwrap();
-            for tag in tags {
+            for tag in TempTag::ALL {
                 for seq in [0, 7, u64::MAX] {
                     let temp = temp_path(&target, seq, tag);
                     let temp = temp.file_name().unwrap().to_str().unwrap();
                     let (carried, parsed_tag) = parse_temp_name(temp).expect(temp);
-                    assert_eq!(parsed_tag, tag, "{temp}");
+                    assert_eq!(parsed_tag, tag.suffix(), "{temp}");
                     if name != long {
                         assert_eq!(carried, fname, "{temp}");
                     } else {
@@ -757,12 +987,12 @@ mod tests {
                 }
             }
         }
-        let tx = fixed_temp_name("tx", "1759000000000-1");
+        let tx = fixed_temp_name(FixedTempKind::Tx, "1759000000000-1");
         assert_eq!(tx, ".tine-tx-1759000000000-1.tmp");
         assert!(is_fixed_temp_name(&tx));
-        let stage = temp_path(&Path::new("/g/pages").join(&tx), 3, ".capture");
+        let stage = temp_path(&Path::new("/g/pages").join(&tx), 3, TempTag::Capture);
         let (carried, tag) = parse_temp_name(stage.file_name().unwrap().to_str().unwrap()).unwrap();
-        assert_eq!((carried, tag), (tx.as_str(), ".capture"));
+        assert_eq!((carried, tag), (tx.as_str(), TempTag::Capture.suffix()));
         for foreign in [
             "A.md",
             ".A.md.tmp",
@@ -774,6 +1004,95 @@ mod tests {
             ".A.md.1.2.new.part",
         ] {
             assert_eq!(parse_temp_name(foreign), None, "{foreign}");
+            assert!(!is_temp_name(foreign), "{foreign}");
+        }
+    }
+
+    /// Numbers exactly as `{}` formats the writers' integer types.
+    #[test]
+    fn writer_number_is_exactly_the_writers_format() {
+        for (part, max, expected) in [
+            ("0", PID_MAX, true),
+            ("7", PID_MAX, true),
+            ("4294967295", PID_MAX, true),
+            ("4294967296", PID_MAX, false),
+            ("18446744073709551615", SEQ_MAX, true),
+            ("18446744073709551616", SEQ_MAX, false),
+            ("18446744073709551616", MILLIS_MAX, true),
+            ("18446744073709551615999", MILLIS_MAX, true),
+            ("18446744073709551616000", MILLIS_MAX, false),
+            ("340282366920938463463374607431768211455", MILLIS_MAX, false),
+            ("340282366920938463463374607431768211456", MILLIS_MAX, false),
+            ("", SEQ_MAX, false),
+            ("00", SEQ_MAX, false),
+            ("01", SEQ_MAX, false),
+            ("+1", SEQ_MAX, false),
+            ("-1", SEQ_MAX, false),
+            ("1 ", SEQ_MAX, false),
+            ("١", SEQ_MAX, false),
+        ] {
+            assert_eq!(writer_number(part, max), expected, "{part:?}");
+        }
+    }
+
+    /// `is_temp_name` says yes to every name Tine's temp makers produce (every
+    /// tag, a shortened name, the fixed form, a temp of a fixed temp) and no
+    /// to user names that only look alike.
+    #[test]
+    fn is_temp_name_covers_every_temp_maker() {
+        let long = format!("{}.md", "漢".repeat(84));
+        for name in ["A.md", "x.png", "config.edn", long.as_str()] {
+            for tag in TempTag::ALL {
+                let temp = temp_path(&Path::new("/g/pages").join(name), 9, tag);
+                let temp = temp.file_name().unwrap().to_str().unwrap();
+                assert!(is_temp_name(temp), "{temp}");
+            }
+        }
+        assert!(is_temp_name(&fixed_temp_name(
+            FixedTempKind::Tx,
+            "1759000000000-1"
+        )));
+        // A millisecond stamp is a `u128`: past `u64` is still one, up to
+        // `Duration::MAX.as_millis()`, the most a writer can format.
+        assert!(is_temp_name(".tine-tx-18446744073709551616-0.tmp"));
+        assert!(is_temp_name(".tine-tx-18446744073709551615999-0.tmp"));
+        assert!(!is_temp_name(".tine-tx-18446744073709551616000-0.tmp"));
+        assert!(!is_temp_name(
+            ".tine-tx-340282366920938463463374607431768211455-1.tmp"
+        ));
+        let tx = fixed_temp_name(FixedTempKind::Restore, "12-3");
+        assert!(is_temp_name(&tx));
+        let stage = temp_path(&Path::new("/g").join(&tx), 1, TempTag::New);
+        assert!(is_temp_name(stage.file_name().unwrap().to_str().unwrap()));
+        for foreign in [
+            "notes.tmp",
+            ".hidden.tmp",
+            "a.x.y.tmp",
+            ".tine-trash",
+            ".config.edn.9.10new.tmp",
+        ] {
+            assert!(!is_temp_name(foreign), "{foreign}");
+        }
+        // Look-alikes of the narrowed grammar (review of 6fb074e9f): an unknown
+        // tag, an empty tag, an unknown or empty fixed kind, a glued sequence;
+        // and numbers no writer formats (review of 5582895519, B2).
+        for foreign in TEMP_LOOK_ALIKES {
+            assert!(!is_temp_name(foreign), "{foreign}");
+        }
+        // The shapes shipped releases left (review of 5582895519, B1), and the
+        // shared table of every current and shipped one.
+        for shipped in [
+            ".scan.pdf.123.7.import.tmp",
+            ".config.edn.123.7.stage.tmp",
+            ".config.edn.123.7.publish.tmp",
+            ".Page.md.123.7.projection.tmp",
+        ] {
+            assert!(is_temp_name(shipped), "{shipped}");
+        }
+        for name in ["A.md", "x.png", ".tine-tx-1-2.tmp"] {
+            for temp in tine_temp_names(name) {
+                assert!(is_temp_name(&temp), "{temp}");
+            }
         }
     }
 

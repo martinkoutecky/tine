@@ -4848,13 +4848,13 @@ pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
         dst,
         Source::File(&input, u64::MAX),
         Mode::Default,
-        ".restore",
+        crate::atomic_file::TempTag::Restore,
     )?
     .publish_and_sync(true)
 }
 
 /// Copy from an already-open source capability into a new destination while
-/// enforcing a byte ceiling during the stream (temp tag `.capture`). This is
+/// enforcing a byte ceiling during the stream (temp tag `.capture`, [`crate::atomic_file::TempTag::Capture`]). This is
 /// the native-capture path: it avoids reopening an attacker-replaceable
 /// pathname and avoids whole-value Android/IPC/base64 amplification.
 pub(crate) fn atomic_copy_file_new(
@@ -4869,7 +4869,7 @@ pub(crate) fn atomic_copy_file_new(
         dst,
         Source::File(input, max_bytes),
         Mode::Default,
-        ".capture",
+        crate::atomic_file::TempTag::Capture,
     )?
     .publish_and_sync(true)
 }

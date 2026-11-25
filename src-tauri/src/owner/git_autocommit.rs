@@ -361,24 +361,11 @@ pub(super) fn without_tine_own(
     repo.tree_with(Some(tree), &logseq, left, 0o040000)
 }
 
-/// One of Tine's own in-flight atomic-save temp files
-/// (`.{name}.{pid}.{seq}{tag}.tmp`, `tine_store::atomic_file::temp_path`).
+/// Whether the work-tree path `path` names one of Tine's own temp files; the
+/// file name is read by the one temp-name answer,
+/// [`crate::device_io::atomic_file::is_temp_name`].
 pub(super) fn tine_temp(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let Some(stem) = name.strip_suffix(".tmp") else {
-        return false;
-    };
-    let Some((before, seq)) = stem.rsplit_once('.') else {
-        return false;
-    };
-    let Some((target, pid)) = before.rsplit_once('.') else {
-        return false;
-    };
-    let digits = seq.bytes().take_while(u8::is_ascii_digit).count();
-    target.starts_with('.')
-        && !pid.is_empty()
-        && pid.bytes().all(|b| b.is_ascii_digit())
-        && digits > 0
+    crate::device_io::atomic_file::is_temp_name(path.rsplit('/').next().unwrap_or(path))
 }
 
 /// What an autocommit did.
@@ -417,7 +404,7 @@ pub(crate) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
         }
         let tip = repo.tip().map_err(|e| Unusable::Failed(e.message))?;
         let tip_tree = tip.as_ref().map(|c| c.tree()).transpose().map_err(failed)?;
-        stage(&repo, &prefix, &mut lock.index)?;
+        stage(&repo, &prefix, tip_tree.as_ref(), &mut lock.index)?;
         repo.guard
             .check_git(&repo.repo, &repo.branch)
             .map_err(failed)?;
@@ -493,22 +480,30 @@ pub(crate) fn commit_locked(root: &Path, message: &str) -> Result<Outcome, Unusa
 
 /// Stage every change git sees under the graph root into `index` (a copy):
 /// new and modified regular files with their exact bytes, deletions removed.
-/// Ignored files, untracked nested repositories, symlinks, Tine's own temp
-/// files, Tine's own `logseq/.tine-*` files and Syncthing's in-flight copies
-/// are left out (tracked ones are removed from the index copy). A file `.gitattributes`
+/// Ignored files, untracked nested repositories, symlinks, Tine's own
+/// `logseq/.tine-*` files and Syncthing's in-flight copies are left out
+/// (tracked ones are removed from the index copy). Tine's temp files keep
+/// `tip`'s entry, or its absence, whatever the index holds
+/// ([`keep_tip_for_scratch`]). A file `.gitattributes`
 /// filters or re-encodes refuses the whole commit (git-lfs, git-crypt: its raw bytes must not be
 /// committed). A file the user untracked with `git rm --cached` but did not
 /// ignore is added back: G5 commits every change git sees, and `.gitignore`
 /// is how a file stays out.
-fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusable> {
+fn stage(
+    repo: &Repo,
+    prefix: &str,
+    tip: Option<&git2::Tree<'_>>,
+    index: &mut git2::Index,
+) -> Result<(), Unusable> {
     let graph_start = if prefix.is_empty() {
         0
     } else {
         prefix.len() + 1
     };
-    // A copied index can already contain a temp or one of Tine's own files
-    // staged by another git program, or tracked from before they were left
-    // out. Removing them here untracks them without touching disk.
+    // A copied index can already contain one of Tine's own files staged by
+    // another git program, or tracked from before they were left out.
+    // Removing them here untracks them without touching disk. (Tine's temps
+    // are not removed here: see `keep_tip_for_scratch`.)
     let left_out: Vec<Vec<u8>> = index
         .iter()
         .filter(|e| {
@@ -545,6 +540,7 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
         .ok()
         .and_then(|c| c.get_bool("core.filemode").ok())
         .unwrap_or(cfg!(unix));
+    let mut scratch = Vec::new();
     for entry in statuses.iter() {
         let path = entry.path_bytes();
         if !under(path, prefix) || path.ends_with(b"/") {
@@ -554,7 +550,15 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
             continue;
         };
         let in_graph = &path.as_bytes()[graph_start..];
-        if tine_temp(path) || syncthing_temp(in_graph) || tine_own(in_graph) {
+        // The device-file rule comes first (`logseq/.tine-*`, ADR 0078 §2).
+        if syncthing_temp(in_graph) || tine_own(in_graph) {
+            continue;
+        }
+        // Status lists every path whose index entry differs from `tip` or
+        // from disk, so these are all the temps the candidate tree could
+        // get wrong.
+        if tine_temp(path) {
+            scratch.push(path.to_owned());
             continue;
         }
         if EXITING.load(Ordering::Acquire) {
@@ -571,13 +575,12 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
             continue;
         }
         let full = workdir.join(path);
-        match std::fs::symlink_metadata(&full) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        match worktree_entry(&full).map_err(|e| Unusable::Failed(format!("{path}: {e}")))? {
+            None => {
                 let _ = index.remove_path(Path::new(path));
             }
-            Err(e) => return Err(Unusable::Failed(format!("{path}: {e}"))),
-            Ok(meta) if !meta.is_file() => {}
-            Ok(meta) => {
+            Some(meta) if !meta.is_file() => {}
+            Some(meta) => {
                 if let Some(attr) = converting(&repo.repo, Path::new(path)).map_err(failed)? {
                     return Err(Unusable::Conversion(format!("{attr} for {path}")));
                 }
@@ -604,7 +607,77 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
             }
         }
     }
+    for path in scratch {
+        keep_tip_for_scratch(&workdir, tip, index, &path)?;
+    }
     Ok(())
+}
+
+/// What the worktree holds at a path git status lists: `None` when nothing is
+/// there, including when a parent folder became a file (`ENOTDIR`: the tracked
+/// file is gone). The one reading of that answer for ordinary and scratch
+/// staging (review of a7de52a73, B2). One `lstat`.
+fn worktree_entry(full: &Path) -> std::io::Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(full) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// The candidate tree's entry for `path`, a Tine temp file (ADR 0078 §2):
+/// while the file is on disk, `tip`'s entry, or its absence, whatever the
+/// index holds (a staged addition, modification or removal of scratch is
+/// dropped); once the file is confirmed gone, no entry, committed like any
+/// deletion. A temp left on disk therefore never changes the tree: a clean
+/// checkout stays clean and a fast-forward pull stays one (review of
+/// c897398d8, B1). Costs one `lstat`, and runs only for a temp git status
+/// lists.
+fn keep_tip_for_scratch(
+    workdir: &Path,
+    tip: Option<&git2::Tree<'_>>,
+    index: &mut git2::Index,
+    path: &str,
+) -> Result<(), Unusable> {
+    let on_disk = worktree_entry(&workdir.join(path))
+        .map_err(|e| Unusable::Failed(format!("{path}: {e}")))?
+        // A folder where the temp was: the file is gone.
+        .is_some_and(|meta| !meta.is_dir());
+    let kept = on_disk
+        .then(|| tip.and_then(|t| t.get_path(Path::new(path)).ok()))
+        .flatten()
+        .filter(|e| e.kind() == Some(git2::ObjectType::Blob))
+        .map(|e| (e.id(), e.filemode() as u32));
+    let Some((id, mode)) = kept else {
+        let _ = index.remove_path(Path::new(path));
+        return Ok(());
+    };
+    if index.get_path(Path::new(path), 0).map(|e| (e.id, e.mode)) == Some((id, mode)) {
+        return Ok(());
+    }
+    index
+        .add(&git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            file_size: 0,
+            id,
+            flags: 0,
+            flags_extended: 0,
+            path: path.as_bytes().to_vec(),
+        })
+        .map_err(failed)
 }
 
 /// Copy `from` into `into` in 1 MiB chunks, stopping with `Interrupted` once

@@ -153,8 +153,23 @@ one-block and 60-block page edits both add zero bytes/files/transport beyond §U
 
 Every change git sees under the graph root, honouring `.gitignore`: Tine's saves, other programs' edits,
 deletions. The graph root is matched as a literal path prefix in the staging callback, never as a pathspec pattern
-(a folder named `Notes [work]` is a glob). Skipped: Tine's own in-flight temp files (`atomic_file::temp_path`'s
-shape) and untracked nested repositories (never added as gitlinks). Like `git commit -a`, an intermediate staged
+(a folder named `Notes [work]` is a glob). Skipped: Tine scratch, the names this version or a shipped one
+could have written as a temp, as `atomic_file::is_temp_name` alone answers: `.{name}.{pid}.{seq}{tag}.tmp` with
+a current writer's tag or a tag a shipped release wrote (`.import`, `.stage`, `.publish`, `.projection`), and
+`.tine-tx-{ms}-{seq}.tmp` and `.tine-restore-{pid}-{seq}.tmp`, every number as the writers format it (decimal, no
+leading zero, within the writer's type: pid `u32`, sequence `u64`, milliseconds at most
+`Duration::MAX.as_millis()`). The rule is for files; a folder with such a name is an ordinary folder. Stated as the
+candidate tree against `HEAD`, for a path whose file name is scratch: while the file exists on disk the tree keeps
+`HEAD`'s entry, or its absence, whatever the index holds (a staged addition, modification or removal of scratch,
+from `git add -f` or another git program, is dropped); a tracked entry is removed only once the file is confirmed
+gone from disk, committed like any deletion. A scratch file still on disk therefore never changes the tree: a
+clean checkout stays clean and a fast-forward pull stays one. The device-file rule for `logseq/.tine-*` above
+applies first (it suppresses a cleanup-only commit in its namespace). A user's file that only looks
+alike (`.report.2026.11.backup.tmp`, `.tine-report.tmp`, `.report.01.2.new.tmp`) is committed; one spelled exactly
+like scratch is taken as scratch, being a name Tine writes. Accepted limit: a scratch file an older build committed
+and that is then deleted makes one deletion commit, as before; on a device whose pull is due, that commit can make
+the pull report `diverged` once, the mechanism described above for device files. Also skipped: untracked nested
+repositories (never added as gitlinks). Like `git commit -a`, an intermediate staged
 version of a file is replaced by the working tree's. A file the user untracked (`git rm --cached`) but did not
 ignore is still a change git sees, so it is committed again: `.gitignore` is how a file stays out (review F2;
 honouring the untrack would only delete it once). A file whose `.gitattributes` sets `filter`, `ident` or
@@ -259,6 +274,9 @@ design. The changed paths between `H` and `U` inside the graph root are applied 
 `U` and the ref at `H`. Before **every** autocommit (pre-pull, cadence, background/quit, structural brackets: P3),
 if a fetched `U` is a strict descendant of `H` and every path that differs from `H` holds its `U` blob or is in
 this process's applied-path set (P4), the autocommit is skipped and the next sync resumes the pull from step 1.
+Tine scratch (§2) never counts as a local change; a scratch path counts as the pull's progress when it holds the
+pull's own `H → U` change (a tracked temp `U` deletes, already gone from disk) or is in the applied-path set, so a
+pull interrupted after that deletion resumes instead of committing it locally.
 Otherwise (a genuine local change) the autocommit runs and the pull ends as `diverged`: nothing is lost.
 
 The host records P4 at each guarded publication, even when the caller already

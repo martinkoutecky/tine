@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const ASSET_RECOVERY: &str = ".tine-restore-recovery";
+use crate::asset_watch::{in_restore_recovery, ASSET_RECOVERY};
 static RECOVERY_SEQ: AtomicU64 = AtomicU64::new(0);
 static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "test-faults")]
@@ -207,7 +207,7 @@ impl Store {
                 }),
                 Area::Assets => {
                     crate::file_kind::is_asset_sidecar_path(Path::new(&file.rel))
-                        && !file.rel.split('/').any(|part| part == ASSET_RECOVERY)
+                        && !in_restore_recovery(Path::new(&file.rel))
                 }
                 Area::Meta => file.rel == "config.edn",
                 Area::Trash => false,
@@ -1084,7 +1084,7 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
     // folding this in would reopen by path. The fsync and the directory sync
     // are the shared, counted ones.
     let temp = crate::atomic_file::fixed_temp_name(
-        "restore",
+        crate::atomic_file::FixedTempKind::Restore,
         &format!(
             "{}-{}",
             std::process::id(),
@@ -1183,7 +1183,7 @@ fn retire_extras(
             let kind = entry.file_type()?;
             if kind.is_dir() {
                 if area == Area::Assets {
-                    if name == ASSET_RECOVERY {
+                    if in_restore_recovery(&child) {
                         continue;
                     }
                 } else if name.to_str().is_none_or(|s| s.starts_with('.'))

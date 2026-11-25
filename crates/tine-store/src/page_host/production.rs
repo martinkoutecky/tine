@@ -492,7 +492,7 @@ fn temp(path: &Path, bytes: &[u8]) -> io::Result<PreparedWrite> {
         path,
         crate::atomic_file::Source::Bytes(bytes),
         crate::atomic_file::Mode::Default,
-        "",
+        crate::atomic_file::TempTag::Replace,
     )
 }
 
