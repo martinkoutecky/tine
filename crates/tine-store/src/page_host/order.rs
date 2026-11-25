@@ -193,6 +193,16 @@ pub(super) struct Pair {
     pub choice: PairChoice,
 }
 
+/// A decided pair launch judges (`Order::launch_judged`): its place
+/// (operation name, pair index) and both endpoints' read results.
+pub(super) struct Judged<'a> {
+    pub name: &'a str,
+    pub index: usize,
+    pub pair: &'a Pair,
+    pub source: &'a Text,
+    pub receiver: &'a Text,
+}
+
 /// A paired operation whose durable draft is on disk: its pairs, every
 /// page it names, and the decision records that retire after it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -634,27 +644,56 @@ impl Order {
         }
     }
 
-    /// Launch: each decided pair's phase from its endpoints' disk bytes
-    /// (`reads`), the receiver's judged by `certified` (receiver, bytes,
-    /// image: `Host::receiver_certified`). A failed read keeps custody.
+    /// Launch: each decided pair's phase. A pair `launch_judged` lists is
+    /// judged by `judge` (the pair, the source's and the receiver's bytes):
+    /// whether the source durably holds the original
+    /// (`Host::source_original`) and whether the receiver is certified
+    /// (`Host::receiver_certified`). Any other decided pair (a read failed)
+    /// keeps custody.
     pub fn decided_phases(
         &mut self,
         reads: &BTreeMap<PageKey, Option<Text>>,
-        mut certified: impl FnMut(&PageKey, &Text, &Text) -> bool,
+        mut judge: impl FnMut(&Pair, &Text, &Text) -> (Original, bool),
     ) {
+        let judged: Vec<(String, usize, PairPhase)> = (self.launch_judged(reads))
+            .map(|j| {
+                let (original, certified) = judge(j.pair, j.source, j.receiver);
+                let phase = cancel_phase(original, j.source, certified, true);
+                (j.name.to_owned(), j.index, phase)
+            })
+            .collect();
         for op in self.paired.values_mut() {
             for pair in op.pairs.iter_mut().filter(|p| p.choice != PairChoice::None) {
-                let read = |key: &PageKey| reads.get(key).cloned().flatten();
-                let phase = match (read(&pair.source), read(&pair.receiver)) {
-                    (Some(source), Some(receiver)) => {
-                        let certified = certified(&pair.receiver, &receiver, &pair.image);
-                        cancel_phase(&pair.preimage, &source, certified, true)
-                    }
-                    _ => PairPhase::Retained,
-                };
-                pair.phase = phase;
+                pair.phase = PairPhase::Retained;
             }
         }
+        for (name, index, phase) in judged {
+            self.paired.get_mut(&name).unwrap().pairs[index].phase = phase;
+        }
+    }
+
+    /// Launch: the decided pairs E1 judges, with their two read results:
+    /// those whose source and receiver reads (`reads`, one per
+    /// `decided_pages` key) both succeeded, an absent file included. The
+    /// one answer for launch's witness schedule (`launch_witnesses`) and
+    /// its phases (`decided_phases`).
+    pub fn launch_judged<'a>(
+        &'a self,
+        reads: &'a BTreeMap<PageKey, Option<Text>>,
+    ) -> impl Iterator<Item = Judged<'a>> + 'a {
+        self.paired.iter().flat_map(move |(name, op)| {
+            (op.pairs.iter().enumerate())
+                .filter(|(_, p)| p.choice != PairChoice::None)
+                .filter_map(move |(index, pair)| {
+                    Some(Judged {
+                        name,
+                        index,
+                        pair,
+                        source: reads.get(&pair.source)?.as_ref()?,
+                        receiver: reads.get(&pair.receiver)?.as_ref()?,
+                    })
+                })
+        })
     }
 
     /// Both endpoints of every decided pair (launch reads them once).
@@ -662,6 +701,22 @@ impl Order {
         self.pairs()
             .filter(|(_, p)| p.choice != PairChoice::None)
             .flat_map(|(_, p)| [p.receiver.clone(), p.source.clone()])
+            .collect()
+    }
+
+    /// The sources launch witnesses, each once with its read bytes: those
+    /// of a pair `launch_judged` lists whose bytes are its preimage, the
+    /// only pairs whose phase the witness can change. Launch witnesses them
+    /// in its one directory pass (`HostIo::graph_launch`).
+    pub fn launch_witnesses(
+        &self,
+        reads: &BTreeMap<PageKey, Option<Text>>,
+    ) -> Vec<(PageKey, Text)> {
+        let mut seen = BTreeSet::new();
+        (self.launch_judged(reads))
+            .filter(|j| source_present(&j.pair.preimage, j.source))
+            .filter(|j| seen.insert(&j.pair.source))
+            .map(|j| (j.pair.source.clone(), j.source.clone()))
             .collect()
     }
 
@@ -734,6 +789,14 @@ impl Order {
                 (!moves.is_empty() && !versions.is_empty()).then(|| Gates::new(moves, versions))
             })
             .collect()
+    }
+
+    /// The phase and choice of the (first) pair whose source is `source`.
+    #[cfg(test)]
+    pub fn source_state(&self, source: &str) -> Option<(PairPhase, PairChoice)> {
+        (self.pairs())
+            .find(|(_, p)| p.source == source)
+            .map(|(_, p)| (p.phase, p.choice))
     }
 
     /// What `source`'s removal may do now.
@@ -847,16 +910,23 @@ impl Order {
         changed
     }
 
-    /// The source's own save published `bytes`: a pair awaiting its
-    /// guarded restoration settles as cancelled once the preimage is back.
-    /// Returns the operations that changed.
-    pub fn restored(&mut self, source: &str, bytes: &Text) -> Vec<String> {
+    /// The source's own save published: a pair awaiting its guarded
+    /// restoration settles as cancelled once the source holds the preimage
+    /// again (`original`, given the preimage: `Host::source_original`, with
+    /// a durable or weak witness). A failed witness leaves the pair awaiting
+    /// its restoration, as other bytes do. Returns the operations that
+    /// changed.
+    pub fn restored(
+        &mut self,
+        source: &str,
+        mut original: impl FnMut(&Text) -> Original,
+    ) -> Vec<String> {
         let mut changed = vec![];
         for (name, op) in &mut self.paired {
             for pair in &mut op.pairs {
                 if pair.source == source
                     && pair.phase == PairPhase::Restore
-                    && source_present(&pair.preimage, bytes)
+                    && original(&pair.preimage).holds()
                 {
                     pair.phase = PairPhase::Cancelled;
                     changed.push(name.clone());
@@ -1009,33 +1079,60 @@ impl Order {
     }
 }
 
-/// The source holds its admitted text, the pair's preimage (the model's
-/// `sourcePresent`, given the source's bytes): an absent source holds none.
+/// The source's bytes are its admitted text, the pair's preimage: an
+/// absent source holds none. Bytes alone anchor nothing; only
+/// `Host::source_original` asks this, with the source's durability witness.
 pub(super) fn source_present(preimage: &Text, source: &Text) -> bool {
     source.is_some() && source == preimage
 }
 
+/// Whether a source holds its pair's original text, as the one answerer
+/// `Host::source_original` judges it (the model's `sourcePresent`), from
+/// the source's bytes and its durability witness (`HostIo::source_witnessed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Original {
+    /// The preimage, and the witness flushed that very file and synced its
+    /// directory entries up to the graph root (D).
+    Durable,
+    /// The preimage on a filesystem that offers no directory sync, or a
+    /// Windows chain (W): the bytes rule every save there already gets.
+    Weak,
+    /// The preimage, but a witness step failed (U): a power cut may still
+    /// drop or revert the file, so it anchors nothing.
+    Failed,
+    /// Other bytes, or no file.
+    No,
+}
+
+impl Original {
+    /// The source anchors the original text (D or W; develop's byte match).
+    pub(super) fn holds(self) -> bool {
+        matches!(self, Self::Durable | Self::Weak)
+    }
+}
+
 /// The one answer to "is a pair's original text still anchored outside its
 /// operation draft" (the model's `sourcePresent or certified`): the source
-/// holds its preimage (`source_present`), or the receiver is certified
-/// (`certified`: `Host::receiver_certified`). Launch and Use Disk ask it
-/// through `cancel_phase`; a published newer source text asks it directly
+/// holds its preimage with a durable or weak witness (`original`:
+/// `Host::source_original`), or the receiver is certified (`certified`:
+/// `Host::receiver_certified`). Launch and Use Disk ask it through
+/// `cancel_phase`; a published newer source text asks it directly
 /// (`Order::disarm`'s `anchored`).
-pub(super) fn anchored(preimage: &Text, source: &Text, certified: bool) -> bool {
-    source_present(preimage, source) || certified
+pub(super) fn anchored(original: Original, certified: bool) -> bool {
+    original.holds() || certified
 }
 
 /// Where a decided pair's original text stands (the model's
 /// `cancelPhase`): anchored (`anchored`) cancels the pair; else it is
-/// restorable from its preimage when the source's slot is free after its
-/// removal (`removed`); else custody.
+/// restorable from its preimage when the source's slot (bytes `source`) is
+/// free after its removal (`removed`); else custody.
 pub(super) fn cancel_phase(
-    preimage: &Text,
+    original: Original,
     source: &Text,
     certified: bool,
     removed: bool,
 ) -> PairPhase {
-    if anchored(preimage, source, certified) {
+    if anchored(original, certified) {
         PairPhase::Cancelled
     } else if source.is_none() && removed {
         PairPhase::Restore
@@ -1088,23 +1185,40 @@ impl<F: HostIo> Host<F> {
         };
         if let Some(chosen) = &chosen {
             // Where the original text stands: the other endpoint's bytes.
-            let (source, receiver) = if chosen.on_receiver {
-                let source = match &src_bytes {
-                    Some(source) => Ok(source.clone()),
-                    None => self.fs.read_page(&chosen.source),
-                };
-                (source, Ok(bytes.clone()))
-            } else if source_present(&chosen.preimage, &bytes) {
-                (Ok(bytes.clone()), Ok(None))
-            } else {
-                (Ok(bytes.clone()), self.fs.read_page(&chosen.receiver))
+            let source = match (&src_bytes, chosen.on_receiver) {
+                (_, false) => Ok(bytes.clone()),
+                (Some(source), true) => Ok(source.clone()),
+                (None, true) => self.fs.read_page(&chosen.source),
             };
-            let (Ok(source), Ok(receiver)) = (source, receiver) else {
+            let Ok(source) = source else {
                 return self.refused(request, key, Refusal::ReadFailed);
             };
-            let certified =
-                Self::receiver_certified(&mut self.fs, &chosen.receiver, &receiver, &chosen.image);
-            let phase = cancel_phase(&chosen.preimage, &source, certified, chosen.removed);
+            let fs = &mut self.fs;
+            let original = Self::source_original(&chosen.preimage, &source, || {
+                fs.source_witnessed(&chosen.source, &source)
+            });
+            // Develop's receiver evidence: on the source, a held original
+            // (D or W) needs no receiver read; otherwise the receiver is
+            // read, and a certified one still cancels. Only a failed witness
+            // (U) tolerates an unreadable receiver: the choice is recorded
+            // as Retained, keeping the draft, instead of being refused.
+            let certified = if chosen.on_receiver {
+                Self::receiver_certified(&mut self.fs, &chosen.receiver, &bytes, &chosen.image)
+            } else if original.holds() {
+                false
+            } else {
+                match self.fs.read_page(&chosen.receiver) {
+                    Ok(receiver) => Self::receiver_certified(
+                        &mut self.fs,
+                        &chosen.receiver,
+                        &receiver,
+                        &chosen.image,
+                    ),
+                    Err(_) if original == Original::Failed => false,
+                    Err(_) => return self.refused(request, key, Refusal::ReadFailed),
+                }
+            };
+            let phase = cancel_phase(original, &source, certified, chosen.removed);
             let written = self.write_decision(key, chosen, phase);
             self.repair_op(&chosen.name);
             if !written {
@@ -1428,5 +1542,48 @@ mod tests {
         assert!(o.touches(&BTreeSet::from(["s1".to_string()])));
         o.discarded("d2");
         assert!(o.gates.is_empty(), "no move left: the order ends");
+    }
+
+    /// Two decided pairs on one source whose bytes hold the preimage, one
+    /// receiver unreadable and one readable: launch schedules the source's
+    /// witness once (eligibility per pair, then once per source), as with
+    /// both pairs judged; with both receivers unreadable, not at all.
+    #[test]
+    fn a_source_with_one_unreadable_and_one_readable_receiver_is_witnessed_once() {
+        let text: Text = Some(Arc::from(&b"- a"[..]));
+        let mut order = Order::default();
+        for (name, receiver) in [("op1", "r1"), ("op2", "r2")] {
+            let pair = Pair {
+                member: 0,
+                source_member: 1,
+                receiver: receiver.into(),
+                source: "s".into(),
+                image: text.clone(),
+                preimage: text.clone(),
+                phase: PairPhase::Retained,
+                choice: PairChoice::SourceDisk,
+            };
+            let op = PairedOp {
+                id: [0; 16],
+                pairs: vec![pair],
+                pages: BTreeSet::from([receiver.into(), "s".into()]),
+                decisions: BTreeMap::new(),
+                unreadable: false,
+            };
+            order.adopt(name.into(), op);
+        }
+        let mut reads = BTreeMap::from([
+            ("s".to_string(), Some(text.clone())),
+            ("r1".to_string(), None),
+            ("r2".to_string(), Some(text.clone())),
+        ]);
+        let once = vec![("s".to_string(), text)];
+        assert_eq!(order.launch_witnesses(&reads), once);
+        // Both pairs judged (an absent receiver reads): still once.
+        reads.insert("r1".into(), Some(None));
+        assert_eq!(order.launch_witnesses(&reads), once);
+        reads.insert("r1".into(), None);
+        reads.insert("r2".into(), None);
+        assert!(order.launch_witnesses(&reads).is_empty());
     }
 }
