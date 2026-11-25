@@ -98,7 +98,8 @@ const graphName = () => browser.execute(() => document.querySelector(".graph-swi
 const errorToasts = () => browser.execute(() => [...document.querySelectorAll(".toast")].filter(t => t.querySelector(".toast-msg"))
   .map(t => ({ text: t.querySelector(".toast-msg").textContent, actions: [...t.querySelectorAll(".toast-action:not(.toast-copy)")].map(b => b.textContent) })));
 async function switchToBeta() {
-  await browser.keys(["Escape"]);
+  // Escape leaves the editor; with no editor open it would start pane selection, which takes the keys.
+  if (await browser.$(editorSelector()).isExisting()) await browser.keys(["Escape"]);
   await browser.keys("g");
   await browser.keys(["Shift", "g"]);
   await browser.$(".all-graphs").waitForExist({ timeout: 10_000 });
@@ -129,10 +130,12 @@ try {
   stage = "relaunched on another page: the refused switch names the page";
   await launch();
   await openPageByName(browser, "Notes");
+  // The relaunch's own notice ("recovered unsaved edits") names the page too: only a notice the switch adds counts.
+  const before = new Set((await errorToasts()).map(t => t.text));
   await switchToBeta();
-  await browser.waitUntil(async () => (await errorToasts()).some(t => t.text.includes(KEY)),
-    { timeout: 30_000, timeoutMsg: "the refused switch did not name the page" });
-  const named = (await errorToasts()).find(t => t.text.includes(KEY));
+  const refusal = async () => (await errorToasts()).find(t => !before.has(t.text) && t.text.includes(KEY));
+  await browser.waitUntil(async () => !!(await refusal()), { timeout: 30_000, timeoutMsg: "the refused switch did not name the page" });
+  const named = await refusal();
   assert(named.actions.length === 0, `the notice has no action: ${JSON.stringify(named.actions)}`);
   assert(await graphName() === "alpha", "the switch went through over an unresolved draft");
   assert(fs.readFileSync(path.join(beta, "pages/Notes.md"), "utf8") === "- Beta notes\n", "beta changed");
