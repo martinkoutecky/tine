@@ -29,6 +29,7 @@ on:
           - android
           - performance
           - multiwindow
+          - window-size
           - macos
           - linux
       purpose:
@@ -867,4 +868,44 @@ jobs:
         with:
           name: multiwindow-${{ matrix.os }}
           path: test-results/hosted-multiwindow
+          if-no-files-found: warn
+
+  # GH #1043 focused proof (not part of `full`): on Windows, a restarted main
+  # window has the size it was saved with, frameless and with the native frame,
+  # across three native close/reopen cycles with a resize in each.
+  # scripts/hosted-window-size.mjs reads the window from outside the app and
+  # exits non-zero on any failed check.
+  window-size:
+    name: Focused / window size across restarts
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'window-size'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - run: cargo build --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Three launches per frame mode
+        run: node scripts/hosted-window-size.mjs
+      - name: Upload evidence (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-size-${{ matrix.os }}
+          path: test-results/hosted-window-size
           if-no-files-found: warn
