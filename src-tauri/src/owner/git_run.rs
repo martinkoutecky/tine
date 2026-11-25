@@ -38,6 +38,12 @@ pub(super) mod index_lock_identity;
 use index_lock_identity::IndexLockIdentity;
 mod open;
 pub(crate) use open::{configure_libgit2, discover, graph_prefix};
+mod attributes;
+#[cfg(test)]
+pub(crate) use attributes::attr_counts;
+pub(super) use attributes::{
+    attribute_files_apply, checkout_conversion, raw_content_conversion, shared_attribute_files,
+};
 
 pub(crate) const TRAILER: &str = "Tine-Run";
 const SNAPSHOT_TRAILER: &str = "Tine-Snapshot";
@@ -165,24 +171,6 @@ pub(crate) fn check_repository(slot: &GraphSlot) -> Result<(), ErrorBody> {
 pub(crate) fn check_page(slot: &GraphSlot, page: &PageId) -> Result<(), ErrorBody> {
     let repo = open_repo(slot)?;
     repo.check_raw_content(&repo.path_of(page))
-}
-
-/// Raw-content eligibility shared by runs and autocommits. Never execute
-/// filters: their working bytes may be plaintext that must not enter Git.
-pub(super) fn raw_content_conversion(
-    repo: &Repository,
-    path: &Path,
-) -> Result<Option<&'static str>, git2::Error> {
-    for attr in ["filter", "ident", "working-tree-encoding"] {
-        let value = repo.get_attr(path, attr, git2::AttrCheckFlags::FILE_THEN_INDEX)?;
-        if !matches!(
-            git2::AttrValue::from_string(value),
-            git2::AttrValue::Unspecified | git2::AttrValue::False
-        ) {
-            return Ok(Some(attr));
-        }
-    }
-    Ok(None)
 }
 
 /// The graph's repository, opened and checked for commits (git-sync DESIGN

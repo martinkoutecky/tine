@@ -550,27 +550,6 @@ fn check_sync(repo: &Repo) -> Result<(), PullOutcome> {
     Ok(())
 }
 
-/// A changed path git would convert on checkout (`text`, `eol`, `crlf`), or
-/// whose raw bytes must not be written (`filter`, `ident`,
-/// `working-tree-encoding`).
-fn conversion(repo: &Repo, path: &str) -> Result<Option<&'static str>, git2::Error> {
-    if let Some(attr) = super::git_run::raw_content_conversion(&repo.repo, Path::new(path))? {
-        return Ok(Some(attr));
-    }
-    for attr in ["text", "eol", "crlf"] {
-        let value =
-            repo.repo
-                .get_attr(Path::new(path), attr, git2::AttrCheckFlags::FILE_THEN_INDEX)?;
-        if !matches!(
-            git2::AttrValue::from_string(value),
-            git2::AttrValue::Unspecified | git2::AttrValue::False
-        ) {
-            return Ok(Some(attr));
-        }
-    }
-    Ok(None)
-}
-
 fn regular(mode: FileMode) -> Option<u32> {
     match mode {
         FileMode::Blob | FileMode::BlobGroupWritable => Some(0o100644),
@@ -716,7 +695,9 @@ fn pre_check(
     for change in changes {
         let mut pending: Vec<&str> = Vec::new();
         for path in change.paths() {
-            if let Some(attr) = conversion(repo, path).map_err(git)? {
+            if let Some(attr) =
+                super::git_run::checkout_conversion(&repo.repo, Path::new(path)).map_err(git)?
+            {
                 return Err(refused(
                     path,
                     format!("git converts it on checkout ({attr})"),

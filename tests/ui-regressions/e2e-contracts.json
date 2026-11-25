@@ -852,8 +852,8 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh671-journal-startup.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
-      "acceptableVariations":["Heading classes, startup timing and layout may vary while the expected journal content is visible and existing files remain unchanged."],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, shows a heading block the template made as a heading at once (GH #1036), keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
+      "acceptableVariations":["Heading size, startup timing and layout may vary while the expected journal content is visible, the template's heading is a heading and existing files remain unchanged."],
       "nonRequirements":["Exact pixels, a specific remount count or Android device certification from Linux WebKitGTK."],
       "stability":"burn-in"
     },
