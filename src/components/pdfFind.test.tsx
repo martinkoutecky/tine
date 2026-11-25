@@ -237,6 +237,11 @@ describe("PdfFind keeps the find box's keyboard while matches land", () => {
       expect(document.getSelection()!.toString()).toBe("viewer");
       await type("");
       expect(document.getSelection()!.toString()).toBe("");
+      // A viewer that unmounts leaves the window's selection alone: it may be
+      // another reader's match or the user's own selection by now.
+      await type("viewer");
+      dispose();
+      expect(document.getSelection()!.toString()).toBe("viewer");
     } finally { dispose(); }
   });
 

@@ -3,7 +3,7 @@ import * as pdfjs from "pdfjs-dist";
 import { latestOwner, type Owner } from "../owned";
 import { isMobilePlatform } from "../nativeChrome";
 import { reportUiFailure } from "../uiFailure";
-import { createRangeIn, windowOf } from "../windowRealm";
+import { createRangeIn, selectionOf, windowOf } from "../windowRealm";
 import { pdfTextContent } from "./pdfTextContent";
 
 export const PDF_FIND_TEXT_CACHE_BYTES = isMobilePlatform ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
@@ -47,29 +47,36 @@ export function createPdfFind(ctx: {
   // The current match is painted, never selected: moving the document selection
   // into the text layer takes the keyboard from the find box (#1037).
   let painted: { registry: Map<string, unknown>; highlight: unknown } | null = null;
-  // A runtime without CSS highlights (WebKit before 17.2) keeps the old mark,
-  // the selection, with its cost: there the box still loses the keyboard.
-  let selected: Selection | null = null;
+  /** The window's CSS highlights, or null where the runtime has none (WebKit before 17.2). */
+  function highlightsOf(target: Parameters<typeof windowOf>[0]) {
+    const realm = windowOf(target) as HighlightRealm;
+    return realm.CSS?.highlights && realm.Highlight ? { registry: realm.CSS.highlights, Highlight: realm.Highlight } : null;
+  }
   function paint(range: Range) {
     unpaint();
-    const realm = windowOf(range.startContainer) as HighlightRealm;
-    const registry = realm.CSS?.highlights;
-    if (!registry || !realm.Highlight) {
-      selected = realm.getSelection();
-      selected?.removeAllRanges();
-      selected?.addRange(range);
+    const css = highlightsOf(range.startContainer);
+    if (!css) {
+      // No CSS highlights: the mark is the selection, as it always was there,
+      // with its cost (the box loses the keyboard).
+      const selection = selectionOf(range.startContainer);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
       return;
     }
-    const highlight = new realm.Highlight(range);
-    registry.set(PDF_FIND_HIGHLIGHT, highlight);
-    painted = { registry, highlight };
+    const highlight = new css.Highlight(range);
+    css.registry.set(PDF_FIND_HIGHLIGHT, highlight);
+    painted = { registry: css.registry, highlight };
   }
   /** Another reader in the same window may have painted since: leave its match. */
   function unpaint() {
     if (painted && painted.registry.get(PDF_FIND_HIGHLIGHT) === painted.highlight) painted.registry.delete(PDF_FIND_HIGHLIGHT);
     painted = null;
-    selected?.removeAllRanges();
-    selected = null;
+  }
+  /** Results went away or Find closed. Without CSS highlights that clears the
+   *  window's selection, as it always did; a viewer that only unmounts does not. */
+  function clearMark() {
+    unpaint();
+    if (!highlightsOf(ctx.scrollElement())) selectionOf(ctx.scrollElement())?.removeAllRanges();
   }
   onCleanup(unpaint);
 
@@ -118,7 +125,7 @@ export function createPdfFind(ctx: {
     setFindCount(0);
     setFindCur(0);
     setFindTruncated(false);
-    unpaint();
+    clearMark();
   }
   async function run(query: string) {
     const current = latestOwner(ctx.requests, "find", ctx.owner);
@@ -156,7 +163,7 @@ export function createPdfFind(ctx: {
     matches = acc;
     setFindCount(acc.length);
     if (acc.length) navigate(0);
-    else { setFindCur(0); unpaint(); }
+    else { setFindCur(0); clearMark(); }
   }
   function runReported(query: string) {
     run(query).catch((error) => reportUiFailure("pdf-find", error));
@@ -175,7 +182,7 @@ export function createPdfFind(ctx: {
   async function gotoMatch(index: number) {
     const length = matches.length;
     if (!length) return;
-    // The newest navigation owns the selection; a closed Find, a new query or a
+    // The newest navigation owns the mark; a closed Find, a new query or a
     // teardown retires it, and it never rereads the mutable `matches` after an
     // await (I-20/I-21).
     const current = latestOwner(ctx.requests, "find-goto", ctx.owner, findOpen);
@@ -241,7 +248,7 @@ export function createPdfFind(ctx: {
     setFindOpen(false);
     // Closing retires the pending debounce, any running scan and navigation.
     cancel();
-    unpaint();
+    clearMark();
   }
   function cancel() { clearTimeout(debounce); latestOwner(ctx.requests, "find"); retireNavigation(); }
   return { findOpen, findQuery, findCount, findCur, findTruncated,
