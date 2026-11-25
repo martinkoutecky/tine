@@ -860,7 +860,7 @@ fn write_snapshot(
     source: BackupSource,
     suffix: &str,
     cancelled: &dyn Fn() -> bool,
-    keep: usize,
+    keep: Option<usize>,
     lock_wait: std::time::Duration,
 ) -> BackupOutcome {
     let capture = match capture(store, source, cancelled, Budget::archive()) {
@@ -1012,7 +1012,7 @@ fn publish_locked(
     zips: &std::path::Path,
     capture: Capture,
     suffix: &str,
-    keep: usize,
+    keep: Option<usize>,
 ) -> BackupOutcome {
     let n = capture.files.len();
     // D4: every recognized name, partials included, is reserved before a
@@ -1150,9 +1150,15 @@ struct Candidate {
 fn maintain_locked(
     base: &std::path::Path,
     zips: &std::path::Path,
-    keep: usize,
+    keep: Option<usize>,
     fresh: Option<&std::path::Path>,
 ) {
+    // An unknown keep count authorizes no retirement, of a healthy or a
+    // damaged snapshot, and no verification work.
+    let Some(keep) = keep else {
+        crate::debug::diag_private("backup-prune-skipped", "keep count unknown".to_string());
+        return;
+    };
     let scan = match scan(base, zips) {
         Ok(scan) => scan,
         Err(error) => {
@@ -1297,7 +1303,7 @@ fn prune_now(base: &std::path::Path, keep: usize, lock_wait: std::time::Duration
         &zips.join(naming::LOCK_FILE),
         std::time::Instant::now() + lock_wait,
     ) {
-        Ok(Some(_lock)) => maintain_locked(base, &zips, keep, None),
+        Ok(Some(_lock)) => maintain_locked(base, &zips, Some(keep), None),
         Ok(None) => crate::debug::diag_private("backup-busy", "prune"),
         Err(error) => crate::debug::diag_private("backup-prune-skipped", error.to_string()),
     }
@@ -1318,10 +1324,10 @@ fn backup_keep_at(settings: &std::path::Path) -> std::io::Result<usize> {
         .map_or(BACKUP_KEEP_DEFAULT, |n| (n as usize).max(1)))
 }
 
-/// The keep count a retention pass may delete by. With the count unknown it
-/// keeps every snapshot: a failed settings read never deletes a backup.
-fn retention_keep_at(settings: &std::path::Path) -> usize {
-    backup_keep_at(settings).unwrap_or(usize::MAX)
+/// The keep count a retention pass may retire by: `None` while the settings
+/// file cannot be read, and the pass then does not run.
+fn retention_keep_at(settings: &std::path::Path) -> Option<usize> {
+    backup_keep_at(settings).ok()
 }
 
 /// One row of Settings' Backups list. `id` names the namespace
