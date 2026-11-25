@@ -280,16 +280,53 @@ fn a_source_overwritten_in_place_during_its_witness_keeps_custody() {
 /// Reopen: the path is replaced by another file with the same bytes
 /// after the chain's syncs (a reopen): the final check sees another file,
 /// so the witness fails. The plain witness flushes once and reads twice.
+/// A launch with no decided source is develop's directory pass: no
+/// directory identity is taken and no evidence kept; with one decided
+/// source, only its chain's directories are identified.
+#[test]
+fn a_launch_without_decided_sources_takes_no_witness_evidence() {
+    use crate::page_host::production::{DIR_IDS, DIR_SYNCS};
+    let root = tempfile::tempdir().unwrap();
+    let (graph, app) = (root.path().join("graph"), root.path().join("app"));
+    let trash = graph.join("logseq/.tine-trash/pages");
+    fs::create_dir_all(&app).unwrap();
+    let mut pages = BTreeSet::new();
+    for dir in ["a", "b/c", "d"] {
+        fs::create_dir_all(graph.join(dir)).unwrap();
+        let page = format!("{dir}/p.md");
+        fs::write(graph.join(&page), "- x\n").unwrap();
+        pages.insert(page);
+    }
+    let mut io = ProductionIo::attach(&graph, &app, "ids", &trash);
+    DIR_IDS.with(|ids| ids.set(0));
+    DIR_SYNCS.with(|syncs| syncs.set(0));
+    assert!(io.graph_launch(&pages, &[]).is_empty());
+    assert_eq!(DIR_IDS.with(std::cell::Cell::get), 0);
+    let plain = DIR_SYNCS.with(|syncs| syncs.replace(0));
+    // Graph root, a, b, b/c, d.
+    assert_eq!(plain, 5);
+    let source = ("b/c/p.md".to_string(), Some(Arc::from(&b"- x\n"[..])));
+    let witnessed = io.graph_launch(&pages, &[source]);
+    assert!(!matches!(witnessed[0], SourceWitness::Failed(_)));
+    // The source's chain (graph root, b, b/c), identified when synced and
+    // again at the final check; the directory syncs are unchanged.
+    assert_eq!(DIR_IDS.with(std::cell::Cell::get), 6);
+    assert_eq!(DIR_SYNCS.with(std::cell::Cell::get), plain);
+}
+
 #[test]
 fn the_witness_fails_when_the_path_names_another_file_afterwards() {
     let mut f = fixture();
     let (path, graph) = (f.graph.join("a.md"), f.graph.clone());
     WITNESS_READS.with(|reads| reads.set(0));
     crate::atomic_file::FILE_SYNCS.with(|syncs| syncs.set(0));
-    assert_eq!(
-        f.host.fs.source_witnessed("a.md", &bytes(OLD)),
+    // A successful witness is weak on Windows by design.
+    let good = if cfg!(windows) {
+        SourceWitness::Weak
+    } else {
         SourceWitness::Durable
-    );
+    };
+    assert_eq!(f.host.fs.source_witnessed("a.md", &bytes(OLD)), good);
     assert_eq!(WITNESS_READS.with(std::cell::Cell::get), 2);
     assert_eq!(crate::atomic_file::FILE_SYNCS.with(std::cell::Cell::get), 1);
     before_witness_step(WitnessStep::Replaced, move || {

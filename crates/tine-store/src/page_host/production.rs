@@ -268,13 +268,12 @@ impl ProductionIo {
 
     /// Sync each of `dirs` once (root first: a `BTreeSet` orders a parent
     /// before its children), recording its identity first. A directory that
-    /// fails the containment check is skipped and recorded as such.
-    /// `count`: each sync counts as a host fsync (`cost_counters`, outside
-    /// launch, whose pass the counters never included).
+    /// fails the containment check is skipped and recorded as such. Each
+    /// sync counts as a host fsync (`cost_counters`; the launch pass, which
+    /// the counters never included, does not use this).
     fn sync_chain(
         &self,
         dirs: std::collections::BTreeSet<PathBuf>,
-        count: bool,
     ) -> BTreeMap<PathBuf, ChainSync> {
         (dirs.into_iter())
             .map(|dir| {
@@ -283,10 +282,7 @@ impl ProductionIo {
                 }
                 let id = directory_id(&dir);
                 #[cfg(feature = "test-faults")]
-                if count {
-                    crate::cost_counters::fsync();
-                }
-                let _ = count;
+                crate::cost_counters::fsync();
                 let result = self.sync_graph_directory(&dir);
                 (dir, (Some(result), id))
             })
@@ -644,6 +640,9 @@ thread_local! {
     /// Graph directory syncs asked for (`sync_graph_directory`), for cost
     /// tests.
     pub(super) static DIR_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Directory identities taken for a witness chain (`directory_id`), for
+    /// cost tests.
+    pub(super) static DIR_IDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Run once just before the witness's step (another program acting
     /// between two of its steps).
     pub(super) static WITNESS_HOOK: std::cell::RefCell<Option<WitnessHook>> =
@@ -673,6 +672,8 @@ fn witness_hook(step: WitnessStep) {
 /// none elsewhere): a directory replaced while its chain was synced makes
 /// the witness fail.
 fn directory_id(dir: &Path) -> Option<(u64, u64)> {
+    #[cfg(test)]
+    DIR_IDS.with(|ids| ids.set(ids.get() + 1));
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -829,7 +830,9 @@ impl HostIo for ProductionIo {
         // (REVIEW-2b-r2 R1). A trash directory that does not exist is skipped.
         // The decided sources' witnesses share this pass: their file steps
         // first, one handle at a time, then each directory synced once, then
-        // their final checks; the directory syncs stay the launch's own.
+        // their final checks; the directory syncs stay the launch's own. Only
+        // the directories of those sources' chains keep evidence (identity and
+        // result): with no decided source the pass is the plain one above.
         let reads: Vec<_> = (sources.iter())
             .map(|(page, bytes)| {
                 let path = self.page_path(page);
@@ -838,13 +841,8 @@ impl HostIo for ProductionIo {
             })
             .collect();
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
-        let paths = (pages.iter().map(|page| self.page_path(page))).chain(
-            reads
-                .iter()
-                .filter(|(_, read)| read.is_ok())
-                .map(|(path, _)| path.clone()),
-        );
-        for path in paths.collect::<Vec<_>>() {
+        for page in pages {
+            let path = self.page_path(page);
             if self.check_path(&path).is_err() {
                 continue;
             }
@@ -855,13 +853,36 @@ impl HostIo for ProductionIo {
                 .filter(|dir| dir.try_exists().unwrap_or(true))
                 .map(Path::to_path_buf),
         );
-        let synced = self.sync_chain(directories, false);
-        self.launch_warnings = (synced.iter())
-            .filter_map(|(dir, (result, _))| match result {
-                Some(Err(error)) => Some((dir.clone(), error.kind())),
-                _ => None,
-            })
-            .collect();
+        let mut witnessed = std::collections::BTreeSet::new();
+        for (path, _) in reads.iter().filter(|(_, read)| read.is_ok()) {
+            if self.check_path(path).is_ok() {
+                witnessed.extend(chain(&self.graph, path.parent().unwrap()).map(Path::to_path_buf));
+            }
+        }
+        directories.extend(witnessed.iter().cloned());
+        self.launch_warnings.clear();
+        let mut synced: BTreeMap<PathBuf, ChainSync> = BTreeMap::new();
+        for directory in directories {
+            let evidence = witnessed.contains(&directory);
+            if self.check_path(&directory).is_err() {
+                if evidence {
+                    synced.insert(directory, (None, None));
+                }
+                continue;
+            }
+            let id = if evidence {
+                directory_id(&directory)
+            } else {
+                None
+            };
+            let result = self.sync_graph_directory(&directory);
+            if let Err(error) = &result {
+                self.launch_warnings.push((directory.clone(), error.kind()));
+            }
+            if evidence {
+                synced.insert(directory, (Some(result), id));
+            }
+        }
         let mut now = BTreeMap::new();
         (reads.into_iter())
             .map(|(path, read)| self.witness_end(&path, read, &synced, &mut now))
@@ -1045,7 +1066,6 @@ impl HostIo for ProductionIo {
                 chain(&self.graph, path.parent().unwrap())
                     .map(Path::to_path_buf)
                     .collect(),
-                true,
             ),
             Err(_) => BTreeMap::new(),
         };
