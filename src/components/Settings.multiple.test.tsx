@@ -51,3 +51,15 @@ it("shows conflicts in secondary keys and retains default aliases when adding", 
   await press("F9");
   expect(shortcutOverrides()["ui/open-settings"]).toEqual(["t s", "mod+,", "f9"]);
 });
+
+it("a default alias the user bound to another command is not shown, conflicted or kept when adding (GH #1044)", async () => {
+  setShortcutOverrides({});
+  mount(); await tick();
+  expect(row("editor/redo").querySelector(".help-shortcut-alias")?.textContent).toContain("+y");
+  setShortcutOverrides({ "editor/insert-link": "mod+y" }); await tick();
+  expect(row("editor/redo").querySelector(".help-shortcut-alias")).toBeNull();
+  expect(row("editor/insert-link").querySelector('[role="status"]')).toBeNull();
+  row("editor/redo").querySelector<HTMLButtonElement>('button[title="Add keybinding"]')!.click(); await tick();
+  await press("F9");
+  expect(shortcutOverrides()["editor/redo"]).toEqual(["mod+shift+z", "f9"]);
+});

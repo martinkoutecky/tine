@@ -166,14 +166,10 @@ interface CommandDef {
   run?: () => void;
   /** Offered in the palette only while this holds (e.g. a desktop-only command). */
   available?: () => boolean;
-  /** A SECOND default chord that runs the same command: a platform convention a
-   *  user will certainly try and that Logseq does not bind, so the key reaches
-   *  the command it obviously means without displacing Logseq's own binding or
-   *  taking a second row in Settings. An alias is a default, not an override: the
-   *  moment the user binds the command themselves, their chord is the only one,
-   *  because an alias they can neither see in the recorder nor reset must not
-   *  outlive their choice. Global scope only; it loses every collision with a
-   *  primary binding. */
+  /** A SECOND default chord for the same command (Logseq's second key, or a platform convention), without a
+   *  second row in Settings. A default, not an override: once the user binds the command, or its chord to any
+   *  command, it is gone (`liveAlias`), since they can neither see it in the recorder nor reset it. Global scope
+   *  only; it loses every collision with a primary binding. */
   alias?: string;
   /** When false (default), a global command does not fire while typing in an
    *  editor unless its chord includes a modifier. */
@@ -497,12 +493,10 @@ const COMMANDS: CommandDef[] = [
   // Carry the Settings-configured number of days.
   { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
-  // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
-  // shows and remaps. Ctrl+Y is the Windows/Linux convention for redo and Logseq
-  // leaves it unbound, so pressing it was silence (GH #491, master 2721c0126). It
-  // rides along as an alias so the shortcuts list keeps one Redo row. Not on
-  // macOS: there Ctrl+Y is the system's Emacs-style yank inside every text field.
-  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
+  // Logseq binds redo to mod+shift+z and mod+y (GH #491, #1044): the first is the binding Settings shows and
+  // remaps, the second an alias (Ctrl+Y on Windows and Linux, Cmd+Y on macOS, whose physical Ctrl+Y stays the
+  // system's yank in text fields), so the shortcuts list keeps one Redo row.
+  { id: "editor/redo", binding: "mod+shift+z", alias: "mod+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
   // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
@@ -951,6 +945,12 @@ export function runGlobalCommand(id: string): boolean {
   return true;
 }
 
+/** The alias that runs `command` under the user's bindings, or undefined once they bound the command, or its
+ *  chord to any command in any scope. The dispatcher and Settings both ask here. Cost: O(overrides). */
+export function liveAlias({ id, alias }: { id: string; alias?: string }, overrides: Record<string, ShortcutBinding>): string | undefined {
+  return alias && !(id in overrides) && !Object.values(overrides).some((b) => shortcutBindingsConflict(b, alias)) ? alias : undefined;
+}
+
 /** Built-in command defaults (id + label + default binding) for the Settings
  *  remap UI, which computes the effective binding reactively from these plus
  *  config.edn and the user's local overrides. Call from a reactive consumer:
@@ -1111,12 +1111,11 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   }
 
   // Global dispatch list (sequences + global chords). Aliases come last, so a
-  // primary binding always wins a collision, and are dropped for any command the
-  // user has bound themselves.
+  // primary binding always wins a collision, and only live ones are listed.
   const primary = allCommands.filter((c) => c.scope === "global" && c.run)
     .flatMap((c) => bindings[c.id].map((chords) => ({ ...c, chords })));
   const aliased = allCommands
-    .filter((c) => c.scope === "global" && c.run && c.alias && !(c.id in overrides))
+    .filter((c) => c.scope === "global" && c.run && liveAlias(c, overrides))
     .map((c) => ({ ...c, chords: parseBinding(c.alias!) }));
   const commands = [...primary, ...aliased];
 
