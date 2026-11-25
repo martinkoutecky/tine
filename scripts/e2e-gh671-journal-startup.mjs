@@ -34,7 +34,7 @@ const SYNTHETIC_TEMPLATE = [
   "alias:: [[template]]", "",
   "- Daily template", "  template:: Daily Template", "  template-including-parent:: false",
   "\t- {{renderer :todomaster}}", "\t- Prepare", "\t\t- Energy check", "\t\t- Goals", "\t\t\t-",
-  "\t- Notes", "\t- Reflect", "\t\t- **Highlights**", "\t\t\t-",
+  "\t- ## Heading row", "\t- Notes", "\t- Reflect", "\t\t- **Highlights**", "\t\t\t-",
   "- [[Project/Part 2]]", "  template:: Part 2 pipeline", "\t- Step one", "",
 ].join("\n");
 const TEMPLATE = process.env.GH671_TEMPLATE_FILE ? fs.readFileSync(process.env.GH671_TEMPLATE_FILE, "utf8") : SYNTHETIC_TEMPLATE;
@@ -69,6 +69,10 @@ for (const mode of ["fresh", "existing", "no-template"]) {
     await browser.$("h1.page-title").waitForExist({ timeout: 30_000 });
     if (mode !== "no-template") await browser.waitUntil(() => browser.execute((needle) => document.body.textContent.includes(needle),
       mode === "fresh" ? "Prepare" : "EXISTING-JOURNAL-SENTINEL"), { timeout: 30_000 });
+    // GH #1036: a heading block the template made is a heading at once, not only after a restart.
+    if (mode === "fresh" && TEMPLATE === SYNTHETIC_TEMPLATE) await browser.waitUntil(() => browser.execute(() =>
+      [...document.querySelectorAll(".heading-text.h2")].some((h) => h.textContent === "Heading row")),
+      { timeout: 10_000, timeoutMsg: "the template's heading block is not shown as a heading" });
     const error = await browser.$(".page-load-error").isExisting();
     if (error) throw new Error("Journals route displayed a load error");
   }
