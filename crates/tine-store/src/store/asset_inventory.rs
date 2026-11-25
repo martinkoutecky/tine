@@ -79,7 +79,7 @@ impl Snapshot {
 impl Store {
     /// Asset references from every published physical page file, including
     /// duplicate-day journals omitted from queries: a file is referenced when
-    /// the set holds its [`tine_core::asset_refs::live_key`]. Waits for launch reconciliation.
+    /// [`tine_core::asset_refs::is_live`] finds it in the set. Waits for launch reconciliation.
     /// An unreadable or unanalyzable file fails the inventory, naming that file.
     /// No writes and nothing persisted; only set-aside files are read and
     /// parsed. Cost O(referenced names) plus those set-aside files' bytes,
@@ -115,15 +115,15 @@ impl Store {
 
     // The orphan-trash guard holds the writer through this check and the move.
     // A listing uses its captured view; the guard rechecks the latest view.
-    /// Whether any published page file references asset `name`, compared by
-    /// its live key ([`tine_core::asset_refs::live_key`]). Cost O(log A) on
+    /// Whether any published page file references asset `name`, as
+    /// [`tine_core::asset_refs::is_live`] compares it. Cost O(log A) on
     /// the view's asset index plus the set-aside files' bytes; the index is
     /// built here only if no earlier reader warmed it.
     pub(crate) fn asset_referenced_in(&self, view: &WholeGraph, name: &str) -> io::Result<bool> {
         let set_aside = self.set_aside_asset_refs(view)?;
-        // Both sets hold live keys, so `name` is compared by its key.
-        let name = &tine_core::asset_refs::live_key(name);
-        Ok(set_aside.contains(name) || view.graph.asset_refs().references(name))
+        Ok(tine_core::asset_refs::is_live(name, |name| {
+            set_aside.contains(name) || view.graph.asset_refs().references(name)
+        }))
     }
 
     /// Asset references of the files set aside from `view`'s parsed pages,

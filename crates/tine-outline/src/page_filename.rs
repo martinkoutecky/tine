@@ -143,8 +143,9 @@ pub fn decode_uri_component(text: &str) -> Option<String> {
 /// is not keeps its escape text as written. Other text is copied. A run holds
 /// only escaped bytes, and an unescaped character never continues an escaped
 /// lead byte (its first byte is not a continuation byte), so a run decodes on
-/// its own.
-fn decode_escapes_keeping_malformed(text: &str) -> String {
+/// its own. The one Rust lenient decoder: asset liveness (`tine-core`
+/// `asset_refs`) asks it too. O(bytes).
+pub fn decode_escapes_keeping_malformed(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;

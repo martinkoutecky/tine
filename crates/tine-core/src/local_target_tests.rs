@@ -299,7 +299,7 @@ fn liveness_only_adds_names_when_references_disagree() {
 fn is_live(text: &str, name: &str) -> bool {
     let mut live = HashSet::new();
     crate::asset_refs::collect_live_asset_refs(text, &mut live);
-    live.contains(&crate::asset_refs::live_key(name))
+    crate::asset_refs::is_live(name, |name| live.contains(name))
 }
 
 /// The destination text a reader hands its helpers for a row: the parser's
@@ -340,7 +340,7 @@ fn destinations_of(row: &Value) -> Vec<String> {
 }
 
 /// The widening rule's property over the shared table: for every row, every
-/// file name any answerer gives is live (compared by `live_key`, as the
+/// file name any answerer gives is live (compared by `is_live`, as the
 /// orphan list and trash compare). Rust answerers: the owner (attachment and
 /// both PDF readers' names), develop's collector, and the reader's helpers
 /// `asset_rel_path` (raw and decoded, as images and asset links read it) and
@@ -385,7 +385,7 @@ fn liveness_keeps_every_name_any_answerer_gives() {
             }
         }
         for (name, who) in names {
-            if !crate::asset_refs::live_key(&name).is_empty() && !is_live(source, &name) {
+            if !name.is_empty() && !is_live(source, &name) {
                 failures.push(format!("{id} {source:?}: {who} {name:?} not live"));
             }
         }
@@ -448,6 +448,86 @@ fn liveness_keeps_the_files_develop_offered_for_trash() {
         .map(|(text, name)| format!("{text:?} leaves {name:?} trashable"))
         .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The second review's traces where a file a surface uses stays trashable:
+/// whitespace-only names the fold empties, `hls__` pointers the parser reads
+/// (any key case, Org directives and drawers, an extensionless PDF), an image
+/// macro split at U+FEFF, and a graph-file link through a second `assets`
+/// segment to an extensionless file.
+#[test]
+fn liveness_keeps_the_files_the_second_review_found_trashable() {
+    let cases: &[(&str, &str)] = &[
+        // B1: a name the fold empties keeps develop's exact match.
+        ("[blank](../assets/%20)", " "),
+        ("[blank](../assets/%20%20)", "  "),
+        ("[blank](../assets/%09)", "\t"),
+        ("[blank](../assets/%0A)", "\n"),
+        ("[blank](../assets/%C2%A0)", "\u{a0}"),
+        ("[blank](../assets/%E3%80%80)", "\u{3000}"),
+        // B2: the parser's property values, any key case and Org form.
+        ("File-Path:: ../assets/m.pdf", "m.pdf"),
+        ("FILE-path:: report.pdf", "report.pdf"),
+        ("#+File-Path: o.pdf", "o.pdf"),
+        (":PROPERTIES:\n:file-path: d.pdf\n:END:\n", "d.pdf"),
+        ("file-path:: /outside/report", "report"),
+        // B4: the reader splits the macro at U+FEFF.
+        ("{{img ../assets/x.png\u{feff}100}}", "x.png"),
+        ("{{IMG ../ASSETS/y.png\u{feff}center}}", "y.png"),
+        // B5: the opener applies `..` before it finds the `assets` folder.
+        ("[x](%61ssets/../%61ssets/README)", "README"),
+        ("[x](file:%61ssets/../%61ssets/NOTES)", "NOTES"),
+        ("[[file:%61ssets/../%61ssets/LICENSE][x]]", "LICENSE"),
+        ("[x](assets/sub/../../assets/CHANGES)", "CHANGES"),
+    ];
+    let failures: Vec<String> = cases
+        .iter()
+        .filter(|(text, name)| !is_live(text, name))
+        .map(|(text, name)| format!("{text:?} leaves {name:?} trashable"))
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Membership only widens: a set holding a whitespace-only name as written
+/// matches exactly that entry, and an entry is never matched through an
+/// empty key.
+#[test]
+fn membership_keeps_the_exact_match_for_names_the_fold_empties() {
+    let set: HashSet<String> = [" ".to_owned()].into();
+    assert!(crate::asset_refs::is_live(" ", |n| set.contains(n)));
+    let empty_key: HashSet<String> = ["".to_owned()].into();
+    assert!(!crate::asset_refs::is_live("  ", |n| empty_key.contains(n)));
+}
+
+/// The parse prefilter reads each line a bounded number of times: a closer
+/// is never searched for past its line, so a long block of unclosed `[[`,
+/// `{{` or `](<` lines costs O(text bytes) (second review, B3). Counts the
+/// bytes handed to the closer searches.
+#[test]
+fn the_destination_prefilter_never_searches_past_a_line() {
+    use crate::asset_refs::PREFILTER_SEARCHED;
+    for unit in ["[[a\n", "{{a\n", "[x](<a\n"] {
+        let text = unit.repeat(4096);
+        PREFILTER_SEARCHED.with(|n| n.set(0));
+        let mut live = HashSet::new();
+        crate::asset_refs::collect_live_asset_refs(&text, &mut live);
+        let searched = PREFILTER_SEARCHED.with(|n| n.get());
+        assert!(
+            searched <= 2 * text.len(),
+            "{unit:?}: searched {searched} bytes of {}",
+            text.len()
+        );
+    }
+}
+
+/// One lenient decoder (I-12): liveness asks `tine-outline`'s, it keeps no
+/// copy of its own.
+#[test]
+fn liveness_has_no_decoder_of_its_own() {
+    let source = include_str!("asset_refs.rs");
+    assert!(source.contains("decode_escapes_keeping_malformed"));
+    assert!(!source.contains("utf8_chunks"));
+    assert!(is_live("![](../ASSETS/A%ff%20B.png)", "A%ff B.png"));
 }
 
 /// The widening rule decodes once, as every surface does: a twice-escaped

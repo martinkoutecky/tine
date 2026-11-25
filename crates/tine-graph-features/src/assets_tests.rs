@@ -260,3 +260,60 @@ fn an_in_use_attachment_is_never_offered_for_trash() {
     );
     store.close();
 }
+
+/// Through the store, the second review's traces: a whitespace-only name the
+/// fold empties, `hls__` pointers through the parser (mixed-case Markdown
+/// key, Org directive, Org drawer, an extensionless PDF outside `assets/`),
+/// an image macro split at U+FEFF, and a graph-file link through a second
+/// `assets` segment to an extensionless file. Each stays off the orphan list
+/// and the trash recheck refuses it.
+#[test]
+fn the_second_reviews_in_use_files_are_never_offered_for_trash() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for folder in ["pages", "journals", "assets"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let page = [
+        "- [blank](../assets/%20)",
+        "- [tab](../assets/%09)",
+        "- [nbsp](../assets/%C2%A0)",
+        "- [wide](../assets/%E3%80%80)",
+        "- {{img ../assets/x.png\u{feff}100}}",
+        "- [x](%61ssets/../%61ssets/README)",
+    ];
+    std::fs::write(root.join("pages/a.md"), page.join("\n") + "\n").unwrap();
+    for (file, text) in [
+        ("pages/hls__m.md", "File-Path:: ../assets/m.pdf\n\n- h\n"),
+        ("pages/hls__r.md", "file-path:: /outside/report\n\n- h\n"),
+        ("pages/hls__o.org", "#+File-Path: o.pdf\n\n* h\n"),
+        (
+            "pages/hls__d.org",
+            ":PROPERTIES:\n:file-path: d.pdf\n:END:\n\n* h\n",
+        ),
+    ] {
+        std::fs::write(root.join(file), text).unwrap();
+    }
+    let shown = [
+        " ", "\t", "\u{a0}", "\u{3000}", "x.png", "README", "m.pdf", "report", "o.pdf", "d.pdf",
+    ];
+    for name in shown.iter().chain(&["unused.png"]) {
+        std::fs::write(root.join("assets").join(name), b"x").unwrap();
+    }
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
+    let orphans: Vec<String> = orphan_assets(&store)
+        .unwrap()
+        .into_iter()
+        .map(|asset| asset.name)
+        .collect();
+    assert_eq!(orphans, ["unused.png"], "in use but listed as unused");
+    for name in shown {
+        assert_eq!(
+            trash_asset(&store, name).unwrap(),
+            TrashOutcome::Referenced,
+            "{name:?}"
+        );
+        assert!(root.join("assets").join(name).exists(), "{name:?}");
+    }
+    store.close();
+}

@@ -113,16 +113,21 @@ image embed, Org link and `img` macro URL the parser reports; its attachment
 is added (a folder literally written `assets`, in any case, the name after it
 decoded once), with its first folder. The third is one generous widening
 rule (`widen_one`) over every destination the parser reports (links, macro
-arguments), every `file-path` pointer, and every `assets` mention in the text,
-in its percent-decoded views, in the attribute values the HTML sanitizer keeps
-and in Hiccup strings: the text after the first `assets` folder (any case,
-`/`, `\` or `%5C`), raw, decoded once and decoded leniently, with and without
-a `?`/`#` suffix, normalized, with its first folder, and for a parsed
-destination or pointer its dotted basename (a bare `x.pdf`, a relative image).
-The orphan list and the trash recheck compare a directory entry by its live
-key (`live_key`: the file-name fold the store's leaf identity uses, coarser
-than any volume's equivalence), so the added names can only keep a file off
-the unused list. Until the reader asks the same owner, the collector's own
+arguments split at both Rust's and ECMAScript's whitespace), every
+`file-path` property the parser reads (Markdown properties, Org drawers and
+directives, any key case), and every `assets` mention in the text, in its
+percent-decoded views, in the attribute values the HTML sanitizer keeps and in
+Hiccup strings: the text after the first `assets/`, after the first and the
+last `assets` folder and after the `assets` folder of the path with `..`
+applied (any case, `/`, `\` or `%5C`), raw, decoded once and decoded
+leniently, with and without a `?`/`#` suffix, normalized, with its first
+folder, and for a parsed destination or pointer its basename, dotted or not (a
+bare `x.pdf`, a relative image, an extensionless file). The orphan list and
+the trash recheck call a directory entry live when the set holds it as
+written or holds its non-empty live key (`is_live`; `live_key` is the
+file-name fold the store's leaf identity uses, coarser than any volume's
+equivalence), so membership is a superset of the exact match and the added
+names can only keep a file off the unused list. Until the reader asks the same owner, the collector's own
 answer stays the base, so no change to the owner can make a shown file unused.
 Export does not ask the owner yet: it copies the collector's own answer (the
 decoded spelling, without folder markers), until a later step makes export
