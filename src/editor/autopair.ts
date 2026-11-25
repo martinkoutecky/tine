@@ -64,6 +64,13 @@ function shouldAutoClose(next: string | undefined): boolean {
   return !next || /\s/.test(next) || CLOSERS.has(next);
 }
 
+/** A quote or backtick typed right after a letter or a digit closes what an earlier
+ *  one opened (`"hello` + `"`), so it gets no partner (GH #1020). Brackets have a
+ *  distinct opener and never hit this. The same rule as VS Code and CodeMirror. */
+function closesAfterWord(typed: string, before: string | undefined): boolean {
+  return PAIRS[typed] === typed && before !== undefined && /[\p{L}\p{N}]/u.test(before);
+}
+
 /** Post-input auto-pairing (run from `onInput`, AFTER the browser inserted the
  *  single char `typed`). Returns the adjusted `{value, caret}` or null when
  *  nothing should change. Handles, in order:
@@ -72,7 +79,8 @@ function shouldAutoClose(next: string | undefined): boolean {
  *   2. skip-over — typing a closer that already sits right after the caret steps
  *      over it instead of stacking a duplicate;
  *   3. single pair insert — typing an opener at a boundary inserts its closer,
- *      caret between. */
+ *      caret between; a quote or backtick right after a letter or digit is a
+ *      closer and inserts nothing. */
 export function autoPairInsertOnInput(
   value: string,
   caret: number,
@@ -92,7 +100,7 @@ export function autoPairInsertOnInput(
   }
   // 3) Single pair insert.
   const closer = PAIRS[typed];
-  if (closer && shouldAutoClose(value[caret])) {
+  if (closer && shouldAutoClose(value[caret]) && !closesAfterWord(typed, value[caret - 2])) {
     return { value: value.slice(0, caret) + closer + value.slice(caret), caret };
   }
   return null;

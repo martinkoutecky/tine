@@ -30,6 +30,38 @@ describe("autoPairInsertOnInput — single pair insert", () => {
   });
 });
 
+describe("autoPairInsertOnInput — a quote after a word closes (GH #1020)", () => {
+  // `type(v, c, ch)` inserts `ch` at `c` first, as the browser does.
+  it("adds no second quote after a letter or a digit", () => {
+    expect(type('{{y "hello}}', 10, '"')).toEqual({ value: '{{y "hello"}}', caret: 11 }); // the report
+    expect(type('say "hello', 10, '"')).toEqual({ value: 'say "hello"', caret: 11 }); // end of the block
+    expect(type('"hello now', 6, '"')).toEqual({ value: '"hello" now', caret: 7 }); // before a space
+    expect(type('"ano', 4, '"')).toEqual({ value: '"ano"', caret: 5 });
+    expect(type('"žluťoučký', 10, '"')).toEqual({ value: '"žluťoučký"', caret: 11 }); // not only ASCII
+    expect(type('"2026', 5, '"')).toEqual({ value: '"2026"', caret: 6 });
+    expect(type("`code", 5, "`")).toEqual({ value: "`code`", caret: 6 });
+  });
+
+  it("still pairs a quote that opens: at the start, after a space, an opener or punctuation", () => {
+    expect(type("say ", 4, '"')).toEqual({ value: 'say ""', caret: 5 });
+    expect(type("{{y }}", 4, '"')).toEqual({ value: '{{y ""}}', caret: 5 });
+    expect(type("()", 1, '"')).toEqual({ value: '("")', caret: 2 });
+    expect(type("a: ", 3, "`")).toEqual({ value: "a: ``", caret: 4 });
+    expect(type("_", 1, '"')).toEqual({ value: '_""', caret: 2 }); // an emphasis mark is not a word
+  });
+
+  it("leaves brackets alone: they open after a word as before", () => {
+    expect(type("f", 1, "(")).toEqual({ value: "f()", caret: 2 });
+    expect(type("see", 3, "[")).toEqual({ value: "see[]", caret: 4 });
+  });
+
+  it("typing the text of the report key by key gives it back", () => {
+    let state = { value: "", caret: 0 };
+    for (const ch of '{{y "hello"}}') state = type(state.value, state.caret, ch);
+    expect(state).toEqual({ value: '{{y "hello"}}', caret: 13 });
+  });
+});
+
 describe("autoPairInsertOnInput — skip-over", () => {
   it("types through a closer that already follows the caret", () => {
     // In `(|)`, typing `)` steps over instead of stacking `())`.
