@@ -433,6 +433,84 @@ fn gh811_an_in_place_write_during_the_publication_read_reaches_the_watcher() {
     assert_ne!(stamp.rev(), Some(&crate::FileRev::from_bytes(b"mine")));
 }
 
+/// Put a copy of `path` with the same bytes in its place, as another program
+/// replacing the file would: same content, another file.
+fn same_bytes_copy(path: &Path) {
+    let copy = path.with_file_name(".copy.tmp");
+    fs::copy(path, &copy).unwrap();
+    fs::rename(&copy, path).unwrap();
+}
+
+/// GH #1033: on Windows with the graph on WSL's share, a page's later save
+/// never landed: every try ended Uncertain ("changed before directory sync")
+/// for a file nothing else touched, and the edit stayed only in the
+/// crash-recovery copy. That volume gives no file IDs (GH #973) and its
+/// stamps of one unchanged file differ, so there the check rereads the path
+/// and compares its bytes with the publication read's.
+/// Scenario: the share reports other times, then another identity, for the
+/// unchanged published file.
+#[test]
+fn gh1033_unchanged_bytes_publish_where_stamps_do_not_identify_files() {
+    crate::root_binding::UNIDENTIFIED_STAMPS.with(|seam| seam.set(true));
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    crate::watch::STAMPS_BY_PATH.with(|count| count.set(0));
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", touch_times);
+    assert_eq!((outcome, step), (Outcome::Published, None), "other times");
+    // The reread replaces the post-sync path probe: no stamp by path.
+    assert_eq!(crate::watch::STAMPS_BY_PATH.with(|count| count.get()), 0);
+    f.edit("a.md", "mine again");
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", same_bytes_copy);
+    assert_eq!(
+        (outcome, step),
+        (Outcome::Published, None),
+        "other identity"
+    );
+    f.edit("a.md", "third");
+    let (outcome, step) = save_with_publication_read(&mut f, "a.md", same_bytes_copy);
+    assert_eq!(
+        (outcome, step),
+        (Outcome::Published, None),
+        "during the read"
+    );
+    assert!(f.host.pages["a.md"].clean());
+    assert_eq!(
+        f.host.storage_diag.snapshot()["pageSaves"]["uncertainProof"]["publicationChanged"],
+        0
+    );
+
+    // Other bytes in its place are still refused there.
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", |path| {
+        let delivered = path.with_file_name(".syncthing.a.md.tmp");
+        fs::write(&delivered, b"theirs").unwrap();
+        fs::rename(&delivered, path).unwrap();
+    });
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+    assert!(f.host.pages["a.md"].risk);
+    crate::root_binding::UNIDENTIFIED_STAMPS.with(|seam| seam.set(false));
+}
+
+/// GH #1033's guard: where stamps identify files, a file another program put
+/// in the page's place is refused even with the same bytes.
+/// Scenario: a sync client renames an identical copy over the page.
+#[cfg(unix)]
+#[test]
+fn gh1033_a_same_bytes_replacement_stays_uncertain_where_stamps_identify_files() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "mine");
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", same_bytes_copy);
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+}
+
 #[test]
 fn storage_diagnostics_count_base_revision_refusal_once() {
     let mut f = Fixture::new();

@@ -116,6 +116,39 @@ impl RootBinding {
             Err(error) => Err(error),
         }
     }
+
+    /// Whether a file's stamp (`watch::Stamp`) on this graph's volume tells
+    /// one file from another, so that two stamps of an unchanged file are
+    /// equal. Decided by the open's identity query: on Windows a volume
+    /// without FileIdInfo (WSL's share, FAT32/exFAT, Samba; GH #973) gives
+    /// no stable file identity or times, and an unchanged file's stamps
+    /// differed there (GH #1033). Unix stamps carry the device and inode of
+    /// the file just read, so this is always true there.
+    pub(crate) fn stamps_identify_files(&self) -> bool {
+        #[cfg(test)]
+        if UNIDENTIFIED_STAMPS.with(std::cell::Cell::get) {
+            return false;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            !matches!(
+                self.identity,
+                Ok(Identity(IdentityKind::Volume(_) | IdentityKind::Present))
+            )
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            true
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: answer `stamps_identify_files` as a volume without file
+    /// IDs would, on every platform.
+    pub(crate) static UNIDENTIFIED_STAMPS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 fn copy_error(error: &io::Error) -> io::Error {

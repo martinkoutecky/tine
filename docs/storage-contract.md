@@ -488,7 +488,7 @@ probes versus six before M3, for both 1 and 60 blocks). The publication read
 stamps its own handle twice: before its bytes, the watcher's own-write stamp
 (GH #623), and after them (GH #811). The post-sync probe compares time, size,
 identity and change time with the post-read stamp, and the two handle stamps
-must share one identity; it reads and hashes no bytes. Reading can itself move
+must share one identity; it reads and hashes no bytes. Where the graph root's identity query finds no file IDs (Windows on WSL's 9P share, FAT32/exFAT, Samba; GH #973), a stamp does not identify a file: WSL's server sends no birth time, so the creation time a Windows stamp uses as identity is the client's invention, and an unchanged file's stamps differed there, failing every save (GH #1033). There the post-sync step rereads the page instead (one open and read of its bytes, no metadata probe) and requires the bytes the publication read read; other bytes, or no file, return Uncertain. A replacement with identical bytes is not caught there; it changes no text. Reading can itself move
 a file's times. On Android shared storage with MediaProvider's FUSE passthrough,
 a rename over a page leaves the replaced file's mtime on the new file, and the
 read copies the backing file's times into the inode, so a pre-read witness
