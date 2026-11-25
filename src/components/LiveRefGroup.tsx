@@ -30,7 +30,7 @@ import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { useOwnerWindow } from "../windowRealm";
-import { registerQueryResultFold } from "../collapseCommandSurface";
+import { registerHostedRows } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
@@ -667,11 +667,16 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   };
   const owner = useContext(OutlineBlankOwner);
   if (owner) bindLiveOutlineSelection(owner, { scope, surface });
-  // GH #792: the one-level fold commands treat a query block's result rows as its children.
-  if (props.surface === "query") onCleanup(registerQueryResultFold({
+  // A whole-block embed's host shows one row, the embed root.
+  const wholeBlockHost = () => props.surface === "embed" && !!props.hostBlockId
+    && isBlockEmbedMacro(detectMacro(docNode(props.hostBlockId)?.raw ?? "", formatForBlock(props.hostBlockId)));
+  // The fold commands walk a query block's result rows as its children (GH #792) and a
+  // whole-block embed host as its root row (GH #1032).
+  if (props.surface === "query" || props.surface === "embed") onCleanup(registerHostedRows({
     hostId: () => props.hostBlockId,
-    roots: liveRoots,
+    roots: props.surface === "query" ? liveRoots : () => wholeBlockHost() && props.embedId && liveRow(props.embedId) ? [props.embedId] : [],
     surface: collapseSurface,
+    inPlace: props.surface === "embed",
   }));
   let lastBulkVersion: number | undefined;
   createEffect(() => {
@@ -763,12 +768,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
             into the host page; the other rows stay surface-local. */}
         <EmbedNavExitContext.Provider value={
           props.surface === "embed" && props.hostBlockId
-            ? { hostBlockId: props.hostBlockId, hostSurface, firstRoot: () => groupedIds()[0], rowHost: (id) => {
-              // D-20261030-EMB: a whole-block host's one bullet is its root row.
-              const host = props.hostBlockId!;
-              return id === props.embedId && isBlockEmbedMacro(detectMacro(docNode(host)?.raw ?? "", formatForBlock(host)))
-                ? { id: host, scope: hostScope, surface: hostSurface } : null;
-            } }
+            ? { hostBlockId: props.hostBlockId, hostSurface, firstRoot: () => groupedIds()[0], rowHost: (id) =>
+              id === props.embedId && wholeBlockHost() ? { id: props.hostBlockId!, scope: hostScope, surface: hostSurface } : null }
             : null
         }>
         {/* Master GH #341: arrow navigation out of an edited block in this group

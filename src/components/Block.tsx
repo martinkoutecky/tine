@@ -239,7 +239,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   };
   const embedRow = useContext(EmbedNavExitContext);
   const rowHost = () => embedRow?.rowHost(props.id) ?? null;
-  bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing, rowHost);
+  bindCollapseCommandSurface(props.id, collapseSurface, outlineScope, editing);
   const collapsed = () => hostFolded(collapseSurface, props.id);
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {

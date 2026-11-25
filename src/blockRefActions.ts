@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandRow, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
+import { commandRowSurface, hostedRowsByHost, type CommandCollapseSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -203,17 +203,23 @@ export function mergeSelectedBlocks(): boolean {
 
 /** How the fold commands (GH #525 / #696 one level, GH #794 set depth) see the
  *  tree under their targets: which rows answer through a local surface (embed
- *  rows, query result groups), what counts as folded, and each block's visible
- *  children. GH #792: a query block's children are its result rows (and any
- *  outline children); the rows fold through their group's local surface, never
- *  the file. */
+ *  rows, query result groups), what counts as folded or foldable, each block's
+ *  visible children, and the pages a change writes. GH #792: a query block's
+ *  children are its result rows (and any outline children); the rows fold
+ *  through their group's local surface, never the file. GH #1032: a whole-block
+ *  embed host is its one row, the embed root, wherever it is
+ *  reached: as a target or as a child. Costs O(mounted groups) once, then O(1)
+ *  per row. */
 interface FoldWalk {
   /** The command targets (empty when the command falls back to the page's roots). */
   parents: string[];
   pageRoots: string[] | null;
   isCollapsed: (id: string) => boolean;
+  foldable: (id: string) => boolean;
   surfaceOf: (id: string) => CommandCollapseSurface | undefined;
   children: (ids: string[]) => string[];
+  /** The page a change to `id` writes inside the command's undo step, if any. */
+  writes: (id: string) => string | undefined;
 }
 
 function foldWalk(pageFallback: boolean): FoldWalk | null {
@@ -226,26 +232,48 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
     if (!pageRoots) return null;
     parents = [];
   }
-  const row = parents.length ? collapseCommandRow(parents[0]) : undefined;
-  const surface = row?.surface;
-  // A selected whole-block embed host folds its visible root row (D-20261030-EMB).
-  if (row) parents = parents.map((id, i) => i === 0 ? row.id : id);
+  const surface = parents.length ? commandRowSurface(parents[0]) : undefined;
+  const hosted = hostedRowsByHost();
+  // A whole-block embed host stands for its root row, which folds through the host.
+  const embedRoot = new Map<string, { row: string; group: CommandCollapseSurface; surface: CommandCollapseSurface } | null>();
+  const rootOf = (id: string) => {
+    if (!embedRoot.has(id)) {
+      const group = hosted.get(id)?.find((g) => g.inPlace && g.roots().length);
+      const row = group?.roots()[0];
+      embedRoot.set(id, group && row ? {
+        row,
+        group: group.surface,
+        surface: { collapsed: () => group.surface.collapsed(row, storedFold(row)), toggle: (_, current) => group.surface.toggle(row, current) },
+      } : null);
+    }
+    return embedRoot.get(id)!;
+  };
   // Result rows answer to the group that shows them, and so do their descendants.
   const rowSurface = new Map<string, CommandCollapseSurface>();
-  const surfaceOf = (id: string): CommandCollapseSurface | undefined => rowSurface.get(id) ?? surface;
+  // Rows below an embed root: their folds are the source's.
+  const sourceRows = new Set<string>();
+  const surfaceOf = (id: string): CommandCollapseSurface | undefined => rootOf(id)?.surface ?? rowSurface.get(id) ?? surface;
   const isCollapsed = (id: string) => {
     const stored = storedFold(id); // `collapsed::`, else a query's authored `:collapsed? true`
     return surfaceOf(id)?.collapsed(id, stored) ?? stored;
   };
+  const foldable = (id: string) => blockHasFoldableBody(rootOf(id)?.row ?? id);
+  const seen = new Set<string>();
   const children = (ids: string[]) => {
     const out = new Set<string>();
     for (const id of ids) {
+      if (seen.has(id)) continue; // an embed of its own ancestor shows no new rows
+      seen.add(id);
+      const root = rootOf(id);
+      const body = root?.row ?? id;
       const own = rowSurface.get(id);
-      for (const child of docNode(id)?.children ?? []) {
-        if (own && !rowSurface.has(child)) rowSurface.set(child, own);
+      for (const child of docNode(body)?.children ?? []) {
+        if (root || sourceRows.has(id)) sourceRows.add(child);
+        const inherited = root?.group ?? own;
+        if (inherited && !rowSurface.has(child)) rowSurface.set(child, inherited);
         out.add(child);
       }
-      for (const group of queryResultFolds(id)) for (const row of group.roots()) {
+      for (const group of hosted.get(body) ?? []) if (!group.inPlace) for (const row of group.roots()) {
         if (!docNode(row)) continue;
         if (!rowSurface.has(row)) rowSurface.set(row, group.surface);
         out.add(row);
@@ -253,24 +281,26 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
     }
     return [...out];
   };
-  return { parents, pageRoots, isCollapsed, surfaceOf, children };
+  // A read-only source writes nothing, so its page must not refuse the whole step.
+  const writes = (id: string) => rootOf(id) || !surfaceOf(id) || (sourceRows.has(id) && blockWritable(id)) ? docNode(id)?.page : undefined;
+  return { parents, pageRoots, isCollapsed, foldable, surfaceOf, children, writes };
 }
 
 /** Apply fold changes as ONE undo step through the existing per-block door.
  *  Occurrence toggles own their persistence: an embed root saves its HOST
- *  property (with its own undo); below it a block embed saves the source's
- *  folds (D-20261030-EMB) and other surfaces change local presentation only.
- *  A source-page undo snapshot would suppress and then lose that host undo. */
+ *  property; below it a block embed saves the source's folds (D-20261030-EMB);
+ *  other surfaces change local presentation only. The step snapshots exactly
+ *  the pages written, so no nested write's own undo is suppressed and lost. */
 function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][], tag: string): void {
   const apply = () => {
     for (const [id, value] of changes) {
-      if (!blockHasFoldableBody(id) || walk.isCollapsed(id) === value) continue;
+      if (!walk.foldable(id) || walk.isCollapsed(id) === value) continue;
       const own = walk.surfaceOf(id);
       if (own) own.toggle(id, walk.isCollapsed(id));
       else setCollapsed(id, value);
     }
   };
-  const written = [...new Set(changes.filter(([id]) => !walk.surfaceOf(id)).map(([id]) => docNode(id)?.page).filter((p): p is string => !!p))];
+  const written = [...new Set(changes.map(([id]) => walk.writes(id)).filter((p): p is string => !!p))];
   if (!written.length) apply();
   else withUndoUnit(tag, written, apply);
 }
@@ -281,11 +311,8 @@ function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][]
 export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   const walk = foldWalk(true);
   if (!walk) return false;
-  const { parents, pageRoots, isCollapsed, children } = walk;
-  const folded = (id: string) => {
-    const n = docNode(id);
-    return !!n && blockHasFoldableBody(id) && isCollapsed(id);
-  };
+  const { parents, pageRoots, isCollapsed, foldable, children } = walk;
+  const folded = (id: string) => !!docNode(id) && foldable(id) && isCollapsed(id);
   // GH #696: one level includes the targets themselves. Collapse folds the
   // children first and the targets once no child is left open; it never opens
   // a target. Expand opens a folded target alone before reaching its children.
@@ -293,9 +320,9 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   let level: string[];
   if (pageRoots) level = pageRoots;
   else if (collapsed) {
-    const open = parents.filter((id) => blockHasFoldableBody(id) && !isCollapsed(id));
+    const open = parents.filter((id) => foldable(id) && !isCollapsed(id));
     const kids = children(open);
-    level = kids.some((id) => blockHasFoldableBody(id) && !isCollapsed(id)) ? kids : open;
+    level = kids.some((id) => foldable(id) && !isCollapsed(id)) ? kids : open;
   } else {
     opened = parents.filter(folded);
     level = opened.length ? [] : children(parents);
@@ -324,7 +351,7 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
 export function setTargetDepth(depth: number): boolean {
   const walk = foldWalk(false);
   if (!walk) return false;
-  const { parents, isCollapsed, children } = walk;
+  const { parents, isCollapsed, foldable, children } = walk;
   // A selection holds a block and its visible descendants: depth is relative to
   // the topmost selected blocks, so a nested selected block is not a second root.
   const set = new Set(parents);
@@ -332,7 +359,7 @@ export function setTargetDepth(depth: number): boolean {
   const changes: [id: string, collapsed: boolean][] = [];
   const visit = (ids: string[], collapsed: boolean) => {
     for (const id of ids) {
-      if (docNode(id) && blockHasFoldableBody(id) && isCollapsed(id) !== collapsed) changes.push([id, collapsed]);
+      if (docNode(id) && foldable(id) && isCollapsed(id) !== collapsed) changes.push([id, collapsed]);
     }
   };
   for (let n = 0; n < depth && level.length; n++) {

@@ -239,3 +239,128 @@ describe("D-20261030-EMB: root fold per host page, source fold as the fallback",
     } finally { a.dispose(); b.dispose(); }
   });
 });
+
+// GH #1032: a whole-block embed child is its source root's row, so the one-level
+// commands see that row (folding through the host) like an ordinary child.
+describe("GH #1032: one-level fold commands on a parent of block embeds", () => {
+  /** Page A: `parent` holding two embeds of `target` and an ordinary `ord` > `ordkid` > `ordgrand`. */
+  function loadParent(opts: { kidCollapsed?: boolean; ordkidCollapsed?: boolean; embedsOnly?: boolean } = {}) {
+    const kid = { ...leaf("kid", "Embedded child", [leaf("grandkid", "Embedded grandchild")]), collapsed: !!opts.kidCollapsed };
+    if (opts.kidCollapsed) kid.raw += "\ncollapsed:: true";
+    const target = leaf("target", "Embedded root\nid:: target", [kid]);
+    const ordkid = { ...leaf("ordkid", "Ordinary child", [leaf("ordgrand", "Ordinary grandchild")]), collapsed: !!opts.ordkidCollapsed };
+    if (opts.ordkidCollapsed) ordkid.raw += "\ncollapsed:: true";
+    const source = page("Source", [target]);
+    loadFeed([page("A", [leaf("parent", "Parent", [
+      leaf("host-1", "{{embed ((target))}}"),
+      leaf("host-2", "{{embed ((target))}}"),
+      ...opts.embedsOnly ? [] : [leaf("ord", "Ordinary", [ordkid])],
+    ])]), source]);
+    vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) =>
+      ids.map((id) => (id === "target" ? { page: "Source", kind: "page", blocks: [{ ...target, children: [] }] } : null)));
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source as never);
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+  }
+  async function editParent(root: HTMLElement) {
+    await vi.waitFor(() => expect(root.querySelectorAll('.embed-block [data-block-id="target"]').length).toBe(2));
+    const content = root.querySelector<HTMLElement>('[data-block-id="parent"] > .block-main .block-content')!;
+    content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    await vi.waitFor(() => expect(editingId()).toBe("parent"));
+  }
+  const hostFolds = () => [blockProperty("host-1", "collapsed"), blockProperty("host-2", "collapsed")];
+
+  it("the reported shape: a parent of embeds only stays open and its embeds fold", async () => {
+    loadParent({ embedsOnly: true });
+    const { root, dispose } = mount("A");
+    try {
+      await editParent(root);
+      runGlobalCommand("editor/collapse-children"); await tick();
+      expect(doc.byId.parent.collapsed).toBe(false);
+      expect(hostFolds()).toEqual(["true", "true"]);
+      expect(root.textContent).toContain("Embedded root");
+      expect(root.textContent).not.toContain("Embedded child");
+      undo(); await tick();
+      expect(hostFolds()).toEqual([null, null]);
+      runGlobalCommand("editor/collapse-children"); await tick();
+      runGlobalCommand("editor/collapse-children"); await tick();
+      expect(doc.byId.parent.collapsed).toBe(true);
+    } finally { dispose(); }
+  });
+
+  it("Collapse folds every child, embeds included, and leaves the parent open; Expand reverses it", async () => {
+    loadParent();
+    const { root, dispose } = mount("A");
+    try {
+      await editParent(root);
+      runGlobalCommand("editor/collapse-children"); await tick();
+      expect(doc.byId.parent.collapsed).toBe(false);
+      expect(hostFolds()).toEqual(["true", "true"]);
+      expect(doc.byId.ord.collapsed).toBe(true);
+      expect(doc.byId.target.collapsed).toBe(false); // the source is not folded by its occurrences
+      expect(root.textContent).not.toContain("Embedded child");
+      expect(root.textContent).toContain("Parent");
+      undo(); await tick(); // one press, one undo step
+      expect(hostFolds()).toEqual([null, null]);
+      expect(doc.byId.ord.collapsed).toBe(false);
+      runGlobalCommand("editor/collapse-children"); await tick();
+      runGlobalCommand("editor/collapse-children"); await tick();
+      expect(doc.byId.parent.collapsed).toBe(true); // no child is left open: the parent folds
+      runGlobalCommand("editor/expand-children"); await tick();
+      expect(doc.byId.parent.collapsed).toBe(false);
+      expect(hostFolds()).toEqual(["true", "true"]);
+      runGlobalCommand("editor/expand-children"); await tick();
+      expect(hostFolds()).toEqual(["false", "false"]);
+      expect(doc.byId.ord.collapsed).toBe(false);
+      expect(root.textContent).toContain("Embedded child");
+    } finally { dispose(); }
+  });
+
+  it("Expand reaches folds below the embed roots and undoes them with the page's in one step", async () => {
+    loadParent({ kidCollapsed: true, ordkidCollapsed: true });
+    const { root, dispose } = mount("A");
+    try {
+      await editParent(root);
+      expect(root.textContent).not.toContain("Embedded grandchild");
+      runGlobalCommand("editor/expand-children"); await tick();
+      expect(doc.byId.kid.collapsed).toBe(false); // below the root: the source's own fold
+      expect(doc.byId.ordkid.collapsed).toBe(false);
+      expect(hostFolds()).toEqual([null, null]);
+      expect(root.textContent).toContain("Embedded grandchild");
+      undo(); await tick();
+      expect(doc.byId.kid.collapsed).toBe(true);
+      expect(doc.byId.ordkid.collapsed).toBe(true);
+    } finally { dispose(); }
+  });
+
+  it("Expand ends on an embed of its own ancestor", async () => {
+    const parent = leaf("parent", "Parent\nid:: parent", [leaf("host-self", "{{embed ((parent))}}")]);
+    loadFeed([page("A", [parent])]);
+    vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) =>
+      ids.map((id) => (id === "parent" ? { page: "A", kind: "page", blocks: [{ ...parent, children: [] }] } : null)));
+    vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const { root, dispose } = mount("A");
+    try {
+      await vi.waitFor(() => expect(root.querySelector('.embed-block [data-block-id="parent"]')).not.toBeNull());
+      const content = root.querySelector<HTMLElement>('[data-block-id="parent"] > .block-main .block-content')!;
+      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      await vi.waitFor(() => expect(editingId()).toBe("parent"));
+      runGlobalCommand("editor/expand-children"); await tick(); // nothing is folded: returns without a change
+      expect(blockProperty("host-self", "collapsed")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("Set depth 1 on the parent folds the embed rows through their hosts", async () => {
+    loadParent();
+    const { root, dispose } = mount("A");
+    try {
+      await editParent(root);
+      runGlobalCommand("editor/set-depth-1"); await tick();
+      expect(doc.byId.parent.collapsed).toBe(false);
+      expect(hostFolds()).toEqual(["true", "true"]);
+      expect(doc.byId.ord.collapsed).toBe(true);
+      expect(doc.byId.target.collapsed).toBe(false);
+    } finally { dispose(); }
+  });
+});

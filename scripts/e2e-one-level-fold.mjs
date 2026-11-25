@@ -34,6 +34,12 @@ fs.writeFileSync(embedSourceFile, embedSource.replace(PARENT, EMBED));
 const embedHostFile = path.join(graph, "pages", "Embed Host.md");
 fs.writeFileSync(embedHostFile, `- {{embed ((${EMBED}))}}\n  collapsed:: true\n- Page embed parent\n  - {{embed [[Page Body]]}}\n    collapsed:: true\n- [[Embed Host]]\n`);
 fs.writeFileSync(path.join(graph, "pages", "Page Body.md"), "- Embedded page body\n");
+// GH #1032: a parent whose children are all block embeds.
+const KID_A = "1032a000-0000-4000-8000-000000001032", KID_B = "1032b000-0000-4000-8000-000000001032";
+fs.writeFileSync(path.join(graph, "pages", "Kid Source.md"),
+  `- Kid A\n  id:: ${KID_A}\n  - Kid A child\n- Kid B\n  id:: ${KID_B}\n  - Kid B child\n`);
+const kidsFile = path.join(graph, "pages", "Embed Kids.md");
+fs.writeFileSync(kidsFile, `- Kids parent\n  - {{embed ((${KID_A}))}}\n  - {{embed ((${KID_B}))}}\n`);
 const env = { ...process.env, ...scratchProfile(out), TINE_GRAPH: graph,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4874);
@@ -148,9 +154,22 @@ try {
     // use the same X11 capture as the original one-level journey above.
     execFileSync("import", ["-window", "root", path.join(out, scope === ".main-content" ? "embeds-main.png" : "embeds-sidebar.png")], { env });
   }
+  stage = "GH #1032 Collapse (one level) on a parent of block embeds";
+  await openPageByName(browser, "Embed Kids");
+  await visibleText(".main-content", "Kid B child", true);
+  await editRow(".main-content", "Kids parent");
+  await chord("k");
+  // Both embeds fold through their hosts; the parent itself stays open.
+  const kids = await waitForFileText(kidsFile, text => (text.match(/\{\{embed [^\n]+\n\s+collapsed:: true/g) ?? []).length === 2);
+  if (ownProps(kids, "- Kids parent")?.includes("collapsed:: true")) throw Error(`GH #1032: the parent folded itself: ${JSON.stringify(kids)}`);
+  await visibleText(".main-content", "Kid A child", false);
+  await visibleText(".main-content", "Kid B child", false);
+  await visibleText(".main-content", "Kid A", true);
+  await browser.keys(["Escape"]);
+  proof.gh1032 = kids;
   proof.embedNestedFoldOnSource = true;
   proof.outcome = "PASS";
-  proof.journey += "; GH #768 block embed opens its own root then children; GH #769 child page embeds open and close, main pane and right sidebar";
+  proof.journey += "; GH #768 block embed opens its own root then children; GH #769 child page embeds open and close, main pane and right sidebar; GH #1032 a parent of block embeds folds the embeds and stays open";
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #696: ${out}`);
 } catch (error) {
