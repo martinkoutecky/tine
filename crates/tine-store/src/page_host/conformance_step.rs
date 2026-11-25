@@ -333,6 +333,29 @@ impl<F: ConformanceIo> Driver<F> {
                         !self.host.rewritable(&key(src)),
                         "host offers a rewrite of a pair the oracle retains"
                     );
+                    // The outcome itself (rcd-complete F6): a live owner's
+                    // model refuses only when no resolved pair has this
+                    // source, so the host keeps none either, whatever the
+                    // page owes (once the refresh lands, `rewrite_target`
+                    // would otherwise drop it). `rewritable` alone passes
+                    // here on the owed page whatever the pair's phase.
+                    let oracle = self.oracle.state();
+                    let s = &oracle["s"];
+                    let owner = s["alive"] == true
+                        && s["owners"]
+                            .as_array()
+                            .is_some_and(|o| o.contains(&json!(0)));
+                    if owner {
+                        let names = self.host.vehicles_of.get(&key(src)).into_iter().flatten();
+                        let resolved = names
+                            .filter_map(|name| self.host.order.paired(name))
+                            .flat_map(|op| op.pairs.iter())
+                            .any(|p| p.source == key(src) && !p.phase.unresolved());
+                        assert!(
+                            !resolved,
+                            "host keeps a resolved pair of {src} the oracle has none of"
+                        );
+                    }
                 } else {
                     let disposition = self.host.begin_draft_retiring(&key(src));
                     assert_ne!(
