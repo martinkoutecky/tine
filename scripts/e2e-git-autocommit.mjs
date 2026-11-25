@@ -1,5 +1,6 @@
 // Git autocommit (ADR 0078 slice 1) on a disposable graph that is a git repository:
-//  1. Settings → Graph shows the branch and turns on "Commit automatically".
+//  1. Settings → Graph shows the branch and turns on "Commit automatically"; the interval typed
+//     with real keys as -1 keeps the stored 10 and as 1e2 stores 100 (#1035).
 //  2. An edit made by another program is pending; renaming a page through its title
 //     commits that edit first ("Tine: autosave"), then the rename as its own commit,
 //     and leaves the work tree clean.
@@ -12,6 +13,7 @@ import path from "node:path";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const run = path.resolve(`artifacts/git-autocommit/native/run-${Date.now()}`);
 const graph = path.join(run, "graph");
@@ -26,6 +28,7 @@ git("config", "user.email", "e2e@example.invalid");
 git("add", "-A");
 git("commit", "-q", "-m", "initial");
 
+const settingsFile = path.join(run, "data", APP_ID, "tine-settings.json");
 const app = process.env.TINE_APP || path.resolve("target/debug/tine");
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -59,6 +62,29 @@ try {
   });
   await browser.$("[data-git-interval]").waitForExist({ timeout: 10_000, timeoutMsg: "the interval never appeared after choosing Commit automatically" });
   console.log("PASS: Settings → Graph names the branch and turns on Commit automatically");
+
+  // #1035: the interval typed with real keys and left by Tab is read the way the number field parses it.
+  const storedInterval = () => {
+    try { return Object.values(JSON.parse(fs.readFileSync(settingsFile, "utf8")).git_autocommit ?? {})[0]?.interval_minutes; } catch { return undefined; }
+  };
+  const typeInterval = async (keys) => {
+    await browser.$("[data-git-interval]").click();
+    await browser.keys(["Control", "a"]);
+    await browser.keys([...keys]);
+    await browser.keys("Tab");
+  };
+  await browser.waitUntil(() => storedInterval() === 10, { timeout: 10_000, timeoutMsg: `the policy change never stored the interval; stored ${storedInterval()}` });
+  await typeInterval("-1");
+  await browser.waitUntil(async () => (await browser.$("[data-git-interval]").getValue()) === "10", { timeout: 5000,
+    timeoutMsg: `a refused -1 did not show the stored interval again: ${await browser.$("[data-git-interval]").getValue()}` });
+  await sleep(500);
+  if (storedInterval() !== 10) throw new Error(`-1 changed the stored interval to ${storedInterval()}`);
+  await typeInterval("1e2");
+  await browser.waitUntil(() => storedInterval() === 100, { timeout: 10_000, timeoutMsg: `1e2 stored ${storedInterval()}, not 100` });
+  await browser.waitUntil(async () => (await browser.$("[data-git-interval]").getValue()) === "100", { timeout: 5000, timeoutMsg: "the field did not show the stored 100" });
+  console.log("PASS: the interval typed as -1 keeps 10 and 1e2 stores 100 (#1035)");
+  // Tab may have left focus on a control that takes Escape for itself.
+  await browser.execute(() => document.activeElement?.blur());
   await browser.keys("Escape");
 
   fs.writeFileSync(path.join(graph, "pages/Other.md"), "- edited by another program\n");

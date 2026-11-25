@@ -439,3 +439,110 @@ it("#1035: the remote typed while setting up a repository survives a status refr
     vi.useRealTimers();
   }
 });
+
+const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+/** Counts every assignment the component makes to the field's value; `typeAsPerson` bypasses the count. */
+function watchWrites(field: HTMLInputElement) {
+  const writes: string[] = [];
+  Object.defineProperty(field, "value", { configurable: true, get() { return nativeValue.get!.call(this); }, set(text: string) { writes.push(text); nativeValue.set!.call(this, text); } });
+  return writes;
+}
+function typeAsPerson(field: HTMLInputElement, text: string) {
+  field.focus(); nativeValue.set!.call(field, text); field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+it("#1035: while a git field is edited, nothing assigns its value, through typing and status refreshes", async () => {
+  vi.useFakeTimers();
+  try {
+    let device = repo({ policy: "commit", remote, setup_pending: true, signed_in: "old", last: committed("aaaaaaaa") });
+    vi.spyOn(backend(), "gitAutocommitStatus").mockImplementation(async () => device);
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.querySelector("[data-git-sign-in-open]")).not.toBeNull());
+    root.querySelector<HTMLButtonElement>("[data-git-sign-in-open]")!.click();
+    // The interval last: leaving it would end its edit.
+    const fields = ["[data-git-username]", "[data-git-initial-remote]", "[data-git-interval]"].map(sel => root.querySelector<HTMLInputElement>(sel)!);
+    const writes = fields.map(watchWrites);
+    fields.forEach((field, i) => typeAsPerson(field, ["oneshinyboi", "https://example.org/me/other.git", "30"][i]));
+    device = { ...device, signed_in: "someone", interval_minutes: 45, remote: { ...remote, url: "https://example.org/x.git" }, last: committed("bbbbbbbb") };
+    await poll(root, "bbbbbbbb");
+    expect(writes).toEqual([[], [], []]);
+    expect(fields.map(field => field.value)).toEqual(["oneshinyboi", "https://example.org/me/other.git", "30"]);
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("#1035: an interval left without a change follows the device's value again", async () => {
+  vi.useFakeTimers();
+  try {
+    let device = repo({ policy: "commit", last: committed("aaaaaaaa") });
+    vi.spyOn(backend(), "gitAutocommitStatus").mockImplementation(async () => device);
+    const set = vi.spyOn(backend(), "setGitAutocommit");
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.querySelector("[data-git-interval]")).not.toBeNull());
+    const interval = root.querySelector<HTMLInputElement>("[data-git-interval]")!;
+    // Replaced by the same text: the browser fires no change event.
+    typeAsPerson(interval, "10");
+    interval.dispatchEvent(new Event("blur"));
+    device = { ...device, interval_minutes: 45, last: committed("bbbbbbbb") };
+    await poll(root, "bbbbbbbb");
+    expect(interval.value).toBe("45");
+    expect(set).not.toHaveBeenCalled();
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("#1035: an untouched sign-in username follows the status (sign out clears it); an edited one is kept", async () => {
+  vi.useFakeTimers();
+  try {
+    let device = repo({ policy: "sync-on-demand", remote, signed_in: "old", last: committed("aaaaaaaa") });
+    vi.spyOn(backend(), "gitAutocommitStatus").mockImplementation(async () => device);
+    vi.spyOn(backend(), "gitSignOut").mockImplementation(async () => (device = { ...device, signed_in: null }));
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.querySelector("[data-git-sign-in-open]")).not.toBeNull());
+    root.querySelector<HTMLButtonElement>("[data-git-sign-in-open]")!.click();
+    const username = root.querySelector<HTMLInputElement>("[data-git-username]")!;
+    expect(username.value).toBe("old");
+    root.querySelector<HTMLButtonElement>("[data-git-sign-out]")!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Not signed in"));
+    expect(root.querySelector("[data-git-username]")).toBe(username);
+    expect(username.value).toBe("");
+    typeAsPerson(username, "oneshinyboi");
+    device = { ...device, signed_in: "someone", last: committed("bbbbbbbb") };
+    await poll(root, "bbbbbbbb");
+    expect(username.value).toBe("oneshinyboi");
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("#1035: an interval change answered after the person typed again keeps the newer text", async () => {
+  vi.useFakeTimers();
+  try {
+    let device = repo({ policy: "commit", last: committed("aaaaaaaa") });
+    vi.spyOn(backend(), "gitAutocommitStatus").mockImplementation(async () => device);
+    let answer!: () => void;
+    vi.spyOn(backend(), "setGitAutocommit").mockImplementation((policy, minutes) => new Promise(resolve => {
+      answer = () => resolve(device = { ...device, policy, interval_minutes: minutes });
+    }));
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.querySelector("[data-git-interval]")).not.toBeNull());
+    const interval = root.querySelector<HTMLInputElement>("[data-git-interval]")!;
+    typeAsPerson(interval, "30"); interval.dispatchEvent(new Event("change"));
+    typeAsPerson(interval, "45");
+    answer();
+    device = { ...device, last: committed("bbbbbbbb") };
+    await poll(root, "bbbbbbbb");
+    expect(interval.value).toBe("45");
+    // Leaving the field with nothing in flight ends the edit: the device's value shows again.
+    interval.dispatchEvent(new Event("blur"));
+    await vi.waitFor(() => expect(interval.value).toBe("30"));
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
