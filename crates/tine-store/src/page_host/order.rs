@@ -408,9 +408,7 @@ impl Order {
     pub fn touches(&self, keys: &BTreeSet<PageKey>) -> bool {
         keys.iter().any(|key| {
             self.gates.iter().any(|g| g.versions.contains_key(key))
-                || self.paired.values().any(|op| {
-                    op.pages.contains(key) && op.pairs.iter().any(|p| p.phase.unresolved())
-                })
+                || (self.paired.values()).any(|op| op.pages.contains(key) && op.owes())
         })
     }
 

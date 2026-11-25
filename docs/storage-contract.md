@@ -1358,8 +1358,9 @@ from the scanned drafts before any recovered save or choice.
   receivers of unresolved pairs, so none survives a relaunch: at launch a
   receiver whose bytes match certifies nothing, and a decided pair whose
   source left its slot stays restore or retained (below), with its operation
-  draft keeping the source's text, until Tine itself publishes the receiver
-  again or the source is restored.
+  draft keeping the source's text, until the source's own save publishes
+  that text again (the guarded restoration below). Publishing the receiver
+  again does not end either phase.
 - **Use Disk on a pair's endpoint** (a conflict's Use Disk, or the host-level
   Discard of a recovered page), on its unwitnessed receiver, on a receiver
   that does not hold its certified image (by the check above: equal bytes

@@ -127,9 +127,12 @@ pub(super) trait HostIo {
     /// A durability witness for the page's current file (a paired
     /// receiver's check, which compares its bytes): it is still the file
     /// this host's own save published and directory-synced, unchanged
-    /// since; or the graph reports no durability at all, where the live
-    /// bytes are all there is (the weak-filesystem exemption). Another
-    /// program's bytes carry no witness. Adapter memory only.
+    /// since. Another program's bytes carry no witness, and a launch has
+    /// none. Adapter memory only. Production has no weak-graph exemption:
+    /// on a graph that reports no durability it still answers only from
+    /// its own publication, which is stricter than the model's weak
+    /// profile (the model certifies on bytes there), never weaker; only
+    /// the conformance ledger implements the model's exemption.
     fn durable_page(&mut self, page: &str) -> bool;
     /// The host no longer needs `page`'s durability witness (it is no
     /// receiver of an unresolved pair): drop it, so the adapter's witnesses
