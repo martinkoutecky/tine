@@ -1,9 +1,10 @@
 //! The shared local-target table (`fixtures/local-target-cases.json`), Rust
 //! side: the owner gives each row's recorded answer, and the asset collector
-//! (orphan listing, trash recheck) still answers what the row records. A row
-//! whose liveness differs from the owner's attachment must name the decision
-//! or rule that explains it. The TypeScript side pins the renderer; export is
-//! pinned in tine-graph-features (`publish_query_table_tests.rs`).
+//! (orphan listing, trash recheck) keeps the owner's attachment alive and
+//! never fewer names than before it asked the owner (the row's `today`). A row
+//! whose recorded liveness differs from the owner's attachment must name the
+//! decision or rule that explains it. The TypeScript side pins the renderer;
+//! export is pinned in tine-graph-features (`publish_query_table_tests.rs`).
 
 use super::*;
 use serde_json::Value;
@@ -28,7 +29,25 @@ fn find<'a>(node: &'a Value, k: &str) -> Option<&'a Value> {
 /// The row's destination as production hands it over: the parser's own link
 /// node, the first token of the `img` macro's first argument, or the text.
 fn target_of(row: &Value) -> LocalTarget {
-    let origin = Origin::parse(row["origin"].as_str().unwrap()).unwrap();
+    target_as(row, Origin::parse(row["origin"].as_str().unwrap()).unwrap())
+}
+
+/// The attachment the collector should find in the row's source: the owner's
+/// for the row, but a page icon's value is read as the image embed it is
+/// written as (the collector does not know a value is an icon). The folder
+/// itself is no file.
+pub(crate) fn collected_attachment(row: &Value) -> Option<String> {
+    let target = match row["origin"].as_str() {
+        Some("page-icon") => target_as(row, Origin::MdEmbed),
+        _ => target_of(row),
+    };
+    target
+        .attachment()
+        .map(|name| name.as_str().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
+fn target_as(row: &Value, origin: Origin) -> LocalTarget {
     if let Some(dest) = row.get("dest").and_then(Value::as_str) {
         return local_target(Destination::Text(dest), origin);
     }
@@ -102,20 +121,18 @@ fn table_owner_and_collector() {
     for row in rows() {
         let id = row["id"].as_str().unwrap();
         let owner = target_of(&row);
+        let source = row["source"].as_str().unwrap();
         let mut found = HashSet::new();
-        crate::asset_refs::collect_asset_refs(row["source"].as_str().unwrap(), &mut found);
+        crate::asset_refs::collect_asset_refs(source, &mut found);
         let mut collector: Vec<String> = found.iter().cloned().collect();
         collector.sort();
-        // The owner keeps one file alive: its attachment (the folder itself is no file).
-        let kept = owner
-            .attachment()
-            .map(AssetName::as_str)
-            .filter(|n| !n.is_empty());
-        let liveness_differs = kept.is_some_and(|name| !found.contains(name));
+        let mut targets = HashSet::new();
+        crate::asset_refs::collect_asset_targets(source, &mut targets);
+        let kept = collected_attachment(&row);
         if record {
             println!(
                 "REC {}",
-                serde_json::json!({"id": id, "owner_rust": describe(&owner), "collector": collector, "liveness_differs": liveness_differs})
+                serde_json::json!({"id": id, "owner_rust": describe(&owner), "collector": collector, "targets": targets})
             );
             continue;
         }
@@ -126,20 +143,53 @@ fn table_owner_and_collector() {
                 row["owner"]
             ));
         }
-        if collector != strings(&row["today"]["collector"]) {
-            failures.push(format!(
-                "{id}: collector {collector:?} != {}",
-                row["today"]["collector"]
-            ));
+        // The collector's targets are exactly the owner's attachment.
+        let expected: HashSet<String> = kept.iter().cloned().collect();
+        if targets != expected {
+            failures.push(format!("{id}: targets {targets:?} != owner {expected:?}"));
         }
-        if liveness_differs != !row["change"]["liveness"].is_null() {
+        // Liveness keeps that attachment, and never fewer names than before
+        // the collector asked the owner.
+        let before = strings(&row["today"]["collector"]);
+        let lost: Vec<&String> = before
+            .iter()
+            .chain(kept.iter())
+            .filter(|name| !found.contains(*name))
+            .collect();
+        if !lost.is_empty() {
+            failures.push(format!("{id}: liveness lost {lost:?} (now {collector:?})"));
+        }
+        // The record is consistent: `change.liveness` names why the earlier
+        // collector missed the owner's attachment.
+        let missed_before = kept.as_ref().is_some_and(|name| !before.contains(name));
+        if missed_before != !row["change"]["liveness"].is_null() {
             failures.push(format!(
-                "{id}: liveness differs = {liveness_differs}, change = {}",
+                "{id}: liveness differed = {missed_before}, change = {}",
                 row["change"]["liveness"]
             ));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The collector's prefilter skips the parse only where the owner can find
+/// no attachment: any case of `assets`, and raw HTML whose folder name is
+/// spelled with character references, which the reader decodes.
+#[test]
+fn collector_prefilter_admits_every_spelling_the_owner_reads() {
+    for (text, name) in [
+        ("![x](../ASSETS/a.png)", "a.png"),
+        ("![x](../AsSeTs/b.png)", "b.png"),
+        (r#"<img src="../&#97;ssets/e.png"/>"#, "e.png"),
+        (r#"<video poster="../&#x41;SSETS/f.png"></video>"#, "f.png"),
+    ] {
+        let mut targets = HashSet::new();
+        crate::asset_refs::collect_asset_targets(text, &mut targets);
+        assert_eq!(targets, HashSet::from([name.to_owned()]), "{text}");
+        let mut live = HashSet::new();
+        crate::asset_refs::collect_asset_refs(text, &mut live);
+        assert!(live.contains(name), "{text}: {live:?}");
+    }
 }
 
 /// Principle 2: pure and O(destination bytes). Times the owner alone over the

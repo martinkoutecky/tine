@@ -101,6 +101,20 @@ Stamp-invisible in-place writes and changes after this final observation can
 still race the move. Only set-aside files are read and parsed again; they are
 not added to backlinks or query indexes.
 
+Which file a note keeps alive is the file the reader shows. The collector
+decides no name itself: every destination the parser reports (Markdown links
+and image embeds, Org links, the `img` macro's URL, and the `src`, `href` and
+`poster` of raw HTML and Hiccup the reader keeps) goes to the one link-target
+owner (`crates/tine-core/src/local_target.rs`), and its attachment is the name
+kept. Only a folder literally written `assets`, in any case, makes an
+attachment; the name after it is decoded once, `\` and an escaped `%5C` are
+separators, `.` steps drop; a drive path or a web URL names none. Liveness
+adds the deliberately loose plaintext mentions of `assets/` (raw and decoded
+spellings, the first folder of a nested name), which may keep extra files but
+never drop one. Publication copies exactly the owner's names, never a mention
+and never a re-decoded spelling: an HTTPS link copies nothing, and
+`photo%23v2.png` copies `photo#v2.png`.
+
 The guard and the inventory answer parsed pages from an in-memory
 asset-reference index of the published view (per page, the names the same
 collector finds, with a per-name page count), never persisted or checkpointed.

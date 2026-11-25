@@ -244,8 +244,8 @@ fn graph_site_and_query_leaf_have_one_commit_answerer() {
         "I-12: publication must not re-derive asset references; use Corpus::asset_refs"
     );
     let corpus = include_str!("../../tine-core/src/corpus.rs");
-    assert!(corpus.contains("asset_refs::collect_document_asset_refs("),
-        "I-12: Corpus::asset_refs is the orphan detector's collector; exemplar tine-core asset_refs.rs");
+    assert!(corpus.contains("asset_refs::collect_document_asset_targets("),
+        "I-12: Corpus::asset_refs is the orphan detector's collector (its targets); exemplar tine-core asset_refs.rs");
     let contract = include_str!("../../../docs/storage-contract.md");
     for value in [
         "published-queries/<portable-folder>/",

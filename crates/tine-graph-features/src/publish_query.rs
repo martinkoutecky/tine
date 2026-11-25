@@ -506,25 +506,12 @@ fn app_files(
     Ok(())
 }
 
-/// The asset names publication copies, from the collector's candidates: the
-/// decoded spelling of each, without the directory markers. Pure; O(names ×
-/// path depth).
+/// The asset names publication copies: the collector's targets as the owner
+/// named them (never decoded again), without a folder that another copied
+/// name lies under. Pure; O(names × path depth).
 pub(crate) fn publication_asset_names(mut names: HashSet<String>) -> Vec<String> {
-    // The orphan scanner keeps raw and decoded URL spellings. A browser
-    // decodes the URL, so copy only the decoded name when both were seen.
-    let encoded: Vec<_> = names
-        .iter()
-        .filter(|name| name.contains('%'))
-        .cloned()
-        .collect();
-    for name in encoded {
-        if tine_core::asset_refs::percent_decode(&name) != name {
-            names.remove(&name);
-        }
-    }
-    // The shared orphan answerer also marks ancestors (PDF area-image
-    // directories). Publication copies files, so remove those directory
-    // markers while preserving the complete nested reference.
+    // A link to a folder (`assets/sub/`) names no file. Publication copies
+    // files, so drop a name that another copied name lies under.
     let referenced: Vec<_> = names.iter().cloned().collect();
     for name in referenced {
         for parent in Path::new(&name).ancestors().skip(1) {
@@ -554,11 +541,10 @@ fn publication_assets(
     let mut out = Vec::new();
     let mut remaining = budget;
     for name in names {
-        // The scanner over-collects on purpose (orphan detection must not
-        // miss a reference), so a candidate may be prose after `assets/`
-        // rather than a file name. One that cannot name a file is simply
-        // not an asset: skip it like a missing one instead of failing the
-        // whole publication. A real read failure of an asset still fails.
+        // A name the owner gives may still be no file the store can name
+        // (a `..` step after the `assets` folder). Such a name is simply not
+        // an asset: skip it like a missing one instead of failing the whole
+        // publication. A real read failure of an asset still fails.
         let Ok(id) = store.file_id(tine_store::Area::Assets, &name) else {
             continue;
         };
@@ -992,10 +978,10 @@ pub fn publish_static(
 mod snapshot_consistency_tests {
     use super::*;
 
-    // The asset-reference scanner over-collects (orphan detection must not miss a
-    // reference), so prose after `assets/` becomes a candidate name. A candidate
-    // longer than a file name may be must be skipped like a missing asset, not
-    // fail the whole publication (the Guide's own `assets/` sentence did).
+    // Prose after `assets/` keeps files alive (the collector's loose mentions,
+    // so orphan detection cannot miss a reference) but names no link, so
+    // publication copies only the linked file and never fails on the prose
+    // (the Guide's own `assets/` sentence once did).
     #[test]
     fn prose_after_assets_prefix_does_not_fail_publication_assets() {
         let dir = tempfile::tempdir().unwrap();
