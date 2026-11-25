@@ -510,7 +510,11 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                 git_line(page, out);
             }
             if let Some(again) = ok["revert_run"].as_str() {
-                let _ = writeln!(out, "undo this revert: tine run revert {again}");
+                let _ = writeln!(
+                    out,
+                    "undo this revert: {} run revert {again}",
+                    super::command_name()
+                );
             }
         }
         "deleted" => {

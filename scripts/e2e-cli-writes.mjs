@@ -1,5 +1,5 @@
 // CLI §3: serve -> app handover, immediate window update, typing preservation.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -17,6 +17,9 @@ import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 ensurePrivateSessionBus();
 
 const APP = path.resolve(process.env.TINE_APP || "target/debug/tine");
+// GH #1011: a hint names the command the program was started as (the launcher execs the binary under its own path).
+const BINARY = path.resolve(process.env.TINE_APP_BINARY || APP);
+const COMMAND = path.basename(BINARY).replace(/\.exe$/i, "");
 const TMP = path.resolve(process.env.E2E_TMP_DIR || `artifacts/cli-native-${process.pid}`);
 assert(!fs.existsSync(TMP), "use a fresh artifact directory");
 const GRAPH = path.join(TMP, "graph");
@@ -73,7 +76,7 @@ async function pageProperties(owner) {
   await cli(["page", "create", name]);
   const refusal = await cli(["add", "--page", name, "-"], 6, "- tags:: technical\n");
   assert.equal(refusal.error.detail.reason, "page-properties");
-  assert(refusal.error.message.includes("tine prop set --page"));
+  assert(refusal.error.message.includes(`${COMMAND} prop set --page`), refusal.error.message);
   for (const page of [name, `Org ${owner}`]) {
     await cli(["prop", "set", "--page", page, "tags", "technical"]);
     await cli(["prop", "set", "--page", page, "alias", `Shortcut ${page}`]);
@@ -84,7 +87,37 @@ async function pageProperties(owner) {
   }
   steps.push(`${owner}: page headers import, page properties edit and remove, aliases resolve, and refusals explain recovery in Markdown and Org`);
 }
+// GH #1011: the Beta's Linux packages install the program as `tine-beta`. Started under another name, the usage
+// line (this process) and a refusal's hint (the serve owner it starts) name that command, never a literal `tine`.
+function hintsNameTheStartedCommand() {
+  const dir = path.join(TMP, "named"), graph = path.join(dir, "graph"), named = path.join(dir, "tine-other");
+  for (const sub of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, sub), { recursive: true });
+  fs.copyFileSync(BINARY, named, fs.constants.COPYFILE_FICLONE);
+  fs.chmodSync(named, 0o755);
+  const run = (args, input = "") => {
+    const r = spawnSync(named, args, { env: { ...env, TINE_GRAPH: graph }, input, encoding: "utf8", timeout: 60_000 });
+    return { code: r.status, out: r.stdout || "", err: r.stderr || "" };
+  };
+  try {
+    const help = run(["export", "query", "--help"]);
+    assert.equal(help.code, 0, help.err);
+    assert(help.out.includes("tine-other export query"), help.out);
+    assert(!/\btine export query\b/.test(help.out), help.out);
+    const created = run(["page", "create", "Named", "--graph", graph, "--json"]);
+    assert.equal(created.code, 0, created.err);
+    const refusal = run(["add", "--page", "Named", "-", "--graph", graph, "--json"], "- tags:: technical\n");
+    assert.equal(refusal.code, 6, refusal.out + refusal.err);
+    const message = JSON.parse(refusal.err).error.message;
+    assert(message.includes("tine-other prop set --page"), message);
+    assert(!message.includes("use tine prop"), message);
+  } finally {
+    run(["serve", "--stop", graph]);
+    fs.rmSync(named, { force: true });
+  }
+  steps.push("named: usage and a refusal's hint name the command the program was started as");
+}
 try {
+  hintsNameTheStartedCommand();
   const log = fs.openSync(path.join(TMP,"serve.log"), "w");
   serve = spawn(APP, ["serve", GRAPH], { env, stdio: ["ignore",log,log] });
   fs.closeSync(log);

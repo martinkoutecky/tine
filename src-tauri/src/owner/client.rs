@@ -463,7 +463,8 @@ pub(crate) fn take_over(
         if Instant::now() >= deadline {
             return Err(format!(
                 "Tine's command line is still finishing its work on this graph ({progress}). \
-                 Try again in a moment, or stop it with `tine serve --stop {}`.",
+                 Try again in a moment, or stop it with `{} serve --stop {}`.",
+                super::command_name(),
                 root.display()
             ));
         }
@@ -496,10 +497,12 @@ fn refusal_text(body: &ErrorBody) -> String {
         .and_then(Value::as_str)
         .unwrap_or("");
     match reason {
-        "draft-namespace" => "Tine's command line owns this graph with a different \
+        "draft-namespace" => format!(
+            "Tine's command line owns this graph with a different \
             application-data directory, so its unsaved work could not be recovered here. \
-            Stop it with `tine serve --stop`, then open the graph again."
-            .into(),
+            Stop it with `{} serve --stop`, then open the graph again.",
+            super::command_name()
+        ),
         "app-owner" => app_owner_refusal(),
         _ => body.message.clone(),
     }

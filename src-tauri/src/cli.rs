@@ -430,7 +430,10 @@ enum ExportFormat {
 #[derive(Debug, Args)]
 #[command(group(clap::ArgGroup::new("source").required(true).args(["uuid", "query", "page"])))]
 #[command(
-    override_usage = "tine export query [OPTIONS] <GRAPH> <((UUID))|--query <TEXT>|--page <PAGE>>"
+    override_usage = format!(
+        "{} export query [OPTIONS] <GRAPH> <((UUID))|--query <TEXT>|--page <PAGE>>",
+        crate::owner::command_name()
+    )
 )]
 struct QueryExportArgs {
     /// Graph directory (relative or absolute path).
@@ -731,6 +734,8 @@ where
 /// the ordinary GUI; `Some(code)` exits after printing the result or error.
 pub(crate) fn dispatch() -> Option<i32> {
     let argv = std::env::args_os().collect::<Vec<_>>();
+    // Before the parse: usage text and every later hint name this program.
+    crate::owner::set_command_name(argv.first().map(std::ffi::OsString::as_os_str));
     prepare_console_if_needed(&argv);
     let cli = match Cli::try_parse_from(&argv) {
         Ok(cli) => cli,
