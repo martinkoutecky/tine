@@ -68,7 +68,14 @@ pub(crate) fn read_settings_at(
     match read_app_text(path) {
         Ok(text) => decode_settings(&text)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        // A link whose target is absent is an entry that exists.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && std::fs::symlink_metadata(path)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
         Err(error) => Err(error),
     }
 }

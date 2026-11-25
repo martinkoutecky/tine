@@ -187,6 +187,29 @@ fn an_undecodable_settings_file_is_never_set_aside_or_replaced() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// A settings entry that is a link to an absent target (a synced or mounted
+/// folder not there yet) exists: the seed cannot judge it and leaves it alone.
+#[cfg(unix)]
+#[test]
+fn a_settings_link_to_an_absent_target_is_never_set_aside_or_replaced() {
+    let root = scratch("dangling");
+    let release = released_dir(&root);
+    let own = root.join("own-id");
+    fs::create_dir_all(&own).unwrap();
+    std::os::unix::fs::symlink(
+        root.join("not-mounted/tine-settings.json"),
+        own.join("tine-settings.json"),
+    )
+    .unwrap();
+    assert!(seed(&own, &release, None).is_err());
+    assert!(fs::symlink_metadata(own.join("tine-settings.json"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(!root.join("own-id.pre-seed.0").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn a_welcome_only_launch_is_set_aside_intact_not_deleted() {
     let root = scratch("aside");

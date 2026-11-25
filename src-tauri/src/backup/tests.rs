@@ -1047,6 +1047,34 @@ fn an_unchanged_launch_applies_a_keep_count_a_busy_prune_left() {
     g.close();
 }
 
+/// GH #1042: a settings file that exists but cannot be read leaves the keep
+/// count unknown, and a retention pass then deletes nothing (the count it
+/// would fall back to is lower than the one the user may have set).
+#[test]
+fn an_unreadable_settings_file_never_prunes_a_backup() {
+    let g = Graph::new("backup-zip-unknown-keep");
+    let settings = g.root.join("tine-settings.json");
+    for n in 0..=BACKUP_KEEP_DEFAULT {
+        write(&g.graph.join("pages/A.md"), &format!("- {n}\n"));
+        assert!(g.snap("", 40).failure.is_none());
+    }
+    write(&settings, "{\"backup_keep\": 40");
+    write(&g.graph.join("pages/A.md"), "- last\n");
+    assert!(g.snap("", retention_keep_at(&settings)).failure.is_none());
+    assert_eq!(
+        g.zip_names().len(),
+        BACKUP_KEEP_DEFAULT + 2,
+        "{:?}",
+        g.zip_names()
+    );
+    // A readable file is obeyed, with or without a byte-order mark.
+    write(&settings, "\u{feff}{\"backup_keep\": 2}");
+    write(&g.graph.join("pages/A.md"), "- after\n");
+    assert!(g.snap("", retention_keep_at(&settings)).failure.is_none());
+    assert_eq!(g.zip_names().len(), 2, "{:?}", g.zip_names());
+    g.close();
+}
+
 /// D2 (F4): a deletion that failed is retried by the next unchanged launch.
 #[test]
 fn a_failed_prune_delete_is_retried_by_the_next_unchanged_launch() {

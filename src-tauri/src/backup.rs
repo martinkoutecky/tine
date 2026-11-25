@@ -743,7 +743,7 @@ fn backup_into(
         source,
         suffix,
         cancelled,
-        backup_keep_at(&crate::settings::settings_path_in(data_dir)),
+        retention_keep_at(&crate::settings::settings_path_in(data_dir)),
         BACKUP_LOCK_WAIT,
     )
 }
@@ -1304,14 +1304,24 @@ fn prune_now(base: &std::path::Path, keep: usize, lock_wait: std::time::Duration
 }
 
 fn backup_keep(app: &tauri::AppHandle) -> usize {
-    settings_path(app).map_or(BACKUP_KEEP_DEFAULT, |path| backup_keep_at(&path))
+    settings_path(app)
+        .and_then(|path| backup_keep_at(&path).ok())
+        .unwrap_or(BACKUP_KEEP_DEFAULT)
 }
 
-fn backup_keep_at(settings: &std::path::Path) -> usize {
-    crate::settings::read_settings_value_at(settings)
+/// The keep count the settings file states, the default when it states none.
+/// An error when the file exists but cannot be read or decoded: the count is
+/// then unknown.
+fn backup_keep_at(settings: &std::path::Path) -> std::io::Result<usize> {
+    Ok(crate::settings::read_settings_at(settings)?
         .and_then(|v| v.get("backup_keep").and_then(|x| x.as_u64()))
-        .map(|n| (n as usize).max(1))
-        .unwrap_or(BACKUP_KEEP_DEFAULT)
+        .map_or(BACKUP_KEEP_DEFAULT, |n| (n as usize).max(1)))
+}
+
+/// The keep count a retention pass may delete by. With the count unknown it
+/// keeps every snapshot: a failed settings read never deletes a backup.
+fn retention_keep_at(settings: &std::path::Path) -> usize {
+    backup_keep_at(settings).unwrap_or(usize::MAX)
 }
 
 /// One row of Settings' Backups list. `id` names the namespace
