@@ -6,6 +6,7 @@ import { graphOwner, readOwned } from "./owned";
 import { graphEpoch } from "./graphSession";
 import { changed, iconChangeKey } from "./changeKeys";
 import { clearOnBindingInvalidated } from "./binding";
+import { isQuickCaptureWindow } from "./windowRole";
 import { pageByName, pageHeaderProperties } from "./document";
 import { pushToast } from "./toasts";
 import { PAGE_ICON_PROPERTIES } from "./pageIconImage";
@@ -77,9 +78,12 @@ function flush() {
 }
 
 /** Reactive: the referenced page's icon (`tine.icon::`, else `icon::`) or "". Reading it
- *  lazily enqueues a batched fetch; the value fills in once the batch resolves. */
+ *  lazily enqueues a batched fetch; the value fills in once the batch resolves.
+ *  A window granted no graph read (Quick Capture) shows no icon for an unloaded
+ *  page and does not ask. */
 export function pageIcon(name: string): string {
   if (pageByName(name)) return readPageIconProperty(name);
+  if (isQuickCaptureWindow()) return "";
   ensureRev();
   const revision = changed(iconChangeKey(name));
   if (requested.get(name) !== revision) {

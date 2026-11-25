@@ -14,6 +14,7 @@ import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 import { watchErrorToasts } from "./lib/e2e-toasts.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { withEditor, withEditors } from "./lib/e2e-block-editor.mjs";
 
 ensurePrivateSessionBus();
 
@@ -236,18 +237,18 @@ try {
   if (!matchesWindowName(afterContextSwitch.focus.name, "Quick Capture")) {
     throw new Error(`WebDriver context inspection disturbed native focus: ${JSON.stringify(afterContextSwitch)}`);
   }
-  const readDomFocus = () => browser.execute(() => {
-    const editor = document.querySelector(".capture-shell textarea");
-    return {
-      documentHasFocus: document.hasFocus(),
-      editorExists: Boolean(editor),
-      editorIsActive: document.activeElement === editor,
-      activeTag: document.activeElement?.tagName ?? "",
-      activeClass: document.activeElement?.getAttribute("class") ?? "",
-      textareas: document.querySelectorAll("textarea").length,
-      shellExists: Boolean(document.querySelector(".capture-shell")),
-    };
-  });
+  // The capture bullet is the shared block editor (textarea or CodeMirror,
+  // whichever the editor setting mounts); its driver reads focus, text and caret.
+  const CAPTURE = ".capture-shell";
+  const readDomFocus = () => withEditor(browser, CAPTURE, editor => ({
+    documentHasFocus: document.hasFocus(),
+    editorExists: Boolean(editor),
+    editorKind: editor?.kind ?? "",
+    editorIsActive: Boolean(editor?.focused),
+    activeTag: document.activeElement?.tagName ?? "",
+    activeClass: document.activeElement?.getAttribute("class") ?? "",
+    shellExists: Boolean(document.querySelector(".capture-shell")),
+  }));
   const domFocus = await readDomFocus();
   if (!domFocus.documentHasFocus || !domFocus.editorExists || !domFocus.editorIsActive) {
     throw new Error(`Quick Capture bullet lacked first-show DOM focus: ${JSON.stringify({ webviews, captureWindows, domFocus })}`);
@@ -259,12 +260,14 @@ try {
   if (!settledDomFocus.documentHasFocus || !settledDomFocus.editorIsActive) {
     throw new Error(`Quick Capture bullet did not retain focus after first paint: ${JSON.stringify(settledDomFocus)}`);
   }
-  const activeAutocomplete = () => browser.execute(() => ({
+  // Value and caret are read only from the focused capture editor: an
+  // unfocused one reports null, as the active-element read always did.
+  const activeAutocomplete = () => withEditor(browser, CAPTURE, editor => ({
     active: document.querySelector(".autocomplete .ac-item.active .ac-label")?.textContent?.trim() ?? "",
     labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
-    value: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null,
-    selectionStart: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.selectionStart : null,
-    selectionEnd: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.selectionEnd : null,
+    value: editor?.focused ? editor.value : null,
+    selectionStart: editor?.focused ? editor.start : null,
+    selectionEnd: editor?.focused ? editor.end : null,
   }));
   const expectActiveAutocomplete = async (expected, message) => {
     let last = null;
@@ -331,9 +334,8 @@ try {
     for (const marker of [...markers, "DONE", ""]) {
       await browser.keys(["Control", "Enter"]);
       const expected = `${marker ? `${marker} ` : ""}buy milk`;
-      await browser.waitUntil(() => browser.execute(wanted =>
-        document.activeElement instanceof HTMLTextAreaElement &&
-        document.activeElement.value.split("\n")[0] === wanted, expected), {
+      await browser.waitUntil(() => withEditor(browser, CAPTURE, (editor, wanted) =>
+        Boolean(editor?.focused) && editor.value.split("\n")[0] === wanted, expected), {
         timeout: 5_000, timeoutMsg: `Quick Capture workflow did not reach ${expected}`,
       });
     }
@@ -367,6 +369,8 @@ try {
   // UI-CAPTURE-NO-PAGE-INVENTORY: completing page references in the capture
   // window must not raise an error (it once asked for the page inventory the
   // capture WebView is refused, and showed "Couldn't refresh the page list").
+  // UI-CAPTURE-NO-GRAPH-READ-TOASTS: nor for the page icons of the references
+  // the editor renders ("Could not load page icons").
   const captureErrors = await watchErrorToasts(browser, 1_000);
   if (captureErrors.length) throw new Error(`Quick Capture showed error toasts: ${JSON.stringify(captureErrors)}`);
   if (process.env.E2E_CAPTURE_REFUSAL === "1") {
@@ -395,7 +399,7 @@ try {
     reopen.unref();
     await waitForWindow("Quick Capture", 10_000);
     await browser.switchToWindow(captureHandle);
-    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".capture-shell textarea")].some(editor => editor.value.includes("capture-focus-ok"))), {
+    await browser.waitUntil(() => withEditors(browser, CAPTURE, editors => editors.some(editor => editor.value.includes("capture-focus-ok"))), {
       timeout: 10_000, timeoutMsg: "Escape discarded refused capture text",
     });
     await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-refused-kept.png"));
@@ -559,9 +563,8 @@ try {
   await browser.$("//div[contains(@class, 'block-content') and normalize-space(.)='capture focus fixture']").click();
   for (const marker of ["TODO", "DOING", "DONE"]) {
     await browser.keys(["Control", "Enter"]);
-    await browser.waitUntil(() => browser.execute(wanted =>
-      document.activeElement instanceof HTMLTextAreaElement &&
-      document.activeElement.value.split("\n")[0] === `${wanted} capture focus fixture`, marker), {
+    await browser.waitUntil(() => withEditor(browser, "", (editor, wanted) =>
+      Boolean(editor?.focused) && editor.value.split("\n")[0] === `${wanted} capture focus fixture`, marker), {
       timeout: 5_000, timeoutMsg: `routed Home page did not cycle to ${marker}`,
     });
   }
@@ -574,8 +577,7 @@ try {
   await browser.switchToWindow(restartedCapture);
   // The prior page-completion probe left an unfiled query. Select its text
   // before replacing it, rather than letting it contaminate the marker check.
-  await browser.waitUntil(() => browser.execute(() =>
-    document.activeElement instanceof HTMLTextAreaElement), {
+  await browser.waitUntil(() => withEditor(browser, CAPTURE, editor => Boolean(editor?.focused)), {
     timeout: 5_000, timeoutMsg: "reopened capture did not focus its editor",
   });
   await browser.keys(["Control", "a"]);
