@@ -15,6 +15,10 @@ it("explains that closing the last window over a page that cannot be saved reope
   expect(page).toMatch(/close Tine's last window, Tine does not quit over it[^\n]*opens that graph again[^\n]*names each page whose edits are not on disk yet, and why/);
 });
 
+it("explains that a cancelled rename's kept original is listed in the unsaved-changes panel with Restore", () => {
+  expect(page).toMatch(/Use disk version[^\n]*kept after a cancelled rename[^\n]*\*\*Restore\*\*[^\n]*\*\*Copy draft\*\*[^\n]*\*\*Review\*\*/);
+});
+
 it("explains that an outside change equal to the unsaved text is not a conflict and the edit is still saved", () => {
   expect(page).toMatch(/exactly your unsaved text[^\n]*is not a conflict[^\n]*still saves your edit/);
 });

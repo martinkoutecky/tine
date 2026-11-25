@@ -1230,6 +1230,7 @@ pub fn run() {
             page_commands::page_save_now,
             page_commands::page_owed,
             page_commands::page_drafts_retry,
+            page_commands::page_restore_source,
             page_commands::bench_event,
             load_session,
             drafts::legacy_drafts_file,

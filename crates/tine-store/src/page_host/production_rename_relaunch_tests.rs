@@ -853,6 +853,123 @@ fn a_launch_time_byte_match_keeps_the_source_text_until_restored() {
     assert_eq!(on_disk(&f, "a.md"), None);
 }
 
+/// The trace above up to Use Disk on C: A is removed (its text only in the
+/// trash and the operation draft) and its pair is in Restore.
+fn restorable_after_use_disk() -> Fixture {
+    let mut f = relaunched_after_a_crash_before_the_receiver_published();
+    assert_eq!(f.save("c.md"), Outcome::Published);
+    assert_eq!(f.save("b.md"), Outcome::Published);
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    while f.graph.join("a.md").exists() {
+        f.host.advance_save();
+    }
+    fs::write(f.graph.join("c.md"), "- other\n").unwrap();
+    for _ in 0..15 {
+        f.host.advance_save();
+        if f.host.job.is_none() {
+            break;
+        }
+    }
+    assert!(
+        f.host.restorable_sources().is_empty(),
+        "a held pair, undecided, is not restorable"
+    );
+    f.send("c.md", RequestKind::Discard);
+    f
+}
+
+/// The recovery panel's list (`Host::restorable_sources`): only a source
+/// whose pair a Use Disk left restorable, with its spelling and the kept
+/// original text; a restoration refused (the slot taken meanwhile) keeps it
+/// listed and changes nothing.
+#[test]
+fn a_cancelled_rename_lists_its_source_as_restorable() {
+    let mut f = restorable_after_use_disk();
+    assert_eq!(
+        f.host.restorable_sources(),
+        vec![crate::page_host::io::RestorableSource {
+            key: "a.md".into(),
+            path: "a.md".into(),
+            text: OLD.into(),
+        }]
+    );
+    fs::write(f.graph.join("a.md"), "- someone else\n").unwrap();
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Refused);
+    assert_eq!(f.host.restorable_sources().len(), 1, "still listed");
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some("- someone else\n"));
+    assert_eq!(
+        f.host.restore_source("b.md"),
+        Disposition::Refused,
+        "not restorable"
+    );
+}
+
+/// Restore publishes the original text through the source's own guarded
+/// create, which ends the pair: the source leaves the list, and the
+/// operation draft, no longer owed, retires.
+#[test]
+fn restoring_a_source_publishes_its_original_and_leaves_the_list() {
+    let mut f = restorable_after_use_disk();
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+    assert!(
+        f.host.restorable_sources().is_empty(),
+        "the entry disappears"
+    );
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Refused);
+    settle_all(&mut f);
+    assert_eq!(
+        pending_drafts(&f),
+        0,
+        "the operation and its decision retire"
+    );
+    assert_eq!(on_disk(&f, "a.md").as_deref(), Some(OLD));
+}
+
+/// The window hears of each change of the list in the session: on a mail
+/// of its own (empty key) when no page has mail, on the first page mail
+/// otherwise, and not again while the list is unchanged.
+#[test]
+fn page_mail_carries_the_restorable_list_when_it_changes() {
+    use crate::page_host::binding::{Book, Delivery};
+    let mut f = restorable_after_use_disk();
+    let mut book = Book::default();
+    book.session = 7;
+    let mut delivery = Delivery::default();
+    book.mail_restorable(&f.host, &mut delivery);
+    let [(key, mail, facts)] = &delivery.mail[..] else {
+        panic!("one mail");
+    };
+    assert_eq!((key.as_str(), facts.session), ("", 7));
+    assert!(mail.page.is_none() && mail.answer.is_none());
+    assert_eq!(facts.restorable, Some(f.host.restorable_sources()));
+    let mut unchanged = Delivery::default();
+    book.mail_restorable(&f.host, &mut unchanged);
+    assert!(unchanged.mail.is_empty(), "unchanged: nothing to say");
+    assert_eq!(f.host.restore_source("a.md"), Disposition::Applied);
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    let mut later = Delivery::default();
+    let mailed = Mail {
+        page: None,
+        answer: None,
+        generation: f.host.generation,
+    };
+    let facts = |restorable| binding::MailFacts {
+        notice: Default::default(),
+        content: false,
+        refused: None,
+        spelling: String::new(),
+        binding: Default::default(),
+        session: 7,
+        restorable,
+    };
+    later.mail.push(("b.md".into(), mailed, facts(None)));
+    book.mail_restorable(&f.host, &mut later);
+    assert_eq!(later.mail.len(), 1, "it rides the page's mail");
+    assert_eq!(later.mail[0].2.restorable, Some(vec![]));
+}
+
 /// The running-session trace: C was published by this host (witnessed),
 /// then another program wrote the same bytes as a new file. Use Disk on C
 /// now finds C not certified, as the removal's pre-check does, so it writes

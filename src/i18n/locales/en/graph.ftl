@@ -88,3 +88,9 @@ root-recovery-moved-durability-unwitnessed = The unsaved edits were moved into t
 graph-open-other-app = The graph is open in another Tine window.
 root-moved-draft-error = The graph folder was moved, replaced or disconnected, and its recovery copy could not be written. Keep this window open and copy your unsaved text until device storage is working again.
 graph-merge-unites-tags = Both pages have tags. Before the merge, the remaining page's tags become: { $tags }
+# English retains the existing "(s)" wording; translations may inflect by count.
+graph-kept-original-text-of-cancelled-renames = { $count ->
+    [one] Tine kept the original text of { $count } page(s) whose rename was cancelled: { $pages }. Review to restore it.
+   *[other] Tine kept the original text of { $count } page(s) whose rename was cancelled: { $pages }. Review to restore it.
+    }
+graph-review-kept-pages = Review

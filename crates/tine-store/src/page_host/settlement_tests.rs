@@ -284,6 +284,13 @@ fn two_superseding_decisions_on_one_source_relaunch() {
     assert_eq!(phases, [PairPhase::Retained, PairPhase::Settled]);
     let logical = drafts::scan(h.fs.draft_files(true)).logical;
     assert_eq!(logical[&src(0)].base, Base::Known(text("S0")));
+    // A superseded pair keeps custody, but its source holds the newer
+    // text: the recovery panel never offers to restore over it.
+    assert!(h.order.restorable(&src(0)).is_none());
+    assert!(
+        h.restorable_sources().is_empty(),
+        "a superseded pair is never listed"
+    );
 }
 
 /// F9, settlement rewrite: the same two decisions on a Retained pair (its

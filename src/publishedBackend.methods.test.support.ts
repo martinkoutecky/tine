@@ -289,6 +289,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pageWait",
   "pageSaveNow",
   "pageDraftsRetry",
+  "pageRestoreSource",
   "mergeLiveConflict",
   "quickSharePrepare",
   "quickShareCreate",

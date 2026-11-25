@@ -343,9 +343,47 @@ impl PageHost {
                     })
                 })
                 .collect();
+            status.restorable = host.restorable_sources();
             status
         });
         status.expect("page host driver ended")
+    }
+
+    /// `page_restore_source`: restore the original text a cancelled rename
+    /// kept of `key` (`DraftStatus::restorable`), for the current window
+    /// `session` only (S2), through `Host::restore_source`. `Pending` once
+    /// the page holds the text: its own guarded create publishes it, and
+    /// the publication ends the pair, so the source leaves the restorable
+    /// list (page mail says so). `Waiting` while the page or a rename is
+    /// busy; `Refused` when the key is not restorable, its slot is occupied
+    /// or another file claims its name, or it holds unsaved text.
+    pub fn restore_source(&self, session: u64, key: &str) -> PageOperation {
+        // Only a listed key takes a lock registration; the step checks again.
+        let owned = key.to_owned();
+        let read = move |state: &State<ProductionIo, SystemClock>| {
+            state.progress.host.order.restorable(&owned).is_some()
+        };
+        if !self.driver.shared.read(read).unwrap_or(false) {
+            return PageOperation::Refused;
+        }
+        let spelling = self.spelling(key);
+        if self.try_register(key, &spelling).is_none() {
+            return PageOperation::Refused;
+        }
+        let key = key.to_owned();
+        let step = move |state: &mut State<ProductionIo, SystemClock>| {
+            if state.book.session != session {
+                return Disposition::Refused;
+            }
+            state.progress.with_host(|host| host.restore_source(&key))
+        };
+        let deadline = tine_core::clock::Instant::now() + retained::OPERATION_WAIT;
+        match (self.driver.shared).locked_step(Deadline::At(deadline), step) {
+            Ok(Disposition::Applied | Disposition::Pending) => PageOperation::Pending,
+            Ok(Disposition::Waiting) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
+            Err(Unanswered::Late) => PageOperation::Uncertain,
+            _ => PageOperation::Refused,
+        }
     }
 
     /// `page_drafts_retry` (S3): re-probe down draft I/O in the running

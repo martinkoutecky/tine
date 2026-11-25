@@ -1387,8 +1387,13 @@ from the scanned drafts before any recovered save or choice.
   (custody only). The host's guarded restoration puts that text back into
   the source page at risk over an absent base; its own draft and guarded
   create publish it, refused over an occupied slot, a claimant or twin, or
-  unsaved text, and that publication cancels the pair. The window does not
-  offer restoration yet (follow-up): the draft keeps custody meanwhile.
+  unsaved text, and that publication cancels the pair. The window offers it
+  from the unsaved-changes recovery panel: the `load_graph` draft status and
+  page mail (whenever the list differs from the last one the session mailed) name
+  each source `Order::restorable_sources` lists (a pair in restore or
+  retained after a Use Disk; never a superseded one), with its kept text, and
+  `page_restore_source` runs the guarded restoration. A refusal leaves the
+  pair and its draft as they were.
 - A decision this code does not act on (reviewed text `1`, or superseding
   input `2` on a receiver) or an unreadable or mismatched decision naming a
   readable paired operation blocks that operation's source removals and

@@ -12,6 +12,8 @@ import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned, type Owner
 import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { dismissToast, pushToast } from "./toasts";
+import { openUnsavedRecovery } from "./unsavedRecovery";
+import { setRestorableSources } from "./restorableSources";
 import { restartTine } from "./update";
 import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -327,6 +329,9 @@ export async function loadGraphPath(
   retireGraphCssEditor();
   unfreeze?.();
   unfreeze = null;
+  // Before the binding's mail: a mailed list opens the recovery panel only for
+  // a source this reply did not already name.
+  setRestorableSources(result.draft_status?.restorable ?? [], true);
   await bindHost();
   reportDraftStatus(result.draft_status ?? null);
   void reportLegacyDrafts();
@@ -416,6 +421,11 @@ function reportDraftStatus(status: DraftStatus | null): void {
       : page.failing ? " (saving fails)" : "";
     pushToast(msg("graph-page-s-still-have-edits-that-are", { count: held.length, pages: held.map((page) => page.path + why(page)).join(", ") }),
       held.some((page) => page.conflict || page.failing) ? "error" : "info", { sticky: true });
+  }
+  const kept = status?.restorable ?? [];
+  if (kept.length) {
+    const id: number = pushToast(msg("graph-kept-original-text-of-cancelled-renames", { count: kept.length, pages: kept.map((source) => source.path).join(", ") }),
+      "info", { sticky: true, action: { label: msg("graph-review-kept-pages"), run: () => { dismissToast(id); openUnsavedRecovery(); } } });
   }
   if (status?.unreadable.length) {
     pushToast(msg("graph-tine-left-unreadable-crash-recovery-file-s-in-place", { count: status.unreadable.length, files: status.unreadable.join(", ") }), "error", { sticky: true });

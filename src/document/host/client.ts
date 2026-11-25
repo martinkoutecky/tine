@@ -16,7 +16,7 @@ import { cutSourceMatches } from "../cutSource";
 import { inFileFormat } from "../convert";
 import {
   STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type OwedPage, type PageMail,
-  type PageRefusal, type PublishedNeed,
+  type PageRefusal, type PublishedNeed, type RestorableSource,
 } from "./protocol";
 
 /** What the installed text's bytes were: a file revision, a proved absence, or unknown. */
@@ -203,6 +203,8 @@ export class HostClient {
    * drop). Every change of `busy`, `owes`, `conflicted`, `isOpen` or `holdsContent` must be told: the
    * query results gate (wiring.ts) reads them only when this moves its revision. */
   onChange: () => void = () => {};
+  /** Told the restorable sources a session's mail carries (`PageMail.restorable`). */
+  onRestorable: (sources: RestorableSource[]) => void = () => {};
 
   constructor(
     readonly host: HostPort,
@@ -629,6 +631,9 @@ export class HostClient {
   receive(mail: PageMail): void {
     if (this.rebinding) { this.rebinding.push(mail); return; }
     if (mail.session !== this.session) return;
+    if (mail.restorable) this.onRestorable(mail.restorable);
+    // A mail with an empty key carries only the restorable sources.
+    if (!mail.key) return;
     const page = this.byKey.get(mail.key);
     if (!page) {
       if ([...this.pages.values()].some((p) => p.phase.kind === "sending" && p.phase.request === "open"))

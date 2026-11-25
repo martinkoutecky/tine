@@ -1,4 +1,4 @@
-import type { PageMail, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
+import type { PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
 import { RetiredGraph, type MockGraph, type MockGraphSession } from "./mockGraph";
 import type { PageDto } from "./types";
 
@@ -106,6 +106,8 @@ export function mockPageHost(graph: PageHostGraph, refusal: () => string) {
     async pageSaveNow() {},
     async pageOwed() { return []; },
     async pageDraftsRetry() {},
+    /** The preview runs no renames that leave a source restorable. */
+    async pageRestoreSource(): Promise<PageOperation> { return "refused"; },
     /** The preview's stand-in for the desktop's file watcher, which scripts
      * drive (`scripts/repro-carry-blur.mjs`): another program writes `text`
      * to `path`, the core recaptures it, and the window gets the new text as

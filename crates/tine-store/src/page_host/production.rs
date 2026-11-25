@@ -1122,6 +1122,7 @@ impl HostIo for ProductionIo {
             }),
             unreadable: self.untouchable.iter().cloned().collect(),
             unsaved: vec![],
+            restorable: vec![],
         }
     }
 

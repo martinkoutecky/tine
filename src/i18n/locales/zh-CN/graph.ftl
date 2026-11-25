@@ -110,3 +110,7 @@ root-recovery-moved-durability-unwitnessed = 未保存的编辑已移入当前�
 graph-open-other-app = 此图谱已在另一个 Tine 窗口中打开。
 root-moved-draft-error = 图谱文件夹被移动、替换或断开连接，且无法写入恢复副本。请保持此窗口打开并复制未保存的文本，直到设备存储恢复正常。
 graph-merge-unites-tags = 两个页面都有标签。合并前，保留页面的标签将变为：{ $tags }
+graph-kept-original-text-of-cancelled-renames = { $count ->
+   *[other] Tine 保留了 { $count } 个已取消重命名的页面的原始文本：{ $pages }。点击“查看”以恢复。
+    }
+graph-review-kept-pages = 查看

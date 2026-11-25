@@ -14,6 +14,7 @@ PageRefusal  # why: backend wire type of the page host protocol; batch-og-s3b
 PendingEdit  # why: a text edit staged by an editor and written only once the kernel answers; batch-og-wasm-enter-trap
 PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 PublishedRevision  # why: actual host publication evidence returned by the existing wait; batch-fix-964-dev-r3
+RestorableSource  # why: backend wire type of the page host protocol (the kept sources the unsaved-changes panel lists); batch-rcd-restore-entry
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 admitRead  # why: all asynchronous working-set admissions compare captured local generations; each retry requires a newer relevant generation; batch-feed-admission-1114
@@ -184,6 +185,7 @@ resolveBlockRef
 resolveConflict  # why: one conflict resolution intent; batch03
 resolveGuideBlockRef
 resolveGuidePageDto
+restoreSource  # why: the unsaved-changes panel restores a source a cancelled rename kept through the page host; batch-rcd-restore-entry
 restoreTodayJournalInFeed
 retireFeedPages  # why: releases measured offscreen journal documents through the shared safety gate; batch-og-l10-03
 revealNode

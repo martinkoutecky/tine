@@ -24,6 +24,7 @@ import { dismissToast, pushToast } from "../../toasts";
 import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
+import { setRestorableSources } from "../../restorableSources";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
 import { aliasDraftBlocks, appendAliasDraft, emptyPage, pageToDto, replaceLandedAliasDraft } from "../convert";
 import { isBlockMoving } from "../edits/moves";
@@ -200,6 +201,7 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
   const next: HostClient = new HostClient(hostPort(), portFor(() => client === next),
     { pending: pendingAssetWrites, started: assetWritesStarted });
   next.onChange = hostChanged;
+  next.onRestorable = (sources) => setRestorableSources(sources, false);
   client = next;
   bound = false;
   try {
@@ -724,6 +726,16 @@ export function cutSourcePagesRetired(sources: readonly ClipboardSourcePage[]): 
 }
 
 // ------------------------------------------------------------------ conflicts (§9)
+
+/** The recovery panel's Restore: put back the original text a cancelled rename
+ * kept of `key` (`page_restore_source`). The host's answer; "refused" with no
+ * bound host or once the graph binding changed. */
+export async function restoreSource(key: string): Promise<PageOperation> {
+  const c = host();
+  if (!c) return "refused";
+  const done = await writeOwned(bindingOwner(), backend().pageRestoreSource(c.session, key));
+  return done.kind === "current" ? done.value : "refused";
+}
 
 /** Keep mine: send the text on the disk state the conflict showed. Take disk:
  * consume the unsent input and install the host's text. */

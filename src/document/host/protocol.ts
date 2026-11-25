@@ -71,6 +71,11 @@ export interface PageMail {
   page: MailPage | null;
   answer: MailAnswer | null;
   notice: MailNotice;
+  /** The restorable sources (`DraftStatus.restorable`), on the first mail
+   * after the list differs from the one last mailed in the session (empty
+   * at its start, so a session starting with sources mails them once). A mail with an empty key
+   * carries only this. */
+  restorable?: RestorableSource[];
 }
 
 /** A command the host did not admit: nothing was sent (`binding.rs` `PageRefusal`). */
@@ -103,6 +108,17 @@ export interface DraftStatus {
   unavailable?: string | null;
   unreadable: string[];
   unsaved?: UnsavedPage[];
+  /** Sources whose original text a cancelled rename kept (`io.rs` `RestorableSource`). */
+  restorable?: RestorableSource[];
+}
+
+/** A rename's source whose pair a Use Disk cancelled after the source was
+ * removed: its original text is only in the rename's recovery draft, and
+ * `page_restore_source` restores it. `text` is that original, for Copy. */
+export interface RestorableSource {
+  key: string;
+  path: string;
+  text: string;
 }
 
 /** A page whose text is not on disk yet (`io.rs` `UnsavedPage`). `recovered`:

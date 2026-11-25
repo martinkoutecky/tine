@@ -1123,6 +1123,7 @@ export interface MessageArgs {
   "graph-created-the-graph-at-it-is": { "root": string | number };
   "graph-grant-all-files-access-for-tine-then": {};
   "graph-graph-not-opened-its-external-assets-directory": { "assetsDirectory": string | number };
+  "graph-kept-original-text-of-cancelled-renames": { "count": number; "pages": string | number };
   "graph-merge-unites-tags": { "tags": string | number };
   "graph-name-prompt-cancel": {};
   "graph-name-prompt-create-a-new-graph": {};
@@ -1146,6 +1147,7 @@ export interface MessageArgs {
   "graph-recovered-unsaved-edits-on-page-s-tine": { "count": number; "pages": string | number };
   "graph-restart-tine": {};
   "graph-retry": {};
+  "graph-review-kept-pages": {};
   "graph-rewrite-config-skipped": { "page": string | number; "reason": string | number };
   "graph-rewrite-conflicted-referrers": { "count": number; "files": string | number; "page": string | number };
   "graph-rewrite-rename-failed": { "error": string | number };
@@ -3348,10 +3350,20 @@ export interface MessageArgs {
   "unsaved-recovery-copy-complete-recovery-data": {};
   "unsaved-recovery-copy-draft": {};
   "unsaved-recovery-keep-working": {};
+  "unsaved-recovery-kept-after-a-cancelled-rename": { "path": string | number };
+  "unsaved-recovery-kept-after-a-cancelled-rename-detail": { "path": string | number };
   "unsaved-recovery-no-page-draft-is-available-in-this-window": {};
   "unsaved-recovery-no-pending-page-drafts-if-closing-still-fails": {};
   "unsaved-recovery-open-page": {};
   "unsaved-recovery-open-page-to-resolve-the-conflict": {};
+  "unsaved-recovery-original-copied": {};
+  "unsaved-recovery-original-copy-failed": {};
+  "unsaved-recovery-restore": {};
+  "unsaved-recovery-restore-failed": { "error": string | number; "path": string | number };
+  "unsaved-recovery-restore-refused": { "path": string | number };
+  "unsaved-recovery-restore-uncertain": { "path": string | number };
+  "unsaved-recovery-restore-waiting": { "path": string | number };
+  "unsaved-recovery-restoring": {};
   "unsaved-recovery-retry-saving": {};
   "unsaved-recovery-saving": {};
   "unsaved-recovery-summary": { "count": number };

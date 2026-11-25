@@ -170,6 +170,12 @@ export interface Backend {
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
   /** Retry crash-draft storage after the host reported it unavailable. */
   pageDraftsRetry(): Promise<void>;
+  /** Restore the original text a cancelled rename kept of `key`
+   * (`DraftStatus.restorable`): "pending" once the page holds it and its own
+   * save publishes it, which removes the key from the list (page mail);
+   * "waiting" while the page or a rename is busy; "refused" when it is not
+   * restorable, its file exists again, or it holds unsaved text. */
+  pageRestoreSource(session: number, key: string): Promise<PageOperation>;
   /** Desktop semantic lease recovery; absent in browser/mobile backends. */
   ownerProtectionStatus?(): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
   retryOwnerProtection?(repair: boolean): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;

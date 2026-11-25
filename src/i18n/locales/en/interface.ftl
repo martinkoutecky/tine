@@ -287,3 +287,23 @@ unsaved-recovery-summary =
         [one] { NUMBER($count, useGrouping: 0) } affected page. Review or copy your drafts before closing. Copying does not save the graph.
        *[other] { NUMBER($count, useGrouping: 0) } affected pages. Review or copy your drafts before closing. Copying does not save the graph.
     }
+
+unsaved-recovery-kept-after-a-cancelled-rename = { $path } — kept after a cancelled rename
+
+unsaved-recovery-kept-after-a-cancelled-rename-detail = A rename of this page was cancelled after its file was removed. Tine kept the original text below; Restore puts it back as { $path }.
+
+unsaved-recovery-restore = Restore
+
+unsaved-recovery-restoring = Restoring…
+
+unsaved-recovery-restore-waiting = { $path } is busy. Try Restore again in a moment.
+
+unsaved-recovery-restore-refused = Couldn't restore { $path }: a file with that name exists again, or the page has unsaved edits. The original text stays here; copy it to keep it.
+
+unsaved-recovery-restore-uncertain = Tine has not confirmed the restore of { $path } yet; it keeps trying.
+
+unsaved-recovery-restore-failed = Couldn't restore { $path }: { $error }
+
+unsaved-recovery-original-copied = Copied. Paste it into a separate file to keep a copy.
+
+unsaved-recovery-original-copy-failed = Could not copy. Select the text below and copy it manually. It stays here.

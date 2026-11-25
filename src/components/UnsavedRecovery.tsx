@@ -1,4 +1,4 @@
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
 import { DialogActions } from "./DialogActions";
 // The unsaved-changes recovery panel (GH #540, master dc3f2104b). Opened when the
 // user declines to discard at close, or from a failed-save toast. It lists every
@@ -6,7 +6,9 @@ import { DialogActions } from "./DialogActions";
 // retry the ordinary save, open the page (its conflict bar resolves it), or copy
 // the draft. Copying is read-only and never acknowledges a save.
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { flushAll, unsavedDrafts } from "../document";
+import { flushAll, restoreSource, unsavedDrafts, type RestorableSource } from "../document";
+import { restorableSources } from "../restorableSources";
+import { pushToast } from "../toasts";
 import { mainPaneRouter } from "../router";
 import { writeClipboardText } from "../clipboard";
 import { closeUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
@@ -40,6 +42,49 @@ function RecoveryDraft(props: { page: PageDto }): JSX.Element {
     <button class="settings-btn" type="button" onClick={() => void copy(true)}>{t("unsaved-recovery-copy-complete-recovery-data")}</button>
     <p role="status">{message()}</p>
   </div>;
+}
+
+/** A rename's source whose original text a cancelled rename kept (the host's
+ * restorable list): Restore puts the text back through the page's own guarded
+ * save, and the entry leaves once that publishes. A refusal is shown and the
+ * text stays here to copy. */
+function KeptSource(props: { source: RestorableSource }): JSX.Element {
+  const [message, setMessage] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const path = () => props.source.path;
+  const copy = async () => {
+    try {
+      await writeClipboardText(props.source.text);
+      setMessage(t("unsaved-recovery-original-copied"));
+    } catch {
+      setMessage(t("unsaved-recovery-original-copy-failed"));
+    }
+  };
+  const restore = async () => {
+    if (busy()) return;
+    setBusy(true);
+    try {
+      const outcome = await restoreSource(props.source.key);
+      if (outcome === "applied" || outcome === "pending") setMessage(t("unsaved-recovery-restoring"));
+      else if (outcome === "waiting") pushToast(msg("unsaved-recovery-restore-waiting", { path: path() }), "info");
+      else if (outcome === "uncertain") pushToast(msg("unsaved-recovery-restore-uncertain", { path: path() }), "info");
+      else pushToast(msg("unsaved-recovery-restore-refused", { path: path() }), "error");
+    } catch (error) {
+      pushToast(msg("unsaved-recovery-restore-failed", { path: path(), error: String(error) }), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <section class="unsaved-recovery-entry">
+    <h3>{t("unsaved-recovery-kept-after-a-cancelled-rename", { path: path() })}</h3>
+    <p>{t("unsaved-recovery-kept-after-a-cancelled-rename-detail", { path: path() })}</p>
+    <button class="settings-btn" type="button" disabled={busy()} onClick={() => void restore()}>{t("unsaved-recovery-restore")}</button>
+    <div class="recovery-draft">
+      <pre tabIndex={0}>{props.source.text}</pre>
+      <button class="settings-btn" type="button" onClick={() => void copy()}>{t("unsaved-recovery-copy-draft")}</button>
+      <p role="status">{message()}</p>
+    </div>
+  </section>;
 }
 
 export function UnsavedRecovery(): JSX.Element {
@@ -84,7 +129,8 @@ function RecoveryPanel(): JSX.Element {
         cancel={<button class="settings-btn" type="button" onClick={closeUnsavedRecovery}>{t("unsaved-recovery-keep-working")}</button>}
         primary={<button class="settings-btn" type="button" disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>} />
       <p role="status">{message()}</p>
-      <Show when={pages().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
+      <For each={restorableSources()}>{(source) => <KeptSource source={source} />}</For>
+      <Show when={pages().length === 0 && restorableSources().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
       <For each={pages()}>{(entry) => <section class="unsaved-recovery-entry">
         <h3>{entry.name} — {entry.state}</h3>
         <button class="settings-btn" type="button" onClick={() => {

@@ -310,6 +310,11 @@ pub struct PageMail {
     pub(crate) answer: Option<MailAnswer>,
     /// Save and draft status.
     pub(crate) notice: MailNotice,
+    /// The restorable sources (`DraftStatus::restorable`), on the first
+    /// mail after the list changed in the session. A mail with an empty
+    /// key carries only this: no page has an empty key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) restorable: Option<Vec<io::RestorableSource>>,
 }
 
 /// A host page operation's disposition (delete, rename).
@@ -365,6 +370,8 @@ pub(super) struct MailFacts {
     pub binding: BindingNotice,
     /// The window session current when the mail was collected.
     pub session: u64,
+    /// The restorable sources, when the list changed (`PageMail`).
+    pub restorable: Option<Vec<io::RestorableSource>>,
 }
 
 /// The page notices the binding keeps beside the host's (A2, REVIEW-3a).
@@ -478,6 +485,11 @@ pub(super) struct Book {
     /// No window owns the session any more (`orphan_stop`): the window
     /// crash ran once for that owner. A window reload clears it.
     orphaned: bool,
+    /// The restorable pairs (source, vehicle name) the session's window
+    /// last heard of (`Order::restorable_sources`) by mail; empty at the
+    /// session's start (a window reload clears it), so an empty list is
+    /// never mailed and a listed one is mailed once.
+    restorable: Vec<(PageKey, String)>,
 }
 
 impl Book {
@@ -694,6 +706,7 @@ impl Book {
                     spelling: String::new(),
                     binding: BindingNotice::default(),
                     session: 0,
+                    restorable: None,
                 },
             ));
         }
@@ -729,6 +742,7 @@ impl Book {
                         spelling: String::new(),
                         binding: BindingNotice::default(),
                         session: 0,
+                        restorable: None,
                     },
                 ));
             }
@@ -749,8 +763,53 @@ impl Book {
             work(Work::Book, 1);
             subscribed.contains(page)
         });
+        self.mail_restorable(&progress.host, &mut delivery);
         self.delivering |= !delivery.publications.is_empty();
         delivery
+    }
+
+    /// The restorable sources ride the first mail after their list differs
+    /// from the one last mailed in the session (`PageMail::restorable`;
+    /// empty at the session's start), or a mail of their own (empty key)
+    /// when no page has mail: the restoring save that ends a pair need not
+    /// mail the window any page it holds. The graph-open reply names the
+    /// list a session starts with, so the window opens the recovery panel
+    /// only for a source it did not know. One pass over the durable pairs,
+    /// which allocates only when the list changed.
+    pub(super) fn mail_restorable<F: HostIo>(&mut self, host: &Host<F>, delivery: &mut Delivery) {
+        let sent = self.restorable.iter().map(|(key, name)| (key, name));
+        let now = host
+            .order
+            .restorable_sources()
+            .map(|(key, name, _)| (key, name));
+        if now.eq(sent) {
+            return;
+        }
+        self.restorable = (host.order.restorable_sources())
+            .map(|(key, name, _)| (key.clone(), name.clone()))
+            .collect();
+        let restorable = Some(host.restorable_sources());
+        if let Some((.., facts)) = delivery.mail.first_mut() {
+            facts.restorable = restorable;
+            return;
+        }
+        delivery.mail.push((
+            PageKey::new(),
+            Mail {
+                page: None,
+                answer: None,
+                generation: host.generation,
+            },
+            MailFacts {
+                notice: Notice::default(),
+                content: false,
+                refused: None,
+                spelling: String::new(),
+                binding: BindingNotice::default(),
+                session: self.session,
+                restorable,
+            },
+        ));
     }
 
     /// Owned keys the host no longer holds, with nothing left to publish:
@@ -951,6 +1010,7 @@ impl PageHost {
             });
             state.book.session = next_session();
             state.book.orphaned = false;
+            state.book.restorable.clear();
             Reloaded {
                 session: state.book.session,
                 next_id,

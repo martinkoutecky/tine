@@ -282,3 +282,23 @@ unsaved-recovery-summary = { $count ->
     [one] { NUMBER($count, useGrouping: 0) } 个页面受影响。关闭前请检查或复制草稿。复制不会保存图谱。
    *[other] { NUMBER($count, useGrouping: 0) } 个页面受影响。关闭前请检查或复制草稿。复制不会保存图谱。
     }
+
+unsaved-recovery-kept-after-a-cancelled-rename = { $path } — 在取消重命名后保留
+
+unsaved-recovery-kept-after-a-cancelled-rename-detail = 此页面的重命名在其文件被移除后被取消。Tine 保留了下方的原始文本；“恢复”会将其放回为 { $path }。
+
+unsaved-recovery-restore = 恢复
+
+unsaved-recovery-restoring = 正在恢复…
+
+unsaved-recovery-restore-waiting = { $path } 正忙。请稍后再次点击“恢复”。
+
+unsaved-recovery-restore-refused = 无法恢复 { $path }：同名文件已再次存在，或该页面有未保存的编辑。原始文本仍保留在这里；可复制以保存。
+
+unsaved-recovery-restore-uncertain = Tine 尚未确认 { $path } 已恢复；它会继续尝试。
+
+unsaved-recovery-restore-failed = 无法恢复 { $path }：{ $error }
+
+unsaved-recovery-original-copied = 已复制。请粘贴到单独的文件中以保留副本。
+
+unsaved-recovery-original-copy-failed = 无法复制。请手动选中下方文本并复制。它仍保留在这里。

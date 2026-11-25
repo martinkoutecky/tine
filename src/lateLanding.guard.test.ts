@@ -120,7 +120,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
-  "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageDeleteFile", "pageSaveNow",
+  "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageDeleteFile", "pageRestoreSource", "pageSaveNow",
   "setGuideAnnounced", "renamePage", "followPageIdentity", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setEnableTooltip", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",

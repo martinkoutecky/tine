@@ -259,5 +259,6 @@ fn page_mail(store: &Store, key: PageKey, mail: Mail, facts: MailFacts) -> PageM
             observe_error: facts.binding.observe_error,
             twin: facts.binding.twin,
         },
+        restorable: facts.restorable,
     }
 }

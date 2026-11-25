@@ -595,7 +595,15 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 64)
+## Page host (ceiling: 65)
+# rcd-restore-entry, option B (64 -> 65): `restore_source`, the window's
+# Restore of a source a cancelled rename kept (src-tauri page_commands.rs
+# page_restore_source, the unsaved-changes recovery panel). No existing verb
+# answers it with a parameter: `discard` is Use Disk on an open page and takes
+# the disk; `delete` and `submit` write a page's own input, while a
+# restoration writes the admitted preimage only the operation draft holds,
+# over an absent slot, and selects the pair's restore. The list it acts on
+# rides the existing `draft_status` and `PageMail` (no new read item).
 # RCD slice 1 part 3, call 21 (63 -> 64): `DraftOwnership`, the owner claim's
 # answer `start` takes: a host whose claim holds no lock starts with drafts
 # unowned. `start` cannot answer it without a parameter, and `bool` would not
@@ -652,6 +660,7 @@ fn page_host::PageHost::save_now
 fn page_host::PageHost::owed
 fn page_host::PageHost::draft_status
 fn page_host::PageHost::drafts_retry
+fn page_host::PageHost::restore_source
 fn page_host::PageHost::orphan_stop
 fn page_host::PageHost::retarget
 fn page_host::PageHost::stop_abort

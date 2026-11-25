@@ -786,9 +786,10 @@ impl Order {
     /// the removal. When the original text is anchored (`anchored`, the
     /// module's `anchored` over the published text) the pair is
     /// disarmed; else it is retained, and the operation draft keeps the
-    /// admitted preimage as the only copy of that text. A source already
-    /// moved keeps its custody: its original text stays in the draft until
-    /// the receiver is exact again.
+    /// admitted preimage as the only copy of that text. Only an Armed pair,
+    /// or a Held one whose source has not moved, is superseded; a pair
+    /// whose source already moved is left as it is (None). Nothing here,
+    /// nor a later exact receiver, ends a Retained pair.
     pub fn disarm(&mut self, source: &str, anchored: bool) -> Option<String> {
         self.superseded(source)?;
         let phase = if anchored {
@@ -866,23 +867,34 @@ impl Order {
         changed
     }
 
-    /// The decided pair whose source `key` may be restored from its
-    /// admitted preimage, as (vehicle name, preimage).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn restorable(&self, key: &str) -> Option<(String, Text)> {
+    /// Every decided pair whose source may be restored from its admitted
+    /// preimage, as (source, vehicle name, preimage), in vehicle order: a
+    /// Use Disk left the pair in Restore or Retained with the original text
+    /// only in the operation draft. A superseded pair (newer source text)
+    /// is never one. The one answer to "which source is restorable":
+    /// `restorable` asks it for one key, and the window's recovery panel
+    /// lists it (`Host::restorable_sources`).
+    pub fn restorable_sources(&self) -> impl Iterator<Item = (&PageKey, &String, &Text)> {
         self.pairs()
-            .find(|(_, p)| {
-                p.source == key
-                    && matches!(p.phase, PairPhase::Restore | PairPhase::Retained)
+            .filter(|(_, p)| {
+                matches!(p.phase, PairPhase::Restore | PairPhase::Retained)
                     && matches!(p.choice, PairChoice::SourceDisk | PairChoice::ReceiverDisk)
                     && p.preimage.is_some()
             })
-            .map(|(name, p)| (name.clone(), p.preimage.clone()))
+            .map(|(name, p)| (&p.source, name, &p.preimage))
+    }
+
+    /// The decided pair whose source `key` may be restored from its
+    /// admitted preimage (`restorable_sources`), as (vehicle name,
+    /// preimage).
+    pub fn restorable(&self, key: &str) -> Option<(String, Text)> {
+        self.restorable_sources()
+            .find(|(source, ..)| *source == key)
+            .map(|(_, name, preimage)| (name.clone(), preimage.clone()))
     }
 
     /// A restoration of `key` was selected: its pair awaits the guarded
     /// create (the model's `selectPair(.., "restore")`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn select_restore(&mut self, key: &str) -> Option<String> {
         let name = self.restorable(key)?.0;
         let pair = self.pair_mut(key)?;
@@ -1215,6 +1227,22 @@ impl<F: HostIo> Host<F> {
         (vehicle.stage, (file, decision))
     }
 
+    /// The window's restorable sources (`Order::restorable_sources`), one
+    /// per key: the pair `restore_source` would take, with the key's
+    /// current spelling and the kept text. Bounded by the durable pairs;
+    /// no I/O.
+    pub(super) fn restorable_sources(&self) -> Vec<io::RestorableSource> {
+        let mut seen = BTreeSet::new();
+        (self.order.restorable_sources())
+            .filter(|(key, ..)| seen.insert(*key))
+            .map(|(key, _, text)| io::RestorableSource {
+                key: key.clone(),
+                path: self.fs.spelling(key),
+                text: String::from_utf8_lossy(text.as_deref().unwrap_or_default()).into_owned(),
+            })
+            .collect()
+    }
+
     /// Restore `key`'s admitted preimage after its pair's Use Disk left the
     /// text only in the operation draft (the model's `restoreSource`): the
     /// page takes the preimage at risk over an absent base, so its own draft
@@ -1222,7 +1250,6 @@ impl<F: HostIo> Host<F> {
     /// pair. Refused unless the slot is free on disk (an occupied slot keeps
     /// the preimage as custody) and the page holds no unsaved text; a
     /// claimant or twin fails the create, as for any creation.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn restore_source(&mut self, key: &str) -> Disposition {
         if !self.alive {
             return Disposition::Disabled;

@@ -78,6 +78,24 @@ pub struct DraftStatus {
     pub(crate) unavailable: Option<String>,
     pub(crate) unreadable: Vec<String>,
     pub(crate) unsaved: Vec<UnsavedPage>,
+    /// The sources a cancelled rename kept the original text of, which the
+    /// window may restore (`Host::restorable_sources`). Page mail carries
+    /// the same list whenever it changes in the session.
+    pub(crate) restorable: Vec<RestorableSource>,
+}
+
+/// A rename's source whose pair a Use Disk cancelled after the source was
+/// removed: its original text is only in the rename's recovery draft
+/// (`Order::restorable_sources`), and `page_restore_source` restores it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorableSource {
+    /// The host's key, which `page_restore_source` names.
+    pub(crate) key: String,
+    /// Its file, relative to the graph root.
+    pub(crate) path: String,
+    /// The kept original text (lossy UTF-8), for the panel's Copy draft.
+    pub(crate) text: String,
 }
 
 /// A page whose text is not on disk yet, and why (STEP3 §9, B-QA).
@@ -128,11 +146,11 @@ pub(super) trait HostIo {
     /// receiver's check, which compares its bytes): it is still the file
     /// this host's own save published and directory-synced, unchanged
     /// since. Another program's bytes carry no witness, and a launch has
-    /// none. Adapter memory only. Production has no weak-graph exemption:
-    /// on a graph that reports no durability it still answers only from
-    /// its own publication, which is stricter than the model's weak
-    /// profile (the model certifies on bytes there), never weaker; only
-    /// the conformance ledger implements the model's exemption.
+    /// none. Adapter memory only. Production (`ProductionIo::durable_page`)
+    /// reads no bytes and has no weak-graph case: true only while the
+    /// file's metadata still matches the stamp its own publication took,
+    /// on every graph. The model's weak profile certifies on bytes
+    /// instead; only the conformance ledger implements that.
     fn durable_page(&mut self, page: &str) -> bool;
     /// The host no longer needs `page`'s durability witness (it is no
     /// receiver of an unresolved pair): drop it, so the adapter's witnesses

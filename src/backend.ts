@@ -396,6 +396,9 @@ class TauriBackend implements Backend {
   pageDraftsRetry() {
     return this.call<void>("page_drafts_retry");
   }
+  pageRestoreSource(session: number, key: string) {
+    return this.call<PageOperation>("page_restore_source", { session, key });
+  }
   onPageMail(cb: (mail: PageMail) => void) { return this.on("page-mail", cb); }
   onGraphOpenWaiting(cb: (saving: string) => void) { return this.on("graph-open-waiting", cb); }
   onGraphOpenOwnerWaiting(cb: (progress: string) => void) { return this.on("graph-open-owner-waiting", cb); }

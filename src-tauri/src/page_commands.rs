@@ -330,6 +330,17 @@ pub(crate) async fn page_owed(
     .await
 }
 
+/// Restore the original text a cancelled rename kept of `key`
+/// (`DraftStatus::restorable`, the unsaved-changes recovery panel).
+#[tauri::command]
+pub(crate) async fn page_restore_source(
+    session: u64,
+    key: String,
+    ctx: GraphContext<'_>,
+) -> Result<PageOperation, String> {
+    hosted(ctx, move |host| host.restore_source(session, &key)).await
+}
+
 #[tauri::command]
 pub(crate) async fn page_drafts_retry(ctx: GraphContext<'_>) -> Result<(), String> {
     hosted(ctx, PageHost::drafts_retry).await?
