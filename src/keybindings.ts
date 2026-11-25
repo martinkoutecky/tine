@@ -392,10 +392,8 @@ const COMMANDS: CommandDef[] = [
   { id: "go/keyboard-shortcuts", binding: "g s", label: msg("command-go-keyboard-shortcuts"), scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the
   // dispatcher so they fire even while editing a block; remappable like any other.
-  // GH #1040: on macOS Option+Left/Right is the editor's word motion, so the Mac
-  // keys are OG's (config.cljs `:go/backward` / `:go/forward`, mod+[ / mod+]).
-  { id: "go/backward", binding: isMac ? "mod+[" : "alt+left", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
-  { id: "go/forward", binding: isMac ? "mod+]" : "alt+right", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
+  { id: "go/backward", binding: "alt+left", alias: isMac ? "mod+[" : "", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
+  { id: "go/forward", binding: "alt+right", alias: isMac ? "mod+]" : "", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
   // mod+w is a mod-chord, so it clears the while-editing guard and reaches the
   // generic dispatch loop below — closes the active tab even mid-edit (like a
   // browser). The last tab can't be closed, so this never quits the app.
@@ -985,6 +983,20 @@ function isEditableTarget(t: EventTarget | null): boolean {
     || !!el.closest?.('[data-block-editor="cm6"]');
 }
 
+const CARET_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "password", "number"]);
+
+/** A field with a text caret: a textarea, a text-like input, or editable content
+ *  (CodeMirror's). The target itself, not its editor wrapper: a button inside an
+ *  editor has no caret. */
+function isTextCaretTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el?.tagName) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName === "INPUT") return CARET_INPUT_TYPES.has((el as HTMLInputElement).type);
+  // isContentEditable, with the nearest contenteditable attribute where it is missing.
+  return el.isContentEditable ?? (el.closest?.("[contenteditable]")?.getAttribute("contenteditable") ?? "false") !== "false";
+}
+
 function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true
@@ -1214,9 +1226,19 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       return;
     }
 
+    // GH #1040: on macOS Option+Left/Right is a text field's word motion. Back
+    // and Forward's default keys leave a field with a text caret alone, before
+    // either dispatch path below (this test, the global list) can take them; a
+    // key the user saved for them still navigates, and Cmd+[ / ] always do.
+    if (isMac && isTextCaretTarget(e.target)
+        && ["go/backward", "go/forward"].some((id) => !(id in overrides) && matchesCommand(e, id))) {
+      resetSeq();
+      return;
+    }
+
     // Browser-style history nav, handled BEFORE the while-editing guard so
-    // Back / Forward work from inside a block too (like a browser navigating
-    // from a focused field). preventDefault stops the editor's own handling.
+    // Alt+Left / Alt+Right work from inside a block too (like a browser navigating
+    // from a focused field). preventDefault stops the textarea's own alt-arrow.
     if (matchesCommand(e, "go/backward")) {
       e.preventDefault();
       resetSeq();

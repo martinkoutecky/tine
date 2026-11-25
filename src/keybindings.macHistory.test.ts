@@ -5,9 +5,9 @@ import { commandDefaults, eventToBindingString } from "./keybindings";
 
 afterAll(() => vi.unstubAllGlobals());
 
-it("binds OG's Cmd+[ / Cmd+] as the macOS history shortcuts, leaving Option+arrows to the editor (GH #780 comment 1, GH #1040)", () => {
+it("accepts OG's Cmd+[ / Cmd+] as macOS history shortcuts (GH #780 comment 1)", () => {
   const event = (key: string, code: string) => ({ key, code, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }) as KeyboardEvent;
   const defaults = commandDefaults();
-  expect(defaults.find(command => command.id === "go/backward")).toMatchObject({ binding: eventToBindingString(event("[", "BracketLeft")), alias: undefined });
-  expect(defaults.find(command => command.id === "go/forward")).toMatchObject({ binding: eventToBindingString(event("]", "BracketRight")), alias: undefined });
+  expect(defaults.find(command => command.id === "go/backward")?.alias).toBe(eventToBindingString(event("[", "BracketLeft")));
+  expect(defaults.find(command => command.id === "go/forward")?.alias).toBe(eventToBindingString(event("]", "BracketRight")));
 });
