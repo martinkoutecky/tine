@@ -2177,7 +2177,7 @@ fn r2_marker_temp_crash_cuts_do_not_accumulate() {
                 &marker,
                 crate::atomic_file::Source::Bytes(b"M"),
                 crate::atomic_file::Mode::Default,
-                "",
+                crate::atomic_file::TempTag::Replace,
             )
             .unwrap(),
         );

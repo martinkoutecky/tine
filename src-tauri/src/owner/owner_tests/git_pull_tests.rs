@@ -1300,3 +1300,54 @@ fn q_git_pull_inside_a_bigger_work_tree_refuses() {
     let outcome = pull(&graph.slot());
     assert_eq!(outcome.code(), "refused", "{outcome:?}");
 }
+
+/// Review of 6fb074e9f: the resume test (s3.7 P3) leaves out exactly the
+/// temp names Tine writes. Beside a half-applied pull, each of those keeps the
+/// autocommit deferred; a user's file that only looks like one is a local
+/// change, so the autocommit is not deferred.
+#[test]
+fn q_git_resume_test_leaves_out_exactly_tines_temp_names() {
+    use crate::device_io::atomic_file::{tine_temp_names, TEMP_LOOK_ALIKES};
+    use crate::owner::git_autocommit::open_checked;
+    use crate::owner::git_pull::defers_autocommit;
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let up = upstream(
+        &repo,
+        &[
+            Edit::Write("pages/a.md", b"- theirs\n"),
+            Edit::Write("assets/n.txt", b"note\n"),
+        ],
+    );
+    test_hook::crash_at(Step::AfterPages);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    let _ = std::fs::remove_file(repo.path().join("index.lock"));
+    test_hook::restart(&graph.root);
+    let deferred = || defers_autocommit(&open_checked(&graph.root).unwrap());
+    assert!(deferred(), "the half-applied pull alone defers");
+
+    let tine: Vec<_> = tine_temp_names("a.md")
+        .iter()
+        .map(|name| graph.root.join("pages").join(name))
+        .collect();
+    for path in &tine {
+        std::fs::write(path, b"half a save").unwrap();
+    }
+    assert!(
+        deferred(),
+        "a temp Tine writes was taken for a local change"
+    );
+    for name in TEMP_LOOK_ALIKES {
+        let path = graph.root.join("pages").join(name);
+        std::fs::write(&path, b"the user's").unwrap();
+        assert!(!deferred(), "{name} was left out of the resume test");
+        std::fs::remove_file(&path).unwrap();
+    }
+    for path in &tine {
+        std::fs::remove_file(path).unwrap();
+    }
+    landed(&pull(&slot));
+    assert_eq!(head(&repo), up);
+}

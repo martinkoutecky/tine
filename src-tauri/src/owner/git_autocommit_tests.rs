@@ -1511,6 +1511,69 @@ fn tine_temp_matches_only_the_atomic_save_shape() {
     assert!(!tine_temp("pages/notes.tmp"));
     assert!(!tine_temp("pages/.hidden.tmp"));
     assert!(!tine_temp("pages/a.x.y.tmp"));
+    for name in crate::device_io::atomic_file::tine_temp_names("a.md") {
+        assert!(tine_temp(&format!("assets/{name}")), "{name}");
+    }
+    for name in crate::device_io::atomic_file::TEMP_LOOK_ALIKES {
+        assert!(!tine_temp(&format!("assets/{name}")), "{name}");
+    }
+}
+
+/// Review of 6fb074e9f: a user's file whose name only looks like a temp is
+/// the user's. Added, edited or deleted, it reaches the commit; the temps Tine
+/// writes beside it stay out. The names are spelled out (not the shared
+/// table) so this test runs unchanged on the commit that skipped them.
+#[test]
+fn a_users_file_that_looks_like_a_temp_is_committed() {
+    const USER: &[&str] = &[
+        "assets/.report.2026.11.backup.tmp",
+        "assets/.tine-report.tmp",
+        "assets/.report.2026.11..tmp",
+        "assets/.tine-.tmp",
+        "pages/.a.md.1.2new.tmp",
+        "assets/.tine-tx-1.tmp",
+        "assets/.a.png.1.2.import.tmp",
+    ];
+    const TINE: &[&str] = &[
+        "pages/.a.md.4242.17.tmp",
+        "pages/.a.md.4242.18.new.tmp",
+        "assets/.a.png.4242.19.private.tmp",
+        "assets/.a.png.4242.20.restore.tmp",
+        "assets/.a.png.4242.21.capture.tmp",
+        "assets/.tine-tx-1759000000000-1.tmp",
+        "assets/.tine-restore-4242-3.tmp",
+        "assets/..tine-tx-1759000000000-1.tmp.4242.22.capture.tmp",
+    ];
+    let f = fixture(&[
+        ("pages/a.md", "- a\n"),
+        ("assets/.edited.2026.11.backup.tmp", "old"),
+        ("assets/.tine-deleted.tmp", "old"),
+    ]);
+    for path in USER {
+        write(&f.work, path, "the user's");
+    }
+    write(&f.work, "assets/.edited.2026.11.backup.tmp", "new");
+    fs::remove_file(f.work.join("assets/.tine-deleted.tmp")).unwrap();
+    for path in TINE {
+        write(&f.work, path, "half a save");
+    }
+
+    commit_now(&f.work, MESSAGE).unwrap();
+    for path in USER {
+        assert_eq!(
+            at_head(&f.repo, path).as_deref(),
+            Some("the user's"),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        at_head(&f.repo, "assets/.edited.2026.11.backup.tmp").as_deref(),
+        Some("new")
+    );
+    assert_eq!(at_head(&f.repo, "assets/.tine-deleted.tmp"), None);
+    for path in TINE {
+        assert_eq!(at_head(&f.repo, path), None, "{path}");
+    }
 }
 
 #[test]

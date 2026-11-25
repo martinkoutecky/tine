@@ -1629,7 +1629,10 @@ impl Store {
                 );
             }
         }
-        let asset_recovery = self.graph.assets_path().join(".tine-restore-recovery");
+        let asset_recovery = self
+            .graph
+            .assets_path()
+            .join(crate::asset_watch::ASSET_RECOVERY);
         match fs::read_dir(asset_recovery) {
             Ok(entries) => {
                 for entry in entries {

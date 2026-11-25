@@ -17,6 +17,45 @@ const NAME_MAX_BYTES: usize = 255;
 /// A temp name may always use this many bytes, even beside a short target.
 const TEMP_NAME_FLOOR: usize = 100;
 
+/// Every tag a [`temp_path`] temp carries, one per writer that makes temps.
+/// The one list: writers name their temp by a variant, and
+/// [`parse_temp_name`] accepts exactly these suffixes, so a user's file that
+/// only looks alike (`.report.2026.11.backup.tmp`) is never taken for Tine's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TempTag {
+    /// A replacing save ([`atomic_write_with_check`], the page host).
+    Replace,
+    /// A create-new publication ([`atomic_write_new`]).
+    New,
+    /// An owner-only write ([`atomic_write_private`]).
+    Private,
+    /// Restore's copy of a file into a new name.
+    Restore,
+    /// A streamed capture into a new name.
+    Capture,
+}
+
+impl TempTag {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Replace,
+        Self::New,
+        Self::Private,
+        Self::Restore,
+        Self::Capture,
+    ];
+
+    /// The text the tag puts before `.tmp`.
+    pub(crate) const fn suffix(self) -> &'static str {
+        match self {
+            Self::Replace => "",
+            Self::New => ".new",
+            Self::Private => ".private",
+            Self::Restore => ".restore",
+            Self::Capture => ".capture",
+        }
+    }
+}
+
 /// Same-directory temp for `path`: `.{name}.{pid}.{seq}{tag}.tmp`. Its name is
 /// never longer than `max(target name, TEMP_NAME_FLOOR)` bytes, so the temp fits
 /// whenever the target does (C3W W1 / L04: the name + ~20 bytes made every save
@@ -25,54 +64,97 @@ const TEMP_NAME_FLOOR: usize = 100;
 /// and a short extension is kept, so [`parse_temp_name`] still finds a page
 /// temp's extension; uniqueness comes from pid + seq alone. The only temp-name
 /// format in tine-store for a user-named target (C3Y Y1; guarded by
-/// `tests/c3y_derived_names_guard.rs`). The tags in use: `""` (a replacing
-/// save), `.new`, `.private`, `.restore`, `.capture`.
-pub(crate) fn temp_path(path: &Path, seq: u64, tag: &str) -> PathBuf {
+/// `tests/c3y_derived_names_guard.rs`). The tags: [`TempTag`].
+pub(crate) fn temp_path(path: &Path, seq: u64, tag: TempTag) -> PathBuf {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-    let suffix = format!(".{}.{seq}{tag}.tmp", std::process::id());
+    let suffix = format!(".{}.{seq}{}.tmp", std::process::id(), tag.suffix());
     let limit = fname.len().max(TEMP_NAME_FLOOR).min(NAME_MAX_BYTES);
     let (stem, ext) = split_short_ext(fname);
     dir.join(fit_name(".", stem, &format!("{ext}{suffix}"), limit))
 }
 
+/// Whether `part` is a non-empty run of ASCII digits (a pid, a sequence, a
+/// millisecond stamp).
+fn numeric(part: &str) -> bool {
+    !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// The one reader of [`temp_path`]'s names: `(target name, tag)` for
-/// `.{name}.{pid}.{seq}{tag}.tmp`, with numeric pid and seq and a tag of at
-/// most one dot-free component (`""` or `.new`). For a shortened temp the
-/// target name is the one the temp carries (the cut stem and its kept
+/// `.{name}.{pid}.{seq}{tag}.tmp`, with a non-empty name, numeric pid and seq
+/// and one of [`TempTag::ALL`]'s suffixes, nothing else. For a shortened temp
+/// the target name is the one the temp carries (the cut stem and its kept
 /// extension), not the full name: the cut is not reversible. Each watcher keeps
-/// its own folder scope. O(name length), no I/O.
-pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, &str)> {
+/// its own folder scope. O(name length × 5), no I/O.
+pub(crate) fn parse_temp_name(name: &str) -> Option<(&str, TempTag)> {
     let stem = name.strip_prefix('.')?.strip_suffix(".tmp")?;
-    let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-    let (before, last) = stem.rsplit_once('.')?;
-    let (before, seq, tag) = if numeric(last) {
-        (before, last, "")
-    } else {
-        let (rest, seq) = before.rsplit_once('.')?;
-        (rest, seq, &stem[before.len()..])
-    };
-    let (target, pid) = before.rsplit_once('.')?;
-    (numeric(seq) && numeric(pid) && !target.is_empty()).then_some((target, tag))
+    TempTag::ALL.into_iter().find_map(|tag| {
+        let (before, seq) = stem.strip_suffix(tag.suffix())?.rsplit_once('.')?;
+        let (target, pid) = before.rsplit_once('.')?;
+        (numeric(seq) && numeric(pid) && !target.is_empty()).then_some((target, tag))
+    })
+}
+
+/// The kinds of fixed-form temp, one per writer that makes one. The one list:
+/// [`fixed_temp_name`] spells a kind and [`is_fixed_temp_name`] accepts exactly
+/// these, so a user's `.tine-report.tmp` is never taken for Tine's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixedTempKind {
+    /// A streamed transaction's stage.
+    Tx,
+    /// Restore's directory-handle copy.
+    Restore,
+}
+
+impl FixedTempKind {
+    pub(crate) const ALL: [Self; 2] = [Self::Tx, Self::Restore];
+
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Tx => "tx",
+            Self::Restore => "restore",
+        }
+    }
+}
+
+/// Whether `unique` has the shape both fixed-temp writers give it:
+/// `{digits}-{digits}` (a millisecond stamp or a pid, then a sequence).
+fn fixed_unique(unique: &str) -> bool {
+    unique
+        .split_once('-')
+        .is_some_and(|(first, seq)| numeric(first) && numeric(seq))
 }
 
 /// The fixed-form temp `.tine-{kind}-{unique}.tmp`, for scratch that has no
 /// user-named target of its own (restore's directory-handle copy, a streamed
-/// transaction's stage). Never shortened: `kind` and `unique` are Tine's.
-pub(crate) fn fixed_temp_name(kind: &str, unique: &str) -> String {
-    format!(".tine-{kind}-{unique}.tmp")
+/// transaction's stage). `unique` is `{digits}-{digits}`. Never shortened:
+/// `kind` and `unique` are Tine's.
+pub(crate) fn fixed_temp_name(kind: FixedTempKind, unique: &str) -> String {
+    debug_assert!(fixed_unique(unique), "{unique}");
+    format!(".tine-{}-{unique}.tmp", kind.word())
 }
 
-/// Whether `name` has [`fixed_temp_name`]'s form. O(name length), no I/O.
+/// Whether `name` is a [`fixed_temp_name`]: one of [`FixedTempKind::ALL`] and
+/// a `{digits}-{digits}` unique part, nothing else. O(name length), no I/O.
 pub(crate) fn is_fixed_temp_name(name: &str) -> bool {
-    name.starts_with(".tine-") && name.ends_with(".tmp")
+    let Some(body) = name
+        .strip_prefix(".tine-")
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    FixedTempKind::ALL.into_iter().any(|kind| {
+        body.strip_prefix(kind.word())
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(fixed_unique)
+    })
 }
 
-/// Whether the file name `name` is one of Tine's own temps: a [`temp_path`]
-/// temp of any target and tag, or a [`fixed_temp_name`]. The one answer for
-/// callers that skip every Tine temp wherever it lies (the asset watcher; Git
-/// autocommit and pull, through the app's `device_io` copy of this file); the
-/// graph watcher narrows the target to graph text.
+/// Whether the file name `name` is one Tine itself writes as a temp: a
+/// [`temp_path`] temp of any target and [`TempTag`], or a [`fixed_temp_name`].
+/// The one answer for callers that skip every Tine temp wherever it lies (the
+/// asset watcher; Git autocommit and pull, through the app's `device_io` copy
+/// of this file); the graph watcher narrows the target to graph text.
 /// Guarded by `tests/temp_name_owner_guard.rs`. O(name length), no I/O.
 pub(crate) fn is_temp_name(name: &str) -> bool {
     is_fixed_temp_name(name) || parse_temp_name(name).is_some()
@@ -331,7 +413,7 @@ impl PreparedWrite {
         target: &Path,
         source: Source<'_>,
         mode: Mode,
-        tag: &str,
+        tag: TempTag,
     ) -> io::Result<Self> {
         let options = temp_options(mode)?;
         let temporary = temp_path(target, TMP_SEQ.fetch_add(1, Ordering::Relaxed), tag);
@@ -513,7 +595,7 @@ pub(crate) fn sync_target_directory(dir: &Path) -> io::Result<()> {
 /// Create-new publication of `bytes` at `path` (temp tag `.new`): fails with
 /// `AlreadyExists` if a file appeared there after the caller's check.
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, ".new")?
+    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, TempTag::New)?
         .publish_and_sync(true)
 }
 
@@ -521,7 +603,7 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// temp tag `.private`). Only the app's `device_io` calls it.
 #[allow(dead_code)]
 pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Private, ".private")?
+    PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Private, TempTag::Private)?
         .publish_and_sync(false)
 }
 
@@ -568,9 +650,49 @@ pub(crate) fn atomic_write_with_check(
     bytes: &[u8],
     check: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
-    let prepared = PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, "")?;
+    let prepared =
+        PreparedWrite::prepare(path, Source::Bytes(bytes), Mode::Default, TempTag::Replace)?;
     check()?;
     prepared.publish_and_sync(false)
+}
+
+/// User file names shaped like Tine's temps that Tine never writes (an
+/// unknown or empty tag, an unknown, empty or malformed fixed kind, a glued
+/// sequence): every caller of [`is_temp_name`] must leave them to the user.
+/// The table the watchers' and Git's tests share.
+#[cfg(test)]
+pub(crate) const TEMP_LOOK_ALIKES: &[&str] = &[
+    ".report.2026.11.backup.tmp",
+    ".tine-report.tmp",
+    ".report.2026.11..tmp",
+    ".tine-.tmp",
+    ".a.md.1.2new.tmp",
+    ".a.md.1.2.import.tmp",
+    ".a.md.1.2.new.new.tmp",
+    ".tine-tx-.tmp",
+    ".tine-tx-1.tmp",
+    ".tine-tx-1-x.tmp",
+    ".tine-publish-1-2.tmp",
+];
+
+/// Every temp name Tine writes beside `target` (a file name): one per
+/// [`TempTag`], one per [`FixedTempKind`], and a tagged temp of a fixed one,
+/// all from the writers' own name makers. The table the watchers' and Git's
+/// tests share.
+#[cfg(test)]
+pub(crate) fn tine_temp_names(target: &str) -> Vec<String> {
+    let name = |path: PathBuf| path.file_name().unwrap().to_str().unwrap().to_owned();
+    let dir = Path::new("/g");
+    let mut names: Vec<String> = TempTag::ALL
+        .into_iter()
+        .map(|tag| name(temp_path(&dir.join(target), 7, tag)))
+        .collect();
+    for kind in FixedTempKind::ALL {
+        let fixed = fixed_temp_name(kind, "1759000000000-1");
+        names.push(name(temp_path(&dir.join(&fixed), 7, TempTag::Capture)));
+        names.push(fixed);
+    }
+    names
 }
 
 #[cfg(test)]
@@ -687,7 +809,7 @@ mod tests {
         for title in ["a".repeat(250), "漢".repeat(84), "漢".repeat(40)] {
             let target = Path::new("/g/pages").join(format!("{title}.md"));
             let name_len = target.file_name().unwrap().len();
-            for tag in ["", ".new"] {
+            for tag in [TempTag::Replace, TempTag::New] {
                 let tmp = temp_path(&target, u64::MAX, tag);
                 let tmp_name = tmp.file_name().unwrap().to_str().unwrap();
                 assert!(
@@ -699,12 +821,12 @@ mod tests {
                 assert_eq!(tmp.parent(), target.parent());
             }
         }
-        let short = temp_path(Path::new("/g/pages/A.md"), 7, ".import");
+        let short = temp_path(Path::new("/g/pages/A.md"), 7, TempTag::Capture);
         assert_eq!(
             short.file_name().unwrap().to_str().unwrap(),
-            format!(".A.md.{}.7.import.tmp", std::process::id())
+            format!(".A.md.{}.7.capture.tmp", std::process::id())
         );
-        let short = temp_path(Path::new("/g/pages/A.md"), 7, "");
+        let short = temp_path(Path::new("/g/pages/A.md"), 7, TempTag::Replace);
         assert_eq!(
             short.file_name().unwrap().to_str().unwrap(),
             format!(".A.md.{}.7.tmp", std::process::id())
@@ -745,12 +867,11 @@ mod tests {
     /// name when it fits, else the cut stem with the extension kept.
     #[test]
     fn parse_temp_name_reads_back_every_temp_path() {
-        let tags = ["", ".new", ".private", ".restore", ".capture"];
         let long = format!("{}.md", "漢".repeat(84));
         for name in ["A.md", "assets/x.png", "config.edn", long.as_str()] {
             let target = Path::new("/g/pages").join(name);
             let fname = target.file_name().unwrap().to_str().unwrap();
-            for tag in tags {
+            for tag in TempTag::ALL {
                 for seq in [0, 7, u64::MAX] {
                     let temp = temp_path(&target, seq, tag);
                     let temp = temp.file_name().unwrap().to_str().unwrap();
@@ -767,12 +888,12 @@ mod tests {
                 }
             }
         }
-        let tx = fixed_temp_name("tx", "1759000000000-1");
+        let tx = fixed_temp_name(FixedTempKind::Tx, "1759000000000-1");
         assert_eq!(tx, ".tine-tx-1759000000000-1.tmp");
         assert!(is_fixed_temp_name(&tx));
-        let stage = temp_path(&Path::new("/g/pages").join(&tx), 3, ".capture");
+        let stage = temp_path(&Path::new("/g/pages").join(&tx), 3, TempTag::Capture);
         let (carried, tag) = parse_temp_name(stage.file_name().unwrap().to_str().unwrap()).unwrap();
-        assert_eq!((carried, tag), (tx.as_str(), ".capture"));
+        assert_eq!((carried, tag), (tx.as_str(), TempTag::Capture));
         for foreign in [
             "A.md",
             ".A.md.tmp",
@@ -795,15 +916,18 @@ mod tests {
     fn is_temp_name_covers_every_temp_maker() {
         let long = format!("{}.md", "漢".repeat(84));
         for name in ["A.md", "x.png", "config.edn", long.as_str()] {
-            for tag in ["", ".new", ".private", ".restore", ".capture"] {
+            for tag in TempTag::ALL {
                 let temp = temp_path(&Path::new("/g/pages").join(name), 9, tag);
                 let temp = temp.file_name().unwrap().to_str().unwrap();
                 assert!(is_temp_name(temp), "{temp}");
             }
         }
-        let tx = fixed_temp_name("restore", "12-3");
+        for kind in FixedTempKind::ALL {
+            assert!(is_temp_name(&fixed_temp_name(kind, "1759000000000-1")));
+        }
+        let tx = fixed_temp_name(FixedTempKind::Restore, "12-3");
         assert!(is_temp_name(&tx));
-        let stage = temp_path(&Path::new("/g").join(&tx), 1, ".new");
+        let stage = temp_path(&Path::new("/g").join(&tx), 1, TempTag::New);
         assert!(is_temp_name(stage.file_name().unwrap().to_str().unwrap()));
         for foreign in [
             "notes.tmp",
@@ -812,6 +936,11 @@ mod tests {
             ".tine-trash",
             ".config.edn.9.10new.tmp",
         ] {
+            assert!(!is_temp_name(foreign), "{foreign}");
+        }
+        // Look-alikes of the narrowed grammar (review of 6fb074e9f): an unknown
+        // tag, an empty tag, an unknown or empty fixed kind, a glued sequence.
+        for foreign in TEMP_LOOK_ALIKES {
             assert!(!is_temp_name(foreign), "{foreign}");
         }
     }

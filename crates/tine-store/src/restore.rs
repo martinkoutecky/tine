@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const ASSET_RECOVERY: &str = ".tine-restore-recovery";
+use crate::asset_watch::ASSET_RECOVERY;
 static RECOVERY_SEQ: AtomicU64 = AtomicU64::new(0);
 static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "test-faults")]
@@ -1084,7 +1084,7 @@ fn copy_new(recovery: &Recovery, live: &Path, bytes: &[u8]) -> io::Result<()> {
     // folding this in would reopen by path. The fsync and the directory sync
     // are the shared, counted ones.
     let temp = crate::atomic_file::fixed_temp_name(
-        "restore",
+        crate::atomic_file::FixedTempKind::Restore,
         &format!(
             "{}-{}",
             std::process::id(),

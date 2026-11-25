@@ -895,7 +895,11 @@ impl HostIo for ModelFs {
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.run(Phase::CustodyWrite, |fs| {
             // The production temp name, composed by the audited helper.
-            let temp = crate::atomic_file::temp_path(std::path::Path::new(name), 0, "");
+            let temp = crate::atomic_file::temp_path(
+                std::path::Path::new(name),
+                0,
+                crate::atomic_file::TempTag::Replace,
+            );
             let temp = format!("{CUSTODY}{}", temp.to_string_lossy());
             fs.call()?;
             fs.files.insert(temp.clone(), Arc::from(bytes));

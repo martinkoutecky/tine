@@ -1437,7 +1437,7 @@ impl<'a> PagePlan<'a> {
                         Content::Stream { source, max_bytes } => {
                             source.seek(SeekFrom::Start(0)).map_err(failed)?;
                             let stage = path.with_file_name(crate::atomic_file::fixed_temp_name(
-                                "tx",
+                                crate::atomic_file::FixedTempKind::Tx,
                                 &trash_stamp(),
                             ));
                             self.check_write_target(&stage).map_err(failed)?;

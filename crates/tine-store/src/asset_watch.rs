@@ -71,8 +71,8 @@ impl AssetScope {
 
 /// Tine's own writes under the assets directory: a temp of any of its atomic
 /// publishers ([`crate::atomic_file::is_temp_name`], the one temp-name answer),
-/// or a path inside or naming one of [`tine_own_entry`]'s folders. Only the
-/// final rename is a logical asset change.
+/// or a path inside or naming [`tine_own_entry`]'s folder. Only the final
+/// rename is a logical asset change.
 fn is_tine_bookkeeping(path: &Path, root: &Path) -> bool {
     let atomic_temp = path
         .file_name()
@@ -81,16 +81,21 @@ fn is_tine_bookkeeping(path: &Path, root: &Path) -> bool {
     atomic_temp || tine_own_entry(path.strip_prefix(root).unwrap_or(path))
 }
 
-/// Whether a component of `relative` is a `.tine-` entry Tine keeps for itself
-/// under the assets directory (restore's `.tine-restore-recovery` folder and
-/// what it holds). A wider question than "is this a temp name": such a folder
-/// is no temp, and every file inside it is Tine's whatever its name.
+/// Restore's recovery folder under the assets directory, the one `.tine-`
+/// entry Tine keeps there: restore makes it, and the asset watcher and
+/// restore's own walks leave it out.
+pub(crate) const ASSET_RECOVERY: &str = ".tine-restore-recovery";
+
+/// Whether a component of `relative` is the one entry Tine keeps for itself
+/// under the assets directory: restore's recovery folder
+/// ([`ASSET_RECOVERY`]). A wider question than "is this a temp
+/// name": the folder is no temp, and every file inside it is Tine's whatever
+/// its name. Exactly that name: a user's `.tine-report.tmp` is the user's
+/// (review of 6fb074e9f; the rule used to take any `.tine-` component).
 fn tine_own_entry(relative: &Path) -> bool {
-    relative.components().any(|part| {
-        part.as_os_str()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".tine-"))
-    })
+    relative
+        .components()
+        .any(|part| part.as_os_str() == ASSET_RECOVERY)
 }
 
 /// Events queued between watcher cycles: exact ordinary-file paths and whether
@@ -318,5 +323,50 @@ impl AssetObserver {
         changed.sort_by(|a, b| a.0.cmp(&b.0));
         changed.dedup_by(|a, b| a.0 == b.0);
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Review of 6fb074e9f: both asset-watcher paths (an exact event and a
+    /// full rescan) skip every name Tine writes under the assets directory and
+    /// nothing else: a user's file shaped like a temp, or inside a `.tine-`
+    /// folder of the user's own, is an asset change.
+    #[test]
+    fn the_asset_watcher_skips_exactly_the_names_tine_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let assets = root.join("assets");
+        fs::create_dir_all(assets.join(ASSET_RECOVERY).join("restore-1")).unwrap();
+        fs::create_dir_all(assets.join(".tine-mine")).unwrap();
+        let graph = Graph::open(&root);
+        let exact_observer = AssetObserver::new(AssetScope::new(&graph));
+        let full_observer = AssetObserver::new(AssetScope::new(&graph));
+
+        let mut tine: Vec<PathBuf> = crate::atomic_file::tine_temp_names("pic.png")
+            .iter()
+            .map(|name| assets.join(name))
+            .collect();
+        tine.push(assets.join(ASSET_RECOVERY).join("restore-1/pic.png"));
+        let mut user: Vec<PathBuf> = crate::atomic_file::TEMP_LOOK_ALIKES
+            .iter()
+            .map(|name| assets.join(name))
+            .collect();
+        user.push(assets.join(".tine-mine/pic.png"));
+        user.push(assets.join("pic.png"));
+        for path in tine.iter().chain(&user) {
+            fs::write(path, b"x").unwrap();
+        }
+        let mut expected: Vec<_> = user
+            .iter()
+            .map(|path| (path.clone(), ChangeKind::Created))
+            .collect();
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let exact: HashSet<PathBuf> = tine.iter().chain(&user).cloned().collect();
+        assert_eq!(exact_observer.reconcile(&exact, false), expected);
+        assert_eq!(full_observer.reconcile(&HashSet::new(), true), expected);
     }
 }

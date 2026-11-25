@@ -2373,23 +2373,27 @@ mod tests {
     /// `.tmp`, and not a temp of a non-graph-text name.
     #[test]
     fn atomic_temp_recognises_every_tine_temp_beside_graph_text() {
-        let page = Path::new("/g/pages/A.md");
-        for tag in ["", ".new", ".private", ".restore", ".capture"] {
-            assert!(
-                atomic_temp(&crate::atomic_file::temp_path(page, 4, tag)),
-                "{tag}"
-            );
+        let pages = Path::new("/g/pages");
+        for name in crate::atomic_file::tine_temp_names("A.md") {
+            assert!(atomic_temp(&pages.join(&name)), "{name}");
         }
-        let stage = Path::new("/g/pages").join(crate::atomic_file::fixed_temp_name("tx", "1-2"));
-        assert!(atomic_temp(&stage));
-        assert!(atomic_temp(&crate::atomic_file::temp_path(
-            &stage, 4, ".capture"
-        )));
         assert!(atomic_temp(Path::new("/g/pages/.tine-restore-12-3.tmp")));
         for foreign in ["/g/pages/A.md.tmp", "/g/pages/.A.md.tmp", "/g/pages/A.md"] {
             assert!(!atomic_temp(Path::new(foreign)), "{foreign}");
         }
-        let asset = crate::atomic_file::temp_path(Path::new("/g/pages/x.png"), 4, "");
+        // A user's file that only looks like a temp is graph text's business
+        // (review of 6fb074e9f): `.a.md.…` look-alikes of a page temp too.
+        for foreign in crate::atomic_file::TEMP_LOOK_ALIKES {
+            assert!(!atomic_temp(&pages.join(foreign)), "{foreign}");
+        }
+        for foreign in [".A.md.1.2.backup.tmp", ".A.md.1.2..tmp", ".A.md.1.2new.tmp"] {
+            assert!(!atomic_temp(&pages.join(foreign)), "{foreign}");
+        }
+        let asset = crate::atomic_file::temp_path(
+            Path::new("/g/pages/x.png"),
+            4,
+            crate::atomic_file::TempTag::Replace,
+        );
         assert!(!atomic_temp(&asset));
     }
 
