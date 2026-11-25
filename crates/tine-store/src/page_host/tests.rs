@@ -6,6 +6,8 @@ use super::*;
 mod mutation_tests;
 #[path = "progress_tests.rs"]
 mod progress_tests;
+#[path = "settlement_tests.rs"]
+mod settlement_tests;
 
 pub(super) fn text(bytes: &str) -> Text {
     Some(Arc::from(bytes.as_bytes()))

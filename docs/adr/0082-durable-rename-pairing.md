@@ -115,7 +115,9 @@ unresolved pairs.
   the operation owes its publication (stricter than the model, which may
   rewrite at any settlement): a rename that completes in one pass retires its
   draft whole with no rewrite, as before; the last pair still retires the
-  whole draft.
+  whole draft. One rewrite drops every settled or cancelled pair at once
+  (the model's rewrite, once per pair), so an operation that stalls with K
+  settled pairs is rewritten once, not K times.
 - The Quint storage models (s3.5 to s3.7) describe the durable pairing, and
   the conformance suite replays them on the host in all four profiles.
 - A matching receiver another program wrote holds its pair until the host
@@ -123,7 +125,11 @@ unresolved pairs.
   a durable outside write too: stricter, never weaker.
 - Newer text on a held source writes a superseding decision (choice 2,
   with its version, base and text) before that text publishes; while draft
-  I/O is down or that write fails the save waits. With the receiver
+  I/O is down or that write fails the save waits. A write whose outcome is
+  uncertain (not durable, maybe on disk) does not count: the retried save
+  writes the decision again until one is durable. During a settlement
+  rewrite the operation's pages belong to the rewrite, so that save waits
+  for its commit. With the receiver
   certified, or the text equal to the preimage, the pair is disarmed; else it
   is retained: the operation draft keeps the preimage, the removal stays
   disarmed across relaunch, siblings continue, and the whole draft never

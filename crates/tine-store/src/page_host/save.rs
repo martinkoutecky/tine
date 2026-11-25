@@ -581,7 +581,7 @@ impl<F: HostIo> Host<F> {
                             }
                             Err(_) => false,
                         };
-                        let anchored = job.bytes == preimage || certified;
+                        let anchored = order::anchored(&preimage, &job.bytes, certified);
                         if let Some(name) = self.order.disarm(&key, anchored) {
                             self.repair_op(&name);
                         }

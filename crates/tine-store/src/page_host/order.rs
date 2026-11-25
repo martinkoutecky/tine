@@ -584,39 +584,52 @@ impl Order {
         }
     }
 
-    /// The pair whose source `source` may still be removed and has no
-    /// choice yet: newer text saved there must first make its superseding
-    /// choice durable (`Host::start_save`). As (vehicle name, request id,
-    /// source member).
-    pub fn supersedes(&self, source: &str) -> Option<(String, [u8; 16], u32)> {
-        self.paired.iter().find_map(|(name, op)| {
-            op.pairs
-                .iter()
-                .find(|p| {
-                    p.source == source
-                        && p.choice == PairChoice::None
-                        && matches!(
-                            p.phase,
-                            PairPhase::Armed | PairPhase::Held { removed: false }
-                        )
-                })
-                .map(|p| (name.clone(), op.id, p.source_member))
-        })
+    /// The one answer to "which pair's removal does newer text on `source`
+    /// supersede now": its unresolved pair, while that removal may still
+    /// run (Armed, or Held before the source moved). Both questions below
+    /// ask it: whether a superseding decision must be made durable before
+    /// the text saves (`supersedes`), and which pair the published text
+    /// disarms or retains (`disarming`, `disarm`).
+    fn superseded(&self, source: &str) -> Option<(&String, &PairedOp, &Pair)> {
+        let (name, pair) = self.active(source)?;
+        matches!(
+            pair.phase,
+            PairPhase::Armed | PairPhase::Held { removed: false }
+        )
+        .then(|| (name, &self.paired[name], pair))
     }
 
-    /// A superseding decision on `member` (a source) of `name` is (or may
-    /// be) durable; its phase is unchanged until the newer text publishes
+    /// The superseded pair (`superseded`) whose superseding decision is not
+    /// known durable yet (its choice is still None): newer text saved on
+    /// `source` first writes that decision (`Host::start_save`). As
+    /// (vehicle name, request id, source member).
+    pub fn supersedes(&self, source: &str) -> Option<(String, [u8; 16], u32)> {
+        self.superseded(source)
+            .filter(|(_, _, p)| p.choice == PairChoice::None)
+            .map(|(name, op, p)| (name.clone(), op.id, p.source_member))
+    }
+
+    /// A superseding decision on `member` (a source) of `name` may be on
+    /// disk: its vehicle is registered (it retires with the operation, and
+    /// a settlement rewrite carries it). Only a decision known durable
+    /// (`durable`: its write reached Present, or launch read it) gives the
+    /// pair its Superseded choice; an uncertain write leaves the choice
+    /// None, so the next save writes the decision again before its text
+    /// may publish. The phase is unchanged until the newer text publishes
     /// (`disarm`), or launch decides it.
     pub fn decide_superseded(
         &mut self,
         name: &str,
         member: u32,
         decision: (String, drafts::Decision),
+        durable: bool,
     ) {
         if let Some(op) = self.paired.get_mut(name) {
-            for pair in op.pairs.iter_mut().filter(|p| p.source_member == member) {
-                if pair.choice == PairChoice::None {
-                    pair.choice = PairChoice::Superseded;
+            if durable {
+                for pair in op.pairs.iter_mut().filter(|p| p.source_member == member) {
+                    if pair.choice == PairChoice::None {
+                        pair.choice = PairChoice::Superseded;
+                    }
                 }
             }
             op.decisions.insert(decision.0, Some(decision.1));
@@ -755,16 +768,11 @@ impl Order {
         self.resolve(source, PairPhase::Settled)
     }
 
-    /// The pair whose removal newer text on `source` would supersede now,
-    /// as (vehicle name, receiver, image, preimage): its receiver is read
-    /// to place the original text (`disarm`).
+    /// The pair whose removal newer text on `source` supersedes now
+    /// (`superseded`), as (vehicle name, receiver, image, preimage): its
+    /// receiver is read to place the original text (`disarm`).
     pub fn disarming(&self, source: &str) -> Option<(String, PageKey, Text, Text)> {
-        let (name, p) = self.active(source)?;
-        matches!(
-            p.phase,
-            PairPhase::Armed | PairPhase::Held { removed: false }
-        )
-        .then(|| {
+        self.superseded(source).map(|(name, _, p)| {
             (
                 name.clone(),
                 p.receiver.clone(),
@@ -777,14 +785,14 @@ impl Order {
     /// `source` published newer text before its removal (the model's
     /// `publishedPair`): the removal is superseded. Its superseding choice
     /// was durable before that save (`supersedes`), so no relaunch replays
-    /// the removal. When the original text is anchored (`anchored`: the
-    /// newer text is the preimage, or the receiver is certified) the pair is
+    /// the removal. When the original text is anchored (`anchored`, the
+    /// module's `anchored` over the published text) the pair is
     /// disarmed; else it is retained, and the operation draft keeps the
     /// admitted preimage as the only copy of that text. A source already
     /// moved keeps its custody: its original text stays in the draft until
     /// the receiver is exact again.
     pub fn disarm(&mut self, source: &str, anchored: bool) -> Option<String> {
-        self.disarming(source)?;
+        self.superseded(source)?;
         let phase = if anchored {
             PairPhase::Disarmed
         } else {
@@ -850,8 +858,7 @@ impl Order {
             for pair in &mut op.pairs {
                 if pair.source == source
                     && pair.phase == PairPhase::Restore
-                    && bytes.is_some()
-                    && pair.preimage == *bytes
+                    && source_present(&pair.preimage, bytes)
                 {
                     pair.phase = PairPhase::Cancelled;
                     changed.push(name.clone());
@@ -1004,17 +1011,33 @@ impl Order {
     }
 }
 
+/// The source holds its admitted text, the pair's preimage (the model's
+/// `sourcePresent`, given the source's bytes): an absent source holds none.
+pub(super) fn source_present(preimage: &Text, source: &Text) -> bool {
+    source.is_some() && source == preimage
+}
+
+/// The one answer to "is a pair's original text still anchored outside its
+/// operation draft" (the model's `sourcePresent or certified`): the source
+/// holds its preimage (`source_present`), or the receiver is certified
+/// (`certified`: `Host::receiver_certified`). Launch and Use Disk ask it
+/// through `cancel_phase`; a published newer source text asks it directly
+/// (`Order::disarm`'s `anchored`).
+pub(super) fn anchored(preimage: &Text, source: &Text, certified: bool) -> bool {
+    source_present(preimage, source) || certified
+}
+
 /// Where a decided pair's original text stands (the model's
-/// `cancelPhase`): anchored by the source's preimage on disk or by the
-/// certified receiver (cancelled); else restorable from its preimage when
-/// the source's slot is free after its removal (`removed`); else custody.
+/// `cancelPhase`): anchored (`anchored`) cancels the pair; else it is
+/// restorable from its preimage when the source's slot is free after its
+/// removal (`removed`); else custody.
 pub(super) fn cancel_phase(
     preimage: &Text,
     source: &Text,
     certified: bool,
     removed: bool,
 ) -> PairPhase {
-    if (source.is_some() && source == preimage) || certified {
+    if anchored(preimage, source, certified) {
         PairPhase::Cancelled
     } else if source.is_none() && removed {
         PairPhase::Restore
@@ -1073,7 +1096,7 @@ impl<F: HostIo> Host<F> {
                     None => self.fs.read_page(&chosen.source),
                 };
                 (source, Ok(bytes.clone()))
-            } else if bytes.is_some() && bytes == chosen.preimage {
+            } else if source_present(&chosen.preimage, &bytes) {
                 (Ok(bytes.clone()), Ok(None))
             } else {
                 (Ok(bytes.clone()), self.fs.read_page(&chosen.receiver))
@@ -1129,8 +1152,10 @@ impl<F: HostIo> Host<F> {
     /// is about to save (`Host::start_save`): write its superseding choice
     /// (the decision's choice `2`, with the text) through the guarded
     /// vehicle path first, so no relaunch replays the removal over it. True
-    /// when there is nothing to write or it is durable; a write that may
-    /// have reached the disk marks the pair, which launch acts on.
+    /// when there is nothing to write or it is durable. A write that may
+    /// have reached the disk registers its vehicle but leaves the choice
+    /// None (`Order::decide_superseded`): the save waits, and its retry
+    /// writes the decision again until one is known durable.
     pub(super) fn write_superseding(&mut self, key: &str, page: &Page) -> bool {
         let Some((name, id, member)) = self.order.supersedes(key) else {
             return true;
@@ -1142,8 +1167,12 @@ impl<F: HostIo> Host<F> {
             bytes: page.buf.clone(),
         };
         let (stage, decision) = self.decision_vehicle(key, &name, id, member, choice);
+        // Absent is durably absent; any other stage may leave it on disk,
+        // but only Present lets the text publish over the removal.
         if stage != Stage::Absent {
-            self.order.decide_superseded(&name, member, decision);
+            let durable = stage == Stage::Present;
+            self.order
+                .decide_superseded(&name, member, decision, durable);
         }
         stage == Stage::Present
     }

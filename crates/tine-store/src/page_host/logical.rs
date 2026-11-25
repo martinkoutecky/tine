@@ -448,7 +448,7 @@ impl<F: HostIo> Host<F> {
             if d.choice.superseding() {
                 let name = drafts::op_vehicle(&d.op);
                 self.order
-                    .decide_superseded(&name, d.member, (decision.clone(), d.clone()));
+                    .decide_superseded(&name, d.member, (decision.clone(), d.clone()), true);
             }
         }
         // Where each decided pair's original text stands now: one read of

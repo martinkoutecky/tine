@@ -747,3 +747,95 @@ fn no_operation_vehicle_caches_whether_its_order_holds() {
         assert!(!holds_violations(&files).is_empty(), "missed mutant {to}");
     }
 }
+
+/// One answerer of "which pair's removal does newer text on this source
+/// supersede now" (rcd-impl-2e B1): `Order::superseded` alone names the
+/// phase set (Armed, or Held before the source moved); `supersedes` (is a
+/// durable decision still owed) and `disarming`/`disarm` (which pair the
+/// published text disarms or retains) ask it.
+const SUPERSEDED_PHASES: &str = "PairPhase :: Armed | PairPhase :: Held { removed : false }";
+const SUPERSEDED_ANSWERER: &str = "order.rs::superseded";
+
+/// One answerer of "does the source hold its admitted text" (rcd-impl-2e
+/// B2, the model's `sourcePresent`): `order::source_present` alone compares
+/// a page's bytes with a pair's preimage; `anchored` (with the certified
+/// receiver) and `cancel_phase` build on it for launch, Use Disk and the
+/// newer text's publication.
+const PREIMAGE_ANSWERER: &str = "order.rs::source_present";
+
+/// A `==`/`!=` whose operand ends in `preimage` (`x . preimage`, `* p .
+/// preimage`) in a body's token text.
+fn compares_preimage(body: &str) -> bool {
+    // Token text glues a group's delimiters to its edge tokens.
+    let t: Vec<&str> = (body.split_whitespace())
+        .map(|x| x.trim_matches(|c| "()[]{},;".contains(c)))
+        .collect();
+    let right = |t: &[&str]| {
+        let mut i = t.iter().take_while(|x| matches!(**x, "*" | "&")).count();
+        let mut last = None;
+        while i < t.len() {
+            last = Some(t[i]);
+            if t.get(i + 1) != Some(&".") {
+                break;
+            }
+            i += 2;
+        }
+        last == Some("preimage")
+    };
+    (0..t.len()).any(|i| {
+        matches!(t[i], "==" | "!=") && (t[..i].last() == Some(&"preimage") || right(&t[i + 1..]))
+    })
+}
+
+fn answerer_violations(files: &BTreeMap<String, String>) -> Vec<String> {
+    let (_, calls) = census(files);
+    let mut out = Vec::new();
+    for (function, body) in &calls {
+        if body.contains(SUPERSEDED_PHASES) && function != SUPERSEDED_ANSWERER {
+            out.push(format!("{function} names the superseded phase set"));
+        }
+        if compares_preimage(body) && function != PREIMAGE_ANSWERER {
+            out.push(format!("{function} compares bytes with a preimage"));
+        }
+    }
+    out
+}
+
+#[test]
+fn one_function_answers_each_superseding_question() {
+    let files = production_files(&page_host_dir());
+    let violations = answerer_violations(&files);
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+    let (_, calls) = census(&files);
+    assert!(calls[SUPERSEDED_ANSWERER].contains(SUPERSEDED_PHASES));
+    assert!(compares_preimage(&calls[PREIMAGE_ANSWERER]));
+    // Its mutants: the base's inline anchoring at publication, an inline
+    // preimage match in a restoration, a second copy of the phase set.
+    let mutants = [
+        (
+            "save.rs",
+            "order::anchored(&preimage, &job.bytes, certified)",
+            "job.bytes == preimage || certified",
+        ),
+        (
+            "order.rs",
+            "source_present(&pair.preimage, bytes)",
+            "bytes.is_some() && pair.preimage == *bytes",
+        ),
+        (
+            "order.rs",
+            "    /// The superseded pair (`superseded`)",
+            "    fn armed_mutant(p: &Pair) -> bool {\n        matches!(p.phase, PairPhase::Armed | PairPhase::Held { removed: false })\n    }\n    /// The superseded pair (`superseded`)",
+        ),
+    ];
+    for (file, from, to) in mutants {
+        let mut files = files.clone();
+        let source = files.get_mut(file).unwrap();
+        assert!(source.contains(from), "mutant anchor {from}");
+        *source = source.replacen(from, to, 1);
+        assert!(
+            !answerer_violations(&files).is_empty(),
+            "missed mutant {to}"
+        );
+    }
+}

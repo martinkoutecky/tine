@@ -219,30 +219,53 @@ impl<F: HostIo> Host<F> {
         true
     }
 
-    /// The resolved pair of paired operation `op` whose source is `key`
-    /// that a settlement rewrite may drop now (its index in the pairing),
-    /// the model's `pairRewrite` target: the operation keeps another pair,
-    /// every decision of it is one this code acts on, and neither endpoint
-    /// still owes the publication of its record (that record is then the
-    /// only copy of the page's text, so the host keeps it; the model drops
-    /// an endpoint's record whatever its page holds).
-    pub(super) fn rewrite_target(&self, op: &str, key: &str) -> Option<usize> {
+    /// The resolved pairs of paired operation `op` a settlement rewrite
+    /// drops now, by index in the pairing (the model's `pairRewrite`
+    /// target, once per pair): the resolved pair whose source is `key`
+    /// first, and with it every other resolved pair the rewrite may drop,
+    /// so an operation that stalls with K settled pairs rewrites once, not
+    /// K times (PC-1). A pair may go when neither endpoint still owes the
+    /// publication of its record (that record is then the only copy of the
+    /// page's text, so the host keeps it; the model drops an endpoint's
+    /// record whatever its page holds). Every decision must be one this
+    /// code acts on, and the operation keeps at least one pair (all
+    /// resolved is whole retirement's, `retire_whole`).
+    pub(super) fn rewrite_target(&self, op: &str, key: &str) -> Option<Vec<usize>> {
         let paired = self.order.paired(op)?;
         let live = self.live_ops.get(op)?;
-        if paired.unreadable || paired.pairs.len() < 2 || !self.drafts.contains_key(op) {
+        if paired.unreadable || !self.drafts.contains_key(op) {
             return None;
         }
-        let at = (paired.pairs.iter()).rposition(|p| p.source == key && !p.phase.unresolved())?;
-        let pair = &paired.pairs[at];
-        let owed = live.owed.contains(&pair.receiver) || live.owed.contains(&pair.source);
-        (!owed).then_some(at)
+        let droppable = |p: &order::Pair| {
+            !p.phase.unresolved()
+                && !live.owed.contains(&p.receiver)
+                && !live.owed.contains(&p.source)
+        };
+        let first =
+            (paired.pairs.iter()).rposition(|p| p.source == key && !p.phase.unresolved())?;
+        if !droppable(&paired.pairs[first]) {
+            return None;
+        }
+        let mut dropped = vec![first];
+        dropped.extend(
+            (paired.pairs.iter().enumerate())
+                .filter(|(at, p)| *at != first && droppable(p))
+                .map(|(at, _)| at),
+        );
+        if dropped.len() == paired.pairs.len() {
+            dropped.pop();
+        }
+        (!dropped.is_empty()).then_some(dropped)
     }
 
     /// `key` is the source of a resolved pair a settlement rewrite drops
-    /// now: a draft candidate although its operation still waits. Only once
-    /// no page of the operation owes its publication: while the operation
-    /// is still being saved its pairs settle in turn and the draft retires
-    /// whole, so a rewrite per settled pair would only add writes (PC-3).
+    /// now (`rewrite_target`): a draft candidate although its operation
+    /// still waits. Only once no page of the operation owes its
+    /// publication: while it is still being saved its pairs settle in turn
+    /// and the draft retires whole, so a rewrite per settled pair would only
+    /// add writes (PC-3). This is scheduling policy, not the rewrite's own
+    /// precondition: the model's `pairRewrite` may run while a sibling's
+    /// page still owes, and the host refines it there (conformance).
     pub(super) fn rewritable(&self, key: &str) -> bool {
         let names = self.vehicles_of.get(key).into_iter().flatten();
         names.filter(|name| name.starts_with("op-")).any(|name| {
@@ -251,10 +274,11 @@ impl<F: HostIo> Host<F> {
         })
     }
 
-    /// The settlement rewrite (the model's `pairRewrite`): replace paired
-    /// operation draft `op` by a fresh one without the resolved pair whose
-    /// source is `key` and that pair's endpoint records, keeping every other
-    /// pair, its decisions (rewritten for the new draft's request id and
+    /// The settlement rewrite (the model's `pairRewrite`, once per dropped
+    /// pair): replace paired operation draft `op` by a fresh one without the
+    /// resolved pairs `rewrite_target` names (the one whose source is `key`
+    /// first) and their endpoint records, keeping every other pair, its
+    /// decisions (rewritten for the new draft's request id and
     /// member indexes) and the shared referrer records. The new draft and
     /// those decisions are written first (fresh no-replace names, temp,
     /// fsync, rename, private-directory sync); `op` and its decisions are
@@ -267,12 +291,13 @@ impl<F: HostIo> Host<F> {
         if self.test.single_page_drafts {
             return false;
         }
-        let Some(at) = self.rewrite_target(op, key) else {
+        let Some(targets) = self.rewrite_target(op, key) else {
             return false;
         };
         let paired = &self.order.paired(op).unwrap();
-        let target = &paired.pairs[at];
-        let dropped = [target.member, target.source_member];
+        let dropped: BTreeSet<u32> = (targets.iter())
+            .flat_map(|&at| [paired.pairs[at].member, paired.pairs[at].source_member])
+            .collect();
         let records = &self.drafts[op];
         let mut index = BTreeMap::new();
         let mut kept = vec![];
@@ -284,7 +309,7 @@ impl<F: HostIo> Host<F> {
             }
         }
         let pairs: drafts::Pairs = (paired.pairs.iter().enumerate())
-            .filter(|(i, _)| *i != at)
+            .filter(|(i, _)| !targets.contains(i))
             .map(|(_, p)| (index[&p.member], index[&p.source_member]))
             .collect();
         let id = uuid::Uuid::new_v4().into_bytes();
