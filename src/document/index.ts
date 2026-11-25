@@ -106,9 +106,10 @@
 export { blockIsGridView, blockIsOpaqueSheetView, collapseEpochOf, node, onBlockRawChanged, onPageRawChanged, someBlockInTrees, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName, pageReadOnly, sourceFormatForPage } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { trackAssetWrite } from "./assetWrites";
-export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushPage, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, type UnsavedState } from "./host/wiring";
+export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushAllUnsettled, flushPage, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, type UnsavedState } from "./host/wiring";
 export { pendingDataRevision } from "./host/wiring";
-export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./host/protocol";
+export type { Unsettled } from "./host/settle";
+export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublicationRefused, PublishedNeed, PublishedRevision } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 export { admitRead } from "./readAdmission";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";

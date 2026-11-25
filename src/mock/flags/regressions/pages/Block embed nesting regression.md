@@ -1,0 +1,5 @@
+- {{embed ((b10c0e3b-0000-4000-8000-000000000002))}}
+	- {{embed [[Page embed source regression]]}}
+	- Host child with an inline embed {{embed ((b10c0e3b-0000-4000-8000-000000000001))}}
+- Page preview [[Block embed regression]]
+- Block preview ((b10c0e3b-0000-4000-8000-000000000003))
