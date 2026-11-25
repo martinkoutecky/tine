@@ -43,14 +43,23 @@ export interface LocalTarget {
  * attribute or page icon value. */
 export type LocalDestination = { url: Url } | { text: string };
 
+// The door's numbering (crates/lsdoc-wasm `local_target_json`): a plain text
+// destination is 0, a Url tag its index here; an origin its index in ORIGINS.
+// An unknown name is -1, which the door answers with `null`.
+const URL_TYPES: readonly string[] = ["", "page_ref", "block_ref", "search", "file", "embed_data", "complex"];
+const ORIGINS: readonly LocalTargetOrigin[] = [
+  "md-link", "md-embed", "org-link", "org-bare", "img-macro", "html-resource", "page-icon",
+];
+
 /** Ask the owner. Pure, O(destination bytes), no I/O. Throws on an input the
  * owner refuses to read (an unknown origin), which is a programming error. */
 export function localTarget(destination: LocalDestination, origin: LocalTargetOrigin): LocalTarget {
+  const at = ORIGINS.indexOf(origin);
   const json = "text" in destination
-    ? local_target_json("", destination.text, undefined, undefined, origin)
+    ? local_target_json(0, destination.text, undefined, undefined, at)
     : destination.url.type === "complex"
-      ? local_target_json("complex", undefined, destination.url.protocol, destination.url.link, origin)
-      : local_target_json(destination.url.type, destination.url.v, undefined, undefined, origin);
+      ? local_target_json(URL_TYPES.indexOf("complex"), "", destination.url.protocol, destination.url.link, at)
+      : local_target_json(URL_TYPES.indexOf(destination.url.type), destination.url.v, undefined, undefined, at);
   const answer = JSON.parse(json) as LocalTarget | null;
   if (answer === null) throw new Error(`local target: unreadable destination for ${origin}`);
   return answer;

@@ -177,8 +177,9 @@ fn literal_file_prefix(dest: &str) -> bool {
         .is_some_and(|p| p.eq_ignore_ascii_case(b"file:"))
 }
 
+/// The route without the custom scheme's name.
 #[derive(Clone, Copy)]
-enum AnchorRoute {
+pub(crate) enum AnchorRoute {
     Relative,
     Web,
     Mail,
@@ -205,7 +206,12 @@ pub fn scheme_route(dest: &str) -> SchemeRoute {
 /// The anchor route as a number for the wasm door (relative, web, mail,
 /// file, drive, defer, drop): no allocation either way. O(prefix bytes).
 pub fn anchor_route_code(dest: &str) -> u32 {
-    route(dest, None) as u32
+    anchor_route(dest) as u32
+}
+
+/// The route without the custom scheme's name: no allocation. O(prefix bytes).
+pub(crate) fn anchor_route(dest: &str) -> AnchorRoute {
+    route(dest, None)
 }
 
 /// The scheme route of a raw HTML resource attribute, every control byte

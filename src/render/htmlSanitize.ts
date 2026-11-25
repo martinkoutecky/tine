@@ -1,6 +1,7 @@
 import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
 import { deferAnchorHref, hasWebUrlPrefix, previewResourceDecision } from "../linkSchemePolicy";
+import { color_only_style } from "./wasm/lsdoc_wasm.js";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
 // apply to raw inline/block HTML embedded in a Markdown/Org block.
@@ -34,7 +35,7 @@ export const RAW_HTML_TAGS = policy.tags;
 
 /** Attributes that survive, across all allowed tags. Note the absence of
  *  `style` here (positioning/tracking; colour declarations are carried over
- *  separately, see `colorOnlyStyle`), `autoplay`, and any `on*` handler.
+ *  separately, see `color_only_style`), `autoplay`, and any `on*` handler.
  *  `controls` exposes user-driven playback; `loop`/`muted` retain playback
  *  state without starting it; `preload` is the browser's media fetch hint;
  *  `poster` is the video placeholder; `type` lets `<source>` advertise its
@@ -51,30 +52,9 @@ export const RAW_HTML_ATTRS = policy.browser.attributes;
 // --- Colour-only `style` (GH #243) ---
 // OG's DOMPurify default keeps `style` on hiccup/raw HTML, which is how Logseq users
 // write `[:span {:style "color: red"} "x"]`. Tine keeps only colour declarations, so a
-// shared note can recolor text but never position, resize, hide or fetch anything:
-// property names come from the policy's `browser.styleProperties`, and a value must be
-// one closed colour literal (#hex, a bare colour word, or a flat rgb()/hsl()/oklch()-
-// style function with only numbers, `%`, `/`, `,` and `.`): no url(), var(), calc(),
-// image-set() or `!important`. Anything else in the attribute is dropped.
-const STYLE_PROPERTIES: readonly string[] = policy.browser.styleProperties;
-const COLOR_VALUE = /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$/i;
-const COLOR_FUNCTION_BANNED = /(?:var|calc|url|env|attr|image|min|max|clamp)/i;
-
-/** The colour declarations of a `style` attribute value, serialized; "" if none. */
-export function colorOnlyStyle(value: string): string {
-  const kept: string[] = [];
-  for (const declaration of value.split(";")) {
-    const colon = declaration.indexOf(":");
-    if (colon < 0) continue;
-    const property = declaration.slice(0, colon).trim().toLowerCase();
-    const v = declaration.slice(colon + 1).trim();
-    if (!STYLE_PROPERTIES.includes(property) || !COLOR_VALUE.test(v)) continue;
-    // A function body may contain letters (`from`, `none`, channel names) but never a nested call.
-    if (v.includes("(") && COLOR_FUNCTION_BANNED.test(v.slice(v.indexOf("(")))) continue;
-    kept.push(`${property}: ${v}`);
-  }
-  return kept.join("; ");
-}
+// shared note can recolor text but never position, resize, hide or fetch anything.
+// The rule is the export sanitizer's (`color_only_style` in tine-core's html_sanitize,
+// through wasm), so the app and a published page keep the same declarations.
 
 /** True if `src` is a local filesystem path (not a web / data / blob URL). */
 function isLocalSrc(src: string): boolean {
@@ -139,7 +119,7 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   // declarations first and put them back on whatever survives.
   const colors = new Map<Element, string>();
   for (const element of root.querySelectorAll("[style]")) {
-    const kept = colorOnlyStyle(element.getAttribute("style") ?? "");
+    const kept = color_only_style(element.getAttribute("style") ?? "");
     if (kept) colors.set(element, kept);
   }
   DOMPurify.sanitize(root, {

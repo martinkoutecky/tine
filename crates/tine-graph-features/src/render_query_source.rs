@@ -87,6 +87,15 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> QuerySources {
 
 pub(crate) fn visit_inlines<E>(
     blocks: &mut [Block],
+    visit: impl FnMut(&mut [Inline]) -> Result<(), E>,
+) -> Result<(), E> {
+    visit_nodes(blocks, |_| {}, visit)
+}
+
+/// Visit every block (before its children) and every inline run of a body.
+pub(crate) fn visit_nodes<E>(
+    blocks: &mut [Block],
+    mut on_block: impl FnMut(&mut Block),
     mut visit: impl FnMut(&mut [Inline]) -> Result<(), E>,
 ) -> Result<(), E> {
     enum Node<'a> {
@@ -95,7 +104,10 @@ pub(crate) fn visit_inlines<E>(
         Inlines(&'a mut [Inline]),
     }
     let mut todo: Vec<_> = blocks.iter_mut().map(Node::Block).collect();
-    while let Some(node) = todo.pop() {
+    while let Some(mut node) = todo.pop() {
+        if let Node::Block(block) = &mut node {
+            on_block(block);
+        }
         match node {
             Node::Block(block) => match block {
                 Block::Paragraph { inline, .. }

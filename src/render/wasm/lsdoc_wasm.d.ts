@@ -35,6 +35,12 @@ export function builtin_macro(name: string): string;
 export function canonical_group_field(value: string): string | undefined;
 
 /**
+ * The colour declarations a note's `style` keeps in rendered output ("" if
+ * none): the export sanitizer's rule, so app and export agree. O(value bytes).
+ */
+export function color_only_style(value: string): string;
+
+/**
  * The same own-property discriminator that editor_text uses to hide comment metadata.
  */
 export function comment_quote(properties: string): string | undefined;
@@ -161,12 +167,15 @@ export function linkable_property_names(value: string, is_org: boolean): string[
 
 /**
  * The one owner of "which local target does this destination name". A parser
- * link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
- * plain text destination); the answer is the `LocalTarget` JSON, or `null`
- * for an unknown origin or Url tag. O(destination bytes), no parse or
- * filesystem I/O. Plain arguments, not JSON: both modules have a size ceiling.
+ * link node arrives as its `url` fields. `url_type` is 0 for a plain text
+ * destination in `v`, else the Url tag (1 page_ref, 2 block_ref, 3 search,
+ * 4 file, 5 embed_data, 6 complex); `origin` indexes the list below. Both
+ * orders are `src/localTarget.ts`'s. The answer is the `LocalTarget` JSON, or
+ * `null` for a number out of range. O(destination bytes), no parse or
+ * filesystem I/O. Numbers, not names or JSON: both modules have a size
+ * ceiling, and matching names cost the app module about 0.5k.
  */
-export function local_target_json(url_type: string, v: string | null | undefined, protocol: string | null | undefined, link: string | null | undefined, origin: string): string;
+export function local_target_json(url_type: number, v: string, protocol: string | null | undefined, link: string | null | undefined, origin: number): string;
 
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_raw: string, enabled: boolean, with_seconds: boolean): string;
 
@@ -424,6 +433,7 @@ export interface InitOutput {
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly builtin_macro: (a: number, b: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
+    readonly color_only_style: (a: number, b: number) => [number, number];
     readonly comment_quote: (a: number, b: number) => [number, number, number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
@@ -447,7 +457,7 @@ export interface InitOutput {
     readonly link_scheme: (a: number, b: number) => [number, number];
     readonly link_scheme_prefix_bytes: () => number;
     readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
-    readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
+    readonly local_target_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];

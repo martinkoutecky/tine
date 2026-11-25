@@ -1,21 +1,38 @@
-// The refused link schemes (`src-tauri/external-link-schemes.json`, its
-// `refused` array), compiled into core, the one answerer of membership. The
-// TypeScript policy imports the same file.
+// Lists compiled into core from the checked-in JSON they live in, so the wasm
+// modules carry neither the JSON text nor a reader for it:
+// - the refused link schemes (`src-tauri/external-link-schemes.json`, its
+//   `refused` array); core is the one answerer of membership and the
+//   TypeScript policy imports the same file;
+// - the colour rule's style properties (`fixtures/html-sanitize-policy.json`,
+//   `browser.styleProperties`).
 fn main() {
-    let file = "../../src-tauri/external-link-schemes.json";
-    println!("cargo:rerun-if-changed={file}");
-    let list: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(file).expect(file)).expect(file);
-    let refused: Vec<&str> = list["refused"]
-        .as_array()
-        .expect("refused")
-        .iter()
-        .map(|name| name.as_str().expect("refused name"))
-        .collect();
+    let refused = strings("../../src-tauri/external-link-schemes.json", &["refused"]);
+    let style = strings(
+        "../../fixtures/html-sanitize-policy.json",
+        &["browser", "styleProperties"],
+    );
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
-    std::fs::write(
-        out.join("refused_schemes.rs"),
-        format!("const REFUSED_SCHEMES: &[&str] = &{refused:?};\n"),
-    )
-    .expect("generated refused schemes");
+    for (file, name, list) in [
+        ("refused_schemes.rs", "REFUSED_SCHEMES", refused),
+        ("style_properties.rs", "STYLE_PROPERTIES", style),
+    ] {
+        std::fs::write(
+            out.join(file),
+            format!("const {name}: &[&str] = &{list:?};\n"),
+        )
+        .expect(file);
+    }
+}
+
+/// The string array at `path` in the JSON file `file`.
+fn strings(file: &str, path: &[&str]) -> Vec<String> {
+    println!("cargo:rerun-if-changed={file}");
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file).expect(file)).expect(file);
+    let list = path.iter().fold(&json, |value, key| &value[key]);
+    list.as_array()
+        .unwrap_or_else(|| panic!("{file}: {path:?} is not an array"))
+        .iter()
+        .map(|name| name.as_str().expect("a string").to_owned())
+        .collect()
 }

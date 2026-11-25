@@ -1077,6 +1077,27 @@ function __tine_raw_canonical_group_field(value) {
 }
 
 /**
+ * The colour declarations a note's `style` keeps in rendered output ("" if
+ * none): the export sanitizer's rule, so app and export agree. O(value bytes).
+ * @param {string} value
+ * @returns {string}
+ */
+function __tine_raw_color_only_style(value) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.color_only_style(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * The same own-property discriminator that editor_text uses to hide comment metadata.
  * @param {string} properties
  * @returns {string | undefined}
@@ -1514,37 +1535,36 @@ function __tine_raw_linkable_property_names(value, is_org) {
 
 /**
  * The one owner of "which local target does this destination name". A parser
- * link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
- * plain text destination); the answer is the `LocalTarget` JSON, or `null`
- * for an unknown origin or Url tag. O(destination bytes), no parse or
- * filesystem I/O. Plain arguments, not JSON: both modules have a size ceiling.
- * @param {string} url_type
- * @param {string | null | undefined} v
+ * link node arrives as its `url` fields. `url_type` is 0 for a plain text
+ * destination in `v`, else the Url tag (1 page_ref, 2 block_ref, 3 search,
+ * 4 file, 5 embed_data, 6 complex); `origin` indexes the list below. Both
+ * orders are `src/localTarget.ts`'s. The answer is the `LocalTarget` JSON, or
+ * `null` for a number out of range. O(destination bytes), no parse or
+ * filesystem I/O. Numbers, not names or JSON: both modules have a size
+ * ceiling, and matching names cost the app module about 0.5k.
+ * @param {number} url_type
+ * @param {string} v
  * @param {string | null | undefined} protocol
  * @param {string | null | undefined} link
- * @param {string} origin
+ * @param {number} origin
  * @returns {string}
  */
 function __tine_raw_local_target_json(url_type, v, protocol, link, origin) {
-    let deferred6_0;
-    let deferred6_1;
+    let deferred4_0;
+    let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(url_type, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(v, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(v) ? 0 : passStringToWasm0(v, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var ptr1 = isLikeNone(protocol) ? 0 : passStringToWasm0(protocol, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(protocol) ? 0 : passStringToWasm0(protocol, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var ptr2 = isLikeNone(link) ? 0 : passStringToWasm0(link, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(link) ? 0 : passStringToWasm0(link, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len3 = WASM_VECTOR_LEN;
-        const ptr4 = passStringToWasm0(origin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len4 = WASM_VECTOR_LEN;
-        const ret = wasm.local_target_json(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
-        deferred6_0 = ret[0];
-        deferred6_1 = ret[1];
+        const ret = wasm.local_target_json(url_type, ptr0, len0, ptr1, len1, ptr2, len2, origin);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -2954,6 +2974,7 @@ export const block_may_have_logbook = __tineGuard("block_may_have_logbook", __ti
 export const block_reference_names = __tineGuard("block_reference_names", __tine_raw_block_reference_names);
 export const builtin_macro = __tineGuard("builtin_macro", __tine_raw_builtin_macro);
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
+export const color_only_style = __tineGuard("color_only_style", __tine_raw_color_only_style);
 export const comment_quote = __tineGuard("comment_quote", __tine_raw_comment_quote);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);

@@ -62,6 +62,13 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
     tine_core::query::view::canonical_group_token(value).map(str::to_owned)
 }
 
+/// The colour declarations a note's `style` keeps in rendered output ("" if
+/// none): the export sanitizer's rule, so app and export agree. O(value bytes).
+#[wasm_bindgen]
+pub fn color_only_style(value: &str) -> String {
+    tine_core::html_sanitize::color_only_style(value)
+}
+
 use tine_outline::page_filename;
 
 /// The native file-format answer, including mixed-case Org extensions.
@@ -1119,35 +1126,52 @@ pub fn link_scheme(dest: &str) -> Option<String> {
 }
 
 /// The one owner of "which local target does this destination name". A parser
-/// link node arrives as its `url` fields (`url_type` is the Url tag, "" for a
-/// plain text destination); the answer is the `LocalTarget` JSON, or `null`
-/// for an unknown origin or Url tag. O(destination bytes), no parse or
-/// filesystem I/O. Plain arguments, not JSON: both modules have a size ceiling.
+/// link node arrives as its `url` fields. `url_type` is 0 for a plain text
+/// destination in `v`, else the Url tag (1 page_ref, 2 block_ref, 3 search,
+/// 4 file, 5 embed_data, 6 complex); `origin` indexes the list below. Both
+/// orders are `src/localTarget.ts`'s. The answer is the `LocalTarget` JSON, or
+/// `null` for a number out of range. O(destination bytes), no parse or
+/// filesystem I/O. Numbers, not names or JSON: both modules have a size
+/// ceiling, and matching names cost the app module about 0.5k.
 #[wasm_bindgen]
 pub fn local_target_json(
-    url_type: &str,
-    v: Option<String>,
+    url_type: u32,
+    mut v: String,
     protocol: Option<String>,
     link: Option<String>,
-    origin: &str,
+    origin: u32,
 ) -> String {
     use lsdoc::ast::Url;
+    use std::mem::take;
     use tine_core::local_target::{local_target, Destination, Origin};
-    let Some(origin) = Origin::parse(origin) else {
+    // The order `src/localTarget.ts` sends.
+    const ORIGINS: [Origin; 7] = [
+        Origin::MdLink,
+        Origin::MdEmbed,
+        Origin::OrgLink,
+        Origin::OrgBare,
+        Origin::ImgMacro,
+        Origin::HtmlResource,
+        Origin::PageIcon,
+    ];
+    let Some(&origin) = ORIGINS.get(origin as usize) else {
         return "null".into();
     };
-    let v = v.unwrap_or_default();
     let url = match url_type {
-        "" => return local_target(Destination::Text(&v), origin).to_json(),
-        "page_ref" => Url::PageRef { v },
-        "block_ref" => Url::BlockRef { v },
-        "search" => Url::Search { v },
-        "file" => Url::File { v },
-        "embed_data" => Url::EmbedData { v },
-        "complex" => Url::Complex { protocol, link },
+        0 => None,
+        1 => Some(Url::PageRef { v: take(&mut v) }),
+        2 => Some(Url::BlockRef { v: take(&mut v) }),
+        3 => Some(Url::Search { v: take(&mut v) }),
+        4 => Some(Url::File { v: take(&mut v) }),
+        5 => Some(Url::EmbedData { v: take(&mut v) }),
+        6 => Some(Url::Complex { protocol, link }),
         _ => return "null".into(),
     };
-    local_target(Destination::Link { url: &url }, origin).to_json()
+    let dest = match &url {
+        Some(url) => Destination::Link { url },
+        None => Destination::Text(&v),
+    };
+    local_target(dest, origin).to_json()
 }
 
 /// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.

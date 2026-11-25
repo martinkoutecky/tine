@@ -14,10 +14,11 @@
 //! attachment. Where a product question is still open, this module keeps the
 //! renderer's current answer and says so at that site ("Pending decision").
 
-use crate::link_scheme::{scheme_route, SchemeRoute};
+use crate::link_scheme::{anchor_route, scheme_route, AnchorRoute, SchemeRoute};
 use crate::lsdoc::ast::Url;
 // The strict decoder and the ECMAScript trim set are the outline's: one Rust
 // answer each (pinned by `owner_holds_no_decoder_or_whitespace_set`).
+use tine_outline::editor_text::js_blank;
 pub(crate) use tine_outline::editor_text::js_trim;
 use tine_outline::page_filename::decode_uri_component as strict_decode;
 
@@ -158,31 +159,28 @@ impl LocalTarget {
     /// hand: derived serde code would push the browser parser module over its
     /// size ceiling. O(answer bytes).
     pub fn to_json(&self) -> String {
-        let (kind, key, value) = match &self.route {
-            Route::PageRef { name } => ("page_ref", "name", name.as_str()),
-            Route::BlockRef { id } => ("block_ref", "id", id.as_str()),
-            Route::Web => ("web", "", ""),
-            Route::Mail => ("mail", "", ""),
-            Route::AppScheme { scheme } => ("app_scheme", "scheme", scheme.as_str()),
-            Route::Refused => ("refused", "", ""),
-            Route::Fragment { href } => ("fragment", "href", href.as_str()),
-            Route::Attachment { name } => ("attachment", "name", name.as_str()),
-            Route::GraphFile { path } => ("graph_file", "path", path.as_str()),
-            Route::OutsideFile { path, .. } => ("outside_file", "path", path.as_str()),
-            Route::Drive { path } => ("drive", "path", path.as_str()),
-            Route::FileUrl { url } => ("file_url", "url", url.as_str()),
-            Route::PageRelative { path } => ("page_relative", "path", path.as_str()),
-            Route::RefusedMalformed => ("refused_malformed", "", ""),
+        // The kind with its closing quote, then the field's key when it has one.
+        let (head, value) = match &self.route {
+            Route::PageRef { name } => (r#"page_ref","name":"#, Some(name.as_str())),
+            Route::BlockRef { id } => (r#"block_ref","id":"#, Some(id.as_str())),
+            Route::Web => (r#"web""#, None),
+            Route::Mail => (r#"mail""#, None),
+            Route::AppScheme { scheme } => (r#"app_scheme","scheme":"#, Some(scheme.as_str())),
+            Route::Refused => (r#"refused""#, None),
+            Route::Fragment { href } => (r#"fragment","href":"#, Some(href.as_str())),
+            Route::Attachment { name } => (r#"attachment","name":"#, Some(name.as_str())),
+            Route::GraphFile { path } => (r#"graph_file","path":"#, Some(path.as_str())),
+            Route::OutsideFile { path, .. } => (r#"outside_file","path":"#, Some(path.as_str())),
+            Route::Drive { path } => (r#"drive","path":"#, Some(path.as_str())),
+            Route::FileUrl { url } => (r#"file_url","url":"#, Some(url.as_str())),
+            Route::PageRelative { path } => (r#"page_relative","path":"#, Some(path.as_str())),
+            Route::RefusedMalformed => (r#"refused_malformed""#, None),
         };
         let mut out = String::from(r#"{"route":{"kind":""#);
         let quote =
             |out: &mut String, v: &str| out.push_str(&serde_json::to_string(v).unwrap_or_default());
-        out.push_str(kind);
-        out.push('"');
-        if !key.is_empty() {
-            out.push_str(",\"");
-            out.push_str(key);
-            out.push_str("\":");
+        out.push_str(head);
+        if let Some(value) = value {
             quote(&mut out, value);
         }
         if let Route::OutsideFile { reason, .. } = &self.route {
@@ -239,8 +237,7 @@ pub fn local_target(dest: Destination<'_>, origin: Origin) -> LocalTarget {
             }
             // Design: a bare Org drive link names the drive file, not a page.
             Url::PageRef { v }
-                if origin == Origin::OrgBare
-                    && is_drive(&decode_once(js_trim(v)).replace('\\', "/")) =>
+                if origin == Origin::OrgBare && is_drive(&decode_once(js_trim(v))) =>
             {
                 return path_target(v, SchemeRoute::Drive, origin);
             }
@@ -287,7 +284,7 @@ pub fn complex_destination(protocol: &str, link: &str) -> String {
     if protocol == "file" {
         link.to_owned()
     } else {
-        format!("{protocol}://{link}")
+        [protocol, "://", link].concat()
     }
 }
 
@@ -334,8 +331,8 @@ pub fn resolve_file(route: &Route, root: &str) -> Option<String> {
 fn path_target(dest: &str, decision: SchemeRoute, origin: Origin) -> LocalTarget {
     // Pending decision 2 (whitespace trimming): JavaScript's trim, as rendered today.
     let mut text = js_trim(dest);
-    if decision == SchemeRoute::File {
-        text = &text[5..];
+    if matches!(decision, SchemeRoute::File) {
+        text = text.get(5..).unwrap_or_default();
         if matches!(text.as_bytes().first(), Some(b'/' | b'\\')) {
             return file_url(dest.trim(), origin);
         }
@@ -347,14 +344,14 @@ fn path_target(dest: &str, decision: SchemeRoute, origin: Origin) -> LocalTarget
     }
     let decoded = decode_once(text).replace('\\', "/");
     let mut target = if is_drive(&decoded) {
-        if !decoded[2..].starts_with('/') {
+        if decoded.as_bytes().get(2) != Some(&b'/') {
             // `C:docs` is relative to a drive's current folder: never opened.
             return LocalTarget::of(Route::RefusedMalformed);
         }
         LocalTarget::of(Route::Drive {
             path: normalize_drive(&decoded),
         })
-    } else if let Some(name) = (decision == SchemeRoute::Relative)
+    } else if let Some(name) = matches!(decision, SchemeRoute::Relative)
         .then(|| attachment_name(text))
         .flatten()
     {
@@ -382,7 +379,11 @@ fn path_target(dest: &str, decision: SchemeRoute, origin: Origin) -> LocalTarget
 
 /// PDF identity of a file route. O(path bytes).
 fn file_pdf(route: &Route, decoded: &str, origin: Origin) -> Option<Pdf> {
-    let basename = || AssetName(decoded.rsplit('/').next().unwrap_or(decoded).to_owned());
+    let base = decoded
+        .bytes()
+        .rposition(|b| b == b'/')
+        .map_or(0, |i| i + 1);
+    let basename = || AssetName(decoded.get(base..).unwrap_or_default().to_owned());
     match route {
         // A bare `x.pdf` keeps Logseq's assets-relative reader.
         Route::GraphFile { .. } if !decoded.contains('/') => {
@@ -401,15 +402,20 @@ fn file_pdf(route: &Route, decoded: &str, origin: Origin) -> Option<Pdf> {
     }
 }
 
+/// The text after a leading `file://` (any case), if it has one.
+fn after_file_slashes(url: &str) -> Option<&str> {
+    url.get(..7)
+        .filter(|p| p.eq_ignore_ascii_case("file://"))
+        .and(url.get(7..))
+}
+
 fn file_url(url: &str, origin: Origin) -> LocalTarget {
     let mut target = LocalTarget::of(Route::FileUrl {
         url: url.to_owned(),
     });
     // A `file://` URL names a PDF when its path ends in `.pdf` and it carries
     // no query or fragment (no URL parser: it would double the wasm module).
-    let pdf = url
-        .get(..7)
-        .is_some_and(|p| p.eq_ignore_ascii_case("file://"))
+    let pdf = after_file_slashes(url).is_some()
         && query_start(url) == url.len()
         && !url.contains("%00")
         && is_pdf(&percent_decode(url));
@@ -441,12 +447,13 @@ fn attachment_name(raw: &str) -> Option<AssetName> {
             i += 1;
             continue;
         };
-        if raw[start..i].eq_ignore_ascii_case("assets") {
-            let rest = decode_once(&raw[i + len..]).replace('\\', "/");
-            let name: Vec<&str> = rest
-                .split('/')
-                .filter(|p| !p.is_empty() && *p != ".")
-                .collect();
+        if raw
+            .get(start..i)
+            .is_some_and(|folder| folder.eq_ignore_ascii_case("assets"))
+        {
+            let rest = decode_once(raw.get(i + len..).unwrap_or_default()).replace('\\', "/");
+            let mut name = Vec::new();
+            push_segments(&mut name, &rest, false);
             return Some(AssetName(name.join("/")));
         }
         i += len.max(1);
@@ -455,17 +462,30 @@ fn attachment_name(raw: &str) -> Option<AssetName> {
     None
 }
 
-fn graph_relative(path: &str) -> Route {
-    let mut segments: Vec<&str> = Vec::new();
+/// Push `path`'s `/`-separated segments, without empty and `.` ones. With
+/// `parents`, a `..` removes the segment before it; one with nothing before
+/// it to remove is kept when `segments` started empty and dropped otherwise
+/// (a drive root clamps it). O(path bytes).
+fn push_segments<'a>(segments: &mut Vec<&'a str>, path: &'a str, parents: bool) {
+    let floor = segments.len();
     for part in path.split('/') {
         match part {
             "" | "." => {}
-            ".." if segments.last().is_some_and(|last| *last != "..") => {
-                segments.pop();
+            ".." if parents => {
+                if segments.len() > floor && segments.last() != Some(&"..") {
+                    segments.pop();
+                } else if floor == 0 {
+                    segments.push(part);
+                }
             }
             part => segments.push(part),
         }
     }
+}
+
+fn graph_relative(path: &str) -> Route {
+    let mut segments = Vec::new();
+    push_segments(&mut segments, path, true);
     let path = segments.join("/");
     if segments.first() == Some(&"..") {
         Route::OutsideFile {
@@ -478,63 +498,48 @@ fn graph_relative(path: &str) -> Route {
 }
 
 fn normalize_drive(path: &str) -> String {
-    let mut segments: Vec<&str> = vec![&path[..2]];
-    for part in path[2..].split('/') {
-        match part {
-            "" | "." => {}
-            ".." if segments.len() > 1 => {
-                segments.pop();
-            }
-            ".." => {}
-            part => segments.push(part),
-        }
-    }
+    let (drive, rest) = path.split_at_checked(2).unwrap_or((path, ""));
+    let mut segments = vec![drive];
+    push_segments(&mut segments, rest, true);
+    let mut out = segments.join("/");
     if segments.len() == 1 {
-        return format!("{}/", segments[0]);
+        out.push('/');
     }
-    segments.join("/")
+    out
 }
 
 /// Pending decision 5 (raw HTML and Hiccup resources): today only an absolute
 /// local `<img src>` is read; everything else stays with the browser.
 fn html_resource(src: &str) -> LocalTarget {
+    let file = after_file_slashes(src);
     let local = src.starts_with('/') && !src.starts_with("//")
-        || src
-            .get(..7)
-            .is_some_and(|p| p.eq_ignore_ascii_case("file://"))
+        || file.is_some()
         || src.starts_with("\\\\")
         || is_drive(src) && matches!(src.as_bytes().get(2), Some(b'/' | b'\\'));
     if !local {
-        return LocalTarget::of(match scheme_route(src) {
-            SchemeRoute::Web => Route::Web,
-            SchemeRoute::Drop | SchemeRoute::Defer(_) | SchemeRoute::Mail => Route::Refused,
+        return LocalTarget::of(match anchor_route(src) {
+            AnchorRoute::Web => Route::Web,
+            AnchorRoute::Drop | AnchorRoute::Defer | AnchorRoute::Mail => Route::Refused,
             _ => Route::Fragment {
                 href: src.to_owned(),
             },
         });
     }
-    let path = if src
-        .get(..7)
-        .is_some_and(|p| p.eq_ignore_ascii_case("file://"))
-    {
-        &src[7..]
-    } else {
-        src
-    };
-    let mut path = strict_decode(path).unwrap_or_else(|| path.to_owned());
-    if path.starts_with('/')
-        && is_drive(&path[1..])
-        && matches!(path.as_bytes().get(3), Some(b'/' | b'\\'))
-    {
-        path.remove(0);
-    }
-    LocalTarget::of(if is_drive(&path) {
-        Route::Drive { path }
-    } else {
-        Route::OutsideFile {
+    let path = file.unwrap_or(src);
+    let path = strict_decode(path).unwrap_or_else(|| path.to_owned());
+    // `/C:/x` names the drive path `C:/x`.
+    let drive = path
+        .strip_prefix('/')
+        .filter(|rest| is_drive(rest) && matches!(rest.as_bytes().get(2), Some(b'/' | b'\\')));
+    LocalTarget::of(match drive {
+        Some(drive) => Route::Drive {
+            path: drive.to_owned(),
+        },
+        None if is_drive(&path) => Route::Drive { path },
+        None => Route::OutsideFile {
             path,
             reason: OutsideReason::Absolute,
-        }
+        },
     })
 }
 
@@ -563,7 +568,10 @@ fn org_bare_image(target: &str) -> bool {
         .bytes()
         .take_while(|b| matches!(b, b'.' | b'/'))
         .count();
-    let local = target[lead..].starts_with("assets");
+    let local = target
+        .as_bytes()
+        .get(lead..)
+        .is_some_and(|rest| rest.starts_with(b"assets"));
     // The extension before any `?` or `#` (OG tests the text before `#` and
     // before `?`; both end at the first of them).
     let ext = ext_of(target);
@@ -577,7 +585,7 @@ const OG_ORG_MEDIA: &[&str] = &[
 ];
 /// The extension, ignoring a `?`/`#` tail. O(bytes).
 fn ext_of(name: &str) -> &str {
-    extension(&name[..query_start(name)])
+    extension(name.get(..query_start(name)).unwrap_or_default())
 }
 
 /// Where a URL's query or fragment starts (the length when it has neither).
@@ -588,12 +596,15 @@ fn query_start(url: &str) -> usize {
 }
 
 fn extension(name: &str) -> &str {
-    name.rfind('.').map_or("", |i| &name[i + 1..])
+    name.rfind('.')
+        .and_then(|i| name.get(i + 1..))
+        .unwrap_or_default()
 }
 
 fn is_pdf(name: &str) -> bool {
     let b = name.as_bytes();
-    b.len() >= 4 && b[b.len() - 4..].eq_ignore_ascii_case(b".pdf")
+    b.split_last_chunk::<4>()
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(b".pdf"))
 }
 
 fn is_drive(path: &str) -> bool {
@@ -608,11 +619,12 @@ fn is_drive_root(segment: &str) -> bool {
 /// OG `search-link-cp`: a dotless search target is a page, unless blank, an
 /// anchor (`#x`, `*x`) or a block reference. O(bytes).
 fn search_target_is_page(v: &str) -> bool {
-    let first = v.chars().next();
-    if js_trim(v).is_empty()
-        || first == Some('#')
-        || (first == Some('*') && !v.ends_with('*'))
-        || v.contains('.')
+    // Byte tests: `#`, `*` and `.` are ASCII.
+    let b = v.as_bytes();
+    if js_blank(v)
+        || b.first() == Some(&b'#')
+        || (b.first() == Some(&b'*') && b.last() != Some(&b'*'))
+        || b.contains(&b'.')
     {
         return false;
     }
@@ -621,11 +633,11 @@ fn search_target_is_page(v: &str) -> bool {
 
 fn is_block_ref(v: &str) -> bool {
     // `((` + a hyphenated 8-4-4-4-12 hex id + `))`.
-    let Some(id) = v.strip_prefix("((").and_then(|v| v.strip_suffix("))")) else {
+    let [b'(', b'(', id @ .., b')', b')'] = v.as_bytes() else {
         return false;
     };
     id.len() == 36
-        && id.bytes().enumerate().all(|(i, c)| {
+        && id.iter().enumerate().all(|(i, &c)| {
             if matches!(i, 8 | 13 | 18 | 23) {
                 c == b'-'
             } else {
@@ -645,7 +657,7 @@ fn decode_once(s: &str) -> String {
 pub fn asset_rel_path(url: &str) -> Option<String> {
     let normalized = url.replace('\\', "/");
     let i = normalized.to_ascii_lowercase().find("assets/")?;
-    Some(normalized[i + "assets/".len()..].to_owned())
+    normalized.get(i + "assets/".len()..).map(str::to_owned)
 }
 
 /// PDF identity is its path under `assets/` (case-insensitive directory name),
@@ -681,15 +693,15 @@ pub fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(b.len());
     let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (hex_nibble(b[i + 1]), hex_nibble(b[i + 2])) {
+    while let Some(&c) = b.get(i) {
+        if let (b'%', Some(&[h, l])) = (c, b.get(i + 1..i + 3)) {
+            if let (Some(h), Some(l)) = (hex_nibble(h), hex_nibble(l)) {
                 out.push((h << 4) | l);
                 i += 3;
                 continue;
             }
         }
-        out.push(b[i]);
+        out.push(c);
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
