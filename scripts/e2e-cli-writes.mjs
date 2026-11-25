@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { BLOCK_EDITOR, editorState, withEditors } from "./lib/e2e-block-editor.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
@@ -226,17 +227,20 @@ try {
   // Independent page: a failed window notification must not hide typing proof.
   await openPageByName(browser,"Typing");
   const beforeTyping = await cli(["page","show","Typing"]);
-  await browser.waitUntil(() => browser.execute(() => {
+  await browser.waitUntil(() => browser.execute((editor) => {
+    if (document.activeElement?.matches(editor)) return true;
     const content = document.querySelector(".page .ls-block .block-content-wrapper");
     if (!(content instanceof HTMLElement)) return false;
     content.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true,button:0}));
     content.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,cancelable:true,button:0}));
     content.click();
-    return document.activeElement instanceof HTMLTextAreaElement;
-  }), {timeout:10_000,interval:200});
+    return document.activeElement?.matches(editor) ?? false;
+  }, BLOCK_EDITOR), {timeout:10_000,interval:200});
   await browser.keys(["End"]);
   for (const key of " typing survives") await browser.keys([key]);
-  const typed = await browser.execute(() => document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null);
+  // The open editor is the block's CodeMirror input (or the classic textarea); read it through the shared boundary.
+  const focusedText = async () => { const editor = await editorState(browser, ".page"); return editor?.focused ? editor.value : null; };
+  const typed = await focusedText();
   assert.equal(typed,"user typing survives","literal key events must reach the intended editor before invoking CLI");
   fs.writeFileSync(path.join(TMP,"typing-before.json"),JSON.stringify({editor:typed,file:fs.readFileSync(typingFile,"utf8")},null,2));
   // Still in the editor: flush must save the input before resolving the old handle.
@@ -244,10 +248,10 @@ try {
   if (result.exit !== 6 || result.reply.error?.code !== "stale") {
     failures.push({journey:"typing",classification:"product",expected:"flush user input, then refuse obsolete handle as stale",observed:`CLI exit ${result.exit} while editor contains changed text`});
     await sleep(2000);
-    fs.writeFileSync(path.join(TMP,"typing-result.json"),JSON.stringify({result,file:fs.readFileSync(typingFile,"utf8"),editors:await browser.execute(() => [...document.querySelectorAll("textarea")].map(e=>e.value))},null,2));
+    fs.writeFileSync(path.join(TMP,"typing-result.json"),JSON.stringify({result,file:fs.readFileSync(typingFile,"utf8"),editors:await withEditors(browser, "", editors => editors.map(e => e.value))},null,2));
   } else {
     await waitForFileText(typingFile, text => text === "- user typing survives\n- agent\n");
-    assert(await browser.execute(() => document.activeElement instanceof HTMLTextAreaElement && document.activeElement.value.includes("typing survives")));
+    assert((await focusedText())?.includes("typing survives"), "the user's editor stays open with its text");
     // An unrelated block can still be edited while the user keeps that editor open.
     await cli(["edit",handle(beforeTyping,1),"agent alongside typing"]);
     await waitForFileText(typingFile, text => text === "- user typing survives\n- agent alongside typing\n");
@@ -282,7 +286,7 @@ try {
   if (failures.length) throw new Error("native journey failure: " + failures.map(f => f.journey).join(", "));
   console.log(`PASS ${steps.join("; ")}`);
 } catch (error) {
-    try { fs.writeFileSync(path.join(TMP,"failure-dom.json"),JSON.stringify(await browser.execute(() => ({text:document.body.innerText,editors:[...document.querySelectorAll("textarea")].map(e=>e.value),errors:window.__cliErrors})),null,2)); } catch {}
+    try { fs.writeFileSync(path.join(TMP,"failure-dom.json"),JSON.stringify(await browser.execute(() => ({text:document.body.innerText,editors:[...document.querySelectorAll("textarea, .cm-content")].map(e=>e.value ?? e.textContent),errors:window.__cliErrors})),null,2)); } catch {}
   try { await browser?.saveScreenshot(path.join(TMP,"failure.png")); } catch {}
   fs.writeFileSync(path.join(TMP,"failure.json"),JSON.stringify({commit:gitHead(),journey:steps.length,expected:"handover, window update and typing preservation",observed:String(error),classification:failures.length ? "product" : "ambiguous",steps,failures},null,2));
   console.error(error);
