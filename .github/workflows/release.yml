@@ -398,6 +398,11 @@ jobs:
             exit 1
           fi
 
+      # Stable's and the Beta's packages install the same paths (tine#1011).
+      - name: Verify the .deb replaces the other channel's package
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: node scripts/check-deb-replaces.mjs ./target/release/bundle/deb
+
       - name: Write Linux E2E candidate receipt
         if: matrix.lane == 'linux-x64'
         run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.build.before.json --app target/release/tine

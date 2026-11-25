@@ -89,7 +89,9 @@ warn the first time — here's how to get past it:
 
 **Test the Betas.** Beta testers are welcome and genuinely help: Betas get the fixes first, and what
 you notice shapes the next stable release. *Tine Beta* is a separate app that installs next to Tine,
-so you can keep both.
+so you can keep both. The exception is the Linux `.deb` and `.rpm`: both packages provide the `tine`
+command, so installing one replaces the other (your graphs and settings stay); use the AppImage to
+keep both.
 - **iPhone and iPad** — install Apple's TestFlight app, then open
   **[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)**.
 - **Desktop and Android** — take the newest pre-release from

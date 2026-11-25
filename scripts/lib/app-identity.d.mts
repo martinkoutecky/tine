@@ -30,4 +30,5 @@ export function iosIdentity(identity?: AppIdentity): AppIdentity["ios"] & {
   shareExtensionIdentifier: string;
   iconDirectory: string;
 };
+export function linuxPackageName(identity: Pick<AppIdentity, "productName">): string;
 export function deriveIdentityFiles(root: string, ship: string): Record<string, string>;

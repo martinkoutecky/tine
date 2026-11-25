@@ -63,6 +63,8 @@
     "linux": {
       "deb": {
         "recommends": ["libayatana-appindicator3-1"],
+        "conflicts": ["tine"],
+        "replaces": ["tine"],
         "desktopTemplate": "tine.desktop",
         "files": {
           "usr/share/man/man1/tine.1": "../docs/tine.1",
@@ -107,6 +109,8 @@
       },
       "rpm": {
         "recommends": ["libayatana-appindicator-gtk3"],
+        "conflicts": ["tine"],
+        "obsoletes": ["tine"],
         "desktopTemplate": "tine.desktop",
         "files": {
           "/usr/share/man/man1/tine.1": "../docs/tine.1",

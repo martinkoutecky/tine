@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { APP_ID, IDENTITIES, SHIP, IOS_IDENTITY_FILES, deriveIdentityFiles, iosIdentity } from "../scripts/lib/app-identity.mjs";
+import { APP_ID, IDENTITIES, SHIP, IOS_IDENTITY_FILES, deriveIdentityFiles, iosIdentity, linuxPackageName } from "../scripts/lib/app-identity.mjs";
 
 // The app identity has ONE switch: src-tauri/app-identity.json (docs/app-identity.md).
 // Every identity-bearing file derives from it; nothing else spells an identity.
@@ -51,6 +51,23 @@ describe("app identity switch", () => {
       ? "https://tine.page/updates/beta/latest.json"
       : "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"]);
     expect(/-beta\.\d+$/.test(conf.version)).toBe(SHIP === "experiment");
+  });
+  // tine#1011: stable's and the Beta's .deb both install /usr/bin/tine, the icons
+  // and the man pages. With no relation declared, dpkg refused to install the
+  // Beta where stable was installed ("trying to overwrite ... which is also in
+  // package tine"). Each identity's packages name the other's as replaced.
+  it("each identity's Linux packages replace the other identity's", () => {
+    const names = Object.fromEntries(Object.entries(IDENTITIES)
+      .map(([ship, identity]) => [ship, linuxPackageName(identity)]));
+    expect(names).toEqual({ release: "tine", experiment: "tine-beta" });
+    for (const ship of Object.keys(names)) {
+      const linux = JSON.parse(deriveIdentityFiles(ROOT, ship)["src-tauri/tauri.conf.json"]).bundle.linux;
+      const others = Object.keys(names).filter((other) => other !== ship).map((other) => names[other]);
+      expect(linux.deb.conflicts, ship).toEqual(others);
+      expect(linux.deb.replaces, ship).toEqual(others);
+      expect(linux.rpm.conflicts, ship).toEqual(others);
+      expect(linux.rpm.obsoletes, ship).toEqual(others);
+    }
   });
   it("every derived file matches the switch (run `node scripts/set-app-identity.mjs <ship>`)", () => {
     for (const [file, text] of Object.entries(deriveIdentityFiles(ROOT, SHIP))) {

@@ -45,6 +45,11 @@ export function iosIdentity(identity = IDENTITY) {
   };
 }
 
+/** The name the bundler gives an identity's .deb and .rpm: its product name in kebab case. */
+export function linuxPackageName(identity) {
+  return identity.productName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
 /**
  * The derived identity-bearing files for `ship`, as { relativePath: text },
  * computed from the files currently under `root`. Pure: writes nothing.
@@ -69,6 +74,17 @@ export function deriveIdentityFiles(root, ship) {
   for (const [pattern, value] of edits) {
     if (!pattern.test(conf)) throw new Error(`${confFile}: no match for ${pattern}`);
     conf = conf.replace(pattern, `$1${JSON.stringify(value)}`);
+  }
+  // The .deb and .rpm of every identity install the same paths (/usr/bin/tine,
+  // the icons, the man pages), so two of them cannot be installed together. Each
+  // names the others as packages it replaces; without that, dpkg refuses to
+  // install one over the other.
+  const others = JSON.stringify(Object.values(sw.identities).filter((other) => other !== identity).map(linuxPackageName))
+    .replaceAll(",", ", ");
+  for (const [key, count] of [["conflicts", 2], ["replaces", 1], ["obsoletes", 1]]) {
+    const pattern = new RegExp(`^(        "${key}": )\\[[^\\]]*\\]`, "gm");
+    if ((conf.match(pattern) ?? []).length !== count) throw new Error(`${confFile}: expected ${count} "${key}" line(s)`);
+    conf = conf.replace(pattern, `$1${others}`);
   }
   conf = conf.replace(/("icon": \[)([\s\S]*?)(\n    \])/,
     (_, start, entries, end) => start + entries.replace(/"icons(?:-beta)?\//g, `"${identity.iconDirectory}/`) + end);

@@ -11,6 +11,14 @@ updates, and Beta never installs stable releases (both notifier and installer
 validate through `checkedBetaUpdate` in `src/update.ts`); Beta publication is a
 prerelease and never becomes GitHub's `latest` release.
 
+The Linux `.deb` and `.rpm` are the exception to "installs next to": both
+identities' packages install the same paths (`/usr/bin/tine`, the icons, the man
+pages), so they cannot be installed together. Each package names the other
+(`tine`, `tine-beta`) in `Conflicts` and `Replaces` (`.rpm`: `Conflicts` and
+`Obsoletes`), so installing one removes the other instead of failing; the lists
+are derived from the switch. User data is per identifier and is not touched.
+The AppImage and the Flatpak install beside either.
+
 The internal switch key remains `experiment`. Its Beta identity is new: the
 former experiment identity never shipped, so there is no migration from it.
 
