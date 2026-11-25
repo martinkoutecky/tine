@@ -11,10 +11,12 @@ updates, and Beta never installs stable releases (both notifier and installer
 validate through `checkedBetaUpdate` in `src/update.ts`); Beta publication is a
 prerelease and never becomes GitHub's `latest` release.
 
-On Linux the `.deb`, `.rpm` and AppImage name their command, icons and man
-pages after the identity's `linuxBinaryName` (`tine`, `tine-beta`), so the two
-apps' packages share no file and install next to each other with no package
-relation. `scripts/build-release-bundles.mjs` passes the name to the bundler
+On Linux the `.deb` and `.rpm` name their command, icons, desktop entry
+(`Exec=`, `Icon=`) and man pages after the identity's `linuxBinaryName` (`tine`,
+`tine-beta`), so the two apps' packages share no file and install next to each
+other with no package relation. The AppImage is built in the same step, so its
+internal binary, icon and desktop entry carry the name too (it has no man
+pages); how it is started does not change. `scripts/build-release-bundles.mjs` passes the name to the bundler
 (which renames the built binary to it); every other build keeps
 `target/release/tine`. The release build compares its packages with the latest
 stable release's (`scripts/check-linux-package-paths.mjs`).
@@ -82,7 +84,7 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Release filenames (`scripts/release-layout.mjs`) | derive from `productName`; whitespace becomes `-` for GitHub assets, while `sourceAssets` names Tauri outputs verbatim |
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
 | Deploy destination (`scripts/deploy.sh`) | `~/research/<deployName>` |
-| Command, icon and man-page names in the Linux `.deb`, `.rpm` and AppImage | `linuxBinaryName` |
+| Command and icon names in the Linux `.deb`, `.rpm` and AppImage; man-page names in the `.deb` and `.rpm` | `linuxBinaryName` |
 | Native E2E journeys | `scripts/lib/app-identity.mjs` (`APP_ID`, `IDENTITY`) |
 | Flatpak (`.github/workflows/flatpak.yml`) | `flatpak/` carries the released identity; `scripts/derive-flatpak-identity.mjs` derives the app id, `Name=`, metainfo `<id>`/`<name>`/`<releases>` and every install path for the identity the tree ships (the Beta bundle is `page.tine.TineBeta`, so it installs beside a stable Tine Flatpak with its own `~/.var/app/<id>/` data). The workflow's `identity` input must equal `ship`; a mismatch is refused |
 

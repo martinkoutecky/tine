@@ -2378,6 +2378,14 @@ mod og_20d_guide_tests {
         }
     }
 
+    /// tine#1011: a packaged Tine Beta is started as `tine-beta`; the steps that tell
+    /// a Linux user to run a command say so.
+    #[test]
+    fn linux_command_steps_name_the_packaged_beta_command() {
+        assert!(page("Features/Quick capture").contains("`tine-beta --capture`"));
+        assert!(page("Start/Bring an existing graph").contains("is started as `tine-beta`"));
+    }
+
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
     /// command and og's create-only export contract, and the guide index links it.
     #[test]

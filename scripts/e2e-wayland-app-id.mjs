@@ -141,7 +141,8 @@ try {
     throw new Error(`Tine exited ${client.exitCode} before advertising its app ID:\n${wire.slice(-4_000)}`);
   }
 
-  const fallbackAt = wire.indexOf('set_app_id("tine")');
+  // GTK first advertises the executable's name; a packaged Beta's is not "tine" (tine#1011).
+  const fallbackAt = wire.indexOf(`set_app_id("${path.basename(app)}")`);
   const tineAt = wire.indexOf(`set_app_id("${APP_ID}")`);
   const firstBufferAt = wire.indexOf(".attach(", fallbackAt);
   if (fallbackAt < 0 || tineAt < fallbackAt) {

@@ -10,6 +10,7 @@ icon:: ⚡
 		- **GNOME** — Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → **+**. Command: `tine --capture`. Pick a key like **Super+N**.
 		- **KDE** — System Settings → Shortcuts → Add → Command/URL. Command: `tine --capture`.
 		- **Other desktops** — add a custom keyboard shortcut that runs `tine --capture`. Use the binary's full path if it isn't on your `PATH`.
+		- **Tine Beta from a `.deb` or `.rpm` package** — its command is `tine-beta`, so the shortcut runs `tine-beta --capture`. (`tine --capture` would open stable Tine's capture box, if stable is installed.)
 		- The shortcut only runs a command, so it does not depend on X11 or Wayland global-shortcut support.
 	- **Windows** — give a shortcut to Tine a hotkey:
 		- 1. Open the Start menu, right-click **Tine**, choose **Open file location**. A folder with the Tine shortcut opens.

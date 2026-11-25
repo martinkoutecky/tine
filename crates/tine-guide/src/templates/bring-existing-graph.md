@@ -5,7 +5,7 @@ icon:: 📂
 - ## Open your graph
 	- 1. On the Welcome screen, choose **Open an existing graph** and pick the graph's top-level folder — usually the one containing `pages/`, `journals/`, and `logseq/`. On Android, grant "All files access" when asked; Tine then continues to the folder picker.
 	- 2. Later, use the graph-name menu at the top of the left sidebar → **Open graph…**, or Settings (**t s**) → **Graph** → **Open another graph…**. Graphs you have opened appear in the same sidebar menu for one-click switching.
-	- 3. On desktop, from the command line, `tine /path/to/graph` (or `tine open /path/to/graph`, or `TINE_GRAPH=/path/to/graph`) opens a graph directly.
+	- 3. On desktop, from the command line, `tine /path/to/graph` (or `tine open /path/to/graph`, or `TINE_GRAPH=/path/to/graph`) opens a graph directly. Tine Beta installed from a Linux `.deb` or `.rpm` package is started as `tine-beta`.
 	- 4. What you should see: the same pages and journals Logseq finds. Existing Markdown and Org pages may be at the graph root or in nested folders, not only under `pages/` and `journals/`.
 	- If the graph you used last time cannot be opened at launch — the folder moved, a drive is unplugged, a file is unreadable — the Welcome screen says so in a card that names the graph and the reason, with **Try again** and **Copy details** buttons. Nothing was changed on disk; you can also open another graph from the same screen.
 - ## Switch graphs from the keyboard

@@ -3,7 +3,7 @@ export interface AppIdentity {
   productName: string;
   androidApplicationId: string;
   deployName: string;
-  /** The command, icon and man-page name inside the .deb, .rpm and AppImage. */
+  /** The command and icon name inside the .deb, .rpm and AppImage, and the man pages' name in the .deb and .rpm. */
   linuxBinaryName: string;
   iconDirectory: string;
   ios: {

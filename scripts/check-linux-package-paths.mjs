@@ -19,14 +19,22 @@ const packagesIn = (arg) => (fs.statSync(arg).isDirectory()
   ? fs.readdirSync(arg, { recursive: true }).map((name) => path.join(arg, name))
   : [arg]).filter((file) => /\.(deb|rpm)$/.test(file));
 
-/** Every non-directory path a package installs, without a leading "./" or "/". */
+/**
+ * Every path a package installs, without a leading "./" or "/", mapped to
+ * whether it is a directory. Two packages may share a directory, nothing else.
+ */
 function files(file) {
-  const names = file.endsWith(".deb")
-    ? run("dpkg-deb", ["-c", file]).split("\n").filter((line) => line && !line.startsWith("d"))
-      .map((line) => line.match(/^\S+\s+\S+\s+\d+\s+\S+\s+\S+\s+(.*?)(?: -> .*)?$/)[1])
+  const entries = file.endsWith(".deb")
+    ? run("dpkg-deb", ["-c", file]).split("\n").filter(Boolean).map((line) => {
+      // "<mode> <owner>/<group> <size> <date> <time> <name>[ -> target | link to target]"
+      const [, mode, rest] = line.match(/^(\S+)\s+\S+\s+\d+\s+\S+\s+\S+\s+(.*)$/);
+      const name = mode[0] === "l" ? rest.slice(0, rest.lastIndexOf(" -> "))
+        : mode[0] === "h" ? rest.slice(0, rest.lastIndexOf(" link to ")) : rest;
+      return [name, mode[0] === "d"];
+    })
     : run("rpm", ["-qp", "--queryformat", "[%{FILEMODES:perms} %{FILENAMES}\n]", file])
-      .split("\n").filter((line) => line && !line.startsWith("d")).map((line) => line.slice(line.indexOf(" ") + 1));
-  return new Set(names.map((name) => name.replace(/^\.?\//, "")));
+      .split("\n").filter(Boolean).map((line) => [line.slice(line.indexOf(" ") + 1), line[0] === "d"]);
+  return new Map(entries.map(([name, directory]) => [name.replace(/^\.?\//, "").replace(/\/$/, ""), directory]));
 }
 
 /** Relations to other packages that would stop a side-by-side install. */
@@ -48,11 +56,13 @@ if (SHIP === "release") {
   process.exit(0);
 }
 let reference = split < 0 ? [] : argv.slice(split + 1).flatMap(packagesIn);
-if (split < 0) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tine-stable-packages-"));
+const downloads = split < 0 ? fs.mkdtempSync(path.join(os.tmpdir(), "tine-stable-packages-")) : null;
+if (downloads) {
+  process.on("exit", () => fs.rmSync(downloads, { recursive: true, force: true }));
+  // Every architecture's package: a file only one of them installs counts too.
   run("gh", ["release", "download", "--repo", process.env.GITHUB_REPOSITORY ?? "martinkoutecky/tine",
-    "--pattern", "*_amd64.deb", "--pattern", "*.x86_64.rpm", "--dir", dir], { stdio: "inherit" });
-  reference = packagesIn(dir);
+    "--pattern", "*.deb", "--pattern", "*.rpm", "--dir", downloads], { stdio: "inherit" });
+  reference = packagesIn(downloads);
 }
 let failed = false;
 for (const file of built) {
@@ -61,7 +71,8 @@ for (const file of built) {
   if (!stable.length) throw new Error(`no stable ${kind} to compare ${file} with`);
   const own = files(file);
   for (const other of stable) {
-    const shared = [...files(other)].filter((name) => own.has(name)).sort();
+    const shared = [...files(other)].filter(([name, directory]) => own.has(name) && !(directory && own.get(name)))
+      .map(([name]) => name).sort();
     if (!shared.length) continue;
     failed = true;
     console.error(`${path.basename(file)} shares ${shared.length} path(s) with ${path.basename(other)}:\n  ${shared.join("\n  ")}`);
@@ -70,6 +81,6 @@ for (const file of built) {
     failed = true;
     console.error(`${path.basename(file)} declares ${field}: ${value}`);
   }
-  if (!failed) console.log(`${path.basename(file)}: ${own.size} paths, none shared with ${stable.map((other) => path.basename(other)).join(", ")}`);
+  if (!failed) console.log(`${path.basename(file)}: ${[...own.values()].filter((directory) => !directory).length} files, none shared with ${stable.map((other) => path.basename(other)).join(", ")}`);
 }
 if (failed) process.exit(1);
