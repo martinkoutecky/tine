@@ -194,6 +194,20 @@ it("rejects a missing or refused asset instead of answering empty bytes", async 
   await expect(api.streamAsset("/etc/passwd")).rejects.toThrow(/not a file/);
 });
 
+it("asks for the copied file when an embed carries a query or fragment", async () => {
+  // `![x](../assets/p.png?rev=1)` renders by the name before `?`: export copies
+  // `p.png`, so the published read must fetch `p.png`, not `p.png%3Frev%3D1`.
+  const fetched: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
+    fetched.push(String(url));
+    return respond(bytesOf(1), { headers: { "content-length": "1" } });
+  }));
+  const api = testPublishedBackend(files);
+  await api.readAsset("p.png?rev=1", TEST_ASSET_MAX_BYTES);
+  await api.readAsset("icon.svg#part", TEST_ASSET_MAX_BYTES);
+  expect(fetched.map((url) => url.split("/").pop())).toEqual(["p.png", "icon.svg"]);
+});
+
 it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {
   const api = testPublishedBackend(files);
   vi.stubGlobal("fetch", vi.fn(async () => respond(bytesOf(10), { headers: { "content-length": "10" } })));

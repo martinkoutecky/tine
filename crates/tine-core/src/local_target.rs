@@ -466,7 +466,7 @@ fn attachment_name(raw: &str) -> Option<AssetName> {
 /// `parents`, a `..` removes the segment before it; one with nothing before
 /// it to remove is kept when `segments` started empty and dropped otherwise
 /// (a drive root clamps it). O(path bytes).
-fn push_segments<'a>(segments: &mut Vec<&'a str>, path: &'a str, parents: bool) {
+pub(crate) fn push_segments<'a>(segments: &mut Vec<&'a str>, path: &'a str, parents: bool) {
     let floor = segments.len();
     for part in path.split('/') {
         match part {
@@ -563,7 +563,7 @@ fn page_icon(value: &str) -> LocalTarget {
 
 /// OG `show-link?` for a bare Org reference: an `assets` prefix or a media
 /// suffix makes it an image, except pdf/mp4/ogg/webm. O(bytes).
-fn org_bare_image(target: &str) -> bool {
+pub(crate) fn org_bare_image(target: &str) -> bool {
     let lead = target
         .bytes()
         .take_while(|b| matches!(b, b'.' | b'/'))
@@ -601,7 +601,7 @@ fn extension(name: &str) -> &str {
         .unwrap_or_default()
 }
 
-fn is_pdf(name: &str) -> bool {
+pub(crate) fn is_pdf(name: &str) -> bool {
     let b = name.as_bytes();
     b.split_last_chunk::<4>()
         .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(b".pdf"))

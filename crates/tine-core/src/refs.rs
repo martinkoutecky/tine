@@ -6,6 +6,7 @@ use crate::config::FileNameFormat;
 
 #[path = "page_identity.rs"]
 pub(crate) mod page_identity;
+pub use page_identity::fold_file_name;
 pub use page_identity::page_key;
 
 #[path = "refs_label.rs"]

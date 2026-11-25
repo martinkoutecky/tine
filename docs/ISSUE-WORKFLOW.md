@@ -20,8 +20,8 @@ fail-before test, implementation, deployment, and release lifecycle.
 2. For an unclear report, ask precisely for missing version/platform/install
    details, exact steps, and a minimal anonymized sample graph or block text. Add
    `needs-info`; do not guess at a fix.
-3. For a clear bug, prove it before the fix, implement the smallest safe change,
-   and run the cheapest test layer that can actually observe it. Visual, caret,
+3. For a clear bug, prove it before the fix, fix the shared cause
+   ([PRINCIPLES 11](PRINCIPLES.md)), and run the cheapest test layer that can actually observe it. Visual, caret,
    focus, filesystem, and WebKit behavior require browser/native evidence.
 4. Once the verified fix is pushed to `develop`, describe it as fixed for that
    development version and leave the issue open with `fixed-in-development`.
@@ -60,8 +60,8 @@ an acceptable side effect of adding a feature.
 
 ## Planning and work sessions
 
-Release milestones answer “which release”: v0.6.0 is Plugins and v0.7.0 is
-Sync. The GitHub Project answers workflow `Status`, execution `Horizon`
+Release milestones answer “which release” (the plan is in
+[`ROADMAP.md`](ROADMAP.md)). The GitHub Project answers workflow `Status`, execution `Horizon`
 (Now/Next/Later), and `Priority`; labels capture triage and decision state.
 Decision sessions queue work without builds; after the maintainer says “go,” the
 queued work is implemented, tested, pushed, and deployed autonomously. Product,
