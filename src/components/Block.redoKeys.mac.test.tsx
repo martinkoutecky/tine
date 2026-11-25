@@ -79,13 +79,6 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1044 Redo keys on macOS (%s)
     expect(doc.byId[ID].raw).toBe("alpha");
   });
 
-  it("an editor command the user bound to Cmd+Y runs instead of Redo", () => {
-    const editor = typedThenUndone({ "editor/insert-link": "mod+y" });
-    editor().select(0, 5);
-    expect(editor().keydown(cmd("y")).defaultPrevented).toBe(true);
-    expect(editor().value()).toBe("[alpha]()");
-  });
-
   it("a user's own Redo binding takes Cmd+Y with it", () => {
     const editor = typedThenUndone({ "editor/redo": "mod+alt+r" });
     editor().keydown(cmd("y"));

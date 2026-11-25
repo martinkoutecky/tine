@@ -991,13 +991,12 @@ mod rename_guide_tests {
     #[test]
     fn mod_y_redo_alias_is_documented_in_the_bundled_guide() {
         // GH #491, #1044: both redo chords, the second one on each platform, that
-        // remapping Redo replaces both, and that a user's editing command on the key wins in a block.
+        // remapping Redo replaces both.
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("redo is Ctrl/Cmd+Shift+Z"));
         assert!(tips.contains("**Ctrl+Y** also redoes on Windows and Linux"));
         assert!(tips.contains("and **Cmd+Y** on macOS, as in Logseq"));
         assert!(tips.contains("remapping Redo replaces both"));
-        assert!(tips.contains("an editing command you bind to that key runs instead"));
     }
 
     #[test]

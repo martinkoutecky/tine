@@ -60,7 +60,7 @@ import { MEDIA_EDITORS, type MediaEditor } from "../mediaEditors";
 import { detectMediaEditorCommand, mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
 import { formatAssetName } from "../media";
 import { openConflicts, openPage, openFile } from "../router";
-import { commandDefaults, eventToBindingString, liveAlias, setKeybindingsSuspended } from "../keybindings";
+import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { bindingAlternatives, shortcutValue } from "../shortcutBindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { Field, Toggle, settingLabel, settingAttributes, settingDescription, settingHint } from "./settingsField";
@@ -195,7 +195,7 @@ export function Settings(): JSX.Element {
     const ov = shortcutOverrides();
     return commandDefaults().map((c) => ({
       ...c,
-      alias: liveAlias(c, { ...cfg, ...ov }),
+      alias: c.id in ov || c.id in cfg ? undefined : c.alias,
       effective: ov[c.id] ?? cfg[c.id] ?? c.binding,
       overridden: c.id in ov,
     }));

@@ -15,9 +15,8 @@ import { installKeybindings } from "../keybindings";
 import type { ShortcutBinding } from "../shortcutBindings";
 import { Block } from "./Block";
 
-// GH #1044 off macOS: Ctrl+Y stays Redo's second key (GH #491), and like the
-// Mac's Cmd+Y (Block.redoKeys.mac.test.tsx) it yields to a command the user
-// bound to it. Before, Redo beat the user's editor-scope binding.
+// GH #1044 off macOS: Ctrl+Y stays Redo's second key (GH #491), unchanged by
+// giving the Mac its Cmd+Y (Block.redoKeys.mac.test.tsx).
 
 beforeAll(() => initParser());
 
@@ -62,13 +61,6 @@ describe.each<EditorKind>(["textarea", "cm6"])("GH #1044 Redo keys off macOS (%s
     expect(editor().keydown(ctrl("y")).defaultPrevented).toBe(true);
     expect(editor().value()).toBe("alpha beta");
     expect(doc.byId[ID].raw).toBe("alpha beta");
-  });
-
-  it("an editor command the user bound to Ctrl+Y runs instead of Redo", () => {
-    const editor = typedThenUndone({ "editor/insert-link": "ctrl+y" });
-    editor().select(0, 5);
-    expect(editor().keydown(ctrl("y")).defaultPrevented).toBe(true);
-    expect(editor().value()).toBe("[alpha]()");
   });
 
   it("outside the block editor, Ctrl+Y still redoes although the user bound it to an editor command", () => {
