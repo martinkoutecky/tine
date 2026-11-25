@@ -22,7 +22,7 @@ const SYNCS: readonly GitPolicy[] = ["sync-on-demand", "sync-automatically"];
 function draftField(device: () => string) {
   const [edited, setEdited] = createSignal(false);
   let element!: HTMLInputElement;
-  let edits = 0, pending = 0, leftAt = -1;
+  let edits = 0, pending = 0, leftAt = -1, sentAt = -1;
   const end = () => setEdited(false);
   return {
     ref: (el: HTMLInputElement) => {
@@ -35,9 +35,10 @@ function draftField(device: () => string) {
     onBlur: () => { if (pending === 0) end(); else leftAt = edits; },
     /** A submission of the typed text; call the returned function when it is answered, accepted or refused. */
     submitted: () => {
-      const at = edits;
+      sentAt = edits;
       pending++;
-      return () => { if (--pending === 0 && (edits === at || edits === leftAt)) end(); };
+      // Answers may arrive in any order: the last one to arrive ends the edit if nothing was typed since the newest submission.
+      return () => { if (--pending === 0 && (edits === sentAt || edits === leftAt)) end(); };
     },
     end,
   };
@@ -178,7 +179,8 @@ export function GitAutocommitSetting(): JSX.Element {
           <button class="settings-btn" data-git-sign-out onClick={signOut}>{t("git-settings-sign-out")}</button>{" "}
           <Show when={!signingIn()}><button class="settings-btn" data-git-sign-in-open onClick={() => setSigningIn(true)}>{t("git-settings-sign-in")}</button></Show>
         </>}</Show>
-        <Show when={signingIn()}>
+        {/* The form belongs to the origin it was opened for: another origin gets empty fields, never this one's typed name and token. */}
+        <Show when={signingIn() && origin()} keyed>{(_origin) =>
           <form data-git-sign-in-form onSubmit={(e) => { e.preventDefault(); signIn(); }}>
             <div>{t("git-settings-sign-in-hint")}</div>
             <input class="settings-input" ref={username.ref} onInput={username.onInput} autocomplete="username" aria-label={t("git-settings-username")} placeholder={t("git-settings-username")} data-git-username />
@@ -186,7 +188,7 @@ export function GitAutocommitSetting(): JSX.Element {
             <DialogActions
               cancel={<button class="settings-btn" type="button" onClick={() => { token.value = ""; setSigningIn(false); }}>{t("git-settings-sign-in-cancel")}</button>}
               primary={<button class="settings-btn" type="submit">{t("git-settings-sign-in-save")}</button>} />
-          </form>
+          </form>}
         </Show>
       </div>}</Show>
       </div>

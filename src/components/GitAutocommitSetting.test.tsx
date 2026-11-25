@@ -546,3 +546,56 @@ it("#1035: an interval change answered after the person typed again keeps the ne
     vi.useRealTimers();
   }
 });
+
+it("#1035: a sign-in form belongs to the origin it was opened for; another origin gets empty fields", async () => {
+  vi.useFakeTimers();
+  try {
+    let device = repo({ policy: "sync-on-demand", remote, signed_in: null, last: committed("aaaaaaaa") });
+    vi.spyOn(backend(), "gitAutocommitStatus").mockImplementation(async () => device);
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.querySelector("[data-git-sign-in-open]")).not.toBeNull());
+    root.querySelector<HTMLButtonElement>("[data-git-sign-in-open]")!.click();
+    typeAsPerson(root.querySelector<HTMLInputElement>("[data-git-username]")!, "name-for-a");
+    typeAsPerson(root.querySelector<HTMLInputElement>("[data-git-token]")!, "token-for-a");
+    // Same origin, another path: the same credential scope, the draft stays.
+    device = { ...device, remote: { ...remote, url: "https://example.org/me/other.git" }, last: committed("bbbbbbbb") };
+    await poll(root, "bbbbbbbb");
+    expect(root.querySelector<HTMLInputElement>("[data-git-username]")!.value).toBe("name-for-a");
+    expect(root.querySelector<HTMLInputElement>("[data-git-token]")!.value).toBe("token-for-a");
+    // The tracked remote now points at another origin (changed in another git client).
+    device = { ...device, remote: { name: "origin", url: "https://other.example/me/notes.git", https_origin: "https://other.example" }, last: committed("cccccccc") };
+    await poll(root, "cccccccc");
+    expect(root.textContent).toContain("https://other.example");
+    expect(root.querySelector<HTMLInputElement>("[data-git-username]")!.value).toBe("");
+    expect(root.querySelector<HTMLInputElement>("[data-git-token]")!.value).toBe("");
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("#1035: interval answers arriving out of order still end the edit, and the field follows the device again", async () => {
+  vi.useFakeTimers();
+  try {
+    let device = repo({ policy: "commit", last: committed("aaaaaaaa") });
+    vi.spyOn(backend(), "gitAutocommitStatus").mockImplementation(async () => device);
+    const answers: (() => void)[] = [];
+    vi.spyOn(backend(), "setGitAutocommit").mockImplementation((policy, minutes) => new Promise(resolve => {
+      answers.push(() => resolve(device = { ...device, policy, interval_minutes: minutes }));
+    }));
+    const { root, dispose } = mount();
+    await vi.waitFor(() => expect(root.querySelector("[data-git-interval]")).not.toBeNull());
+    const interval = root.querySelector<HTMLInputElement>("[data-git-interval]")!;
+    typeAsPerson(interval, "30"); interval.dispatchEvent(new Event("change"));
+    typeAsPerson(interval, "45"); interval.dispatchEvent(new Event("change"));
+    expect(answers.length).toBe(2);
+    answers[1](); await vi.advanceTimersByTimeAsync(0);
+    answers[0](); await vi.advanceTimersByTimeAsync(0);
+    device = { ...device, interval_minutes: 60, last: committed("bbbbbbbb") };
+    await poll(root, "bbbbbbbb");
+    expect(interval.value).toBe("60");
+    dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});

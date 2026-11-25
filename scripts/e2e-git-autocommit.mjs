@@ -77,7 +77,6 @@ try {
   await typeInterval("-1");
   await browser.waitUntil(async () => (await browser.$("[data-git-interval]").getValue()) === "10", { timeout: 5000,
     timeoutMsg: `a refused -1 did not show the stored interval again: ${await browser.$("[data-git-interval]").getValue()}` });
-  await sleep(500);
   if (storedInterval() !== 10) throw new Error(`-1 changed the stored interval to ${storedInterval()}`);
   await typeInterval("1e2");
   await browser.waitUntil(() => storedInterval() === 100, { timeout: 10_000, timeoutMsg: `1e2 stored ${storedInterval()}, not 100` });
