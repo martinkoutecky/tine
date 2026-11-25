@@ -15,6 +15,7 @@ import { watchErrorToasts } from "./lib/e2e-toasts.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { withEditor, withEditors } from "./lib/e2e-block-editor.mjs";
+import { installAccountHome } from "./lib/e2e-account-home.mjs";
 
 ensurePrivateSessionBus();
 
@@ -54,8 +55,15 @@ const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "
 const journalPath = `${GRAPH}/journals/${journal}.md`;
 fs.writeFileSync(journalPath, "- open [[Home]]\n");
 
+// Run on its own (a gate, by hand) as under the suite runner: the app needs its
+// owner lease, and app data that is not under the temp directory. Without
+// either, a sticky notice in the main window's bottom-right corner covers the
+// Settings controls below. The suite runner's fixture is reused when present.
+installAccountHome(TMP, ARTIFACT_DIR);
+fs.mkdirSync(`${TMP}/app-tmp`, { recursive: true });
 const env = {
   ...process.env,
+  TMPDIR: `${TMP}/app-tmp`,
   TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
