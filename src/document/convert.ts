@@ -173,7 +173,10 @@ function flatten(
       if (!sameKeys(existing.children, childIds)) existing.children = childIds;
       return key;
     }
-    acquireSeededFacets(d.raw, format, facetsFromDto(d), () => doc.byId[key]);
+    // Only a backend projection carries facets; a window-built block (no id) has
+    // none, so its facets come from its text like an edited block's (GH #1036).
+    // Seeding its empty fields would also overwrite another block's seed for the same text.
+    if (d.id) acquireSeededFacets(d.raw, format, facetsFromDto(d), () => doc.byId[key]);
     byId[key] = {
       id: key,
       raw: d.raw,
