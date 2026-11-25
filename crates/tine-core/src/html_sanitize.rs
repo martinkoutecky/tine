@@ -7,12 +7,12 @@
 //! (src/main/frontend/security.cljs:5-11, components/block.cljs:3258-3261); keep the set
 //! bounded to media, never iframe/object/embed. `autoplay` stays absent.
 //! `style` keeps only colour declarations (`color_only_style`, which the app
-//! calls through wasm), so an export shows the colours the app shows and
-//! nothing that positions, hides or fetches. Every kept `href` obeys
-//! `safe_export_url`, the rule export applies to Markdown links.
+//! calls through wasm as the batched `color_only_styles`), so an export shows
+//! the colours the app shows and nothing that positions, hides or fetches.
+//! Every kept `href` obeys `safe_export_url`, the rule export applies to
+//! Markdown links.
 
 use ammonia::Builder;
-use regex::Regex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -40,7 +40,7 @@ fn policy() -> &'static Policy {
     })
 }
 /// The policy's `browser.styleProperties`, read on its own so the app's wasm
-/// build (which calls only `color_only_style`) carries no native-policy code.
+/// build (which calls only `color_only_styles`) carries no native-policy code.
 fn style_properties() -> &'static [String] {
     #[derive(Deserialize)]
     struct Browser {
@@ -117,6 +117,7 @@ fn ecmascript_trim(s: &str) -> &str {
 }
 
 /// [`ECMASCRIPT_WHITESPACE`] as a regex class body, JavaScript's `\s`.
+#[cfg(test)]
 fn ecmascript_whitespace_class() -> String {
     ECMASCRIPT_WHITESPACE
         .iter()
@@ -124,9 +125,59 @@ fn ecmascript_whitespace_class() -> String {
         .collect()
 }
 
+/// The colour functions a literal may use, matched ASCII-case-insensitively.
+const COLOR_FUNCTIONS: &[&str] = &[
+    "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch",
+];
+/// Words a colour function's body may not contain (ASCII case folded): a nested call.
+const COLOR_FUNCTION_BANNED: &[&str] = &[
+    "var", "calc", "url", "env", "attr", "image", "min", "max", "clamp",
+];
+
+/// Whether `v` is one closed colour literal: the JavaScript pattern
+/// `/^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|…|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$/i`
+/// matched directly, in one pass over `v`. (The browser build's `regex` has no
+/// lazy DFA, so this pattern's 80-fold Unicode class ran on the slow engine,
+/// about 5 µs a value.) A function body is the text between the name's `(` and
+/// the closing `)` ending `v`; `\s*` then 1-80 body characters, where `\s` is
+/// itself a body character, holds exactly when the body is non-empty, all body
+/// characters, and at most 80 of them follow its leading whitespace.
+fn is_color_literal(v: &str) -> bool {
+    let bytes = v.as_bytes();
+    if let Some(hex) = v.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    if bytes.iter().all(u8::is_ascii_alphabetic) {
+        return (3..=30).contains(&bytes.len());
+    }
+    let Some(open) = v.find('(') else {
+        return false;
+    };
+    let Some(body) = v[open + 1..].strip_suffix(')') else {
+        return false;
+    };
+    if !COLOR_FUNCTIONS
+        .iter()
+        .any(|name| v[..open].eq_ignore_ascii_case(name))
+    {
+        return false;
+    }
+    let is_space = |c: char| ECMASCRIPT_WHITESPACE.contains(&c);
+    let is_body = |c: char| c.is_ascii_alphanumeric() || "-+.%/,".contains(c) || is_space(c);
+    let leading = body.chars().take_while(|&c| is_space(c)).count();
+    let mut total = 0usize;
+    for c in body.chars() {
+        if !is_body(c) {
+            return false;
+        }
+        total += 1;
+    }
+    total >= 1 && total - leading <= 80
+}
+
 /// The colour declarations of a `style` value, serialized `prop: value; …`;
 /// "" if none, the one rule for both the app (through the wasm export
-/// `color_only_style`) and export: the property must be one of the policy's
+/// `color_only_styles`) and export: the property must be one of the policy's
 /// `browser.styleProperties`, and the value one closed colour literal (no
 /// url(), var(), calc(), image-set() or `!important`).
 ///
@@ -138,37 +189,130 @@ fn ecmascript_whitespace_class() -> String {
 /// (`[a-zA-Z]`, `(?i-u)`; Rust's Unicode folding would let `ſ` and the Kelvin
 /// sign match `s` and `k`).
 pub fn color_only_style(value: &str) -> String {
-    static COLOR_VALUE: OnceLock<Regex> = OnceLock::new();
-    static FUNCTION_BANNED: OnceLock<Regex> = OnceLock::new();
-    let color = COLOR_VALUE.get_or_init(|| {
-        // JavaScript's `/i` without `u`: ASCII letters in either case, spelled out.
-        let ws = ecmascript_whitespace_class();
-        Regex::new(&format!(
-            r"^(?:#(?:[0-9a-fA-F]{{3,4}}|[0-9a-fA-F]{{6}}|[0-9a-fA-F]{{8}})|[a-zA-Z]{{3,30}}|(?i-u:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\([{ws}]*[-+0-9a-zA-Z.%/,{ws}]{{1,80}}\))$"
-        ))
-        .expect("colour literal pattern")
-    });
-    let banned = FUNCTION_BANNED.get_or_init(|| {
-        Regex::new(r"(?i-u)var|calc|url|env|attr|image|min|max|clamp").expect("banned functions")
-    });
+    let mut kept = String::new();
+    push_color_only_style(value, &mut kept);
+    kept
+}
+
+/// [`color_only_style`] appended to `out`, with no allocation of its own (the
+/// batch calls it once per value).
+fn push_color_only_style(value: &str, out: &mut String) {
     let properties = style_properties();
-    let mut kept = Vec::new();
+    let start = out.len();
     for declaration in value.split(';') {
         let Some((property, v)) = declaration.split_once(':') else {
             continue;
         };
-        let property = ecmascript_trim(property).to_lowercase();
+        let property = ecmascript_trim(property);
+        // `toLowerCase`: for ASCII text, ASCII lowercase, without a copy.
+        let matched = if property.is_ascii() {
+            properties.iter().find(|p| {
+                p.bytes()
+                    .eq(property.bytes().map(|b| b.to_ascii_lowercase()))
+            })
+        } else {
+            let lower = property.to_lowercase();
+            properties.iter().find(|p| **p == lower)
+        };
         let v = ecmascript_trim(v);
-        if !properties.contains(&property) || !color.is_match(v) {
+        let Some(property) = matched.filter(|_| is_color_literal(v)) else {
             continue;
-        }
+        };
         // A function body may contain letters (`from`, `none`) but never a nested call.
-        if v.find('(').is_some_and(|open| banned.is_match(&v[open..])) {
+        if v.find('(').is_some_and(|open| {
+            let body = v[open..].as_bytes();
+            COLOR_FUNCTION_BANNED.iter().any(|word| {
+                body.windows(word.len())
+                    .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
+            })
+        }) {
             continue;
         }
-        kept.push(format!("{property}: {v}"));
+        if out.len() > start {
+            out.push_str("; ");
+        }
+        out.push_str(property);
+        out.push_str(": ");
+        out.push_str(v);
     }
-    kept.join("; ")
+}
+
+/// `color_only_style` for many values in one call, so the app crosses into
+/// wasm once per sanitized fragment rather than once per `[style]` element.
+/// `values` is every value concatenated and `lengths[i]` the length of value
+/// `i` in UTF-16 code units (JavaScript's `length`): lengths, not a separator,
+/// so no attribute value can shift a boundary. Returns the kept declarations
+/// concatenated and their UTF-16 lengths, in input order. O(total bytes).
+///
+/// A JavaScript caller's values reach Rust as one UTF-8 string, where a lone
+/// high surrogate ending one value and a lone low surrogate starting the next
+/// become one character. Encoded alone, each half would be U+FFFD, so a
+/// character straddling a boundary is read as U+FFFD on both sides: each value
+/// gets the answer it gets through `color_only_style`. Lengths that overrun the
+/// text read the missing part as empty (no panic: a panic aborts the instance).
+pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>) {
+    let bytes = values.as_bytes();
+    let mut kept = String::with_capacity(values.len() / 2);
+    let mut kept_lengths = Vec::with_capacity(lengths.len());
+    let mut pos = 0usize;
+    // The second half of a character that straddled the previous boundary,
+    // owed to the next non-empty value (a character has at most two units).
+    let mut carry = false;
+    for &length in lengths {
+        let mut remaining = length as usize;
+        let head = carry && remaining > 0;
+        if head {
+            remaining -= 1;
+            carry = false;
+        }
+        let start = pos;
+        let mut straddle = false;
+        while remaining > 0 && pos < bytes.len() {
+            // ASCII is one unit a byte: take a whole run at once.
+            let run = remaining.min(bytes.len() - pos);
+            if bytes[pos..pos + run].is_ascii() {
+                pos += run;
+                remaining -= run;
+                continue;
+            }
+            let (width, units) = match bytes[pos] {
+                0x00..=0x7F => (1, 1),
+                0xC0..=0xDF => (2, 1),
+                0xE0..=0xEF => (3, 1),
+                _ => (4, 2),
+            };
+            pos += width;
+            if units > remaining {
+                straddle = true;
+                carry = true;
+                break;
+            }
+            remaining -= units;
+        }
+        let end = if straddle { pos - 4 } else { pos };
+        let before = kept.len();
+        if head || straddle {
+            let mut value = String::new();
+            if head {
+                value.push('\u{FFFD}');
+            }
+            value.push_str(&values[start..end]);
+            if straddle {
+                value.push('\u{FFFD}');
+            }
+            push_color_only_style(&value, &mut kept);
+        } else {
+            push_color_only_style(&values[start..end], &mut kept);
+        }
+        let added = &kept[before..];
+        let units = if added.is_ascii() {
+            added.len()
+        } else {
+            added.encode_utf16().count()
+        };
+        kept_lengths.push(units as u32);
+    }
+    (kept, kept_lengths)
 }
 
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
@@ -380,5 +524,194 @@ mod tests {
         let out = sanitize(r#"<a href="data:text/html,<script>steal()</script>">x</a>"#);
         assert!(!out.contains("data:"), "{out:?}");
         assert!(out.contains(">x</a>"), "{out:?}");
+    }
+
+    /// Batch `values` (JavaScript strings, as UTF-16) the way the app does and
+    /// compare with one `color_only_style` call per value, each value encoded on
+    /// its own (lone surrogates become U+FFFD, as TextEncoder makes them).
+    fn assert_batch_agrees(values: &[Vec<u16>]) {
+        use super::{color_only_style, color_only_styles};
+        let joined: Vec<u16> = values.concat();
+        let lengths: Vec<u32> = values.iter().map(|v| v.len() as u32).collect();
+        let (kept, kept_lengths) = color_only_styles(&String::from_utf16_lossy(&joined), &lengths);
+        let kept: Vec<u16> = kept.encode_utf16().collect();
+        assert_eq!(kept_lengths.len(), values.len());
+        let mut at = 0;
+        for (value, &n) in values.iter().zip(&kept_lengths) {
+            let got = String::from_utf16_lossy(&kept[at..at + n as usize]);
+            at += n as usize;
+            assert_eq!(
+                got,
+                color_only_style(&String::from_utf16_lossy(value)),
+                "{value:?}"
+            );
+        }
+        assert_eq!(at, kept.len());
+    }
+
+    fn js(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn color_only_styles_matches_one_call_per_value() {
+        let values: Vec<Vec<u16>> = [
+            "color: red",
+            "",
+            "position:fixed;color:#c00",
+            ";",
+            "color:\u{feff}red;background-color:#0c0",
+            "font-size: 9px",
+            "color: rgb(1,\u{a0}2,\u{feff}3)",
+            "color: red; x: \u{1F600}",
+            "\u{1F600}",
+            "color: red",
+        ]
+        .iter()
+        .map(|s| js(s))
+        .collect();
+        assert_batch_agrees(&values);
+        assert_batch_agrees(&[]);
+        assert_batch_agrees(&[js("")]);
+    }
+
+    #[test]
+    fn color_only_styles_reads_a_surrogate_pair_split_across_values_as_two_lone_halves() {
+        let high = 0xD83D;
+        let low = 0xDE00;
+        let mut first = js("color: red;x");
+        first.push(high);
+        let mut last = vec![low];
+        last.extend(js(";color: blue"));
+        assert_batch_agrees(&[first.clone(), last.clone()]);
+        // Through an empty value in between, the halves still meet in the joined text.
+        assert_batch_agrees(&[first.clone(), vec![], last.clone()]);
+        assert_batch_agrees(&[vec![high], vec![low]]);
+        assert_batch_agrees(&[js("color:red"), vec![low], vec![high]]);
+    }
+
+    /// The pattern `is_color_literal` and the banned-word check replaced,
+    /// as they were written (regex, `(?i-u)` = JavaScript `/i` without `u`).
+    #[test]
+    fn color_literal_matches_the_former_patterns() {
+        use super::{
+            ecmascript_whitespace_class, is_color_literal, COLOR_FUNCTION_BANNED,
+            ECMASCRIPT_WHITESPACE,
+        };
+        let ws = ecmascript_whitespace_class();
+        let color = regex::Regex::new(&format!(
+            r"^(?:#(?:[0-9a-fA-F]{{3,4}}|[0-9a-fA-F]{{6}}|[0-9a-fA-F]{{8}})|[a-zA-Z]{{3,30}}|(?i-u:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\([{ws}]*[-+0-9a-zA-Z.%/,{ws}]{{1,80}}\))$"
+        ))
+        .unwrap();
+        let banned = regex::Regex::new(r"(?i-u)var|calc|url|env|attr|image|min|max|clamp").unwrap();
+        let mut spaces: Vec<String> = ECMASCRIPT_WHITESPACE
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        spaces.extend(["\u{85}", "\u{200B}", "\u{180E}", "\0", "\u{1F600}"].map(String::from));
+        let heads = [
+            "",
+            "#",
+            "#c",
+            "#c0",
+            "#c00",
+            "#c00c",
+            "#c00c0",
+            "#cc00cc",
+            "#cc00cc0",
+            "#cc00cc00",
+            "#cc00cc00c",
+            "#g00",
+            "#C0C0C0",
+            "re",
+            "red",
+            "RED",
+            "rebeccapurple",
+            "\u{17F}ilver",
+            "blac\u{212A}",
+            "rgb",
+            "RGBA",
+            "hsl",
+            "hsla",
+            "hwb",
+            "lab",
+            "lch",
+            "oklab",
+            "OkLch",
+            "rgbx",
+            "xrgb",
+            "url",
+            "r g b",
+            "abcdefghijabcdefghijabcdefghij",
+            "abcdefghijabcdefghijabcdefghijk",
+        ];
+        let bodies = [
+            "",
+            "1 2 3",
+            "220, 38, 38",
+            "1 2 3 / 50%",
+            "from red h s l",
+            "var(--x)",
+            "calc(1) 2 3",
+            "1)",
+            "(1",
+            "-+.%/,",
+            "a_b",
+            "1;2",
+            "\u{17F}",
+            "MIN 1",
+            "Image",
+        ];
+        let mut inputs: Vec<String> = Vec::new();
+        for h in heads {
+            inputs.push(h.to_string());
+            inputs.push(format!("{h})"));
+            for b in bodies {
+                inputs.push(format!("{h}({b})"));
+                inputs.push(format!("{h}({b}"));
+                inputs.push(format!("{h}({b}))"));
+            }
+            for w in &spaces {
+                inputs.push(format!("{h}{w}"));
+                inputs.push(format!("{h}({w}1{w}2{w})"));
+                inputs.push(format!("{h}({w})"));
+                inputs.push(format!("{h}({w}{w})"));
+            }
+            for n in [79, 80, 81] {
+                inputs.push(format!("{h}({})", "1".repeat(n)));
+                for w in ["\u{A0}", " "] {
+                    inputs.push(format!("{h}({}{})", w.repeat(5), "1".repeat(n)));
+                    inputs.push(format!("{h}({}{})", "1".repeat(n), w));
+                    inputs.push(format!("{h}({})", w.repeat(n)));
+                }
+            }
+        }
+        let matching = inputs.iter().filter(|v| color.is_match(v)).count();
+        assert!(
+            matching > 100 && matching < inputs.len() / 2,
+            "{matching} of {}",
+            inputs.len()
+        );
+        let differ: Vec<&String> = inputs
+            .iter()
+            .filter(|v| color.is_match(v) != is_color_literal(v))
+            .collect();
+        assert!(differ.is_empty(), "{differ:?}");
+        let new_banned = |v: &str| {
+            let body = v.to_ascii_lowercase();
+            COLOR_FUNCTION_BANNED.iter().any(|word| body.contains(word))
+        };
+        let differ: Vec<&String> = inputs
+            .iter()
+            .filter(|v| banned.is_match(v) != new_banned(v))
+            .collect();
+        assert!(differ.is_empty(), "{differ:?}");
+    }
+
+    #[test]
+    fn color_only_styles_reads_overrun_lengths_as_empty() {
+        let (kept, lengths) = super::color_only_styles("color:red", &[9, 4, 0]);
+        assert_eq!(kept, "color: red");
+        assert_eq!(lengths, [10, 0, 0]);
     }
 }

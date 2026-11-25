@@ -1,9 +1,20 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { render } from "solid-js/web";
-import { rawHtmlPresentation } from "./htmlSanitize";
+import { colorOnlyStyles, rawHtmlPresentation } from "./htmlSanitize";
 import { InlineText } from "./inline";
-import { color_only_style } from "./wasm/lsdoc_wasm.js";
 import policy from "../../fixtures/html-sanitize-policy.json";
+
+// Every call into the wasm colour rule, whatever the export's name, so the
+// crossing count below holds for a single-value export and a batched one alike.
+const colourCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock("./wasm/lsdoc_wasm.js", async (original) => {
+  const actual = await original<Record<string, unknown>>();
+  const counted = (name: string, f: unknown) =>
+    typeof f === "function" && name.startsWith("color_only_style")
+      ? (...args: unknown[]) => (colourCalls.count++, (f as (...a: unknown[]) => unknown)(...args))
+      : f;
+  return Object.fromEntries(Object.entries(actual).map(([name, f]) => [name, counted(name, f)]));
+});
 
 /** Safe HTML insertion string, without iframe dispatch. */
 const sanitizeRawHtml = (html: string): string => rawHtmlPresentation(html).html;
@@ -120,8 +131,9 @@ describe("sanitizeRawHtml — shared allowlist contract", () => {
 
 // ORACLE, test-only, not exported: the app's colour rule as it was before the Rust
 // rule replaced it (`colorOnlyStyle`, src/render/htmlSanitize.ts:64 at b184ca9a4),
-// copied verbatim. The wasm `color_only_style` must give the same answer for every
-// declaration, so a note renders the colours it rendered before.
+// copied verbatim. The wasm rule, through the app's batched `colorOnlyStyles`, must
+// give the same answer for every declaration, so a note renders the colours it
+// rendered before.
 const ORACLE_STYLE_PROPERTIES: readonly string[] = policy.browser.styleProperties;
 const ORACLE_COLOR_VALUE = /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$/i;
 const ORACLE_COLOR_FUNCTION_BANNED = /(?:var|calc|url|env|attr|image|min|max|clamp)/i;
@@ -178,9 +190,42 @@ describe("color_only_style gives the app's former answers", () => {
   }
 
   it(`agrees on ${inputs.length} generated declarations`, () => {
+    const wasm = colorOnlyStyles(inputs);
     const differ = inputs
-      .map((input) => ({ input, oracle: oracleColorOnlyStyle(input), wasm: color_only_style(input) }))
+      .map((input, i) => ({ input, oracle: oracleColorOnlyStyle(input), wasm: wasm[i] }))
       .filter((r) => r.oracle !== r.wasm);
     expect(differ).toEqual([]);
+    // One at a time too: a value alone gets the answer it gets in the batch.
+    expect(inputs.filter((input, i) => colorOnlyStyles([input])[0] !== wasm[i])).toEqual([]);
+  });
+});
+
+describe("the colour rule crosses into wasm once per sanitize", () => {
+  for (const n of [1, 100, 1000]) {
+    it(`${n} styled elements, distinct and repeated values: one call`, () => {
+      for (const distinct of [true, false]) {
+        const html = Array.from({ length: n }, (_, i) =>
+          `<span style="color: #${(distinct ? i : 7).toString(16).padStart(6, "0")}; position: fixed">x</span>`).join("");
+        colourCalls.count = 0;
+        const out = rawHtmlPresentation(html).html;
+        expect(colourCalls.count).toBe(1);
+        expect(out.split('style="').length - 1).toBe(n);
+        expect(out).not.toContain("position");
+      }
+    });
+  }
+
+  it("no styled element: no call", () => {
+    colourCalls.count = 0;
+    expect(rawHtmlPresentation("<b>x</b>").html).toBe("<b>x</b>");
+    expect(colourCalls.count).toBe(0);
+  });
+
+  it("an attribute value cannot shift another's answer", () => {
+    // Separators, NUL, a split surrogate pair and non-BMP text inside values.
+    const values = ["color: red\u0000", "\u0000;color: blue", "color: #0c0;x\ud83d", "\ude00;color: teal", "", "\u{1F600}color: red", "color: lime"];
+    const batched = colorOnlyStyles(values);
+    expect(batched).toEqual(values.map((value) => colorOnlyStyles([value])[0]));
+    expect(batched).toEqual(["", "color: blue", "color: #0c0", "color: teal", "", "", "color: lime"]);
   });
 });

@@ -62,11 +62,18 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
     tine_core::query::view::canonical_group_token(value).map(str::to_owned)
 }
 
-/// The colour declarations a note's `style` keeps in rendered output ("" if
-/// none): the export sanitizer's rule, so app and export agree. O(value bytes).
+/// The colour declarations each note `style` keeps in rendered output ("" if
+/// none): the export sanitizer's rule, so app and export agree. One call per
+/// sanitized fragment: `values` concatenated with their UTF-16 `lengths` in;
+/// the kept declarations concatenated out, their UTF-16 lengths written to
+/// `kept_lengths` (the same count as `lengths`). O(total bytes).
 #[wasm_bindgen]
-pub fn color_only_style(value: &str) -> String {
-    tine_core::html_sanitize::color_only_style(value)
+pub fn color_only_styles(values: &str, lengths: &[u32], kept_lengths: &mut [u32]) -> String {
+    let (kept, counts) = tine_core::html_sanitize::color_only_styles(values, lengths);
+    for (slot, count) in kept_lengths.iter_mut().zip(counts) {
+        *slot = count;
+    }
+    kept
 }
 
 use tine_outline::page_filename;
