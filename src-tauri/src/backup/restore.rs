@@ -1285,7 +1285,7 @@ mod tests {
             source.clone(),
             suffix,
             &|| false,
-            BACKUP_KEEP_DEFAULT,
+            Some(BACKUP_KEEP_DEFAULT),
             BACKUP_LOCK_WAIT,
         )
     }
