@@ -1,7 +1,9 @@
 // Visual regression for GH #88: a whole-block `{{embed ((uuid))}}` presents ONE
 // bullet, the embedded root's, at the host's place (D-20261030-EMB restores 0.8's
 // single-root rule after beta.1's GH #726 host bullet), with a heavier source
-// descendant guide.
+// descendant guide. GH #1002: that root bullet and guide keep the embed accent with
+// "Color indent guides by level" on and off. GH #992: the embed takes no more room
+// below its last row than the same outline on its own page.
 // Usage: npm run build:mock && node scripts/shot-block-embed.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -54,16 +56,22 @@ try {
   const embeddedBulletCount = await host.locator(".embed-block .bullet-container").count();
   const rootToggle = host.locator(".embed-block .collapse-toggle.has-children").first();
   const rootToggleCount = await host.locator(".embed-block .collapse-toggle.has-children").count();
-  const rootGuide = host.locator(
-    ".embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children",
-  );
-  const guideWidth = await rootGuide.evaluate((element) => getComputedStyle(element).borderLeftWidth);
+  // GH #992: below its last row the embed adds at most its 1px host edge, like 0.9;
+  // the same outline on its own page adds none.
+  const gapBelow = await host.evaluate((element) => {
+    const rows = element.querySelectorAll(".embed-block .block-main");
+    return element.getBoundingClientRect().bottom - rows[rows.length - 1].getBoundingClientRect().bottom;
+  });
+  if (gapBelow > 2) throw new Error(`embed has ${gapBelow}px below its last row (GH #992)`);
+
+  // The embedded root is the embed's first row, whatever wraps the group's rows.
+  const guideWidth = await host.evaluate((element) => getComputedStyle(
+    element.querySelector(".embed-block .ls-block > .block-children-container > .block-children"),
+  ).borderLeftWidth);
 
   async function accentMetrics() {
     return host.evaluate((element) => {
-      const root = element.querySelector(
-        ".embed-block > .live-ref-group > .ls-block",
-      );
+      const root = element.querySelector(".embed-block .ls-block");
       const child = root?.querySelector(":scope > .block-children-container > .block-children > .ls-block");
       const rootBullet = root?.querySelector(":scope > .block-main > .block-controls .bullet");
       const childBullet = child?.querySelector(":scope > .block-main > .block-controls .bullet");
@@ -72,7 +80,14 @@ try {
       if (!rootBullet || !childBullet || !rootGuide || !childGuide) {
         throw new Error("missing embedded root/child accent geometry");
       }
+      // The accent as the theme resolves it here, read from a probe painted with the token.
+      const probe = document.createElement("span");
+      probe.style.background = "var(--tine-embed-accent, var(--block-embed-accent))";
+      element.append(probe);
+      const accent = getComputedStyle(probe).backgroundColor;
+      probe.remove();
       return {
+        accent,
         rootBullet: getComputedStyle(rootBullet).backgroundColor,
         childBullet: getComputedStyle(childBullet).backgroundColor,
         rootGuide: getComputedStyle(rootGuide).borderLeftColor,
@@ -82,6 +97,9 @@ try {
   }
 
   function assertAccent(label, metrics) {
+    if (metrics.rootBullet !== metrics.accent) {
+      throw new Error(`${label}: embedded root bullet ${metrics.rootBullet} is not the embed accent ${metrics.accent} (GH #1002)`);
+    }
     if (metrics.rootBullet !== metrics.rootGuide) {
       throw new Error(`${label}: root bullet ${metrics.rootBullet} and guide ${metrics.rootGuide} drifted`);
     }
@@ -111,16 +129,21 @@ try {
   if (errors.length) throw new Error(`browser errors:\n${errors.join("\n")}`);
 
   for (const testCase of CASES) {
-    await page.evaluate(({ theme, mode }) => {
-      document.documentElement.setAttribute("data-theme", mode);
-      window.__tineApplyTheme?.(theme);
-    }, testCase);
-    await sleep(180);
-    const metrics = await accentMetrics();
-    assertAccent(testCase.name, metrics);
-    await host.screenshot({ path: `${OUT}/${testCase.name}.png` });
-    console.log(JSON.stringify({ case: testCase.name, ...metrics }));
+    for (const single of [false, true]) {
+      await page.evaluate(({ theme, mode, single }) => {
+        document.documentElement.setAttribute("data-theme", mode);
+        document.documentElement.classList.toggle("tine-guide-colors-single", single);
+        window.__tineApplyTheme?.(theme);
+      }, { ...testCase, single });
+      await sleep(180);
+      const name = `${testCase.name}${single ? "-single-guide-color" : ""}`;
+      const metrics = await accentMetrics();
+      assertAccent(name, metrics);
+      await host.screenshot({ path: `${OUT}/${name}.png` });
+      console.log(JSON.stringify({ case: name, ...metrics }));
+    }
   }
+  await page.evaluate(() => document.documentElement.classList.remove("tine-guide-colors-single"));
 
   const previousMetrics = await accentMetrics();
   const custom = await page.evaluate(() => {
@@ -145,7 +168,7 @@ try {
   if (overrideMetrics.rootBullet !== "rgb(1, 2, 3)" || overrideMetrics.rootGuide !== "rgb(1, 2, 3)") {
     throw new Error(`custom --block-embed-accent override did not win: ${JSON.stringify(overrideMetrics)}`);
   }
-  console.log(JSON.stringify({ out: OUT, bulletCount, hostControlCount, embeddedBulletCount, guideWidth }));
+  console.log(JSON.stringify({ out: OUT, bulletCount, hostControlCount, embeddedBulletCount, guideWidth, gapBelow }));
 } catch (error) {
   console.error(String(error));
   failed = true;

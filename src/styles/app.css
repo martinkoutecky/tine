@@ -3352,6 +3352,8 @@ html[data-system-insets="native-viewport"] {
 .page-section {
   padding-bottom: 18px;
 }
+/* A CommentSurface (embed, query or reference group, sidebar item) has no page spacing (GH #992). */
+.comment-surface > .page-section { padding-bottom: 0; }
 
 .page-section + .page-section {
   margin-top: 6px;
@@ -7678,9 +7680,6 @@ img.emoji {
 .query-group.query-group-no-page {
   margin-bottom: 0;
 }
-.query-group-no-page > .live-ref-group > .comment-surface > .page-section {
-  padding-bottom: 0;
-}
 .link-depth-warning {
   margin: 2px 0;
   font-size: 13px;
@@ -7808,7 +7807,8 @@ html.tine-embed-shading-accent .embed-block {
    bullet (standing for the host), collapse toggle, zoom/sidebar actions, and
    editor surface. Removing the wrapper inset puts that surviving bullet on the
    ordinary outline column. Its descendant guide is slightly heavier to identify
-   the embedded boundary without a box. */
+   the embedded boundary without a box. The embedded rows sit in the group's
+   CommentSurface (`.comment-surface > .page-section > .page-blocks`); GH #1002. */
 .block-embed-host > .block-main > .block-content-wrapper > .macro-host {
   padding: 0;
 }
@@ -7817,10 +7817,10 @@ html.tine-embed-shading-accent .embed-block {
   padding-inline-start: 0;
   margin: 0;
 }
-.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-main > .block-controls .bullet {
+.block-embed-host .embed-block > .live-ref-group > .comment-surface > .page-section > .page-blocks > .ls-block > .block-main > .block-controls .bullet {
   background: var(--tine-embed-accent, var(--block-embed-accent));
 }
-.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
+.block-embed-host .embed-block > .live-ref-group > .comment-surface > .page-section > .page-blocks > .ls-block > .block-children-container > .block-children {
   border-inline-start-width: 2px;
   border-inline-start-color: var(--tine-embed-accent, var(--block-embed-accent));
 }
