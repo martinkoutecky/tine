@@ -219,7 +219,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-pdf-area-ref.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the PDF viewer, Find's box keeps taking characters while matches land (GH #1037): after one search, selecting the query and typing a new one leaves the whole new query in the box. A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
       "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],
       "nonRequirements": ["No reporter attachments, private graph, Windows runtime certification or release acceptance. Crop generation is covered by the existing PDF journey."],
       "stability":"burn-in"
@@ -675,7 +675,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-git-autocommit.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; the interval typed with real keys and left by Tab stores what the number field parses (-1 keeps the stored 10 and the field shows 10 again, 1e2 stores 100; #1035); renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
       "acceptableVariations":["Commit timing and Settings layout may vary while both commits land in this order with these subjects."],
       "nonRequirements":["Interval-driven commits (covered by Rust tests), push or pull, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -852,8 +852,8 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh671-journal-startup.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
-      "acceptableVariations":["Heading classes, startup timing and layout may vary while the expected journal content is visible and existing files remain unchanged."],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, shows a heading block the template made as a heading at once (GH #1036), keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
+      "acceptableVariations":["Heading size, startup timing and layout may vary while the expected journal content is visible, the template's heading is a heading and existing files remain unchanged."],
       "nonRequirements":["Exact pixels, a specific remount count or Android device certification from Linux WebKitGTK."],
       "stability":"burn-in"
     },

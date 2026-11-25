@@ -49,10 +49,40 @@ pub(crate) fn settings_path_in(app_data: &std::path::Path) -> PathBuf {
     app_data.join(SETTINGS_FILE)
 }
 
+/// The one decoder of device-settings text. A leading UTF-8 byte-order mark
+/// (Windows tools add one) is not content, and a blank file is a fresh start
+/// (`None`); anything else must be JSON. The readers' size bound is on the file
+/// as stored, so the mark's three bytes count toward it.
+pub(crate) fn decode_settings(text: &str) -> serde_json::Result<Option<serde_json::Value>> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(text).map(Some)
+}
+
+/// The device-settings file at `path`: `None` when it is missing or blank, an
+/// error when it exists but cannot be read or decoded.
+pub(crate) fn read_settings_at(
+    path: &std::path::Path,
+) -> std::io::Result<Option<serde_json::Value>> {
+    match read_app_text(path) {
+        Ok(text) => decode_settings(&text)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+        // A link whose target is absent is an entry that exists.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && std::fs::symlink_metadata(path)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn app_bool_at(path: &std::path::Path, key: &str, default: bool) -> bool {
-    read_app_text(path)
-        .ok()
-        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+    read_settings_value_at(path)
         .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
         .unwrap_or(default)
 }
@@ -93,10 +123,8 @@ pub(crate) fn update_settings_strict_at(
     mutate: impl Fn(&mut serde_json::Value) -> Result<(), String>,
 ) -> Result<(), String> {
     crate::device_io::atomic_update(path, &SETTINGS_LOCK, |content| {
-        let mut json: serde_json::Value = if content.trim().is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::from_str(content).map_err(|error| {
+        let mut json = decode_settings(content)
+            .map_err(|error| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
@@ -106,7 +134,7 @@ pub(crate) fn update_settings_strict_at(
                     ),
                 )
             })?
-        };
+            .unwrap_or_else(|| serde_json::json!({}));
         if !json.is_object() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -151,9 +179,7 @@ pub(crate) fn update_settings(
 
 /// The device-settings JSON at `path`, if it can be read and parsed.
 pub(crate) fn read_settings_value_at(path: &std::path::Path) -> Option<serde_json::Value> {
-    read_app_text(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+    read_settings_at(path).ok().flatten()
 }
 
 /// The "Your name" device setting (D-20261017-LD1), written by
@@ -247,15 +273,12 @@ pub(crate) fn approved_external_assets_in(
     graph_root: &std::path::Path,
 ) -> Option<PathBuf> {
     let key = graph_root.display().to_string();
-    read_app_text(&settings_path_in(app_data))
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|json| {
-            external_assets_approvals(&json)
-                .get(&key)
-                .and_then(serde_json::Value::as_str)
-                .map(PathBuf::from)
-        })
+    read_settings_value_at(&settings_path_in(app_data)).and_then(|json| {
+        external_assets_approvals(&json)
+            .get(&key)
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from)
+    })
 }
 
 pub(crate) fn remember_external_assets_approval(
@@ -286,8 +309,7 @@ pub(crate) fn remember_graph(app: &tauri::AppHandle, path: &str) -> Result<(), S
 #[tauri::command]
 pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<DisplayKnownGraph> {
     settings_path(&app)
-        .and_then(|p| read_app_text(&p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|p| read_settings_value_at(&p))
         .map(|json| {
             parse_known_graphs(&json)
                 .into_iter()
@@ -341,8 +363,7 @@ pub(crate) async fn reveal_known_graph(path: String, app: tauri::AppHandle) -> R
 
 pub(crate) fn last_graph_path(app: &tauri::AppHandle) -> Option<String> {
     settings_path(app)
-        .and_then(|p| read_app_text(&p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|p| read_settings_value_at(&p))
         .and_then(|json| {
             json.get("last_graph_path")
                 .and_then(|value| value.as_str())
@@ -355,8 +376,7 @@ pub(crate) fn last_graph_path(app: &tauri::AppHandle) -> Option<String> {
 /// Cmd/Ctrl+Enter files.
 fn capture_enter_files(app: &tauri::AppHandle) -> bool {
     settings_path(app)
-        .and_then(|p| read_app_text(&p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|p| read_settings_value_at(&p))
         .and_then(|v| v.get("capture_enter_files").and_then(|x| x.as_bool()))
         .unwrap_or(false)
 }
@@ -385,8 +405,7 @@ pub(crate) async fn set_capture_enter_files(
 /// for the three-mode `linkAutocompletePolicy` string key, which is the only writer.
 fn link_first_match(app: &tauri::AppHandle) -> bool {
     settings_path(app)
-        .and_then(|p| read_app_text(&p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|p| read_settings_value_at(&p))
         .and_then(|v| v.get("link_first_match").and_then(|x| x.as_bool()))
         .unwrap_or(false)
 }
@@ -401,8 +420,7 @@ pub(crate) fn get_link_first_match(app: tauri::AppHandle) -> bool {
 /// local because it's a feel preference, not graph data.
 fn smooth_scroll(app: &tauri::AppHandle) -> bool {
     settings_path(app)
-        .and_then(|p| read_app_text(&p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|p| read_settings_value_at(&p))
         .and_then(|v| v.get("smooth_scroll").and_then(|x| x.as_bool()))
         .unwrap_or(false)
 }
@@ -556,8 +574,7 @@ pub(crate) async fn set_app_bool(
 #[tauri::command]
 pub(crate) fn get_app_string(key: String, default: String, app: tauri::AppHandle) -> String {
     settings_path(&app)
-        .and_then(|p| read_app_text(&p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|p| read_settings_value_at(&p))
         .and_then(|v| v.get(&key).and_then(|x| x.as_str().map(str::to_string)))
         .unwrap_or(default)
 }
@@ -926,6 +943,29 @@ fn atomic_write_session_with_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GH #1042: a script saved the settings with a UTF-8 byte-order mark.
+    /// Readers see the user's values, and a write keeps every other key.
+    #[test]
+    fn a_byte_order_mark_is_not_settings_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = settings_path_in(temp.path());
+        std::fs::write(
+            &path,
+            "\u{feff}{\"smooth_scroll\":true,\"comment_author_name\":\"Ann\",\"backup_keep\":3}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_settings_value_at(&path).unwrap()["comment_author_name"],
+            "Ann"
+        );
+        assert!(app_bool_at(&path, "smooth_scroll", false));
+        update_settings_at(&path, |json| json["capture_enter_files"] = true.into()).unwrap();
+        let written = read_settings_value_at(&path).unwrap();
+        assert_eq!(written["smooth_scroll"], true);
+        assert_eq!(written["backup_keep"], 3);
+        assert_eq!(written["capture_enter_files"], true);
+    }
 
     #[test]
     fn an_older_session_save_never_replaces_a_newer_one() {
