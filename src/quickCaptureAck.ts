@@ -18,6 +18,10 @@ export interface QuickCaptureAck {
   unproved?: boolean;
 }
 
+/** The sender gave an unconfirmed capture up (Start a new capture): nothing
+ * asks for its proof again, so its receiver keeps nothing of it. */
+export interface QuickCaptureAbandon { id: string; target: string }
+
 export const QUICK_CAPTURE_ACK_TIMEOUT_MS = 5000;
 export const QUICK_CAPTURE_ACK_MAX_RETRIES = 2;
 

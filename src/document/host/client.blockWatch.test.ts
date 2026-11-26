@@ -1,5 +1,5 @@
-// `HostClient.watchBlocks`: proved only by an own-save version EQUAL to a
-// version the host took from a text that held the watched blocks.
+// `HostClient.watchBlocks`: proved only by an own-save version EQUAL to the
+// newest version the host took, from a text that held the watched blocks.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mail, mailPage, opened, setup, tick, took } from "./fakes.test.support";
 
@@ -117,4 +117,58 @@ it("there is nothing to watch on a page the client does not know, or for no bloc
   await opened(ctx, "P", 3);
   expect(ctx.client.watchBlocks("Unknown", ["x"])).toBeNull();
   expect(ctx.client.watchBlocks("P", [])).toBeNull();
+});
+
+it("only the newest taken text can prove: a watch keeps one version however long the save is blocked", async () => {
+  const ctx = await setup();
+  await opened(ctx, "P", 3);
+  const watch = ctx.client.watchBlocks("P", ["P-1"])!;
+  // A blocked save: the host takes each edit, and publishes none of them.
+  for (let version = 4; version < 1004; version++) await sendAndTake(ctx, `ab${version}`, version);
+  const kept = (ctx.client as unknown as { pages: Map<string, { watches: object[] }> }).pages.get("P")!.watches;
+  expect(kept).toHaveLength(1);
+  expect(JSON.stringify(kept[0]).length).toBeLessThan(200);
+  // The host can still write only its current buffer: an older taken version is superseded.
+  await ownSave(ctx, 500);
+  expect(watch.proved).toBe(false);
+  await ownSave(ctx, 1003);
+  expect(watch.proved).toBe(true);
+});
+
+it("a newer taken text without the blocks takes the proof away from an older one that held them", async () => {
+  const ctx = await setup();
+  await opened(ctx, "P", 3);
+  const watch = ctx.client.watchBlocks("P", ["P-1"])!;
+  await sendAndTake(ctx, "ab", 4);
+  await sendAndTake(ctx, "", 5); // the block is gone from the text the host holds now
+  await ownSave(ctx, 4);
+  expect(watch.proved).toBe(false);
+});
+
+it("released watches cost a send nothing: the page's text is walked once per live watch", async () => {
+  const ctx = await setup();
+  await opened(ctx, "P", 3);
+  const walks = async (version: number): Promise<number> => {
+    ctx.doc.type("P", `ab${version}`);
+    let reads = 0;
+    const dto = ctx.doc.dto("P")!;
+    const blocks = dto.blocks;
+    Object.defineProperty(dto, "blocks", { get() { reads += 1; return blocks; }, configurable: true, enumerable: true });
+    ctx.client.noteEdit("P", "save-block");
+    ctx.client.sendNow("P");
+    await tick();
+    ctx.client.receive(mail(7, KEY, mailPage(version, { kind: "unchanged" }), took(ctx.host.last("submit").id, version)));
+    return reads;
+  };
+  const bare = await walks(4);
+  const abandoned = Array.from({ length: 100 }, () => ctx.client.watchBlocks("P", ["P-1"])!);
+  const live = ctx.client.watchBlocks("P", ["P-1"])!;
+  for (const watch of abandoned) watch.release();
+  expect(await walks(5)).toBe(bare + 1);
+  const pages = (ctx.client as unknown as { pages: Map<string, { watches: object[] }> }).pages;
+  expect(pages.get("P")!.watches).toHaveLength(1);
+  live.release();
+  expect(await walks(6)).toBe(bare);
+  expect(pages.get("P")!.watches).toHaveLength(0);
+  expect(abandoned.some((watch) => watch.proved) || live.proved).toBe(false);
 });

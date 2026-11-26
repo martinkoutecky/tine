@@ -17,7 +17,10 @@ beforeAll(() => initParser());
 
 const h = vi.hoisted(() => ({ receive: null as null | ((event: { payload: unknown }) => Promise<void>), ack: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_: string, receive: typeof h.receive) => { h.receive = receive; return () => { h.receive = null; }; },
+  listen: async (name: string, receive: typeof h.receive) => {
+    if (name !== "quick-capture") return () => {};
+    h.receive = receive; return () => { h.receive = null; };
+  },
   emitTo: h.ack,
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));

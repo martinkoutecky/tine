@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   api: null as null | { submit(): void; cancel(): void },
   listeners: new Map<string, (e: { payload: unknown }) => void>(),
   requests: [] as Array<{ id: string; text: string }>,
+  abandoned: [] as Array<{ to: string; id: string; target: string }>,
   hide: vi.fn(),
 }));
 vi.mock("./components/Block", () => ({ Block: () => null,
@@ -19,8 +20,9 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: async (name: string, cb: (e: { payload: unknown }) => void) => {
     h.listeners.set(name, cb); return () => h.listeners.delete(name);
   },
-  emitTo: async (_: string, event: string, payload: { id: string; text: string }) => {
+  emitTo: async (to: string, event: string, payload: { id: string; text: string }) => {
     if (event === "quick-capture") h.requests.push(payload);
+    if (event === "quick-capture-abandon") h.abandoned.push({ to, ...(payload as unknown as { id: string; target: string }) });
   },
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({
@@ -159,6 +161,8 @@ it("an acknowledgement that the save is unproved keeps the text and the retry, a
   expect(document.body.textContent).toContain("already on the page");
   expect(document.body.textContent).not.toContain("previous graph");
   expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
+  // The window that took the attempt is told it was given up, once, by its id.
+  await vi.waitFor(() => expect(h.abandoned.filter((a) => a.id === request.id)).toEqual([{ to: "main", id: request.id, target: "main" }]));
   const fresh = await submit();
   expect(fresh.id).not.toBe(request.id);
   await ack(fresh.id, { ok: true });

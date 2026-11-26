@@ -78,9 +78,11 @@ interface Watch {
   ids: readonly string[];
   /** The page's outstanding text request, and whether the DTO it sent held every id. */
   sent: { id: number; holds: boolean } | null;
-  /** Versions the host took from a DTO that held every id. */
-  holding: Set<number>;
+  /** The newest version the host took, when its DTO held every id; else null. */
+  held: number | null;
   proved: boolean;
+  /** Released: forgotten at the page's next send. */
+  dead: boolean;
 }
 
 /** Whether `dto`'s outline contains every id: the text as sent, never the
@@ -607,42 +609,45 @@ export class HostClient {
 
   /** Watch for Tine's own save of a version of `name` whose sent text held every
    * block in `ids`. `proved` turns true, and stays, when a publication wait
-   * reports the page's own-save version EQUAL to a version the host took from a
-   * DTO that held them: a later version proves nothing (Use disk leaves the page
-   * clean at one without them), and the window's document is never consulted.
-   * A session change, a release or a drop of the page forgets the unproved
-   * versions. Null without client state for the page. While watched, each send
-   * of the page walks its DTO once; each published revision costs O(1). */
+   * reports the page's own-save version EQUAL to the newest version the host
+   * took, and the DTO it took held them: a later version proves nothing (Use
+   * disk leaves the page clean at one without them), an older one is not the
+   * text the page holds now, and the window's document is never consulted. A
+   * watch keeps that one version, however long a save stays blocked. A session
+   * change, a release or a drop of the page forgets it. The returned handle
+   * keeps neither the page nor this client alive. Null without client state
+   * for the page. While watched, each send of the page walks its DTO once per
+   * live watch; each published revision costs O(1). */
   watchBlocks(name: string, ids: readonly string[]): BlockWatch | null {
     const page = this.pages.get(name);
     if (!page || !ids.length) return null;
-    const watch: Watch = { ids: [...ids], sent: null, holding: new Set(), proved: false };
+    const watch: Watch = { ids: [...ids], sent: null, held: null, proved: false, dead: false };
     page.watches.push(watch);
     return {
       get proved() { return watch.proved; },
-      release: () => {
-        const at = page.watches.indexOf(watch);
-        if (at >= 0) page.watches.splice(at, 1);
-      },
+      release: () => { watch.dead = true; watch.ids = []; watch.sent = null; watch.held = null; },
     };
   }
 
   /** The text request `id` hands `dto` to the host for `page`. */
   private sent(page: Page, id: number, dto: PageDto): void {
+    if (!page.watches.length) return;
+    page.watches = page.watches.filter((watch) => !watch.dead);
     for (const watch of page.watches) watch.sent = { id, holds: dtoHolds(dto, watch.ids) };
   }
 
   /** The host's own save wrote `version` of the page at `key`. */
   private witnessed(key: string, version: number): void {
     for (const watch of this.byKey.get(key)?.watches ?? []) {
-      if (watch.holding.has(version)) watch.proved = true;
-      for (const held of watch.holding) if (held < version) watch.holding.delete(held);
+      if (watch.held === version) watch.proved = true;
+      // Own-save versions only rise: an older taken version is never written now.
+      if (watch.held !== null && watch.held < version) watch.held = null;
     }
   }
 
   /** The page's taken versions no longer name this binding's host buffers. */
   private unwatch(page: Page): void {
-    for (const watch of page.watches) { watch.sent = null; watch.holding.clear(); }
+    for (const watch of page.watches) { watch.sent = null; watch.held = null; }
   }
 
   // ------------------------------------------------------------- publication (§4.4, F1)
@@ -731,7 +736,8 @@ export class HostClient {
     const result: Answered = { took: answer.took, refusal: answer.outcome.kind === "refused" ? answer.outcome.reason : null };
     for (const watch of page.watches) {
       if (watch.sent?.id !== answer.id) continue;
-      if (answer.took && watch.sent.holds) watch.holding.add(answer.version);
+      // The host's buffer is this text now: an earlier taken version is superseded.
+      if (answer.took) watch.held = watch.sent.holds ? answer.version : null;
       watch.sent = null;
     }
     if (!mail.page) {

@@ -11,7 +11,7 @@ import {
   captureDestination, destinationName, shouldRedirect, templateOutline,
   type QuickCaptureOptions,
 } from "./quickCaptureConfig";
-import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
+import type { QuickCaptureAbandon, QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 
 /** Install the graph window's capture receiver. Each request is deduplicated
  * by id (100 completed ids retained); writes use the document capture door.
@@ -74,6 +74,16 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     } satisfies QuickCaptureAck);
   };
   if (!owner()) return () => {};
+  // A capture stops needing proof when it is acknowledged saved, or when its
+  // sender gives it up: then its watch and every record of its id go.
+  const abandonment = await readOwnedResource(owner, listen<QuickCaptureAbandon>("quick-capture-abandon", async (e) => {
+    const id = e.payload?.id;
+    if (!id || e.payload.target !== windowLabel) return;
+    await inFlight.get(id);
+    landed.get(id)?.watch?.release();
+    for (const kept of [landed, unproved, uncertain, unconfirmed]) kept.delete(id);
+  }), (unlisten) => unlisten());
+  if (abandonment.kind !== "current") return () => {};
   const registration = await readOwnedResource(owner, listen<QuickCaptureRequest & { bindingGeneration: number }>("quick-capture", async (e) => {
     // WebKitGTK currently exposes targeted Tauri events to every graph
     // listener in this process. Treat the payload label as the authority so
@@ -207,9 +217,10 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     }
     ack(id, ok);
   }), (unlisten) => unlisten());
-  if (registration.kind !== "current") return () => {};
+  if (registration.kind !== "current") { abandonment.value(); return () => {}; }
   return () => {
     for (const { watch } of landed.values()) watch?.release();
+    abandonment.value();
     registration.value();
   };
 }

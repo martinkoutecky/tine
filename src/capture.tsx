@@ -40,6 +40,7 @@ import {
   createQuickCaptureRequestId,
   quickCaptureAckMatches,
   shouldRetryQuickCapture,
+  type QuickCaptureAbandon,
   type QuickCaptureAck,
   type QuickCaptureRequest,
 } from "./quickCaptureAck";
@@ -601,6 +602,11 @@ function Capture() {
     if (pendingCapture) return;
     // Explicitly retire the uncertain attempt, keeping every character for the
     // user to reconcile against the previous graph before filing a new request.
+    // The window that took it is told, so it keeps no proof nobody will ask for.
+    if (retry?.target) {
+      const abandoned: QuickCaptureAbandon = { id: retry.id, target: retry.target };
+      void import("@tauri-apps/api/event").then(({ emitTo }) => emitTo(abandoned.target, "quick-capture-abandon", abandoned)).catch(() => {});
+    }
     retry = undefined;
     setCaptureMessage(t(unproved() ? "capture-new-request-unproved" : "capture-new-request"));
     setPreviousGraph(false);

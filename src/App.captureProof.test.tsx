@@ -14,9 +14,13 @@ import { loadSingle } from "./document/workingSet";
 import { initParser } from "./render/parse";
 import type { BlockDto, PageRead } from "./types";
 
-const h = vi.hoisted(() => ({ receive: null as null | ((event: { payload: unknown }) => Promise<void>), ack: vi.fn() }));
+type Listener = (event: { payload: unknown }) => Promise<void>;
+const h = vi.hoisted(() => ({ receive: null as null | Listener, abandon: null as null | Listener, ack: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_: string, receive: typeof h.receive) => { h.receive = receive; return () => { h.receive = null; }; },
+  listen: async (name: string, receive: Listener) => {
+    if (name === "quick-capture") h.receive = receive; else h.abandon = receive;
+    return () => { if (name === "quick-capture") h.receive = null; else h.abandon = null; };
+  },
   emitTo: h.ack,
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
@@ -202,4 +206,32 @@ it("a capture inserted before the page client bound is not acknowledged on retry
     acked(payload.id, UNPROVED);
     expect(pageByName("Inbox")!.roots.map((id) => doc.byId[id].raw).filter((raw) => raw === "startup capture")).toHaveLength(1);
   } finally { dispose(); finishBind(); await binding; }
+});
+
+// The sender gave the capture up (Start a new capture): its watch is released,
+// so later sends of the page no longer look for its blocks.
+it("an abandoned capture's watch is released, and a watch for another window's id is not", async () => {
+  const g = await graph([file("Inbox")]);
+  g.state.writable = () => true;
+  const submit = backend().pageSubmit.bind(backend());
+  g.disk.submit.mockImplementationOnce((...args) => {
+    g.files.set("pages/Inbox.md", { ...file("Inbox", [block("external")]), rev: "outside" });
+    return submit(...args);
+  });
+  const watched = vi.spyOn(HostClient.prototype, "watchBlocks");
+  try {
+    const payload = await g.capture("abandoned", "- given up");
+    acked(payload.id, UNSAVED);
+    const watch = watched.mock.results.at(-1)!.value as { release(): void };
+    const release = vi.spyOn(watch, "release");
+    await h.abandon!({ payload: { id: payload.id, target: "elsewhere" } });
+    expect(release).not.toHaveBeenCalled();
+    await h.abandon!({ payload: { id: payload.id, target: "main" } });
+    expect(release).toHaveBeenCalledTimes(1);
+    // Nothing of the id is kept: a replay is a capture this window never inserted.
+    expect(await resolveConflict("Inbox", "mine")).toBe(true);
+    await h.receive!({ payload });
+    expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", expect.objectContaining({ id: payload.id, ok: false }));
+    expect(g.on("Inbox").filter((raw) => raw === "given up")).toHaveLength(1);
+  } finally { g.dispose(); }
 });
