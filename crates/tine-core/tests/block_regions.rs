@@ -815,7 +815,8 @@ fn planning_never_enters_an_opening_logbook() {
                 },
             )
             .unwrap();
-        assert_eq!(out, format!("SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
+        // After an empty first line: the block has no title text (GH #1012).
+        assert_eq!(out, format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
         // Read back as the block's schedule (inside the drawer it was not).
         let block = tine_core::doc::DocBlock::new(out.replace("\r\n", "\n"));
         assert!(
@@ -839,7 +840,7 @@ fn edit_exit_planning_tidy_up_hoists_above_an_opening_logbook() {
         let out = parse(&raw, false)
             .apply(&raw, false, Edit::NormalizePlanning)
             .unwrap();
-        assert_eq!(out, format!("SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
+        assert_eq!(out, format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
         let block = tine_core::doc::DocBlock::new(out.replace("\r\n", "\n"));
         assert!(block
             .scheduled()
@@ -850,6 +851,171 @@ fn edit_exit_planning_tidy_up_hoists_above_an_opening_logbook() {
                 .apply(&out, false, Edit::NormalizePlanning)
                 .unwrap(),
             out
+        );
+    }
+}
+
+fn planning(which: &str, value: &str) -> Edit {
+    Edit::Planning {
+        which: which.into(),
+        value: Some(value.into()),
+    }
+}
+
+/// GH #1012: Logseq reads a block's first line as its title and takes no date
+/// from it, so planning written on a block without title text goes after an
+/// empty first line, as OG `frontend.util.text/add-timestamp` writes it. Every
+/// kind the edit accepts, both formats, CRLF, and a second kind picked after
+/// the first (which goes below the first, as on a titled block).
+#[test]
+fn planning_on_a_block_without_title_text_goes_after_an_empty_first_line() {
+    const S: &str = "SCHEDULED: <2026-10-03 Sat>";
+    const D: &str = "DEADLINE: <2026-10-04 Sun>";
+    const LB: &str = ":LOGBOOK:\nCLOCK: [2026-10-01 Wed 10:00]\n:END:";
+    // (org, metadata the block opens with); "" is an empty block.
+    let shapes: [(bool, &str); 7] = [
+        (false, ""),
+        (false, LB),
+        (false, "id:: 6679-abc"),
+        (false, "foo:: bar"),
+        (true, ""),
+        (true, LB),
+        (true, ":PROPERTIES:\n:id: 6679-abc\n:END:"),
+    ];
+    for (org, rest) in shapes {
+        for nl in ["\n", "\r\n"] {
+            if !rest.contains('\n') && nl == "\r\n" {
+                continue; // a one-line block has no line ending to follow
+            }
+            let rest = rest.replace('\n', nl);
+            let tail = |lines: &[&str]| {
+                let mut out = format!("{nl}{}", lines.join(nl));
+                if !rest.is_empty() {
+                    out.push_str(nl);
+                    out.push_str(&rest);
+                }
+                out
+            };
+            for (first, first_line, second, second_line) in [
+                ("Scheduled", S, "Deadline", D),
+                ("Deadline", D, "Scheduled", S),
+            ] {
+                let value = |line: &str| line.split_once(": ").unwrap().1.to_string();
+                let once = parse(&rest, org)
+                    .apply(&rest, org, planning(first, &value(first_line)))
+                    .unwrap();
+                assert_eq!(once, tail(&[first_line]), "org={org} {rest:?} + {first}");
+                let twice = parse(&once, org)
+                    .apply(&once, org, planning(second, &value(second_line)))
+                    .unwrap();
+                assert_eq!(
+                    twice,
+                    tail(&[first_line, second_line]),
+                    "org={org} {rest:?} + {first} + {second}"
+                );
+                // Both lists the parser keeps have both dates, neither on line 0.
+                let regions = parse(&twice, org);
+                let mut kinds: Vec<_> = regions.planning.iter().map(|p| p.kind.as_str()).collect();
+                kinds.sort();
+                assert_eq!(kinds, ["Deadline", "Scheduled"], "{twice:?}");
+                assert!(regions.planning.iter().all(|p| p.line.0 > 0), "{twice:?}");
+                let blocks = tine_core::render::parse_block(&twice, org);
+                let shown = tine_core::block_regions::top_level_render_planning(&twice, &blocks);
+                let mut kinds: Vec<_> = shown.iter().map(|p| p.kind).collect();
+                kinds.sort();
+                assert_eq!(kinds, ["Deadline", "Scheduled"], "{twice:?}");
+                assert!(shown.iter().all(|p| p.line_start > 0), "{twice:?}");
+            }
+            // Closed, which the edit also accepts, follows the same rule.
+            let closed = parse(&rest, org)
+                .apply(&rest, org, planning("Closed", "[2026-10-05 Mon 09:00]"))
+                .unwrap();
+            assert_eq!(closed, tail(&["CLOSED: [2026-10-05 Mon 09:00]"]), "{rest:?}");
+            let regions = parse(&closed, org);
+            assert!(
+                regions.planning.iter().any(|p| p.kind == "Closed" && p.line.0 > 0),
+                "{closed:?}"
+            );
+        }
+    }
+}
+
+/// Replacing or clearing a date on a block without title text keeps the empty
+/// first line; a date written on the first line by an older Tine is replaced
+/// where it is.
+#[test]
+fn replace_and_clear_below_an_empty_first_line() {
+    let lb = ":LOGBOOK:\nCLOCK: [2026-10-01 Wed 10:00]\n:END:";
+    for org in [false, true] {
+        let raw = "\nSCHEDULED: <2026-10-03 Sat>";
+        let edit = |raw: &str, value: Option<&str>| {
+            parse(raw, org)
+                .apply(
+                    raw,
+                    org,
+                    Edit::Planning {
+                        which: "Scheduled".into(),
+                        value: value.map(Into::into),
+                    },
+                )
+                .unwrap()
+        };
+        assert_eq!(edit(raw, Some("<2026-10-09 Fri>")), "\nSCHEDULED: <2026-10-09 Fri>");
+        assert_eq!(edit(raw, None), "");
+        let with_lb = format!("\nSCHEDULED: <2026-10-03 Sat>\n{lb}");
+        let cleared = edit(&with_lb, None);
+        assert_eq!(cleared, format!("\n{lb}"), "org={org}");
+        assert_eq!(
+            edit(&cleared, Some("<2026-10-09 Fri>")),
+            format!("\nSCHEDULED: <2026-10-09 Fri>\n{lb}"),
+            "org={org}"
+        );
+        // Development's first-line shape is replaced in place.
+        assert_eq!(
+            edit("SCHEDULED: <2026-10-03 Sat>", Some("<2026-10-09 Fri>")),
+            "SCHEDULED: <2026-10-09 Fri>"
+        );
+    }
+    // A titled block is unchanged by the rule.
+    assert_eq!(
+        parse("x", false)
+            .apply("x", false, planning("Scheduled", "<2026-10-03 Sat>"))
+            .unwrap(),
+        "x\nSCHEDULED: <2026-10-03 Sat>"
+    );
+}
+
+/// The edit-exit tidy-up and a new Org properties drawer both hoist planning
+/// written below an opening logbook; on a block without title text the hoisted
+/// planning goes after an empty first line, and tidying again is a fixed point.
+#[test]
+fn hoisted_planning_goes_after_an_empty_first_line() {
+    for nl in ["\n", "\r\n"] {
+        let lb = ":LOGBOOK:\nCLOCK: [2026-10-01 Wed 10:00]\n:END:".replace('\n', nl);
+        let raw = format!("{lb}{nl}SCHEDULED: <2026-10-03 Sat>");
+        for org in [false, true] {
+            let out = parse(&raw, org)
+                .apply(&raw, org, Edit::NormalizePlanning)
+                .unwrap();
+            assert_eq!(out, format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}{lb}"), "org={org}");
+            assert_eq!(
+                parse(&out, org).apply(&out, org, Edit::NormalizePlanning).unwrap(),
+                out
+            );
+        }
+        let out = parse(&raw, true)
+            .apply(
+                &raw,
+                true,
+                Edit::Property {
+                    key: "foo".into(),
+                    value: Some("bar".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            out,
+            format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}:PROPERTIES:{nl}:foo: bar{nl}:END:{nl}{lb}")
         );
     }
 }

@@ -842,6 +842,10 @@ fn split(
     let before = &et.visible[..split_before];
     let after = &et.visible[split_after..];
     let head = js_blank(before) && !js_blank(after);
+    // Enter at the start of a planning line under an empty first line keeps
+    // that line: a block's first line is its title, and Logseq reads no date
+    // there (planning is written below an empty title for that reason).
+    let keeps_title_line = head && regions.planning.iter().any(|p| p.line.0 == raw_offset);
     // The page header is one text field (GH #210 F1; `header::newline_in_header`).
     let is_header = header::is_first_root_header(&cx.txs[t], key);
     if is_header && (head || !js_blank(after)) {
@@ -873,7 +877,7 @@ fn split(
         // The original keeps its key. At a later line boundary the blank prefix
         // and its separator become the new block, so the original keeps only
         // the text after the boundary.
-        if offset > 0 {
+        if offset > 0 && !keeps_title_line {
             tx.block_mut(key)?.raw =
                 editor_text::join_preserving(after, &et.hidden, format.is_org(), &node.raw, hide)
                     .map_err(|_| Reason::Unparseable)?;
@@ -896,7 +900,7 @@ fn split(
                 .ok_or(Reason::Incomplete)?;
             sibs.insert(at, new_key.clone());
         }
-        tx.kind(if offset > 0 {
+        tx.kind(if offset > 0 && !keeps_title_line {
             &[EditKind::InsertBlocks, EditKind::SaveBlock]
         } else {
             &[EditKind::InsertBlocks]

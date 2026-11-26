@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-1012-picker-untitled.mjs": {
+      "setup": "Synthetic routed Plan page with one seed block; scratch HOME/XDG and account-home shim; run once with E2E_EDITOR=textarea and once with E2E_EDITOR=cm6, Linux native.",
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"A date picked through the date picker on an empty block of a routed page is saved as `-` then `  SCHEDULED: <date>`, the shape Logseq reads as a date, in the textarea and the CodeMirror editor.","blocking":true,"authority":"GH #1012"},{"class":"core-operation","userOutcome":"The next character typed after the pick goes into the block's title line, so the saved block is `- TODO x` then `  SCHEDULED: <date>`, and today's journal agenda lists it.","blocking":true}],
+      "acceptableVariations": ["Picker position, chip styling, completion-menu layout and save latency may vary while the saved bytes and the agenda row hold."],
+      "nonRequirements": ["Blocks with title text, Org pages, deadlines and the boundary shapes covered by unit tests; native certification outside Linux WebKitGTK; manager burn-in."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-refusal.mjs": {
       "setup": "Synthetic routed Old page and properties-only-bullet referrer; scratch HOME/XDG, account-home shim, native Linux WebKitGTK at 1920x1080.",
       "contracts": [{"class":"stateful-ux","userOutcome":"A title rename refuses without writing and explains the named referrer's first-save layout change. Save it and rename is explicit; clicking it saves the referrer normally and repeats the same rename. Exact source, referrer and unrelated file contents and the new routed title are verified.","blocking":false,"authority":"D-20261116-P3H; D-20261115-HELP; UI-CM-REFUSAL-HELP"}],
