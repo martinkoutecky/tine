@@ -6,6 +6,7 @@ vi.hoisted(() => Object.defineProperty(navigator, "platform", { configurable: tr
 import { CAPTURE_SCRATCH_NAME } from "./captureSeed";
 import { pageByName } from "./document";
 import { editorIn } from "./tests/editorDriver";
+import { mountCapture } from "./tests/captureApp";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {}, emitTo: async () => {} }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -16,10 +17,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 // Option+Left/Right in its editor and title field are word motion too (the
 // window has no history to go Back in).
 it("macOS Quick Capture: Option+Left/Right reach the editor and the title field unprevented", async () => {
-  const host = document.createElement("div");
-  host.id = "capture-root";
-  document.body.append(host);
-  await import("./capture");
+  const host = await mountCapture();
   await vi.waitFor(() => expect(pageByName(CAPTURE_SCRATCH_NAME)?.roots[0]).toBeDefined());
   const editor = await vi.waitFor(() => editorIn(host));
   editor.focus();
