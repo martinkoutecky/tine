@@ -786,7 +786,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-one-level-fold.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true},{"class":"core-operation","userOutcome":"Bound Collapse (one level) with the caret in, or with the selection on, a block whose children are block embeds hides each embed's children and saves collapsed:: true on each embedding block, while the block itself stays open and the embedded source file is byte-identical (GH #1032).","blocking":true}],
       "acceptableVariations":["Selection styling, animation and save latency may vary while the saved collapsed properties and visible rows agree."],
       "nonRequirements":["Page-scope (no selection) behaviour and multi-level progressions, which component tests cover; native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

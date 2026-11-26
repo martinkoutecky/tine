@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => ({
   setSystemBarAppearance: vi.fn(async (_dark: boolean, _background?: string) => {}),
   appPlatform: vi.fn(async () => "desktop"),
+  warmDone: vi.fn(async () => true),
 }));
 
 vi.mock("./backend", () => ({

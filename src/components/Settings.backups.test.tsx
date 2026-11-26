@@ -6,6 +6,7 @@ import { resetStore } from "../document";
 import { setToasts, toasts } from "../toasts";
 
 const backupBackend = vi.hoisted(() => ({
+  warmDone: vi.fn(async () => true),
   getBackupKeep: vi.fn(),
   listBackups: vi.fn(),
   setBackupKeep: vi.fn(),

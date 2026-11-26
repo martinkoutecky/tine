@@ -1,4 +1,4 @@
-import { type Format, type PageKind } from "../../types";
+import { type BlockDto, type Format, type PageKind } from "../../types";
 import { authoredBlockClaims, doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, bindingCurrent } from "../../binding";
 import { bindingOwner } from "../../owned";
@@ -10,7 +10,7 @@ import { ensurePageLoaded } from "../workingSet";
 import { editBlock, type BlockIdentityFacts } from "../../render/parse";
 
 export { existingBlockId } from "../../blockIdentity";
-import { existingBlockId } from "../../blockIdentity";
+import { blockDtoExternalId, existingBlockId } from "../../blockIdentity";
 
 /** The identity other blocks and persisted UI state must use for a loaded node.
  * A freshly-created node keeps its transient `b…` store key for the whole live
@@ -109,6 +109,16 @@ export function resolveBlockRef(ref: LoadedBlockRef, opts: { navigation?: boolea
   const runtime = doc.byId[ref.uuid];
   if (!runtime || runtime.page !== ref.page) return null;
   return opts.navigation || existingBlockId(runtime.raw, formatForBlock(ref.uuid)) === null ? ref.uuid : null;
+}
+
+/** The live block a backend row from `source` stands for: the row's live key
+ * when its durable id still resolves to that same block on that exact page
+ * (kind and path included), else null. The one source identity check of a
+ * reference or embed row (GH #748), shared by the mounted row and the fold
+ * commands (GH #1032). */
+export function liveDtoBlock(dto: Pick<BlockDto, "id" | "properties">, source: { page: string; kind: PageKind; path?: string }): string | null {
+  const id = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: source.page, pageKind: source.kind, ...(source.path ? { path: source.path } : {}) }, { navigation: true });
+  return id === dto.id ? id : null;
 }
 
 /** `raw` with a durable `id` property added in the page's on-disk format.

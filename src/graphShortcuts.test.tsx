@@ -4,7 +4,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 it.each(["MacIntel", "Linux x86_64", "Win32"])("uses OG defaults without another default binding clash on %s and honors overrides", async platform => {
   vi.resetModules();
-  vi.stubGlobal("navigator", { platform });
+  vi.stubGlobal("navigator", { platform, language: "en-US" });
   const keys = await import("./keybindings");
   const defaults = keys.commandDefaults();
   for (const [id, binding] of [["go/all-graphs", "g shift+g"], ["editor/insert-youtube-timestamp", "mod+shift+y"]]) {
