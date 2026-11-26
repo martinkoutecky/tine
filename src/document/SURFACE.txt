@@ -99,6 +99,7 @@ formatOfFile  # why: the day move holds a new destination in its file's format, 
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
 hasMessageDate  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111
 hasSelection
+historyReplaying  # why: an editor that undo or redo closes during a composition saves nothing, so history keeps its stacks (GH #767); batch-fix-767-composition
 indentBlock
 indentSelection
 insertEditorOutline  # why: a template completion and a multi-line paste in either editor choose where their outline goes and say why it was refused in one place; batch-og-enter-family-1109
