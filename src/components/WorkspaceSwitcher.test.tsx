@@ -103,15 +103,20 @@ describe("WorkspaceSwitcher", () => {
     await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("workspace disk failed"))).toBe(true));
   });
 
-  it("renders the collapsed-sidebar fallback as the compact W control without a workspace label", () => {
+  it("renders the collapsed-sidebar fallback as the compact W icon button without a label or caret (GH #1024)", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
-    dispose = render(() => <WorkspaceSwitcher compact />, host);
+    dispose = render(() => <><WorkspaceSwitcher compact /><div data-full><WorkspaceSwitcher /></div></>, host);
 
     const root = host.querySelector<HTMLElement>('[data-workspace-switcher-compact="true"]')!;
     expect(root.querySelector(".workspace-switcher-name")).toBeNull();
     expect(root.querySelector(".workspace-switcher-mark")?.textContent).toBe("W");
-    expect(root.querySelector(".workspace-switcher-caret svg")).not.toBeNull();
+    expect(root.querySelector(".workspace-switcher-caret")).toBeNull();
+    expect(root.querySelector("button")!.classList.contains("icon-btn")).toBe(true);
+    // The labelled switcher keeps its own button and caret.
+    const full = host.querySelector<HTMLElement>("[data-full] [data-workspace-switcher]")!;
+    expect(full.querySelector(".workspace-switcher-btn .workspace-switcher-caret svg")).not.toBeNull();
+    expect(full.querySelector(".icon-btn")).toBeNull();
   });
 
   it("offers hover quick-switch and a click menu with new, rename, and confirmed delete actions", async () => {

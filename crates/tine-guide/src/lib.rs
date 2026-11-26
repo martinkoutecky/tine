@@ -1247,6 +1247,16 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn phones_show_page_title_buttons_without_a_tap() {
+        // GH #1025: no hover on a phone, so the title's buttons need no tap; one group, menu last. A narrow
+        // journal with carry buttons keeps Share and the star in the menu.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("**A page title's buttons always show on a phone or tablet.**"));
+        assert!(mobile.contains("move as one group below a long title, with **⋯** last"));
+        assert!(mobile.contains("keeps Share and the star in its **⋯** menu"));
+    }
+
+    #[test]
     fn a_capture_finished_after_a_graph_switch_is_documented() {
         // og H1b: kept in the graph it was started in, never the new one.
         let mobile = include_str!("templates/platforms-and-mobile.md");
