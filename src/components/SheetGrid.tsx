@@ -703,7 +703,7 @@ function inSelectedRange(gridId: string, surfaceId: string, cell: MatrixCell): b
 }
 
 function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixCell; header: boolean; depth: number; freezeColumns: () => void }): JSX.Element {
-  const sel = (): SheetCellCtx => ({ gridId: props.gridId, surfaceId: props.surfaceId, row: props.cell.row, col: props.cell.col });
+  const sel = (): SheetCellCtx => ({ gridId: props.gridId, surfaceId: props.surfaceId, row: props.cell.row, col: props.cell.col, outline: true });
   let contentRef: HTMLDivElement | undefined;
   const bgColor = createMemo(() => {
     const id = props.cell.blockId;

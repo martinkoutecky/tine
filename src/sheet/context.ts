@@ -10,6 +10,8 @@ export interface SheetCellCtx {
   columnId?: string;
   row: number;
   col: number;
+  /** Set only by the grid that draws the cell: such a cell edits like an outline. */
+  outline?: true;
 }
 
 export const SheetCellContext = createContext<SheetCellCtx | null>(null);

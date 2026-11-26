@@ -419,9 +419,10 @@ export function cellAt(sel: CellSelInput): MatrixCell | null {
   return { blockId, row: sel.row, col: sel.col, rowSpan: 1, colSpan: 1 };
 }
 
-/** True when `sel`'s own occurrence is mounted (its exact view adapter is registered). */
+/** True when `sel`'s own grid occurrence is mounted (its visibility hook is registered;
+ * only a grid registers one, so a table or board sharing the host key does not count). */
 export function occurrenceMounted(sel: CellSelInput): boolean {
-  return adapters.has(instanceKey(sel.gridId, sel.surfaceId));
+  return visibilityHooks.has(instanceKey(sel.gridId, sel.surfaceId));
 }
 
 export function cellBlockId(sel: CellSelInput): string | null {
