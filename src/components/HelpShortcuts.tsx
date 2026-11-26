@@ -106,8 +106,8 @@ export interface ShortcutSettingRow {
   english?: string;
   binding: string;
   /** A second built-in chord that runs the same command. Shown beside the
-   *  binding so it is discoverable, but not remappable and not its own row: it
-   *  disappears the moment the user binds the command themselves. */
+   *  binding so it is discoverable, but not remappable and not its own row.
+   *  The caller passes only the alias dispatch honours (`activeAlias`). */
   alias?: string;
   effective: string;
   overridden: boolean;
@@ -318,7 +318,7 @@ function ShortcutRow(props: {
           title={t("help-click-to-remap")}
         >{recording() ? t("help-press-keys") : displayBinding(props.row.effective)}
         </button>
-        <Show when={props.row.alias && !props.row.overridden}>
+        <Show when={props.row.alias}>
           <span class="help-shortcut-alias"><Rich message={msg("help-or", { alias: displayBinding(props.row.alias!) })} slots={{ "span": (children) => <span class="help-keycap help-keycap-static">{children}</span> }} /></span>
         </Show>
       </span>

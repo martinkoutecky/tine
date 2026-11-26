@@ -58,7 +58,7 @@ import { MEDIA_EDITORS, type MediaEditor } from "../mediaEditors";
 import { detectMediaEditorCommand, mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
 import { formatAssetName } from "../media";
 import { openConflicts, openPage, openFile } from "../router";
-import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
+import { activeAlias, commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { Field, Toggle } from "./settingsField";
 import { TraySettings } from "./TraySettings";
@@ -177,8 +177,11 @@ export function Settings(): JSX.Element {
     const shortcuts = () => {
     const cfg = graphMeta()?.shortcuts ?? {};
     const ov = shortcutOverrides();
+    // The same merge App installs the keybindings with, so the alias shown is the one dispatch honours.
+    const merged = { ...cfg, ...ov };
     return commandDefaults().map((c) => ({
       ...c,
+      alias: activeAlias(c, merged),
       effective: ov[c.id] ?? cfg[c.id] ?? c.binding,
       overridden: c.id in ov,
     }));

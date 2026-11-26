@@ -975,6 +975,13 @@ export interface Command {
   global?: boolean;
 }
 
+/** The second chord dispatch honours for a command under `overrides` (the graph's config.edn shortcuts merged with
+ *  the device's): its default alias, gone once either binds the command at all (a remap, `false`, an empty binding,
+ *  even the default chord). The dispatcher and Settings → Shortcuts both ask this (GH #1044). O(1). */
+export function activeAlias(command: { id: string; alias?: string }, overrides: Record<string, string>): string | undefined {
+  return command.alias && !(command.id in overrides) ? command.alias : undefined;
+}
+
 /** Install the global shortcut handler, merging config overrides over defaults.
  *  Returns a disposer. */
 export function installKeybindings(overrides: Record<string, string> = {}): () => void {
@@ -999,8 +1006,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     .map((c) => ({ ...c, chords: bindings[c.id] }))
     .filter((c) => c.chords);
   const aliased = allCommands
-    .filter((c) => c.scope === "global" && c.run && c.alias && !(c.id in overrides))
-    .map((c) => ({ ...c, chords: parseBinding(c.alias!) }));
+    .filter((c) => c.scope === "global" && c.run && activeAlias(c, overrides))
+    .map((c) => ({ ...c, chords: parseBinding(activeAlias(c, overrides)!) }));
   const commands = [...primary, ...aliased];
 
   let seq: Chord[] = [];
