@@ -1,3 +1,4 @@
+import { BLOCK_SURFACE_ATTR } from "../contextMenuPolicy";
 import { isHTMLElementNode } from "../windowRealm";
 // Interactive targets that must NOT enter edit on mousedown (mirrors OG's
 // target-forbidden-edit?). Their own handlers run on click, so entering edit
@@ -82,4 +83,17 @@ export function forbidsEditEntry(e: MouseEvent): boolean {
   }
   const hit = target?.closest?.(FORBID_EDIT_SELECTOR);
   return !!hit && host.contains(hit);
+}
+
+// GH #1000: a plain press inside a query's results. The results draw other
+// blocks, so the block that holds the query does not start its edit gesture
+// there: opening the query replaced the results with its editor and the page
+// jumped. One caller, Rendered's press handler, which cancels the press (default
+// and propagation) and opens nothing. A Shift-press is not one: it still extends
+// the outline selection. The region must lie inside the handler's element, so a
+// result row's own handlers, inside the region, are not refused.
+export function pressBelongsToQueryResults(e: MouseEvent): boolean {
+  if (e.shiftKey) return false;
+  const region = (e.target as Element | null)?.closest?.(`[${BLOCK_SURFACE_ATTR}]`);
+  return !!region && (e.currentTarget as Element).contains(region);
 }
