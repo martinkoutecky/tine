@@ -116,7 +116,8 @@ try {
     await browser.$(`${scope} ${editorSelector}`).waitForExist();
   };
   const visibleText = async (scope, text, expected) => browser.waitUntil(() => browser.execute((scope, text, expected) =>
-    [...document.querySelectorAll(`${scope} .block-content`)].some(el => el.textContent.trim() === text && el.offsetParent) === expected,
+    // A row being edited shows its text in the editor, not in its rendered content.
+    [...document.querySelectorAll(`${scope} .block-content, ${scope} .cm-content`)].some(el => el.textContent.trim() === text && el.offsetParent) === expected,
     scope, text, expected), { timeout: 10000, timeoutMsg: `${text}: expected visible=${expected} in ${scope}` });
   const chord = async key => browser.keys(["Control", "Alt", key, "NULL"]);
   for (const scope of [".main-content", ".right-sidebar"]) {
