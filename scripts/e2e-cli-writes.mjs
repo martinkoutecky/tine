@@ -1,5 +1,5 @@
 // CLI §3: serve -> app handover, immediate window update, typing preservation.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { BLOCK_EDITOR, editorState, withEditors } from "./lib/e2e-block-editor.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 
@@ -17,6 +18,10 @@ import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 ensurePrivateSessionBus();
 
 const APP = path.resolve(process.env.TINE_APP || "target/debug/tine");
+// GH #1011: a hint names the command the program was started as (the launcher execs the binary under its own path).
+const BINARY = path.resolve(process.env.TINE_APP_BINARY || APP);
+const plainName = (file) => (/^[A-Za-z0-9._][A-Za-z0-9._-]*$/.test(file) ? file : "tine"); // the program's own rule
+const COMMAND = plainName(path.basename(BINARY));
 const TMP = path.resolve(process.env.E2E_TMP_DIR || `artifacts/cli-native-${process.pid}`);
 assert(!fs.existsSync(TMP), "use a fresh artifact directory");
 const GRAPH = path.join(TMP, "graph");
@@ -73,7 +78,7 @@ async function pageProperties(owner) {
   await cli(["page", "create", name]);
   const refusal = await cli(["add", "--page", name, "-"], 6, "- tags:: technical\n");
   assert.equal(refusal.error.detail.reason, "page-properties");
-  assert(refusal.error.message.includes("tine prop set --page"));
+  assert(refusal.error.message.includes(`${COMMAND} prop set --page`), refusal.error.message);
   for (const page of [name, `Org ${owner}`]) {
     await cli(["prop", "set", "--page", page, "tags", "technical"]);
     await cli(["prop", "set", "--page", page, "alias", `Shortcut ${page}`]);
@@ -84,7 +89,48 @@ async function pageProperties(owner) {
   }
   steps.push(`${owner}: page headers import, page properties edit and remove, aliases resolve, and refusals explain recovery in Markdown and Org`);
 }
+// GH #1011: the Beta's Linux packages install the program as `tine-beta`. Started under another name, the usage
+// line (this process) and a refusal's hint (the serve owner it starts) name that command, never a literal `tine`.
+function hintsNameTheStartedCommand() {
+  const dir = path.join(TMP, "named"), graph = path.join(dir, "graph"), ext = path.extname(BINARY);
+  const named = path.join(dir, `tine-other${ext}`), spaced = path.join(dir, `tine other${ext}`);
+  for (const sub of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, sub), { recursive: true });
+  const run = (app, args, input = "") => {
+    const r = spawnSync(app, args, { env: { ...env, TINE_GRAPH: graph }, input, encoding: "utf8", timeout: 60_000 });
+    return { code: r.status, out: r.stdout || "", err: r.stderr || "" };
+  };
+  try {
+    for (const copy of [named, spaced]) { fs.copyFileSync(BINARY, copy, fs.constants.COPYFILE_FICLONE); fs.chmodSync(copy, 0o755); }
+    const name = `tine-other${ext}`;
+    // clap's own usage line and Tine's `export query` override print one name.
+    for (const [args, usage] of [[["--help"], `Usage: ${name} `], [["page", "show", "--help"], `Usage: ${name} page show`], [["export", "query", "--help"], `Usage: ${name} export query`]]) {
+      const help = run(named, args);
+      assert.equal(help.code, 0, help.err);
+      assert(help.out.includes(usage), `${args.join(" ")}: ${help.out}`);
+      assert(!/Usage: tine /.test(help.out), help.out);
+    }
+    // A name that is not one plain word is not a command to paste: both say `tine`.
+    for (const args of [["--help"], ["export", "query", "--help"]]) {
+      const help = run(spaced, args);
+      assert.equal(help.code, 0, help.err);
+      assert(/Usage: tine /.test(help.out) && !help.out.includes("tine other"), `${args.join(" ")}: ${help.out}`);
+    }
+    const created = run(named, ["page", "create", "Named", "--graph", graph, "--json"]);
+    assert.equal(created.code, 0, created.err);
+    const refusal = run(named, ["add", "--page", "Named", "-", "--graph", graph, "--json"], "- tags:: technical\n");
+    assert.equal(refusal.code, 6, refusal.out + refusal.err);
+    const message = JSON.parse(refusal.err).error.message;
+    assert(message.includes(`${name} prop set --page`), message);
+    assert(!message.includes("use tine prop"), message);
+  } finally {
+    const stop = fs.existsSync(named) ? run(named, ["serve", "--stop", graph]) : { code: 0 };
+    if (stop.code !== 0) console.error(`named: the owner of ${graph} did not stop (exit ${stop.code}): ${stop.err}`);
+    for (const copy of [named, spaced]) fs.rmSync(copy, { force: true });
+  }
+  steps.push("named: usage lines and a refusal's hint print the name the program was started as; an unpasteable name prints tine");
+}
 try {
+  hintsNameTheStartedCommand();
   const log = fs.openSync(path.join(TMP,"serve.log"), "w");
   serve = spawn(APP, ["serve", GRAPH], { env, stdio: ["ignore",log,log] });
   fs.closeSync(log);
@@ -181,17 +227,20 @@ try {
   // Independent page: a failed window notification must not hide typing proof.
   await openPageByName(browser,"Typing");
   const beforeTyping = await cli(["page","show","Typing"]);
-  await browser.waitUntil(() => browser.execute(() => {
+  await browser.waitUntil(() => browser.execute((editor) => {
+    if (document.activeElement?.matches(editor)) return true;
     const content = document.querySelector(".page .ls-block .block-content-wrapper");
     if (!(content instanceof HTMLElement)) return false;
     content.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true,button:0}));
     content.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,cancelable:true,button:0}));
     content.click();
-    return document.activeElement instanceof HTMLTextAreaElement;
-  }), {timeout:10_000,interval:200});
+    return document.activeElement?.matches(editor) ?? false;
+  }, BLOCK_EDITOR), {timeout:10_000,interval:200});
   await browser.keys(["End"]);
   for (const key of " typing survives") await browser.keys([key]);
-  const typed = await browser.execute(() => document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null);
+  // The open editor is the block's CodeMirror input (or the classic textarea); read it through the shared boundary.
+  const focusedText = async () => { const editor = await editorState(browser, ".page"); return editor?.focused ? editor.value : null; };
+  const typed = await focusedText();
   assert.equal(typed,"user typing survives","literal key events must reach the intended editor before invoking CLI");
   fs.writeFileSync(path.join(TMP,"typing-before.json"),JSON.stringify({editor:typed,file:fs.readFileSync(typingFile,"utf8")},null,2));
   // Still in the editor: flush must save the input before resolving the old handle.
@@ -199,10 +248,10 @@ try {
   if (result.exit !== 6 || result.reply.error?.code !== "stale") {
     failures.push({journey:"typing",classification:"product",expected:"flush user input, then refuse obsolete handle as stale",observed:`CLI exit ${result.exit} while editor contains changed text`});
     await sleep(2000);
-    fs.writeFileSync(path.join(TMP,"typing-result.json"),JSON.stringify({result,file:fs.readFileSync(typingFile,"utf8"),editors:await browser.execute(() => [...document.querySelectorAll("textarea")].map(e=>e.value))},null,2));
+    fs.writeFileSync(path.join(TMP,"typing-result.json"),JSON.stringify({result,file:fs.readFileSync(typingFile,"utf8"),editors:await withEditors(browser, "", editors => editors.map(e => e.value))},null,2));
   } else {
     await waitForFileText(typingFile, text => text === "- user typing survives\n- agent\n");
-    assert(await browser.execute(() => document.activeElement instanceof HTMLTextAreaElement && document.activeElement.value.includes("typing survives")));
+    assert((await focusedText())?.includes("typing survives"), "the user's editor stays open with its text");
     // An unrelated block can still be edited while the user keeps that editor open.
     await cli(["edit",handle(beforeTyping,1),"agent alongside typing"]);
     await waitForFileText(typingFile, text => text === "- user typing survives\n- agent alongside typing\n");
@@ -237,7 +286,7 @@ try {
   if (failures.length) throw new Error("native journey failure: " + failures.map(f => f.journey).join(", "));
   console.log(`PASS ${steps.join("; ")}`);
 } catch (error) {
-    try { fs.writeFileSync(path.join(TMP,"failure-dom.json"),JSON.stringify(await browser.execute(() => ({text:document.body.innerText,editors:[...document.querySelectorAll("textarea")].map(e=>e.value),errors:window.__cliErrors})),null,2)); } catch {}
+    try { fs.writeFileSync(path.join(TMP,"failure-dom.json"),JSON.stringify(await browser.execute(() => ({text:document.body.innerText,editors:[...document.querySelectorAll("textarea, .cm-content")].map(e=>e.value ?? e.textContent),errors:window.__cliErrors})),null,2)); } catch {}
   try { await browser?.saveScreenshot(path.join(TMP,"failure.png")); } catch {}
   fs.writeFileSync(path.join(TMP,"failure.json"),JSON.stringify({commit:gitHead(),journey:steps.length,expected:"handover, window update and typing preservation",observed:String(error),classification:failures.length ? "product" : "ambiguous",steps,failures},null,2));
   console.error(error);

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { IDENTITY } from "./lib/app-identity.mjs";
 import { BETA_TAG, packagingProblems, releaseChannel } from "./release-policy.mjs";
 
 const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
@@ -19,6 +20,11 @@ for (const name of ["UPDATE_INFORMATION", "LDAI_UPDATE_INFORMATION"]) {
   if (transport !== "gh-releases-zsync" || source !== updateSource) throw new Error(`${name} does not match the ${channel} channel: ${env[name]}`);
 }
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
+// Linux packages: the command, the icons and the desktop entry are named after
+// the main binary. Each identity has its own name, so its .deb and .rpm share
+// no path with another identity's (tine#1011). tauri-cli renames the built
+// binary to it, so after this step it is target/release/<linuxBinaryName>.
+if (process.platform === "linux") args.push("--config", JSON.stringify({ mainBinaryName: IDENTITY.linuxBinaryName }));
 const result = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "tauri", "build", "--", ...args], { env, stdio: "inherit", shell: process.platform === "win32" });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);

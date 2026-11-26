@@ -132,7 +132,10 @@ pub(crate) fn run_of(args: &Value) -> Result<Option<RunCtx>, ErrorBody> {
     let id = RunId::parse(text).ok_or_else(|| {
         ErrorBody::new(
             "bad-args",
-            format!("`{text}` is not a run id; `tine run begin` prints one"),
+            format!(
+                "`{text}` is not a run id; `{} run begin` prints one",
+                super::command_name()
+            ),
             false,
         )
     })?;

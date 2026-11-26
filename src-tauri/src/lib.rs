@@ -94,6 +94,8 @@ mod watcher;
 #[cfg(any(target_os = "windows", test))]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod webview2_args;
+#[cfg(target_os = "windows")]
+mod window_frame;
 mod workspace_windows;
 mod youtube_identity;
 use backup::{delete_old_backups, get_backup_keep, list_backups, restore_backup, set_backup_keep};
@@ -827,7 +829,15 @@ pub fn run() {
         // frontend's post-install `relaunch()`. Inert until a signed release with
         // a `latest.json` exists — the frontend catches any check() error and
         // falls back to opening the releases page (see src/update.ts).
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    // GH #1043: a frameless Windows window gets its real frame before the
+    // window-state plugin below restores its size (window_frame.rs).
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(window_frame::plugin(move |label| {
+        window_state_tracks(label, deny_main_window_state_restore)
+    }));
+    #[cfg(desktop)]
+    let builder = builder
         // Remember window size/position/maximized across launches (Wayland
         // compositors don't restore this per-app). Exclude FULLSCREEN so it
         // doesn't conflict with focus mode, which is intentionally not persisted.
@@ -1440,6 +1450,28 @@ mod window_state_policy_tests {
         assert!(builder.contains("window_state_tracks("), "{builder}");
         assert!(!builder.contains(".with_denylist("), "{builder}");
         assert!(!builder.contains(".skip_initial_state("), "{builder}");
+    }
+
+    // GH #1043: the frame refresh must reach a window before the restore that
+    // measures its frame, and only the windows the restore touches.
+    #[test]
+    fn the_frame_refresh_runs_before_the_restore_on_the_same_windows() {
+        let source = include_str!("lib.rs");
+        let refresh = source
+            .find("window_frame::plugin(")
+            .expect("window-frame plugin");
+        let restore = source
+            .find("tauri_plugin_window_state::Builder::default()")
+            .expect("window-state plugin builder");
+        assert!(
+            refresh < restore,
+            "the frame refresh must be registered first"
+        );
+        let filter = source[refresh..restore]
+            .split("}));")
+            .next()
+            .expect("window-frame plugin call");
+        assert!(filter.contains("window_state_tracks("), "{filter}");
     }
 }
 

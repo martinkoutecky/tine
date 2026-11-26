@@ -40,7 +40,7 @@ function identityLiterals(): RegExp {
 
 describe("app identity switch", () => {
   it("the Beta identity is fixed, and the shipped identity matches the updater channel", () => {
-    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og", iconDirectory: "icons-beta", ios: {
+    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og", linuxBinaryName: "tine-beta", iconDirectory: "icons-beta", ios: {
       displayName: "Tine Beta", appStoreAppleId: "6832052325", provisioningProfileSecret: "IOS_BETA_MOBILE_PROVISION", shareExtensionProvisioningProfileSecret: "IOS_BETA_SHARE_EXTENSION_MOBILE_PROVISION",
     } });
     // The Beta identity updates only from the beta release and stable Tine only
@@ -51,6 +51,28 @@ describe("app identity switch", () => {
       ? "https://tine.page/updates/beta/latest.json"
       : "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"]);
     expect(/-beta\.\d+$/.test(conf.version)).toBe(SHIP === "experiment");
+  });
+  // tine#1011: stable's and the Beta's .deb and .rpm both installed /usr/bin/tine,
+  // the same icons and man pages, so the second one failed half-way ("trying to
+  // overwrite ... which is also in package tine"). The bundler names the command
+  // and the icons after `linuxBinaryName`; the man pages are named in the config.
+  it("no two identities' Linux packages name the same command or man page", () => {
+    const ships = Object.keys(IDENTITIES);
+    expect(new Set(ships.map((ship) => IDENTITIES[ship].linuxBinaryName)).size).toBe(ships.length);
+    const seen = new Map<string, string>();
+    for (const ship of ships) {
+      const linux = JSON.parse(deriveIdentityFiles(ROOT, ship)["src-tauri/tauri.conf.json"]).bundle.linux;
+      for (const kind of ["deb", "rpm"]) {
+        expect(linux[kind].conflicts ?? linux[kind].replaces ?? linux[kind].obsoletes, `${ship} ${kind}`).toBeUndefined();
+        const pages = Object.keys(linux[kind].files).map((file) => file.replace(/^\//, ""));
+        expect(pages.length, `${ship} ${kind}`).toBeGreaterThan(0);
+        for (const page of pages) {
+          const key = `${kind}:${page}`;
+          expect(seen.get(key), `${page} is in both ${seen.get(key)}'s and ${ship}'s ${kind}`).toBeUndefined();
+          seen.set(key, ship);
+        }
+      }
+    }
   });
   it("every derived file matches the switch (run `node scripts/set-app-identity.mjs <ship>`)", () => {
     for (const [file, text] of Object.entries(deriveIdentityFiles(ROOT, SHIP))) {

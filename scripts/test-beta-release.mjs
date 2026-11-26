@@ -160,7 +160,9 @@ syncBuiltinESMExports();
   assert.notEqual(crossed.status, 0, "AppImage update information naming the other channel must refuse the build");
   assert.equal(built.status, 0, built.stderr);
   const build = JSON.parse(fs.readFileSync(buildRecord, "utf8"));
-  assert.deepEqual(build.args, ["run", "tauri", "build", "--", "--features", "custom-protocol"]);
+  // On Linux the wrapper names the packaged binary after the identity (tine#1011).
+  assert.deepEqual(build.args, ["run", "tauri", "build", "--", "--features", "custom-protocol",
+    ...(process.platform === "linux" ? ["--config", JSON.stringify({ mainBinaryName: IDENTITY.linuxBinaryName })] : [])]);
   for (const key of ["UPDATE_INFORMATION", "LDAI_UPDATE_INFORMATION"]) assert.equal(build.env[key], updateInformation);
   const publish = (tag, value) => spawnSync(process.execPath, ["scripts/publish-release-candidate.mjs", tag, output], { env: { ...env, RELEASE_PUBLISH: value }, encoding: "utf8" });
   assert.equal(publish(tag, "false").status, 0);
