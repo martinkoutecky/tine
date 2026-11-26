@@ -210,6 +210,20 @@ describe("rename's drain (S6)", () => {
   });
 });
 
+describe("a departure barrier (tine#1041)", () => {
+  it("asks the host's departure wait; every other barrier asks for publication", async () => {
+    const ctx = await healthy();
+    // An editor holds P, so the window's own publication wait before a close (J6) stays out of these waits.
+    ctx.client.acquire("P");
+    edit(ctx, "P", "ab");
+    expect(await settle(ctx.client, "all", { departure: true })).toBe(true);
+    expect(ctx.host.last("wait").departure).toBe(true);
+    edit(ctx, "P", "abc");
+    expect(await settle(ctx.client, "all")).toBe(true);
+    expect(ctx.host.last("wait").departure).toBe(false);
+  });
+});
+
 describe("publication results are the session's (REVIEW-3b-P1 F1)", () => {
   it("asks again while each bounded host wait passes, and succeeds when the needs publish", async () => {
     const ctx = await healthy();

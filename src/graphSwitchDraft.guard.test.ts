@@ -15,7 +15,7 @@ const RULE = "a graph switch resets the old working set only after an awaited pu
 
 describe("graph switch keeps the old graph's late edits", () => {
   it("loadGraphPath awaits the last flushAll barrier (flushAllUnsettled), aborting on failure, before load_graph and resetStore", () => {
-    const flush = graph.indexOf("const lateUnflushed = hadGraph ? await flushAllUnsettled() : null;");
+    const flush = graph.indexOf("const lateUnflushed = hadGraph ? await flushAllUnsettled(switching) : null;");
     const abort = graph.indexOf("return { kind: \"aborted\" };", graph.indexOf("if (lateUnflushed) {", flush));
     const load = graph.indexOf("await backend().loadGraph(", flush);
     const reset = graph.indexOf("resetStore();", load);

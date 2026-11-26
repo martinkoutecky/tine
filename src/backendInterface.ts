@@ -165,7 +165,7 @@ export interface Backend {
    * are not written. */
   pageDeleteFile(session: number, path: string, baseRev: string): Promise<PageOperation>;
   /** One bounded wait (≤ 5 s) for these needs to publish; null at the bound. */
-  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number): Promise<PublishedRevision[] | PublicationRefused | false | null>;
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number, departure: boolean): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   pageSaveNow(session: number, keys: readonly string[]): Promise<void>;
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
   /** Retry crash-draft storage after the host reported it unavailable. */

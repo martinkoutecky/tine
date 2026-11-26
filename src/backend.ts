@@ -384,8 +384,8 @@ class TauriBackend implements Backend {
     dropDisplayedFor({ path }); // the name lives on in its other files
     return this.call<PageOperation>("page_delete_file", { session, path, baseRev });
   }
-  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
-    return this.call<PublishedRevision[] | PublicationRefused | false | null>("page_wait", { session, needs, boundMs });
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number, departure: boolean) {
+    return this.call<PublishedRevision[] | PublicationRefused | false | null>("page_wait", { session, needs, boundMs, departure });
   }
   pageSaveNow(session: number, keys: readonly string[]) {
     return this.call<void>("page_save_now", { session, keys });

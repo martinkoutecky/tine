@@ -119,12 +119,14 @@ export interface MessageArgs {
   "calendar-jump-today": {};
   "capture-file-capture": {};
   "capture-new-request": {};
+  "capture-new-request-unproved": {};
   "capture-page-title-optional-if-empty-appended-to-today": {};
   "capture-previous-graph": {};
   "capture-retry-unconfirmed": {};
   "capture-snapshot-saved": {};
   "capture-start-new": {};
   "capture-title-needs-text": {};
+  "capture-unproved": {};
   "carry-carry-couldn-t-be-saved-resolve-the-conflict": {};
   "carry-could-not-carry-tasks": { "error": string | number };
   "carry-could-not-read-journal-days-for-carry": { "error": string | number };
