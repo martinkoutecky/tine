@@ -61,14 +61,6 @@ export function deleteRenderedTextSelection(): boolean {
   if (!wrapper || !wrapper.contains(range.startContainer) || !wrapper.contains(range.endContainer)) {
     return false;
   }
-  // A query's output and the app's notices are generated: an end there names
-  // none of this block's text, and inside a heading, quote or callout it would
-  // snap to an edge of that construct and take the macro's source with it. So
-  // would an end in text of that construct that has no source position of its
-  // own (a callout's title): its edge is chosen by a length that counts the
-  // generated text.
-  if (rangeEndDependsOnGeneratedOutput(wrapper, range.startContainer)
-    || rangeEndDependsOnGeneratedOutput(wrapper, range.endContainer)) return false;
   const id = row.getAttribute("data-block-id");
   if (!id) return false;
   if (editingId() === id) return false; // that block's editor owns the keys
@@ -80,6 +72,15 @@ export function deleteRenderedTextSelection(): boolean {
   if (!page) return false;
   const fmt = page.format === "org" ? "org" : "md";
   if (isAnnotationBlock(node.raw, fmt) || calcSource(node.raw) !== null) return false;
+  // A query's output and the app's notices are generated: an end there names
+  // none of this block's text, and inside a heading, quote or callout it would
+  // snap to an edge of that construct and take the macro's source with it. So
+  // would an end in text of that construct that has no source position of its
+  // own (a callout's title): its edge is chosen by a length that counts the
+  // generated text. Checked after the refusals above, so a refused key
+  // searches nothing.
+  if (rangeEndDependsOnGeneratedOutput(wrapper, range.startContainer)
+    || rangeEndDependsOnGeneratedOutput(wrapper, range.endContainer)) return false;
 
   const start = editorOffsetFromRenderedRange(
     wrapper,
