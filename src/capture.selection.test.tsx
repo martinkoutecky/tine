@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { CAPTURE_SCRATCH_NAME } from "./captureSeed";
 import { insertOutlineAfter, node, pageByName, selectedIds, setRaw, topSelected } from "./document";
 import { endEdit } from "./editorController";
+import { mountCapture } from "./tests/captureApp";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {}, emitTo: async () => {} }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -10,11 +11,8 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 it("copies the clicked outline in Capture", async () => {
-  const host = document.createElement("div");
-  host.id = "capture-root";
-  document.body.append(host);
   const writeRich = vi.spyOn(backend(), "writeRich").mockResolvedValue(undefined);
-  await import("./capture");
+  const host = await mountCapture();
   const first = await vi.waitFor(() => {
     const id = pageByName(CAPTURE_SCRATCH_NAME)?.roots[0];
     expect(id).toBeDefined();

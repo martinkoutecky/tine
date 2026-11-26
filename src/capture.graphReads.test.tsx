@@ -8,6 +8,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import type { GraphMeta } from "./types";
 import { editorIn, maybeEditorIn } from "./tests/editorDriver";
+import { mountCapture } from "./tests/captureApp";
 
 vi.unmock("./editor/cm6Setting");
 vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {}, emitTo: async () => {}, emit: async () => {} }));
@@ -35,9 +36,8 @@ it("UI-CAPTURE-NO-GRAPH-READ-TOASTS: references rendered in the capture editor a
   const icons = vi.spyOn(backend(), "pageIcons").mockRejectedValue(REFUSED);
   const blocks = vi.spyOn(backend(), "resolveBlocks").mockRejectedValue(REFUSED);
   const asset = vi.spyOn(backend(), "readAsset").mockRejectedValue(REFUSED);
-  const root = document.createElement("div"); root.id = "capture-root"; document.body.append(root);
   await (await import("./components/EditorGate")).preloadCm6Editor();
-  await import("./capture");
+  const root = await mountCapture();
   await vi.waitFor(() => expect(maybeEditorIn(root)?.kind).toBe("cm6"));
   const { toasts } = await import("./toasts");
   const errors = () => toasts().filter(toast => toast.kind === "error").map(toast => toast.message);
