@@ -192,7 +192,12 @@ pub(super) fn lower_date_disjunctions(
     let Some(find) = find.filter(|find| !inputs.contains_key(*find)) else {
         return (lowered, consumed);
     };
-    let mut users = None;
+    // Which clauses mention a variable is `advanced_var_uses`' answer, as for
+    // every other lowerer.
+    let users = |var: &'_ str| {
+        let var = var.to_owned();
+        (0..groups.len()).filter(move |&i| advanced_var_uses(groups[i], &var) > 0)
+    };
     for (index, group) in groups
         .iter()
         .enumerate()
@@ -202,18 +207,15 @@ pub(super) fn lower_date_disjunctions(
             continue;
         };
         let date = alternatives[0].date;
-        let users = users.get_or_insert_with(|| variable_users(groups));
         // The page of a journal kind joins nothing outside its group.
-        let private = |page: &str| {
-            !inputs.contains_key(page) && users.get(page).is_some_and(|u| u[..] == [index])
-        };
+        let private = |page: &str| !inputs.contains_key(page) && users(page).all(|i| i == index);
         if inputs.contains_key(date) || !alternatives.iter().filter_map(|a| a.page).all(private) {
             continue;
         }
         // DataScript binds the date inside the group: every other use of it
         // must be a predicate that comes after the group. The scan
         // stops at the first use that is not, before anything is collected.
-        let others = || users[date].iter().copied().filter(|&i| i != index);
+        let others = || users(date).filter(|&i| i != index);
         if others()
             .any(|i| i < index || taken.contains(&i) || !is_predicate(groups[i]) || scoped[i])
         {
@@ -404,29 +406,6 @@ fn is_predicate(group: &Edn) -> bool {
         _ => group,
     };
     matches!(vector(group), Some([call]) if list(call).is_some())
-}
-
-/// Each variable's groups, ascending, from one walk over the whole `:where`.
-fn variable_users<'a>(groups: &[&'a Edn]) -> std::collections::HashMap<&'a str, Vec<usize>> {
-    let mut users: std::collections::HashMap<&str, Vec<usize>> = Default::default();
-    for (index, group) in groups.iter().enumerate() {
-        let mut pending = vec![*group];
-        while let Some(value) = pending.pop() {
-            match value {
-                Edn::Vec(items) | Edn::List(items) | Edn::Set(items) => pending.extend(items),
-                Edn::Map(entries) => entries.iter().for_each(|(k, v)| pending.extend([k, v])),
-                _ => {
-                    if let Some(var) = variable(value) {
-                        let groups = users.entry(var).or_default();
-                        if groups.last() != Some(&index) {
-                            groups.push(index);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    users
 }
 
 fn same_variables(branches: &[Edn]) -> bool {
