@@ -4,8 +4,9 @@ import { spawnSync } from "node:child_process";
 import { SUPPORTED_PLUGIN_API_VERSIONS, parsePluginManifest } from "./manifest";
 
 // The package checker answers "is this manifest valid" with the host's parser,
-// then adds registry policy. So a package the checker passes is one the app
-// installs. Each row changes one field of the shipped fixture.
+// then adds registry policy. So a manifest the checker passes is one the app's
+// manifest parser accepts; the installer still checks the platform and the stored
+// size on its own. Each row changes one field of the shipped fixture.
 const fixture = JSON.parse(readFileSync("fixtures/plugin-graph-ownership/manifest.json", "utf8"));
 mkdirSync("target/artifacts/plugin-checker", { recursive: true });
 const directory = mkdtempSync("target/artifacts/plugin-checker/agreement-");
