@@ -53,7 +53,7 @@ fn gh628_inputs_resolve_without_changing_numeric_dates_or_string_identity() {
 /// with the trailing predicates, so the lowered query grows with the query's
 /// size, never with inner options times trailing predicates.
 #[test]
-fn gh1017_date_disjunction_lowering_is_linear_in_options_and_predicates() {
+fn gh1017_lowered_date_disjunction_grows_linearly_in_options_and_predicates() {
     let nodes = |n: usize| {
         let options = (0..n)
             .map(|i| match i % 2 {
@@ -81,6 +81,20 @@ fn gh1017_date_disjunction_lowering_is_linear_in_options_and_predicates() {
     // Three kinds (journal page, referenced journal, scheduled), each one
     // date binding plus the 1,024 predicates, a few nodes per leaf.
     assert!(full <= 3 * 4 * (1024 + 4), "{full}");
+}
+
+/// GH #1017: many date disjunctions on one date variable are all refused, and
+/// the query does not run.
+#[test]
+fn gh1017_repeated_date_disjunctions_on_one_date_are_refused() {
+    for n in [2, 1024] {
+        let groups =
+            "(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/deadline ?d]) ".repeat(n);
+        let source = format!("[:find (pull ?h [*]) :where [?h :block/marker \"TODO\"] {groups}]");
+        let (query, _, ignored) = advanced_pred(&source, None, TODAY);
+        assert!(query.is_none(), "{n}");
+        assert!(!ignored.is_empty(), "{n}");
+    }
 }
 
 #[test]

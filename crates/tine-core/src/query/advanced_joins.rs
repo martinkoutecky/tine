@@ -169,12 +169,16 @@ struct DateAlternative<'a> {
 }
 
 /// Lower `(or B1 … Bn)` or `(or-join [?h ?d] B1 … Bn)` when every alternative
-/// is one of the four [`DateKind`]s on the same date variable and every other
+/// is one of the four [`DateKind`]s on the same date variable, and every other
 /// use of that variable is a predicate after the group. Anything else is left
-/// for the caller to report as unsupported, as DataScript refuses or answers
-/// it differently. One filter is lowered per kind present (at most four),
-/// each with the trailing predicates, so the work is linear in the query.
+/// for the caller to report as unsupported. `groups` has wrappers opened;
+/// `scoped[i]` says clause `i` came out of a one-branch `or-join`, whose scope
+/// the opening erased: such a clause never takes part here, as group or as
+/// predicate. One filter is lowered per kind present (at most four), each
+/// with the trailing predicates, which must be ones the predicate lowerer
+/// translates. A group is refused at the first disqualifying use of its date.
 pub(super) fn lower_date_disjunctions(
+    scoped: &[bool],
     groups: &[&Edn],
     taken: &std::collections::HashSet<usize>,
     find: Option<&str>,
@@ -192,7 +196,7 @@ pub(super) fn lower_date_disjunctions(
     for (index, group) in groups
         .iter()
         .enumerate()
-        .filter(|(i, _)| !taken.contains(i))
+        .filter(|(i, _)| !taken.contains(i) && !scoped[*i])
     {
         let Some(alternatives) = date_alternatives(group, find) else {
             continue;
@@ -207,18 +211,15 @@ pub(super) fn lower_date_disjunctions(
             continue;
         }
         // DataScript binds the date inside the group: every other use of it
-        // must be a predicate that comes after the group.
-        let predicates = users[date]
-            .iter()
-            .copied()
-            .filter(|&i| i != index)
-            .collect::<Vec<_>>();
-        if predicates
-            .iter()
-            .any(|&i| i < index || taken.contains(&i) || !is_predicate(groups[i]))
+        // must be a predicate that comes after the group. The scan
+        // stops at the first use that is not, before anything is collected.
+        let others = || users[date].iter().copied().filter(|&i| i != index);
+        if others()
+            .any(|i| i < index || taken.contains(&i) || !is_predicate(groups[i]) || scoped[i])
         {
             continue;
         }
+        let predicates = others().collect::<Vec<_>>();
         // The union of a journal kind with and without `journal? true` is the
         // kind without it, so each kind needs one filter.
         let mut kinds: Vec<&DateAlternative> = Vec::new();

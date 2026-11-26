@@ -57,24 +57,30 @@ fn advanced_find(items: &[Edn]) -> Option<(&str, bool)> {
 
 /// Open conjunctions and one-branch disjunctions without spending a frame
 /// per nested wrapper.
-fn flatten_single_branch_groups(groups: &[Edn]) -> Vec<&Edn> {
-    let mut result = Vec::new();
-    let mut pending: Vec<_> = groups.iter().rev().collect();
-    while let Some(group) = pending.pop() {
+/// The clauses of `:where` with wrappers opened, and for each whether it came
+/// out of a one-branch `or-join`. `and` and a one-branch `or` hide no variable;
+/// an `or-join` does, and opening it erases that scope.
+fn flatten_single_branch_groups(groups: &[Edn]) -> (Vec<&Edn>, Vec<bool>) {
+    let (mut result, mut scoped) = (Vec::new(), Vec::new());
+    let mut pending: Vec<_> = groups.iter().rev().map(|group| (group, false)).collect();
+    while let Some((group, inside)) = pending.pop() {
         match list(group) {
             Some([head, rest @ ..]) if head.symbol() == Some("and") => {
-                pending.extend(rest.iter().rev());
+                pending.extend(rest.iter().rev().map(|group| (group, inside)));
             }
-            Some([head, branch]) if head.symbol() == Some("or") => pending.push(branch),
+            Some([head, branch]) if head.symbol() == Some("or") => pending.push((branch, inside)),
             Some([head, vars, branch])
                 if head.symbol() == Some("or-join") && vector(vars).is_some() =>
             {
-                pending.push(branch);
+                pending.push((branch, true));
             }
-            _ => result.push(group),
+            _ => {
+                result.push(group);
+                scoped.push(inside);
+            }
         }
     }
-    result
+    (result, scoped)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,9 +507,8 @@ fn lower_declaration(
         .vector
         .iter()
         .position(|value| value.keyword() == Some("where"));
-    let groups = flatten_single_branch_groups(
-        where_at.map_or(&[][..], |index| &declaration.vector[index + 1..]),
-    );
+    let authored = where_at.map_or(&[][..], |index| &declaration.vector[index + 1..]);
+    let (groups, scoped) = flatten_single_branch_groups(authored);
     let anchor = if joins::page_property_result(&groups, find) {
         Anchor::Page
     } else {
@@ -553,7 +558,7 @@ fn lower_declaration(
     // variable. Move its predicates into each branch before OR, retaining
     // existential semantics when a block has two dates (one outside, one inside).
     let (date_or, date_or_patterns) =
-        lower_date_disjunctions(block_groups, &taken, Some(find), &inputs);
+        lower_date_disjunctions(&scoped, block_groups, &taken, Some(find), &inputs);
     lowered_attributes.extend(date_or);
     attribute_patterns.extend(date_or_patterns);
     let preds: Vec<Filter> = groups
