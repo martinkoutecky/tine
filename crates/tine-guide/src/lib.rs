@@ -2298,6 +2298,8 @@ mod og_20d_guide_tests {
             "Advanced-query shapes that run",
             "Tagged-page name results",
             "numeric `yyyymmdd` inputs",
+            "each exactly one of four date sources for `?d`",
+            "a comparison on `?d` before the `or` or inside an alternative",
             "strict `>` / `<`",
             "reversed bounds return nothing",
             "`direct_ref('project')`",
