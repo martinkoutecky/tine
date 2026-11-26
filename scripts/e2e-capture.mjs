@@ -705,13 +705,13 @@ try {
   if (strays.length) throw new Error(`the capture to another spelling created a second file: ${JSON.stringify(strays)}`);
   console.log("PASS: a capture titled with another spelling of an existing page filed into that page's file");
 
-  // UI-CAPTURE-UNPROVED-RETRY (E2E_CAPTURE_UNPROVED=1): a capture lands in a
+  // UI-CAPTURE-UNPROVED-RETRY: a capture lands in a
   // page whose file changed outside, so its save is refused and the text stays
   // in the capture window. The user takes the disk version, which drops the
   // captured block. Filing the same capture again must not report it saved:
   // the window keeps the text, says it cannot confirm, and offers a new
   // capture, which then files the text exactly once.
-  if (process.env.E2E_CAPTURE_UNPROVED === "1") {
+  {
     const UNPROVED = "unproved-capture-ok";
     const OUTSIDE = "written outside the app";
     const captureText = () => browser.execute(() => document.querySelector(".capture-shell")?.textContent ?? "");
@@ -749,11 +749,23 @@ try {
     if (fs.readFileSync(homePath, "utf8") !== outside) throw new Error("a capture into a conflicted page changed its file");
 
     await browser.switchToWindow(restartedMain);
-    const useDisk = () => browser.$('[data-choice="use-disk"]');
-    if (!(await useDisk().isExisting())) await browser.$(".conflict-banner button").click();
-    await useDisk().waitForExist({ timeout: 10_000, timeoutMsg: "the conflict offered no disk version" });
-    await useDisk().click();
-    await browser.$(".conflict-banner").waitForExist({ timeout: 15_000, reverse: true, timeoutMsg: "taking the disk version left the conflict" });
+    // A page with a file is resolved in its in-page review: keep the disk side everywhere, then apply.
+    const review = '.main-content .page-conflict[data-source="live-save"]';
+    if (!(await browser.$(review).isExisting())) await browser.$(".conflict-banner button").click();
+    // The review may have been read before the capture reached the page's draft: then the first Apply only
+    // refreshes the comparison, and the choice is made again.
+    let applies = 0;
+    for (; applies < 3 && await browser.$(".conflict-banner").isExisting(); applies++) {
+      await browser.$(`${review} .sync-merge-toolbar-actions`).waitForExist({ timeout: 15_000, timeoutMsg: "the conflict review offered no choices" });
+      await browser.$(`${review} .page-conflict-foot .settings-btn-primary`).waitForEnabled({ timeout: 15_000, timeoutMsg: "the conflict review never became ready" });
+      const sides = await browser.$$(`${review} .sync-merge-toolbar-actions button`);
+      if (sides.length !== 4) throw new Error(`the conflict review offers ${sides.length} whole-page choices, expected 4`);
+      await sides[3].click();
+      await browser.$(`${review} .page-conflict-foot .settings-btn-primary`).click();
+      try { await browser.$(".conflict-banner").waitForExist({ timeout: 8_000, reverse: true }); } catch {}
+    }
+    if (await browser.$(".conflict-banner").isExisting()) throw new Error(`taking the disk version left the conflict after ${applies} applies`);
+    console.log(`UNPROVED: the disk version was taken after ${applies} apply(s)`);
     await browser.waitUntil(() => browser.execute((gone, kept) => {
       const text = document.querySelector(".main-content .page-blocks")?.textContent ?? "";
       return !text.includes(gone) && text.includes(kept);
