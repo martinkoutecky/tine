@@ -930,10 +930,17 @@ fn planning_on_a_block_without_title_text_goes_after_an_empty_first_line() {
             let closed = parse(&rest, org)
                 .apply(&rest, org, planning("Closed", "[2026-10-05 Mon 09:00]"))
                 .unwrap();
-            assert_eq!(closed, tail(&["CLOSED: [2026-10-05 Mon 09:00]"]), "{rest:?}");
+            assert_eq!(
+                closed,
+                tail(&["CLOSED: [2026-10-05 Mon 09:00]"]),
+                "{rest:?}"
+            );
             let regions = parse(&closed, org);
             assert!(
-                regions.planning.iter().any(|p| p.kind == "Closed" && p.line.0 > 0),
+                regions
+                    .planning
+                    .iter()
+                    .any(|p| p.kind == "Closed" && p.line.0 > 0),
                 "{closed:?}"
             );
         }
@@ -960,7 +967,10 @@ fn replace_and_clear_below_an_empty_first_line() {
                 )
                 .unwrap()
         };
-        assert_eq!(edit(raw, Some("<2026-10-09 Fri>")), "\nSCHEDULED: <2026-10-09 Fri>");
+        assert_eq!(
+            edit(raw, Some("<2026-10-09 Fri>")),
+            "\nSCHEDULED: <2026-10-09 Fri>"
+        );
         assert_eq!(edit(raw, None), "");
         let with_lb = format!("\nSCHEDULED: <2026-10-03 Sat>\n{lb}");
         let cleared = edit(&with_lb, None);
@@ -997,9 +1007,15 @@ fn hoisted_planning_goes_after_an_empty_first_line() {
             let out = parse(&raw, org)
                 .apply(&raw, org, Edit::NormalizePlanning)
                 .unwrap();
-            assert_eq!(out, format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}{lb}"), "org={org}");
             assert_eq!(
-                parse(&out, org).apply(&out, org, Edit::NormalizePlanning).unwrap(),
+                out,
+                format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}{lb}"),
+                "org={org}"
+            );
+            assert_eq!(
+                parse(&out, org)
+                    .apply(&out, org, Edit::NormalizePlanning)
+                    .unwrap(),
                 out
             );
         }
@@ -1015,7 +1031,9 @@ fn hoisted_planning_goes_after_an_empty_first_line() {
             .unwrap();
         assert_eq!(
             out,
-            format!("{nl}SCHEDULED: <2026-10-03 Sat>{nl}:PROPERTIES:{nl}:foo: bar{nl}:END:{nl}{lb}")
+            format!(
+                "{nl}SCHEDULED: <2026-10-03 Sat>{nl}:PROPERTIES:{nl}:foo: bar{nl}:END:{nl}{lb}"
+            )
         );
     }
 }

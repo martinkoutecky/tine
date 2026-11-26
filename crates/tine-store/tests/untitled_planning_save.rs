@@ -28,14 +28,20 @@ impl Graph {
     /// Read the page, let `change` rewrite its first block, save it through the
     /// page host and return the first block's raw as it was saved.
     fn save(&self, change: impl FnOnce(&str) -> String) -> String {
-        let store = std::sync::Arc::new(Store::open(self.dir.path(), Default::default()).unwrap().0);
+        let store =
+            std::sync::Arc::new(Store::open(self.dir.path(), Default::default()).unwrap().0);
         let writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from(self.path);
         let read = store.page(&id).expect("the page opens");
         let mut doc = read.doc;
         doc.blocks[0].raw = change(&doc.blocks[0].raw);
         let raw = doc.blocks[0].raw.clone();
-        let outcome = writer.save(EditKind::ReplacePage, &id, SaveBase::Existing(read.rev), &doc);
+        let outcome = writer.save(
+            EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc,
+        );
         assert!(outcome.is_ok(), "save failed: {outcome:?}");
         drop(writer);
         store.close();
@@ -51,7 +57,11 @@ fn a_date_picked_on_a_block_without_title_text_saves_and_reloads_unchanged() {
     let md_lb = lb.replace('\n', "\n  ");
     // (path, source, saved file after the pick)
     let cases: Vec<(&'static str, String, String)> = vec![
-        ("pages/empty.md", "-\n- other\n".into(), format!("-\n  {s}\n- other\n")),
+        (
+            "pages/empty.md",
+            "-\n- other\n".into(),
+            format!("-\n  {s}\n- other\n"),
+        ),
         (
             "pages/logbook.md",
             format!("- {md_lb}\n- other\n"),
@@ -67,7 +77,11 @@ fn a_date_picked_on_a_block_without_title_text_saves_and_reloads_unchanged() {
             format!("- {md_lb}\n- other\n").replace('\n', "\r\n"),
             format!("-\n  {s}\n  {md_lb}\n- other\n").replace('\n', "\r\n"),
         ),
-        ("pages/empty.org", "*\n* other\n".into(), format!("*\n{s}\n* other\n")),
+        (
+            "pages/empty.org",
+            "*\n* other\n".into(),
+            format!("*\n{s}\n* other\n"),
+        ),
         (
             "pages/props.org",
             format!("*\n:PROPERTIES:\n:id: {ID}\n:END:\n* other\n"),
