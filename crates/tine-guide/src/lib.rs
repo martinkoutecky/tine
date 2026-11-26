@@ -2950,6 +2950,7 @@ mod asset_manifest_tests {
             .markdown;
         assert!(guide.contains("additions stay for your next capture"));
         assert!(guide.contains("plain retry"));
+        assert!(guide.contains("says it can't confirm the capture and keeps the text"));
         assert!(guide.contains("**Add text** reminder"));
         assert!(guide.contains("never reached a graph"));
         assert!(guide.contains("After a refused filing, **Esc** keeps the text too"));

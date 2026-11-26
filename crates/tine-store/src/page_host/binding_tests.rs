@@ -2337,6 +2337,61 @@ fn a_discard_takes_the_current_disk_and_an_old_session_discard_is_not_admitted()
     live.host.stop();
 }
 
+/// What a retried Quick Capture reads: the version of a text the host took
+/// while the file had changed outside is never reported as written by a
+/// Discard that follows it; a Keep mine that follows it reports its own
+/// version, with the bytes it wrote.
+#[test]
+fn wait_published_reports_a_conflicted_text_only_when_keep_mine_wrote_it() {
+    let trace = |keep: bool| {
+        let live = Live::new(&[("pages/a.md", "- one\n")]);
+        let (key, opened) = live.open("pages/a.md");
+        let theirs = "- theirs\n";
+        assert!(!live.external(&key, theirs).conflict);
+        let mine = "- one\n- captured\n";
+        let id = live.submit(&key, mine, opened.version, None).unwrap();
+        let mail = live.answer(&key, id);
+        let (answer, page) = (mail.answer.unwrap(), mail.page.unwrap());
+        assert!(
+            answer.took && page.conflict,
+            "the host took the text, in conflict"
+        );
+        let taken = answer.version;
+        let resolved = if keep {
+            let id = live.submit(&key, mine, page.version, Some(&token(theirs)));
+            live.answer(&key, id.unwrap()).answer.unwrap().version
+        } else {
+            let id = live.id();
+            live.host.discard(live.host.session(), id, &key).unwrap();
+            live.answer(&key, id).page.unwrap().version
+        };
+        let (operation, written, _) = live.host.wait_published(
+            live.host.session(),
+            &[(key.clone(), resolved, None)],
+            Duration::from_secs(20),
+        );
+        assert_eq!(operation, PageOperation::Applied);
+        assert_eq!(live.disk(&key), if keep { mine } else { theirs });
+        live.host.stop();
+        (taken, resolved, written)
+    };
+    let (taken, _, written) = trace(false);
+    assert!(
+        written.iter().all(|row| row.version != taken),
+        "a Discard never reports the discarded text's version as written: {written:?}"
+    );
+    let (_, kept, written) = trace(true);
+    assert_eq!(
+        written,
+        vec![PublishedRevision {
+            key: "pages/a.md".into(),
+            version: kept,
+            rev: Some(FileRev::from_bytes(b"- one\n- captured\n")),
+        }],
+        "Keep mine reports the version it wrote"
+    );
+}
+
 /// N1 (OG-RULES Rule 8, STEP3 §3.2 `kinds`): a published page's edit kinds
 /// reach the sink `PageHost::start` was given, at its publication; the app
 /// logs them there (`src-tauri` `page_commands::log_edit_kinds`).
