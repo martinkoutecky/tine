@@ -18,7 +18,7 @@
 import { node as docNode, setRaw, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
 import { splitProps, joinProps, BUILTIN_HIDE } from "../editor/properties";
-import { editorOffsetFromRenderedRange } from "../render/spans";
+import { editorOffsetFromRenderedRange, rangeEndDependsOnQueryOutput } from "../render/spans";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { queryAllWindows, selectionOf } from "../windowRealm";
@@ -34,8 +34,9 @@ function blockRowOf(node: Node | null): Element | null {
  *  step, one `save-block` dirty mark, then the block opens in the editor at the
  *  join point); false to leave the event to its default handling. Refuses
  *  (false) a collapsed or cross-block selection, a reference/embed/query
- *  rendering, the block being edited, a read-only page, annotation or calc
- *  blocks, an open modal, and any selection point that does not map to source.
+ *  rendering, a selection end that depends on a query's generated output, the
+ *  block being edited, a read-only page, annotation or calc blocks, an open
+ *  modal, and any selection point that does not map to source.
  *  Cost: O(length of that block). */
 export function deleteRenderedTextSelection(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
@@ -59,6 +60,11 @@ export function deleteRenderedTextSelection(): boolean {
   if (!wrapper || !wrapper.contains(range.startContainer) || !wrapper.contains(range.endContainer)) {
     return false;
   }
+  // A query's results, empty message and controls are generated: an end there
+  // names none of this block's text, and inside a heading, quote or callout it
+  // would snap to an edge of that construct and take the query's source with it.
+  if (rangeEndDependsOnQueryOutput(wrapper, range.startContainer)
+    || rangeEndDependsOnQueryOutput(wrapper, range.endContainer)) return false;
   const id = row.getAttribute("data-block-id");
   if (!id) return false;
   if (editingId() === id) return false; // that block's editor owns the keys
