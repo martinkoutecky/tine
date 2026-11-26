@@ -16,7 +16,7 @@ import type { BlockDto, QueryPublicationRequest } from "../types";
 import { aggregate, AGGREGATE_LABELS, collectAggregateColumns } from "./aggregate";
 import { boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns } from "./boardColumns";
 import { cellView, displayFieldValue, type CellView } from "./cellPresentation";
-import { childrenSheetConfig } from "./childrenSheet";
+import { blockSheet } from "./childrenSheet";
 import { sheetConfig, type FieldType } from "./config";
 import { fieldLabel, isFormulaField, type FieldId } from "./fields";
 import {
@@ -202,15 +202,18 @@ function gridBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>): Sheet
 /** One sheet's export, or null when the block's `tine.view` is not a sheet view.
  *  Never throws: a failing sheet exports as `{view: "error"}`. */
 export function computeSheetExport(input: SheetInput, env: ExportEnv): SheetExport | null {
+  let queried = input.query;
   try {
-    const query = input.query;
-    const cfg = query
-      ? sheetConfig(facetsFromDto(input.owner).properties)
-      : childrenSheetConfig(facetsFromDto(input.owner).properties, input.owner.raw);
-    // A query block's face is the query's own presentation, else its `tine.view`
-    // (Macro.tsx `blockFace`); only tables and boards present query rows.
-    const view = query ? (query.presentation ?? cfg.view) : cfg.view;
-    if (query && view !== "table" && view !== "board") return null;
+    const props = sheetConfig(facetsFromDto(input.owner).properties);
+    // A query block's face is the query's own presentation, else its `tine.view`;
+    // the block's one sheet answer (`blockSheet`, as the live Block and Macro.tsx
+    // read it) decides whether that face or the children draw the sheet.
+    const sheet = blockSheet(props, () => input.owner.raw, input.query ? input.query.presentation ?? props.view ?? "list" : undefined);
+    const queryFace = sheet.query === "table" || sheet.query === "board" ? sheet.query : null;
+    const query = queryFace ? input.query : undefined;
+    queried = query;
+    const cfg = query ? props : sheet.children;
+    const view = queryFace ?? cfg.view;
     if (!view) return null;
     const rows = query
       ? query.rows.map((dto, ix) => detach(query.pages[ix] ?? input.page, dto, ix))
@@ -224,7 +227,7 @@ export function computeSheetExport(input: SheetInput, env: ExportEnv): SheetExpo
     return { page: input.page, path: input.path, fp: query ? query.fp : input.fp, ...(query ? { query: true } : {}), ...body };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { page: input.page, path: input.path, fp: input.query ? input.query.fp : input.fp, ...(input.query ? { query: true } : {}), view: "error", message: message.slice(0, 300) };
+    return { page: input.page, path: input.path, fp: queried ? queried.fp : input.fp, ...(queried ? { query: true } : {}), view: "error", message: message.slice(0, 300) };
   }
 }
 

@@ -8,6 +8,7 @@ import { blockPageReadOnly, childIds, depthOf, formatForBlock, isSelected, node 
 import { visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
+import { blockSheet } from "../sheet/childrenSheet";
 import {
   buildMatrixWindow,
   noteMatrixWindowColumns,
@@ -808,7 +809,7 @@ function SheetBlock(props: {
     const value = facets();
     return value ? effectiveHeadingLevel(value, depthOf(props.id)) : null;
   });
-  const config = createMemo(() => (facets() ? sheetConfig(facets()!.properties) : null));
+  const config = createMemo(() => (facets() ? blockSheet(sheetConfig(facets()!.properties), () => node()?.raw ?? "").children : null));
   const macro = createMemo(() => {
     const n = node();
     return n ? detectMacro(n.raw, fmt()) : null;

@@ -326,13 +326,29 @@ describe("static query-backed sheets present exported rows (family 7)", () => {
     }
   });
 
-  it("the query's own presentation beats tine.view; a list or grid face has no sheet export", () => {
+  it("the query's own presentation beats tine.view; a list or grid face has no query sheet export", () => {
     const base = { owner: "Q {{query (task TODO)}}\ntine.view:: table", rows: QUERY_ROWS };
     expect(computeSheetExport(queryInputOf({ ...base, presentation: "board" }), { now: NOW, workflow: "todo" })?.view).toBe("board");
     expect(computeSheetExport(queryInputOf({ ...base, presentation: "table" }), { now: NOW, workflow: "todo" })?.view).toBe("table");
     expect(computeSheetExport(queryInputOf({ ...base, presentation: "list" }), { now: NOW, workflow: "todo" })).toBeNull();
+    // A grid is the children's sheet, as the live Block draws it (one sheet per block,
+    // tine#874): the query's rows are never laid out, and its results stay the list.
     const grid = { ...base, owner: "Q {{query (task TODO)}}\ntine.view:: grid" };
-    expect(computeSheetExport(queryInputOf(grid), { now: NOW, workflow: "todo" })).toBeNull();
+    const exported = computeSheetExport(queryInputOf(grid), { now: NOW, workflow: "todo" });
+    expect(exported).toMatchObject({ view: "grid", fp: "fp" });
+    expect(exported?.query).toBeUndefined();
+  });
+
+  it("one sheet per block: a grid whose own query asks for a table or board exports the grid, the query stays the list (tine#874)", () => {
+    // FAIL-BEFORE: the export laid the query's rows out as the board/table and dropped
+    // the grid, while the live block drew both sheets.
+    for (const presentation of ["table", "board"] as const) {
+      const input: SheetInput = { ...queryInputOf({ owner: "Q {{query (task TODO)}}\ntine.view:: grid", presentation, rows: QUERY_ROWS }),
+        rows: [dto("", [dto("a"), dto("b")])] };
+      const exported = computeSheetExport(input, { now: NOW, workflow: "todo" });
+      expect(exported, presentation).toMatchObject({ view: "grid", fp: "fp", cols: 2 });
+      expect(exported?.query, presentation).toBeUndefined();
+    }
   });
 
   it("the export echoes the query's own fingerprint and marks itself query-backed", () => {
@@ -380,9 +396,10 @@ describe("Rust hand-off chain", () => {
     expect(actual).toBe(fs.readFileSync(path.join(dir, "exports.json"), "utf8"));
     // The non-sheet candidate is dropped by the app, not by Rust (I-12).
     expect(inputs.length).toBe(7);
-    expect(JSON.parse(actual).map((x: SheetExport) => x.view)).toEqual(["table", "board", "grid", "table", "board"]);
-    // The two query-backed blocks are answered from their result rows; the query-face
-    // grid stays a result list (no export), exactly as the live query block does.
-    expect(JSON.parse(actual).map((x: SheetExport) => !!x.query)).toEqual([false, false, false, true, true]);
+    expect(JSON.parse(actual).map((x: SheetExport) => x.view)).toEqual(["table", "board", "grid", "table", "board", "grid"]);
+    // The two query-backed blocks are answered from their result rows; the grid whose
+    // body is a query exports its children's grid and its query stays a result list,
+    // exactly as the live block draws it (one sheet per block, tine#874).
+    expect(JSON.parse(actual).map((x: SheetExport) => !!x.query)).toEqual([false, false, false, true, true, false]);
   });
 });

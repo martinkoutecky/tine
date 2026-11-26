@@ -112,7 +112,8 @@ import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { blockListProps } from "./BlockList";
-import { childrenSheetConfig } from "../sheet/childrenSheet";
+import { blockSheet } from "../sheet/childrenSheet";
+import { sheetConfig } from "../sheet/config";
 import { SheetCellContext } from "../sheet/context";
 import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
 import { cellBlockId, cellOwner, cellSurfaceKey, selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
@@ -251,7 +252,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const hasChildren = () => outlineChildren().length > 0;
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
   // The children-source sheet this block owns (a query block's table/board is the macro's).
-  const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
+  const sheet = createMemo(() => blockSheet(sheetConfig(blockFacets().properties), () => node().raw).children);
   // Bulletless comments keep their own presentation instead of outline threading.
   const threadLineDecoration = (withoutBullet: boolean): ThreadLineDecoration => {
     if (!(hasChildren() && sheet().view === null) || withoutBullet) return NO_THREAD_LINES;
