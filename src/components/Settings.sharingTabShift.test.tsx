@@ -5,6 +5,7 @@ import { closeSettings, openSettings } from "../ui";
 import { primeQuickShareGate, resetQuickShareGateForTest } from "../quickShareGate";
 
 const sharingBackend = vi.hoisted(() => ({
+  warmDone: vi.fn(async () => true),
   quickShareList: vi.fn(async () => ({ account: null, shares: [], error: null })),
 }));
 
