@@ -9,11 +9,12 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { LiveRefGroup } from "./LiveRefGroup";
+import { LiveRefGroup, createRefOccurrence, writeLocalFolds, type RefOccurrence } from "./LiveRefGroup";
+import { registerQueryAnswerFold } from "../collapseCommandSurface";
 import { requestFrame } from "../windowRealm";
 import { bindOutlineSelection, createOutlineOwner } from "../outlineSelectionTarget";
 
-interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
+interface QueryGroupProps { group: () => RefGroup | undefined; /** The group's local state, created on first use. */ store?: () => RefOccurrence; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
 
 /** Present the complete keyed List without one graph-sized DOM commit. Existing
  * groups survive membership refreshes; at most 32 new shells mount per frame.
@@ -31,8 +32,29 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     frame = undefined;
   };
   onCleanup(cancel);
+  // Each group's local state (result folds, pulled-in context) lives here, keyed by the
+  // group key, so a fold command reaches a group not yet drawn (GH #1004). A key's state
+  // is created by its first drawing or command and dropped when the key leaves the answer,
+  // which is when its group is disposed.
+  const stores = new Map<string, RefOccurrence>();
+  const storeFor = (key: string) => {
+    let store = stores.get(key);
+    if (!store) stores.set(key, store = createRefOccurrence());
+    return store;
+  };
+  if (props.hostBlockId) onCleanup(registerQueryAnswerFold({
+    hostId: () => props.hostBlockId,
+    groups: () => [...untrack(props.groups)].map(([key, group]) => ({
+      // Synthetic rows (page properties, the opening prose) are not outline blocks.
+      ids: group.blocks.filter((block) => !block.page_property && !block.page_preamble).map((block) => block.id),
+      store: stores.get(key),
+      write: (ids: readonly string[], collapsed: boolean) => writeLocalFolds(storeFor(key), ids, collapsed),
+    })),
+  }));
   createEffect(() => {
     const all = [...props.groups().keys()];
+    const present = new Set(all);
+    for (const key of stores.keys()) if (!present.has(key)) stores.delete(key);
     const paused = !!props.paused;
     const resumed = wasPaused && !paused;
     wasPaused = paused;
@@ -69,7 +91,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     return rows * 1.9;
   });
   return <>
-    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} showBreadcrumb={props.showBreadcrumb} showPage={props.showPage} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
+    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} store={() => storeFor(key)} flat={props.flat} showBreadcrumb={props.showBreadcrumb} showPage={props.showPage} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
     <Show when={pendingHeight() > 0}>
       <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
     </Show>
@@ -145,7 +167,7 @@ function MountedQueryGroup(props: QueryGroupProps & { selectionOwner: ReturnType
           >
             {page()}
           </div></Show>
-          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} format={g().format} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
+          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} format={g().format} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} occurrence={props.store?.()} />
         </>
       )}
     </Show>

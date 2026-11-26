@@ -53,6 +53,8 @@ export interface QueryResultFold {
   /** The group's live result roots, in display order. */
   roots: () => string[];
   surface: CommandCollapseSurface;
+  /** The group's local state (identity only), shared with its `QueryAnswerFold` group. */
+  store: object;
 }
 const resultFolds = new Set<QueryResultFold>();
 clearOnBindingInvalidated(() => resultFolds.clear());
@@ -65,4 +67,31 @@ export function registerQueryResultFold(group: QueryResultFold): () => void {
 /** The mounted result groups of query block `hostId`. O(registered groups), once per command. */
 export function queryResultFolds(hostId: string): QueryResultFold[] {
   return [...resultFolds].filter((group) => group.hostId() === hostId);
+}
+
+/** Every result group of a query's answer, drawn or not, registered by the group list that
+ *  owns their local state (GH #1004). `store` is that group's state once it exists. */
+export interface QueryAnswerFold {
+  hostId: () => string | undefined;
+  groups: () => Iterable<{ ids: readonly string[]; store: object | undefined; write: (ids: readonly string[], collapsed: boolean) => void }>;
+}
+const answerFolds = new Set<QueryAnswerFold>();
+clearOnBindingInvalidated(() => answerFolds.clear());
+
+export function registerQueryAnswerFold(answer: QueryAnswerFold): () => void {
+  answerFolds.add(answer);
+  return () => { answerFolds.delete(answer); };
+}
+
+/** The result groups of query block `hostId` that no drawn group in `drawn` answers for with
+ *  live roots: each with the answer's root ids and the writer of its local folds.
+ *  O(registered answers + their groups). */
+export function undrawnQueryResults(hostId: string, drawn: readonly QueryResultFold[]): { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void }[] {
+  const live = new Set(drawn.filter((group) => group.roots().length > 0).map((group) => group.store));
+  const out: { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void }[] = [];
+  for (const answer of answerFolds) {
+    if (answer.hostId() !== hostId) continue;
+    for (const group of answer.groups()) if (!group.store || !live.has(group.store)) out.push(group);
+  }
+  return out;
 }

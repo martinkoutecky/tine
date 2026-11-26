@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandRow, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
+import { collapseCommandRow, queryResultFolds, undrawnQueryResults, type CommandCollapseSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -8,6 +8,7 @@ import { collapseCommandRow, queryResultFolds, type CommandCollapseSurface } fro
 import {
   blockRef,
   blockHasFoldableBody,
+  blockPageReadOnly,
   buildClipboardPayload,
   hasSelection,
   blockHasPageEmbed,
@@ -226,7 +227,12 @@ interface FoldWalk {
   setFold: (id: string, collapsed: boolean) => void;
   surfaceOf: (id: string) => CommandCollapseSurface | undefined;
   children: (ids: string[]) => string[];
+  /** GH #1004: the result rows of query groups not drawn with live rows, named by the
+   *  `children()` call that returned `level` (none for any other array). They are
+   *  written with the level's value and never read: the level is chosen from live rows. */
+  undrawn: (level: string[]) => UndrawnResults[];
 }
+type UndrawnResults = { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void };
 
 function foldWalk(pageFallback: boolean): FoldWalk | null {
   let parents: string[] = hasSelection() ? topSelected() : commandTargetIds();
@@ -265,8 +271,10 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
   const foldable = (id: string) => blockHasFoldableBody(sourceOf(id) ?? id);
   const setFold = (id: string, collapsed: boolean) => sourceOf(id) ? setEmbedRootFold(id, collapsed) : setCollapsed(id, collapsed);
   pageRoots?.forEach(standAsRoot);
+  const undrawnOf = new WeakMap<string[], UndrawnResults[]>();
   const children = (ids: string[]) => {
     const out = new Set<string>();
+    const pending: UndrawnResults[] = [];
     for (const id of ids) {
       const own = rowSurface.get(id);
       for (const child of docNode(id)?.children ?? []) {
@@ -274,15 +282,29 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
         if (!surfaceOf(child)) standAsRoot(child);
         out.add(child);
       }
-      for (const group of queryResultFolds(id)) for (const row of group.roots()) {
+      const drawn = queryResultFolds(id);
+      for (const group of drawn) for (const row of group.roots()) {
         if (!docNode(row)) continue;
         if (!rowSurface.has(row)) rowSurface.set(row, group.surface);
         out.add(row);
       }
+      pending.push(...undrawnQueryResults(id, drawn));
     }
-    return [...out];
+    const level = [...out];
+    // One id, one fold per press: a row already named keeps its first answer. A read-only
+    // hit folds in the session's presentation map, which no command writes.
+    const named = new Set(out);
+    const undrawn: UndrawnResults[] = [];
+    for (const group of pending) {
+      const rows = group.ids.filter((row) => !named.has(row) && !blockPageReadOnly(row));
+      for (const row of rows) named.add(row);
+      if (rows.length) undrawn.push({ ids: rows, write: group.write });
+    }
+    if (undrawn.length) undrawnOf.set(level, undrawn);
+    return level;
   };
-  return { parents, pageRoots, isCollapsed, foldable, setFold, surfaceOf, children };
+  const undrawn = (level: string[]) => undrawnOf.get(level) ?? [];
+  return { parents, pageRoots, isCollapsed, foldable, setFold, surfaceOf, children, undrawn };
 }
 
 /** Apply fold changes as ONE undo step through the existing per-block door.
@@ -290,7 +312,7 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
  *  property (with its own undo); below it a block embed saves the source's
  *  folds (D-20261030-EMB) and other surfaces change local presentation only.
  *  A source-page undo snapshot would suppress and then lose that host undo. */
-function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][], tag: string): void {
+function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][], tag: string, undrawn: { groups: UndrawnResults[]; collapsed: boolean } = { groups: [], collapsed: false }): void {
   const apply = () => {
     for (const [id, value] of changes) {
       if (!walk.foldable(id) || walk.isCollapsed(id) === value) continue;
@@ -298,6 +320,8 @@ function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][]
       if (own) own.toggle(id, walk.isCollapsed(id));
       else walk.setFold(id, value);
     }
+    // Local presentation only: no file, no undo entry, no page load.
+    for (const group of undrawn.groups) group.write(group.ids, undrawn.collapsed);
   };
   const written = [...new Set(changes.filter(([id]) => !walk.surfaceOf(id)).map(([id]) => docNode(id)?.page).filter((p): p is string => !!p))];
   if (!written.length) apply();
@@ -337,7 +361,7 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   const touched = [...opened, ...level];
   if (!touched.some((id) => docNode(id)?.page)) return false;
   commitFolds(walk, [...opened.map((id): [string, boolean] => [id, false]), ...level.map((id): [string, boolean] => [id, collapsed])],
-    collapsed ? "collapse-children" : "expand-children");
+    collapsed ? "collapse-children" : "expand-children", { groups: walk.undrawn(level), collapsed });
   return true;
 }
 

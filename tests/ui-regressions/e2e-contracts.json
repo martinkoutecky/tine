@@ -778,6 +778,12 @@
       "nonRequirements":["Touch (focus-within) visibility and nested-embed precedence, which scripts/shot-embed-actions.mjs and component tests cover; Org graphs (E2E_FORMAT=org runs the same journey); native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh1004-query-fold.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a selected query block whose answer spans 30 pages folds every result, including the result groups not drawn yet at the press: scrolling through the results shows no hit with its child open, the query block stays open, and no file changes (GH #1004).","blocking":true}],
+      "acceptableVariations":["How many groups are drawn at the press, scroll positions and timing may vary while at least one group is undrawn at the press and every hit is folded once drawn."],
+      "nonRequirements":["Expand, Set depth, read-only hits and the caret case, which component tests cover; native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-one-level-fold.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true},{"class":"core-operation","userOutcome":"Bound Collapse (one level) with the caret in, or with the selection on, a block whose children are block embeds hides each embed's children and saves collapsed:: true on each embedding block, while the block itself stays open and the embedded source file is byte-identical (GH #1032).","blocking":true}],
       "acceptableVariations":["Selection styling, animation and save latency may vary while the saved collapsed properties and visible rows agree."],

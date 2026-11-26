@@ -111,6 +111,9 @@ interface LiveRefGroupProps {
   eager?: boolean;
   /** Query-owned bulk action; never supplied by reference or embed callers. */
   bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> };
+  /** Query only: the group's local state, owned by the query's group list so a fold
+   *  command can reach a group before it is first drawn (GH #1004). */
+  occurrence?: RefOccurrence;
 }
 
 // GH #810: the height an embed's rows had when it last unmounted, so its placeholder
@@ -123,7 +126,7 @@ interface LiveRefGroupProps {
 // their outer shell's height. The bounded, graph-scoped cache checks pane width.
 
 interface LocalCollapseRow { v: boolean; bulk?: boolean }
-interface RefOccurrence {
+export interface RefOccurrence {
   surface: string;
   initialCollapsed: Map<string, boolean>;
   localCollapsed: Signal<Record<string, LocalCollapseRow>>;
@@ -131,6 +134,23 @@ interface RefOccurrence {
   excerptFull: Signal<Record<string, boolean>>;
   pendingEdits: Signal<number>;
   geometry: Map<string, { width: number; height: number }>;
+}
+
+/** One occurrence's local state. A query's group list creates its groups' own. */
+export function createRefOccurrence(surface = "ref:" + createUniqueId()): RefOccurrence {
+  return {
+    surface, initialCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
+    excerptFull: createSignal({}), pendingEdits: createSignal(0), geometry: new Map(),
+  };
+}
+
+/** The one writer of an occurrence's local result folds: each id gets `collapsed`. */
+export function writeLocalFolds(occurrence: RefOccurrence, ids: readonly string[], collapsed: boolean): void {
+  occurrence.localCollapsed[1]((state) => {
+    const next = { ...state };
+    for (const id of ids) next[id] = { v: collapsed };
+    return next;
+  });
 }
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
@@ -147,12 +167,8 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const ownerSurface = useContext(SurfaceContext);
   // Only reference surfaces retire. Queries, embeds and previews keep their
   // existing owners; this state also stays stable across reference retirement.
-  const occurrence: RefOccurrence = {
-    surface: props.surfaceKey ?? (props.surface === "embed" && props.hostBlockId
-      ? `embed:${ownerSurface}\u0000${props.hostBlockId}` : `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId()),
-    initialCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
-    excerptFull: createSignal({}), pendingEdits: createSignal(0), geometry: new Map(),
-  };
+  const occurrence = props.occurrence ?? createRefOccurrence(props.surfaceKey ?? (props.surface !== "embed" ? undefined
+    : props.hostBlockId ? `embed:${ownerSurface}\u0000${props.hostBlockId}` : "embed:" + createUniqueId()));
   ownSelectionSurface(occurrence.surface, undefined, ownerSurface);
   let alive = true;
   const [hasViewport, setHasViewport] = createSignal(false);
@@ -642,11 +658,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       if (isEmbed()) { setCollapsed(id, !current); return; }
       setLocalCollapsed((state) => ({ ...state, [id]: { v: !current } }));
     },
-    setMany: (ids, collapsed) => isEmbed() ? setCollapsedBlocks(ids, collapsed) : setLocalCollapsed((state) => {
-      const next = { ...state };
-      for (const id of ids) next[id] = { v: collapsed };
-      return next;
-    }),
+    setMany: (ids, collapsed) => isEmbed() ? setCollapsedBlocks(ids, collapsed) : writeLocalFolds(props.occurrence, ids, collapsed),
   };
   const liveRow = (id: string) => ready() && (!props.excerpt || contextRootIds().has(id)) && liveNode(id);
   const liveRoots = () => ready() ? groupedIds().filter(liveRow) : [];
@@ -664,6 +676,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     hostId: () => props.hostBlockId,
     roots: liveRoots,
     surface: collapseSurface,
+    store: props.occurrence,
   }));
   let lastBulkVersion: number | undefined;
   createEffect(() => {
