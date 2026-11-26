@@ -1,5 +1,6 @@
 import { msg, t } from "../i18n";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { ToolbarActionIcon } from "./ToolbarActionIcon";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
@@ -116,9 +117,10 @@ export function WorkspaceSwitcher(props: { compact?: boolean; toolbarStyle?: JSX
       onMouseEnter={() => { hover.enter(); if (!menuOpen() && workspaces().length) setHoverOpen(true); }}
       onMouseLeave={hover.leave}
     >
+      {/* GH #1024: in the toolbar it is one of the toolbar's icon buttons, with the toolbar's own glyph and no caret. */}
       <button
         type="button"
-        class="workspace-switcher-btn"
+        class={props.compact ? "icon-btn" : "workspace-switcher-btn"}
         aria-label={t("workspace-switcher-workspace", { name: String(active() ? workspaceDisplayName(active()!) : "loading") })}
         aria-haspopup="menu"
         aria-expanded={menuOpen() || hoverOpen()}
@@ -129,13 +131,13 @@ export function WorkspaceSwitcher(props: { compact?: boolean; toolbarStyle?: JSX
           setEdit(null);
         }}
       >
-        <span class="workspace-switcher-mark" aria-hidden="true">W</span>
-        <Show when={!props.compact}>
+        <Show when={!props.compact} fallback={<ToolbarActionIcon id="workspaces" />}>
+          <span class="workspace-switcher-mark" aria-hidden="true">W</span>
           <span class="workspace-switcher-name">
             <EmojiText text={active() ? workspaceDisplayName(active()!) : "Workspace"} />
           </span>
+          <ReferenceDisclosure class="workspace-switcher-caret" collapsed={false} />
         </Show>
-        <ReferenceDisclosure class="workspace-switcher-caret" collapsed={false} />
       </button>
 
       <Show when={hoverOpen() && !menuOpen()}>

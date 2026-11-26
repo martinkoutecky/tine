@@ -211,13 +211,12 @@
    logical, so a mirrored layout puts the thread on the left. Marks hidden (`tine-author-marks-off`, set by
    authorMarksPref.ts; a documented hook, the Guide's thread example reads it) reserve nothing. */
 .tine-author-marks-thread {
-  --author-thread-gutter: var(--tine-author-gutter, 96px);
+  --author-thread-gutter: var(--tine-author-gutter, 68px);
   --author-thread-clear: 0px;
   --author-thread-reserve: calc(var(--author-thread-gutter) + var(--author-thread-clear));
 }
 @media (max-width: 640px) and (pointer: coarse) {
   .tine-author-marks-thread {
-    --author-thread-gutter: var(--tine-author-gutter, 64px);
     --author-thread-clear: 44px;
   }
 }

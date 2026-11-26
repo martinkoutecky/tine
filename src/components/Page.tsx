@@ -1232,28 +1232,6 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
           <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>
         </Show>
         <Show when={!props.page.guide}>
-          <button
-            ref={pageActionsTrigger}
-            type="button"
-            class="page-actions-trigger"
-            data-page-actions-trigger
-            title={t("page-ui-page-actions")}
-            aria-label={t("page-ui-page-actions")}
-            aria-haspopup="menu"
-            aria-expanded={pageActionsOpen()}
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              openPageContextMenu(
-                rect.left,
-                rect.bottom + 4,
-                pageTarget(),
-                true,
-                e.currentTarget,
-              );
-            }}
-          >
-            <span aria-hidden="true">⋯</span>
-          </button>
           <Show when={!isPublishedExport()}>
             <button
               type="button"
@@ -1281,6 +1259,28 @@ function PageSection(props: { page: FeedPage; routed: boolean; children?: JSX.El
                 stroke-linejoin="round"
               />
             </svg>
+          </button>
+          <button
+            ref={pageActionsTrigger}
+            type="button"
+            class="page-actions-trigger"
+            data-page-actions-trigger
+            title={t("page-ui-page-actions")}
+            aria-label={t("page-ui-page-actions")}
+            aria-haspopup="menu"
+            aria-expanded={pageActionsOpen()}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              openPageContextMenu(
+                rect.left,
+                rect.bottom + 4,
+                pageTarget(),
+                true,
+                e.currentTarget,
+              );
+            }}
+          >
+            <span aria-hidden="true">⋯</span>
           </button>
         </Show>
         </div>

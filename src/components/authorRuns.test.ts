@@ -21,7 +21,9 @@ it("the thread look is one class on <html>, drawn with logical sides and the pub
   // Every outline row (authored or not) reserves the one gutter, but not while marks are hidden; the token sets its width.
   expect(threadLook).toContain(".tine-author-marks-thread:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {");
   expect(threadLook).toContain("padding-inline-end: var(--author-thread-reserve)");
-  expect(threadLook).toContain("var(--tine-author-gutter, 96px)");
+  // GH #994: one default on every platform, 68px: a bold six-letter name such as "Claude" needs a 54px chip,
+  // and the chip is the strip less 14px. The phone adds only its fold area.
+  expect(threadLook.match(/--author-thread-gutter:[^;]*;/g)).toEqual(["--author-thread-gutter: var(--tine-author-gutter, 68px);"]);
   expect(threadLook).not.toMatch(/(^|[\s;{])(left|right|margin-left|margin-right|padding-left|padding-right|float: right|float: left):/m);
   expect(threadLook).not.toMatch(/float: (left|right)/);
 });
