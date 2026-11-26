@@ -4,6 +4,7 @@
 // can be submitted again once the name is free.
 import { expect, it, vi } from "vitest";
 import { backend } from "./backend";
+import { mountCapture } from "./tests/captureApp";
 
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload?: unknown }) => void>(),
@@ -53,10 +54,7 @@ it("keeps the captured text in the capture window when the main window could not
   vi.spyOn(backend(), "getCaptureEnterFiles").mockResolvedValue(false);
   vi.spyOn(backend(), "captureTarget").mockResolvedValue("main");
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(17);
-  const root = document.createElement("div");
-  root.id = "capture-root";
-  document.body.append(root);
-  await import("./capture");
+  await mountCapture();
   await vi.waitFor(() => expect(h.captureApi).not.toBeNull());
   h.captureApi!.submit();
   await vi.waitFor(() => expect(h.emitted.some((e) => e.event === "quick-capture")).toBe(true));
