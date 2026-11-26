@@ -121,10 +121,17 @@ export function removeAuthorTarget(ids?: readonly string[]): string | null {
 
 /** The one "Remove author" action, for the block context menu and its command:
  * leaves the editor and clears writable authored targets through the property
- * batch (one undo, one guarded save per changed page). O(target/page bytes). */
+ * batch (one undo, one guarded save per changed page). With no such target
+ * (the palette lists the command always, GH #918) it only says so: no write,
+ * and the editor stays as it was. O(target/page bytes). */
 export function removeAuthor(ids: readonly string[] = commandTargetIds()): void {
+  const targets = ids.filter(hasWritableAuthor);
+  if (!targets.length) {
+    pushToast(msg("block-ref-actions-select-an-authored-block-to-remove"), "warn");
+    return;
+  }
   endEdit("select-block");
-  setBlockProperty(ids.filter(hasWritableAuthor), "tine.author", null);
+  setBlockProperty(targets, "tine.author", null);
 }
 
 function ancestorsIn(id: string, set: ReadonlySet<string>): boolean {
