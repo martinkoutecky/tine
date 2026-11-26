@@ -7,9 +7,14 @@ const UTF8_DECODER = new TextDecoder();
 
 /** Marks an element that draws a DIFFERENT source inside a block's rendered
  *  content: a user macro's expansion, a block reference's target text, an
- *  embed. Span attributes below it are offsets into that other text, never into
- *  the host block's raw, so exact host mapping stops there (GH #375 review). */
+ *  embed, a query's output, one of the app's own notices. Span attributes below
+ *  it are offsets into that other text, never into the host block's raw, so
+ *  exact host mapping stops there (GH #375 review). */
 export const FOREIGN_SOURCE_ATTR = "data-foreign-source";
+/** Text the app generated, which no block authored: a query's output (results,
+ *  its empty message, its controls) and a notice drawn in place of content (a
+ *  region that failed to render, the embed-depth warning). */
+const GENERATED_OUTPUT = `[${FOREIGN_SOURCE_ATTR}="query"], [${FOREIGN_SOURCE_ATTR}="notice"]`;
 
 export interface SpanDomAttrs {
   "data-so": string;
@@ -206,6 +211,17 @@ function closestSpanElement(root: Element, node: Node): Element | null {
     el = el.parentElement;
   }
   return null;
+}
+
+/** Whether mapping a range end at `node` onto the text of the block `root`
+ *  renders would depend on generated output drawn in it: the end lies in that
+ *  output, or the construct the click mapper snaps it to holds some (the snap
+ *  picks an edge by rendered length, which then counts generated text). Such
+ *  an end names no authored text. O(depth + elements in that construct). */
+export function rangeEndDependsOnGeneratedOutput(root: Element, node: Node): boolean {
+  const output = elementFromNode(node)?.closest(GENERATED_OUTPUT);
+  if (output && root.contains(output)) return true;
+  return !!closestSpanElement(root, node)?.querySelector(GENERATED_OUTPUT);
 }
 
 /** DOM-text walk used for click mapping. It treats <br> as "\n" and Twemoji
