@@ -63,3 +63,5 @@ capture-retry-unconfirmed = Saving is unconfirmed — text kept. Retry File capt
 capture-previous-graph = Capture may be in the previous graph; saving is unconfirmed — text kept. Check that graph before capturing again.
 capture-start-new = Start a new capture
 capture-new-request = Text kept for a new capture. Remove anything already saved in the previous graph before filing again.
+capture-unproved = Tine can't confirm this capture was saved — text kept. Check the page; if the capture is missing, start a new capture.
+capture-new-request-unproved = Text kept for a new capture. If part of it is already on the page, remove it here before filing again.

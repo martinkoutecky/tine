@@ -123,7 +123,7 @@ impl Timing {
         draft_errors: &BTreeMap<String, DraftFailure>,
         draft: Option<&Record>,
     ) -> bool {
-        self.notice.draft_error = draft_errors.values().any(|f| f.pages.contains(key));
+        self.notice.draft_error = names(draft_errors, key);
         // The core's model-mandated conflict mailbox push stays immediate.
         // This separate persistent progress indicator waits for a draft
         // application or a surfaced failure of that draft.
@@ -132,6 +132,11 @@ impl Timing {
         }
         page.conflict || self.notice.save_error
     }
+}
+
+/// Whether a surfaced draft failure names `key`.
+fn names(draft_errors: &BTreeMap<String, DraftFailure>, key: &str) -> bool {
+    draft_errors.values().any(|f| f.pages.contains(key))
 }
 
 impl Record {
@@ -380,6 +385,11 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             #[cfg(test)]
             self.reference.save_now(key);
         }
+    }
+
+    /// Whether a surfaced draft failure names `key`.
+    pub(super) fn draft_error_names(&self, key: &str) -> bool {
+        names(&self.draft_errors, key)
     }
 
     /// Pages a surfaced draft failure names (§6 step 5).

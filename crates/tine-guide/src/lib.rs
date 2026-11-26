@@ -989,12 +989,13 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn ctrl_y_redo_alias_is_documented_in_the_bundled_guide() {
-        // GH #491: both redo chords, the platforms that get the second one, and
-        // that remapping Redo replaces both.
+    fn mod_y_redo_alias_is_documented_in_the_bundled_guide() {
+        // GH #491, #1044: both redo chords, the second one on each platform, that
+        // remapping Redo replaces both.
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("redo is Ctrl/Cmd+Shift+Z"));
-        assert!(tips.contains("On Windows and Linux **Ctrl+Y** also redoes"));
+        assert!(tips.contains("**Ctrl+Y** also redoes on Windows and Linux"));
+        assert!(tips.contains("and **Cmd+Y** on macOS, as in Logseq"));
         assert!(tips.contains("remapping Redo replaces both"));
     }
 
@@ -1244,6 +1245,16 @@ mod rename_guide_tests {
         ] {
             assert!(mobile.contains(detail), "missing mobile preview guidance: {detail}");
         }
+    }
+
+    #[test]
+    fn phones_show_page_title_buttons_without_a_tap() {
+        // GH #1025: no hover on a phone, so the title's buttons need no tap; one group, menu last. A narrow
+        // journal with carry buttons keeps Share and the star in the menu.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("**A page title's buttons always show on a phone or tablet.**"));
+        assert!(mobile.contains("move as one group below a long title, with **⋯** last"));
+        assert!(mobile.contains("keeps Share and the star in its **⋯** menu"));
     }
 
     #[test]
@@ -2939,6 +2950,7 @@ mod asset_manifest_tests {
             .markdown;
         assert!(guide.contains("additions stay for your next capture"));
         assert!(guide.contains("plain retry"));
+        assert!(guide.contains("says it can't confirm the capture and keeps the text"));
         assert!(guide.contains("**Add text** reminder"));
         assert!(guide.contains("never reached a graph"));
         assert!(guide.contains("After a refused filing, **Esc** keeps the text too"));

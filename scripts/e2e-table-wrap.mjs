@@ -25,6 +25,9 @@ fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced?
 fs.writeFileSync(path.join(graph, "pages/Table reading.md"), outline);
 fs.writeFileSync(path.join(graph, "pages/Embed reading.md"), "- {{embed [[Table reading]]}}\n- [[Table reading]]\n");
 fs.writeFileSync(path.join(graph, "pages/Unbreakable.md"), `- ${table(["a".repeat(500), "end"]).replaceAll("\n", "\n  ")}\n`);
+// GH #802 (fifth comment): the reporter's table, empty header, short first cell.
+const reporterTable = `| | |\n| --- | --- |\n| 1 2 3 | ${Array(18).fill("ABC").join(" ")} |`;
+fs.writeFileSync(path.join(graph, "pages/Reporter table.md"), `- ${reporterTable.replaceAll("\n", "\n  ")}\n`);
 const date = new Date();
 const day = `${date.getFullYear()}_${String(date.getMonth() + 1).padStart(2, "0")}_${String(date.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(path.join(graph, `journals/${day}.md`), outline);
@@ -139,6 +142,24 @@ try {
     assert.ok(local.moved && local.paneScroll <= 1, `Unbreakable content must scroll inside its table: ${JSON.stringify(local)}`);
     evidence.push({ name: stage, local });
     screenshot(stage);
+  }
+  // GH #802 (fifth comment) reported the first column at about 75% of the
+  // table. Auto layout gives a short first cell its content width, so guard
+  // it below 40% at a narrow, a normal and a wide desktop pane.
+  await openPageByName(browser, "Reporter table");
+  for (const [label, width] of [["narrow", 700], ["normal", 1100], ["wide", 1900]]) {
+    stage = `reporter-table-${label}`;
+    await browser.setWindowSize(width, 1000);
+    await checkReading(".main-content", stage, 1);
+    const share = await browser.execute(() => {
+      const wrap = document.querySelector(".main-content .md-table-wrap"), table = wrap.querySelector("table");
+      const cells = [...table.querySelectorAll("tbody td")].map(cell => cell.getBoundingClientRect().width);
+      const tableWidth = table.getBoundingClientRect().width;
+      return { pane: wrap.closest(".main-content").clientWidth, wrap: wrap.clientWidth, table: tableWidth, cells,
+        classes: wrap.className, firstShare: cells[0] / tableWidth };
+    });
+    evidence.push({ name: stage, share });
+    assert.ok(share.cells.length === 2 && share.firstShare < 0.4, `${stage}: first column takes ${Math.round(share.firstShare * 100)}% of the table: ${JSON.stringify(share)}`);
   }
   for (const [file, bytes] of snapshot) assert.equal(fs.readFileSync(file, "utf8"), bytes, `Reading changed ${file}`);
   fs.writeFileSync(path.join(out, "receipt.json"), JSON.stringify({ outcome: "PASS", base, app, evidence }, null, 2));

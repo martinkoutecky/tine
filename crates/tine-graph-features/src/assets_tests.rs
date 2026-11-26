@@ -294,9 +294,13 @@ fn the_second_reviews_in_use_files_are_never_offered_for_trash() {
     ] {
         std::fs::write(root.join(file), text).unwrap();
     }
-    let shown = [
+    // Windows cannot hold a file named only a space or a tab, so those two links name no file there.
+    let shown: Vec<&str> = [
         " ", "\t", "\u{a0}", "\u{3000}", "x.png", "README", "m.pdf", "report", "o.pdf", "d.pdf",
-    ];
+    ]
+    .into_iter()
+    .filter(|name| !cfg!(windows) || !matches!(*name, " " | "\t"))
+    .collect();
     for name in shown.iter().chain(&["unused.png"]) {
         std::fs::write(root.join("assets").join(name), b"x").unwrap();
     }

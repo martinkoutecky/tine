@@ -595,7 +595,14 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 64)
+## Page host (ceiling: 65)
+# GH #1041 (64 -> 65): `wait_departure`, the barrier a window waits at when it
+# leaves this graph for another (src-tauri page_commands.rs). `wait_published`
+# cannot answer it with a parameter and keep its own promise: its `Applied`
+# means every need is published, at every caller, while a departure's
+# `Applied` holds also for a need left to its draft, which is not published
+# and gets no revision. A flag would make that promise depend on an argument
+# at each of its callers. Both verbs run one internal wait; no step is copied.
 # RCD slice 1 part 3, call 21 (63 -> 64): `DraftOwnership`, the owner claim's
 # answer `start` takes: a host whose claim holds no lock starts with drafts
 # unowned. `start` cannot answer it without a parameter, and `bool` would not
@@ -648,6 +655,7 @@ fn page_host::PageHost::discard
 fn page_host::PageHost::close
 fn page_host::PageHost::delete
 fn page_host::PageHost::wait_published
+fn page_host::PageHost::wait_departure
 fn page_host::PageHost::save_now
 fn page_host::PageHost::owed
 fn page_host::PageHost::draft_status
