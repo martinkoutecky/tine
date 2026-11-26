@@ -9,28 +9,47 @@ import { setTimeout as sleep } from "node:timers/promises";
 const PORT = 5225;
 const OUT = path.resolve(process.env.TOPBAR_SHOT_DIR || "notes");
 // GH #205 has real-fit tiers (master a006f1308). A phone (platform "android":
-// no tab strip, no window controls) keeps calendar/journals/theme and the
-// right-sidebar action direct down to a 345px content box. A desktop topbar
+// no tab strip, no window controls) keeps calendar/journals/share/theme and the
+// right-sidebar action direct down to a 386px content box (discussion #968: the
+// old 345px tier left Settings past the right edge of 375-414px phones once
+// Back/Forward and Share were on the bar). Settings must be on screen in every
+// case, including under interface zoom (`zoom`, CSS zoom as iOS/Android apply it). A desktop topbar
 // carries a tab strip, and a frameless one three window buttons: those collapse
 // optional actions at 460px so a tab pill stays readable (og H). Back/Forward
 // stay inline until the 300px floor; the sidebar action moves to overflow only
 // at the 250px last resort (or at 460px with window controls).
 const CASES = [
-  { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
+  { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
   { name: "system-frame-collapse-440", width: 440, sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme"], separator: false, minTabWidth: 100 },
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false, minTabWidth: 100 },
   { name: "system-frame-nav-collapse-400", width: 400, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "back", "forward"], separator: true, minTabWidth: 100 },
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true, minTabWidth: 100 },
   { name: "custom-frame-collapse-440", width: 440, sidebar: "closed", fakeWindowControls: true, menu: true, nav: 2, optional: 0, sidebarAction: 0, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "right-sidebar"], separator: false },
-  { name: "phone-actions-inline-400", width: 400, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
-  { name: "phone-actions-inline-390", width: 390, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar"], separator: false },
+  { name: "phone-actions-inline-430", width: 430, platform: "ios", sidebar: "closed", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
+  { name: "phone-actions-inline-420", width: 420, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
+  { name: "phone-optional-collapse-414", width: 414, platform: "ios", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
+  { name: "phone-optional-collapse-393", width: 393, platform: "ios", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
+  { name: "phone-optional-collapse-390", width: 390, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
+  { name: "phone-optional-collapse-375", width: 375, platform: "ios", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
   { name: "phone-optional-collapse-360", width: 360, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme"], separator: false },
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
+  { name: "phone-zoom150-390", width: 390, zoom: 1.5, platform: "ios", sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward"], separator: true },
+  { name: "phone-zoom125-390", width: 390, zoom: 1.25, platform: "ios", sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true },
+  { name: "phone-zoom200-390", width: 390, zoom: 2, platform: "ios", sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward"], separator: true },
+  { name: "phone-zoom300-390", width: 390, zoom: 3, platform: "ios", sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward"], separator: true },
   { name: "nav-collapse-280", width: 280, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "back", "forward"], separator: true },
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true },
   { name: "last-resort-240", width: 240, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "right-sidebar", "back", "forward"], separator: true },
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward"], separator: true },
 ];
 
 mkdirSync(OUT, { recursive: true });
@@ -38,7 +57,7 @@ const configArgs = process.env.TINE_VITE_CONFIG ? ["--config", process.env.TINE_
 const baseUrl = process.env.TINE_SHOT_URL || `http://127.0.0.1:${PORT}/`;
 const server = process.env.TINE_SHOT_URL
   ? undefined
-  : spawn("npx", ["vite", "preview", ...configArgs, "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  : spawn("npx", ["vite", "preview", ...configArgs, "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], { stdio: "ignore", detached: true });
 
 async function waitForServer() {
   if (!server) return;
@@ -65,8 +84,18 @@ function measureTopbar() {
     .map(({ label }) => label);
   // Two toolbar controls drawn over each other (tab-strip contents excluded:
   // the strip scrolls and clips its own pills).
+  // A button inside a scrolling cluster (the navigation cluster at the zoom
+  // floor, GH #926) is drawn only within that cluster's box.
+  const shownRect = (button) => {
+    const rect = button.getBoundingClientRect();
+    const scroller = button.closest(".topbar-left");
+    if (!scroller || getComputedStyle(scroller).overflowX === "visible") return rect;
+    const box = scroller.getBoundingClientRect();
+    return { left: Math.max(rect.left, box.left), right: Math.min(rect.right, box.right), top: rect.top, bottom: rect.bottom };
+  };
   const boxes = visibleButtons.filter((button) => !button.closest(".tab-strip-scroll"))
-    .map((button) => ({ label: button.getAttribute("aria-label") || button.title || button.textContent?.trim(), rect: button.getBoundingClientRect() }));
+    .map((button) => ({ label: button.getAttribute("aria-label") || button.title || button.textContent?.trim(), rect: shownRect(button) }))
+    .filter(({ rect }) => rect.right - rect.left > 1);
   const overlapping = boxes.flatMap((a, i) => boxes.slice(i + 1)
     .filter((b) => Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left) > 1
       && Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top) > 1)
@@ -80,7 +109,26 @@ function measureTopbar() {
     return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
   };
   const overflow = document.querySelector("[data-topbar-overflow-trigger]");
+  // Discussion #968: Settings must be inside the window, not only inside the
+  // (overflowing) toolbar box. innerWidth is the visual width under CSS zoom too.
+  const onScreen = (element) => {
+    if (!element || !visible(element)) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.left >= -0.5 && rect.right <= window.innerWidth + 0.5;
+  };
+  // Settings is also the topmost element at its centre, so a tap reaches it.
+  // (Menu rows are checked by geometry only: the demo build's sticky "What's
+  // new" toast may lie over the lower rows at high zoom.)
+  const tappable = (element) => {
+    if (!onScreen(element)) return false;
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+    return Boolean(hit && (hit === element || element.contains(hit)));
+  };
+  const settings = topbar.querySelector('button[title^="Settings"]');
   return {
+    settingsOnScreen: tappable(settings),
+    menuRowsOnScreen: [...topbar.querySelectorAll(".topbar-overflow-menu [data-topbar-overflow-action]")].filter(visible).every(onScreen),
     topbar: { left: bar.left, right: bar.right, width: bar.width },
     buttons: visibleButtons.map((button) => button.getAttribute("aria-label") || button.title || button.textContent?.trim()),
     clipped,
@@ -126,6 +174,14 @@ try {
     if (testCase.sidebar === "closed") {
       await page.addInitScript(() => localStorage.setItem("logseq-claude.sidebarOpen", "0"));
     }
+    if (testCase.zoom) {
+      await page.addInitScript((zoom) => {
+        document.addEventListener("DOMContentLoaded", () => {
+          document.documentElement.style.zoom = String(zoom);
+          document.documentElement.style.setProperty("--interface-zoom", String(zoom));
+        });
+      }, testCase.zoom);
+    }
     if (testCase.platform) {
       await page.addInitScript((platform) => { globalThis.__TINE_PLATFORM__ = platform; }, testCase.platform);
     }
@@ -144,6 +200,7 @@ try {
     await sleep(180);
     const before = await page.evaluate(measureTopbar);
     if (before.clipped.length) throw new Error(`${testCase.name}: clipped toolbar buttons: ${before.clipped.join(", ")}`);
+    if (!before.settingsOnScreen) throw new Error(`${testCase.name}: Settings is not on screen: ${JSON.stringify(before.buttons)}`);
     if (before.overlapping.length) throw new Error(`${testCase.name}: overlapping toolbar buttons: ${before.overlapping.join(", ")}`);
     if (testCase.minTabWidth && !(before.activeTabVisibleWidth >= testCase.minTabWidth)) {
       throw new Error(`${testCase.name}: tab pill squeezed to ${before.activeTabVisibleWidth}px`);
@@ -163,7 +220,7 @@ try {
       await page.locator("[data-topbar-overflow-trigger]").click();
       opened = await page.evaluate(measureTopbar);
       if (JSON.stringify(opened.visibleOverflowActions) !== JSON.stringify(testCase.menuActions)
-        || opened.overflowSeparatorVisible !== testCase.separator) {
+        || opened.overflowSeparatorVisible !== testCase.separator || !opened.menuRowsOnScreen) {
         throw new Error(`${testCase.name}: wrong overflow contents: ${JSON.stringify(opened)}`);
       }
     }
@@ -173,5 +230,6 @@ try {
   }
 } finally {
   await browser?.close();
-  server?.kill("SIGTERM");
+  // npx forks vite: end the whole process group, or vite keeps the port.
+  if (server) { try { process.kill(-server.pid, "SIGTERM"); } catch { server.kill("SIGTERM"); } }
 }
