@@ -189,7 +189,7 @@ export async function loadGraphPath(
   // discard that edit — gated on whether a graph is actually loaded now, NOT on
   // the persisted path (which is empty on a TINE_GRAPH/CLI launch).
   const hadGraph = !!graphMeta();
-  // Leaving for another graph (tine#1041): a page no window is editing, kept by its
+  // Leaving for another graph (tine#1041): a page no window has started editing, kept by its
   // exact draft, does not hold the switch. A refresh of the same graph keeps
   // the full publication barrier. The target is compared as the string given;
   // the late barrier below compares it again after the iOS rebase.

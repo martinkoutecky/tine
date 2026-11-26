@@ -1,6 +1,6 @@
 // tine#1041: a graph switch refused for a page the app does not show. Alpha's
 // page "Repro 964" is deleted on disk while it has unsaved typing (a
-// conflicted draft of a page with no file). While the window is editing that page,
+// conflicted draft of a page with no file). Once the window has edited that page,
 // a switch must be refused with a toast that names the page and carries no
 // action, and the graph stays alpha. Then the app is killed. Relaunched on
 // another page, the host recovers the draft and no window page names it: the
@@ -138,7 +138,7 @@ try {
   await browser.waitUntil(async () => !!(await refusal()), { timeout: 30_000, timeoutMsg: "the refused switch did not name the page" });
   const named = await refusal();
   assert(named.actions.length === 0, `the notice has no action: ${JSON.stringify(named.actions)}`);
-  assert(await graphName() === "alpha", "the switch went through over a conflicted page the window is editing");
+  assert(await graphName() === "alpha", "the switch went through over a conflicted page the window has edited");
   passed.push(stage);
   await kill();
 
@@ -154,7 +154,7 @@ try {
     await browser.waitUntil(async () => await graphName() === "beta" || !!(await refusal()),
       { timeout: 30_000, timeoutMsg: "the switch neither went through nor was refused" });
   }
-  assert(await graphName() === "beta", `the switch was refused ${attempts} times over a draft of a page no window is editing`);
+  assert(await graphName() === "beta", `the switch was refused ${attempts} times over a draft of a page no window has started editing`);
   // The switch lands on beta's journal; its own Notes page shows beta's text.
   await openPageByName(browser, "Notes");
   await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("Beta notes")),

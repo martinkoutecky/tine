@@ -1656,17 +1656,24 @@ keeps the page while the notice stands.
 A wait asked with `departure` (the window is leaving this graph for another)
 first sets aside each need the host may leave to its draft: a settled
 conflicted page at or past the needed version, asked without a block witness,
-that no window is subscribed to, with nothing working on its key, no surfaced
-draft error, and a durable draft that is exactly its text, base and version
+that no window is subscribed to, with nothing working on its key, no draft
+vehicle of it still owed to the launch census, no surfaced draft error naming
+it, and a durable draft that is exactly its text, base and version
 (`Host::exact_copy`, the answer the host's own stop gives for a page at risk).
 A window subscribes with `page_open`, which it sends when a block of the page
-enters editing, so a page that is only displayed is not subscribed. The
+enters editing, so a page that is only displayed is not subscribed; the
+subscription outlives the editor while the host owes the window a save (the
+window-close rule below), so a conflicted page holds the switch from the
+moment a window starts editing it until the conflict is resolved. The
 returned revisions say nothing about a key set aside; its draft stays on disk
 and the next launch of the graph recovers and reports it. Only a switch to
 another graph asks with `departure`: a refresh of the same graph, restore,
-print, rename, window close and quit keep the full answer. Cost per wait step
-and need: one scan of the request queue for the key, and for an eligible key
-one comparison of the draft with the page; no file I/O and no IPC. Proof:
+print, rename, window close and quit keep the full answer. What the departure
+check adds to a wait step, per need: one scan of the request queue for the
+key, one pass over the surfaced draft failures, and for an eligible key one
+comparison of the draft with the page; no file I/O and no IPC. The needs it
+does not set aside go through the publication and refusal checks as before.
+Proof:
 `page_host/binding_departure_tests.rs`, `scripts/e2e-gh1041-switch-draft.mjs`. Any other refusal answers false (a
 failed call, a stale session, a host that ended); it keeps the page and asks
 again after a pause. A new session
