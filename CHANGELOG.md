@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-26
+
 ### Fixed
 
 - On phones 375 to 414 points wide at the default interface zoom, the less-used top-bar buttons now move into the "…" menu, so the Settings button is on screen again instead of past the right edge of the bar (discussion #968, #926). At some higher zoom levels part of the button can still be cut off. Checked in browser engines (Chromium, WebKitGTK); not verified on a real iPhone.

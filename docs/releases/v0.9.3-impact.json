@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.3",
+  "baseTag": "v0.9.2",
+  "focusedAudit": {
+    "required": false,
+    "reason": "Martin authorized the stable patch release on 2026-11-26. The release checklist reserves audits for maintainer requests."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "On phones 375 to 414 points wide at the default interface zoom, the less-used top-bar buttons now move into the \"…\" menu, so the Settings button is on screen again instead of past the right edge of the bar (discussion #968, #926). At some higher zoom levels part of the button can still be cut off. Checked in browser engines (Chromium, WebKitGTK); not verified on a real iPhone.",
+      "userVisible": true,
+      "regressions": ["UI-DISC968-PHONE-SETTINGS-OFF-SCREEN"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The toolbar tier tests and responsive browser probe cover narrow layouts. The catalog records Chromium and WebKitGTK evidence at default zoom. A physical iPhone remains unverified.",
+        "refs": ["src/styles/topbarTiers.test.ts", "scripts/shot-topbar-responsive.mjs", "tests/ui-regressions/catalog.json"]
+      },
+      "docs": {"status": "current", "reason": "The Guide already directs users to the gear at the top right.", "refs": ["crates/tine-core/src/templates/where-things-are.md"]},
+      "website": {"status": "current", "reason": "The public Guide already identifies the Settings button by its icon and location.", "refs": ["website/guide/start-where-things-are.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "A file dropped from the file manager goes after the block under the pointer, and a drop beside the blocks now writes nothing and says \"Drop a file onto a block to insert it.\", as in Logseq. Before, such a drop could link the file into an older journal file that was not on screen. On Linux and macOS with a display scale above 100%, the drop point is no longer shifted up and to the left of the pointer (#1039, UI-GH1039-FILE-DROP-TARGET).",
+      "userVisible": true,
+      "regressions": ["UI-GH1039-FILE-DROP-TARGET"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The render regression covers a drop on a routed page, refusal beside the blocks, and platform coordinate conversion. Native macOS, Windows, and fractional-scale Wayland remain unverified.",
+        "refs": ["src/filedrop.target.test.tsx", "tests/ui-regressions/catalog.json"]
+      },
+      "docs": {"status": "current", "reason": "The Guide already directs users to drop a file onto a block.", "refs": ["crates/tine-core/src/templates/research-document.md"]},
+      "website": {"status": "current", "reason": "The public document workflow already shows where to drop a PDF.", "refs": ["website/guide/workflows-research-a-document.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "Settings → Graph → Git no longer wipes what you type: the sign-in username and the commit interval keep your text while the git status refreshes, and a refused sign-in keeps the username (only the token is cleared). If the git status refresh reports the repository's remote on another server while the sign-in form is open, the form starts fresh for that server instead of keeping the previous server's name and token (#1035, UI-GH1035-GIT-FIELDS-KEEP-TYPING).",
+      "userVisible": true,
+      "regressions": ["UI-GH1035-GIT-FIELDS-KEEP-TYPING"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The render tests exercise refresh while typing, refused sign-in, and a reported server change. The native journey exercises interval entry with real keys.",
+        "refs": ["src/components/GitAutocommitSetting.test.tsx", "scripts/e2e-git-autocommit.mjs"]
+      },
+      "docs": {"status": "current", "reason": "The existing Git sign-in and automatic commit instructions still apply.", "refs": ["crates/tine-core/src/templates/files-external-edits-backups.md"]},
+      "website": {"status": "current", "reason": "The public Guide already describes the Git setup workflow.", "refs": ["website/guide/reference-files-external-edits-and-backups.html"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    },
+    {
+      "section": "Fixed",
+      "text": "On macOS, Cmd+Y redoes, as it does in Logseq, next to Cmd+Shift+Z; before, it did nothing. Ctrl+Y stays the system's yank there, and stays Redo's second key on Windows and Linux. Settings → Shortcuts stops showing this second key once the graph's `config.edn` or this device binds Redo (#1044, UI-GH1044-MAC-CMD-Y-REDO).",
+      "userVisible": true,
+      "regressions": ["UI-GH1044-MAC-CMD-Y-REDO"],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "The render tests cover the editor shortcut and the Settings shortcut list on simulated macOS and Linux. Native macOS remains unverified.",
+        "refs": ["src/components/Block.redoKeys.mac.test.tsx", "src/components/Block.redoKeys.linux.test.tsx", "src/components/Settings.redoAlias.mac.test.tsx", "src/components/Settings.redoAlias.linux.test.tsx", "src/keybindings.test.ts"]
+      },
+      "docs": {"status": "update", "reason": "The bundled Guide lists the macOS Redo shortcut and explains remapping.", "refs": ["crates/tine-core/src/templates/tips.md", "crates/tine-core/src/guide.rs"]},
+      "website": {"status": "update", "reason": "The public shortcuts page and interactive Guide include the updated Redo tip.", "refs": ["website/guide/features-tips-shortcuts.html", "website/guide/feature-showcase.html", "website/guide/app/snapshot.json", "website/guide/search-index.js"]},
+      "blog": {"status": "not-applicable", "reason": "Covered in the patch release notes.", "refs": []}
+    }
+  ]
+}
