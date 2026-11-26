@@ -17,6 +17,10 @@ mod add;
 pub(crate) mod arena;
 #[cfg(desktop)]
 pub(crate) mod client;
+mod command_name;
+pub(crate) use command_name::command_name;
+#[cfg(desktop)]
+pub(crate) use command_name::set_command_name;
 pub(crate) mod endpoint;
 pub(crate) mod git_autocommit;
 pub(crate) mod git_identity;

@@ -577,7 +577,7 @@ branch. A same-branch concurrent commit still uses compare-and-swap retries.
   `run revert REVERT_RUN` undoes its committed pages in one command; it is not a step of the app's Undo. Text:
   `reverted PAGE` / `unchanged PAGE` / `not reverted PAGE (ERROR): MESSAGE`, each kept block as
   `  kept your text (REASON): FIRST LINE` (`  not brought back (unclear whether you removed it) (unclear): FIRST
-  LINE`), then `undo this revert: tine run revert REVERT_RUN`. `run revert` passes the same index-lock gate as a
+  LINE`), then `undo this revert: COMMAND run revert REVERT_RUN`. `run revert` passes the same index-lock gate as a
   `--run` write.
 
 Only commits within 10 minutes before the run's begin time and at most 20,000 first-parent commits back are
@@ -748,6 +748,11 @@ id pages/a.md rev d24f22bfce0d5568
 
 ## Errors
 
+`COMMAND` in a hint is the program's name as it was started: the file name it was run under when that is one plain
+word (`tine`, `tine-beta` for the Beta's Linux packages, `tine.exe` on Windows), otherwise `tine`. Usage lines and
+`--help` print the same name (`src-tauri/src/owner/command_name.rs`). A hint answered by the graph's owner prints the
+owner's name. The version line names the product, `tine`, under every name.
+
 A failed command prints one line to stderr and exits non-zero.
 
 - Text: `tine: <code>: <message>`. A refusal puts its reason in the code so a script can match
@@ -870,7 +875,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `no-host` | no page host could be started for the write |
 | `read-only` | the page is read-only in Tine (a Guide page, or a page that cannot round-trip) |
 | `does-not-round-trip` | the new text would not read back as written (an unclosed fence, a line that becomes a new block) |
-| `page-properties` | malformed agent input would turn an outline write into page properties, changing page metadata; use `tine prop set --page PAGE KEY VALUE` on an existing page |
+| `page-properties` | malformed agent input would turn an outline write into page properties, changing page metadata; use `COMMAND prop set --page PAGE KEY VALUE` on an existing page |
 | `store` | the store refused the save plan |
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
