@@ -98,6 +98,15 @@ export function localImagePath(src: string): string | null {
   return p;
 }
 
+/** `text` parsed as an HTML fragment in an inert document: the one parse raw HTML is
+ * rendered from (so its character references are decoded exactly as the page shows them).
+ * O(fragment bytes). */
+export function inertHtml(text: string): HTMLDivElement {
+  const root = document.implementation.createHTMLDocument("").createElement("div");
+  root.innerHTML = text;
+  return root;
+}
+
 export interface HtmlIframe { src: string; width?: string; height?: string }
 export interface HtmlPresentation { html: string; localImages: (string | null)[]; iframe: HtmlIframe | null }
 
@@ -108,8 +117,7 @@ export interface HtmlPresentation { html: string; localImages: (string | null)[]
  * Browser and native export security policies stay distinct in the shared JSON.
  */
 export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPresentation {
-  const root = document.implementation.createHTMLDocument("").createElement("div");
-  root.innerHTML = text;
+  const root = inertHtml(text);
   const frame = allowIframe ? root.querySelector("iframe") : null;
   const src = frame?.getAttribute("src");
   if (frame && src && hasWebUrlPrefix(src)) {

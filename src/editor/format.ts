@@ -5,8 +5,9 @@
 
 import { headerTokens } from "../markers";
 import { parseBlock, parserReady } from "../render/parse";
-import { HIGHLIGHT_FALLBACK } from "../blockColors";
-import { colorOnlyStyles } from "../render/htmlSanitize";
+import { BLOCK_COLOR_NAMES, HIGHLIGHT_FALLBACK } from "../blockColors";
+import { inertHtml } from "../render/htmlSanitize";
+import { utf16ToUtf8ByteOffset } from "../render/spans";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 
 export interface Edit {
@@ -100,60 +101,57 @@ export function highlightMarkOpen(color: string): string {
   return `<mark style="background-color: var(--ls-highlight-color-${color}, ${HIGHLIGHT_FALLBACK[color]})">`;
 }
 const MARK_CLOSE = "</mark>";
-// One `<mark …>text</mark>` element as HTML spells it: the tag and attribute names in any case,
-// attribute values in either quote or none, text with no tag and no character reference.
-const MARK_ELEMENT = /^<mark((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*>([^<&]*)<\/mark\s*>$/i;
-const MARK_ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
-/** The open-tag length of `html` when it is one coloured highlight: a `<mark>` whose only
- * attribute is a `style` the sanitizer keeps whole and that sets `background-color`. O(html). */
-function colourMarkOpenLength(html: string): number | null {
-  const element = MARK_ELEMENT.exec(html);
-  if (!element) return null;
-  const attributes = [...element[1].matchAll(MARK_ATTRIBUTE)];
-  if (attributes.length !== 1 || attributes[0][1].toLowerCase() !== "style") return null;
-  const style = attributes[0][2] ?? attributes[0][3] ?? attributes[0][4] ?? "";
-  const declarations = style.split(";").filter((part) => part.trim()).length;
-  const [kept] = colorOnlyStyles([style]);
-  const keptDeclarations = kept ? kept.split("; ") : [];
-  if (keptDeclarations.length !== declarations || !keptDeclarations.some((d) => d.startsWith("background-color:"))) return null;
-  return html.toLowerCase().lastIndexOf("</mark") - element[2].length;
-}
-
-/** The highlight that owns `[s, e)` in the parser's reading of `text`: a coloured `<mark>`
- * (`colour`) or a plain `==` highlight around one run of plain text, whose node equals the
- * selection or whose text contains it. `from`/`to` is the node, `innerFrom`/`innerTo` its text. */
+/** The highlight that owns `[s, e)` in the parser's reading of `text`: a mark the colour
+ * row wrote (exactly `highlightMarkOpen(name)`, text, `</mark>`; `colour`) or a plain `==`
+ * highlight around one run of plain text, whose node equals the selection or whose text
+ * contains it. `from`/`to` is the node, `innerFrom`/`innerTo` its text. `"refuse"` when any
+ * other inline HTML overlaps the selection: a mark (or anything) written by hand is never
+ * rewritten. One walk of the AST compares parser byte spans with the selection's bytes;
+ * only the owner's four offsets are mapped back, in one forward pass. O(block bytes + nodes). */
 type Owner = { colour: boolean; from: number; to: number; innerFrom: number; innerTo: number };
-function highlightOwner(text: string, s: number, e: number): Owner | null {
-  const lead = text.length - text.trimStart().length;
-  const cursor = utf8ToUtf16Cursor(text.trimStart());
-  const at = (byte: number) => lead + cursor(byte - 2);
-  let found: Owner | null = null;
-  const owns = (o: Owner) => (s === o.from && e === o.to) || (o.innerFrom <= s && e <= o.innerTo);
+function highlightOwner(text: string, s: number, e: number): Owner | null | "refuse" {
+  const body = text.trimStart(), lead = text.length - body.length;
+  // Parser spans are UTF-8 bytes of the trimmed text behind a two-byte "- " prefix.
+  const byteOf = (unit: number) => 2 + utf16ToUtf8ByteOffset(body, unit - lead);
+  const bs = byteOf(s), be = byteOf(e);
+  type Found = { colour: boolean; html?: string; bytes: [number, number, number, number] };
+  let found: Found | null = null, refuse = false;
   const visit = (value: unknown): void => {
-    if (found || !value || typeof value !== "object") return;
+    if (found || refuse || !value || typeof value !== "object") return;
     if (Array.isArray(value)) { value.forEach(visit); return; }
     const node = value as { k?: string; text?: string; emph?: string; span?: [number, number]; children?: unknown[] };
-    if (node.span && node.span[0] >= 2) {
-      const from = at(node.span[0]), to = at(node.span[1]);
-      if (node.k === "inline_html" && node.text !== undefined && text.slice(from, to) === node.text) {
-        const open = colourMarkOpenLength(node.text);
-        const owner = open === null ? null
-          : { colour: true, from, to, innerFrom: from + open, innerTo: from + open + MARK_ELEMENT.exec(node.text)![2].length };
-        if (owner && owns(owner)) { found = owner; return; }
+    const span = node.span;
+    if (span && span[0] >= 2 && span[0] < be && bs < span[1]) {
+      if (node.k === "inline_html") {
+        const html = node.text ?? "";
+        const open = BLOCK_COLOR_NAMES.map(highlightMarkOpen).find((o) => html.startsWith(o));
+        const innerBytes = open && html.endsWith(MARK_CLOSE)
+          ? [span[0] + open.length, span[1] - MARK_CLOSE.length] : null;
+        const owns = innerBytes && ((bs === span[0] && be === span[1]) || (innerBytes[0] <= bs && be <= innerBytes[1]));
+        if (owns) found = { colour: true, html, bytes: [span[0], innerBytes[0], innerBytes[1], span[1]] };
+        else refuse = true;
+        return;
       }
       if (node.k === "emphasis" && node.emph === "Highlight" && node.children?.length === 1) {
-        const child = node.children[0] as { k?: string; text?: string; span?: [number, number]; span_map?: unknown };
-        if (child.k === "plain" && child.span && !child.span_map) {
-          const owner = { colour: false, from, to, innerFrom: at(child.span[0]), innerTo: at(child.span[1]) };
-          if (text.slice(owner.innerFrom, owner.innerTo) === child.text && owns(owner)) { found = owner; return; }
+        const child = node.children[0] as { k?: string; span?: [number, number]; span_map?: unknown };
+        if (child.k === "plain" && child.span && !child.span_map
+          && ((bs === span[0] && be === span[1]) || (child.span[0] <= bs && be <= child.span[1]))) {
+          found = { colour: false, bytes: [span[0], child.span[0], child.span[1], span[1]] };
+          return;
         }
       }
     }
     for (const key of Object.keys(node)) if (key !== "span") visit((node as Record<string, unknown>)[key]);
   };
   visit(parseBlock(text, false));
-  return found;
+  if (refuse) return "refuse";
+  if (!found) return null;
+  const hit: Found = found; // assigned inside the walk, which TypeScript does not follow
+  const cursor = utf8ToUtf16Cursor(body);
+  const [from, innerFrom, innerTo, to] = hit.bytes.map((byte) => lead + cursor(byte - 2));
+  if (hit.html !== undefined && text.slice(from, to) !== hit.html) return "refuse";
+  return { colour: hit.colour, from, to, innerFrom, innerTo };
 }
 
 /** The block's AST with positions dropped and adjacent plain text merged; the highlight
@@ -191,18 +189,27 @@ function readsAsText(withMark: string, without: string, markup: string, inner: s
   return seenWith.n === seenWithout.n + 1 && a === b;
 }
 
+/** Whether the page shows the mark `markup` with exactly the text `inner`: the render
+ * path's own HTML parse decodes character references (`&copy` reads ©), while `R&D` or
+ * `A & B` stay as written. O(markup). */
+function shownAsWritten(markup: string, inner: string): boolean {
+  return inertHtml(markup).textContent === inner;
+}
+
 /** Colour the selection's highlight (Markdown prose only: the caller decides that the editor
  * shows prose, see `HighlightColors`). `color` is one of Logseq's built-in colors and writes
  * its `<mark style=…>`; `null` removes a coloured highlight. The parser decides which
- * highlight owns the selection (a coloured mark or a plain `==` around plain text, equal to
- * the selection or containing it): a colour replaces that highlight, `null` removes it.
+ * highlight owns the selection (a mark the row wrote or a plain `==` around plain text,
+ * equal to the selection or containing it): a colour replaces that highlight, `null`
+ * removes it.
  * Without an owner, a colour wraps the selection with its outer whitespace left outside.
  * The selection afterwards covers the same text.
  *
  * HTML content is not Markdown: Logseq and Tine show it literally, decode character
  * references in it, and a link inside it stops being a link. So a colour is written or
- * removed only around one line of text with no `<` and no `&`, which the parser reads
- * the same way with and without the highlight. Otherwise, before the parser is ready,
+ * removed only around one line of text that the page shows as written inside the mark
+ * and that the parser reads the same way with and without it; a mark written by hand,
+ * around or inside the selection, is never rewritten. Otherwise, before the parser is ready,
  * and when nothing would change, the answer is `null`. O(block bytes): at most three
  * parses of the block and one of the selection. */
 export function setHighlightColor(
@@ -217,11 +224,13 @@ export function setHighlightColor(
   while (s < e && ASCII_WHITESPACE.test(text[s])) s += 1;
   while (e > s && ASCII_WHITESPACE.test(text[e - 1])) e -= 1;
   if (s === e) return null;
-  const owner = highlightOwner(text, s, e);
+  const found = highlightOwner(text, s, e);
+  if (found === "refuse") return null;
+  const owner = found;
   if (color === null && !owner?.colour) return null;
   const from = owner ? owner.innerFrom : s, to = owner ? owner.innerTo : e;
   const inner = text.slice(from, to);
-  if (/[\r\n<&]/.test(inner)) return null;
+  if (/[\r\n]/.test(inner)) return null;
   const [alone, ...more] = parseBlock(inner, false);
   const only = alone && "inline" in alone && Array.isArray(alone.inline) && alone.inline.length === 1 ? alone.inline[0] : null;
   if (more.length || only?.k !== "plain" || only.text !== inner || only.span_map) return null;
@@ -233,13 +242,13 @@ export function setHighlightColor(
   const withDirection = (edit: Edit): Edit => (direction === undefined ? edit : { ...edit, direction });
   if (color === null) {
     const markup = text.slice(owner!.from, owner!.to);
-    if (!readsAsText(text, base, markup, inner)) return null;
+    if (!shownAsWritten(markup, inner) || !readsAsText(text, base, markup, inner)) return null;
     return withDirection({ text: base, start: selStart, end: selEnd });
   }
   const open = highlightMarkOpen(color);
   const markup = open + inner + MARK_CLOSE;
   const next = base.slice(0, at) + markup + base.slice(at + inner.length);
-  if (next === text || !readsAsText(next, base, markup, inner)) return null;
+  if (next === text || !shownAsWritten(markup, inner) || !readsAsText(next, base, markup, inner)) return null;
   return withDirection({ text: next, start: selStart + open.length, end: selEnd + open.length });
 }
 

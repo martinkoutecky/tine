@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { galleryThemes } from "./themes";
 import { BLOCK_COLOR_NAMES } from "../blockColors";
+import { highlightMarkOpen } from "../editor/format";
+import { colorOnlyStyles } from "../render/htmlSanitize";
 
 // Text in a coloured highlight (the selection toolbar's colour row) stays readable, at least
 // 4.5:1 (WCAG AA), on every shipped theme in both modes: the default theme and each gallery
@@ -52,13 +54,26 @@ function ratio(a: Rgb, b: Rgb): number {
 }
 
 describe("coloured highlight text contrast", () => {
-  // The variable app.css draws a coloured mark's text in.
-  const rule = app.match(/mark\[style\*="background-color"\]\s*\{\s*color:\s*var\((--[a-z0-9-]+)\);/);
-  // Without that rule a coloured mark takes the plain mark's text colour.
-  const textVariable = rule?.[1] ?? app.match(/\nmark \{[^}]*\scolor:\s*var\((--[a-z0-9-]+)\);/)![1];
+  // The rule app.css draws the colour row's marks with: a substring of the style attribute, and
+  // the variable their text is drawn in.
+  const rule = app.match(/\nmark\[style\*="([^"]+)"\]\s*\{\s*color:\s*var\((--[a-z0-9-]+)\);/);
+  const textVariable = rule![2];
+  // The style attribute a mark renders with: what the sanitizer keeps.
+  const rendered = (style: string) => colorOnlyStyles([style])[0];
 
-  it("draws a coloured mark's text in a theme variable", () => {
-    expect(rule?.[1]).toBeTruthy();
+  it("draws the colour row's marks, and only marks with a theme highlight background, in a theme variable", () => {
+    expect(rule).toBeTruthy();
+    const row = BLOCK_COLOR_NAMES.map((name) => rendered(highlightMarkOpen(name).match(/style="([^"]*)"/)![1]));
+    expect(row.every((style) => style.includes(rule![1]))).toBe(true);
+    // Merge review of 75e6ab532, finding 2: a mark written with any other background keeps the
+    // mark text colour it had (on Solarized light, #073642 text on #073642 otherwise).
+    const authored = ["background-color: #073642", "background-color: black", "background-color: rgb(0, 0, 0)",
+      "background-color: hsl(0, 0%, 0%)", "background: #000", "color: var(--ls-highlight-color-red)"];
+    expect(authored.map(rendered).filter((style) => style?.includes(rule![1]))).toEqual([]);
+  });
+
+  it("keeps every other mark's text in the theme's mark text colour", () => {
+    expect(app.match(/\nmark \{[^}]*\scolor:\s*var\((--[a-z0-9-]+)\);/)![1]).toBe("--mark-text");
   });
 
   it("a gallery palette declares a highlight colour only to change it", () => {

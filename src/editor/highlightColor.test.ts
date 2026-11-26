@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { highlightMarkOpen, setHighlightColor } from "./format";
 import { BLOCK_COLOR_NAMES } from "../blockColors";
@@ -65,7 +66,7 @@ describe("setHighlightColor", () => {
     ["inline code", "see `code` now", 4, 10],
     ["text inside inline code", "see `some code` now", 5, 9],
     ["a tag", "see #tag now", 4, 8],
-    ["a tag opener", "x a < b", 2, 7],
+    ["a tag", "x a <b>c</b>", 2, 12],
     ["a character reference", "x a &amp; b", 2, 11],
     ["an escape", "x a \\*b", 2, 7],
     ["two lines", "x one\ntwo", 2, 9],
@@ -140,37 +141,62 @@ describe("setHighlightColor", () => {
       expect(setHighlightColor(first.text, first.start, first.end, "red")).toBeNull();
     });
 
-    // Finding 8: a coloured mark spelled by hand, which the sanitizer renders, is recoloured and removed too.
+    // Merge review of 75e6ab532, findings 1 and 5: only a mark the row wrote is rewritten. A mark
+    // written any other way keeps every declaration and its spelling, whether the selection is
+    // its text, the whole mark, or a span around it.
     it.each([
+      ["a foreground", '<mark style="background-color: #000; color: #fff">'],
+      ["a decoration colour", '<mark style="background-color: #fdd8d8; text-decoration-color: red">'],
       ["two spaces after the colon", '<mark style="background-color:  var(--ls-highlight-color-red, #fdd8d8)">'],
       ["another hex fallback", '<mark style="background-color: var(--ls-highlight-color-red, #ff0000)">'],
       ["an uppercase property", '<mark style="BACKGROUND-COLOR: var(--ls-highlight-color-red, #fdd8d8)">'],
       ["a single-quoted attribute", "<mark style='background-color: var(--ls-highlight-color-red, #fdd8d8)'>"],
       ["a literal hex background", '<mark style="background-color: #fdd8d8">'],
       ["an uppercase tag", '<MARK STYLE="background-color: #fdd8d8">', "</MARK>"],
-    ])("recolours and removes a mark spelled with %s", (_label, open, close = "</mark>") => {
-      const text = `say ${open}hello${close} now`;
-      const from = text.indexOf("hello");
-      for (const [s, e] of [[from, from + 5], [4, text.indexOf(" now")]]) {
-        expect(setHighlightColor(text, s, e, "blue")?.text).toBe(`say ${BLUE}hello</mark> now`);
-        expect(setHighlightColor(text, s, e, null)?.text).toBe("say hello now");
-      }
-    });
-
-    it.each([
+      ["an uppercase open tag", '<MARK style="background-color: #000">'],
+      ["a numeric reference in the style", '<mark style="background-color: &#35;000">'],
+      ["a numeric reference in the property", '<mark style="background&#45;color: #000">'],
       ["a second attribute", '<mark class="x" style="background-color: #fdd8d8">'],
       ["a declaration the sanitizer drops", '<mark style="background-color: #fdd8d8; padding: 2px">'],
       ["no background", '<mark style="color: #c00">'],
-    ])("leaves a mark with %s as it is", (_label, open) => {
-      const text = `say ${open}hello</mark> now`;
+      ["no style", "<mark>"],
+    ])("leaves a mark written with %s as it is", (_label, open, close = "</mark>") => {
+      const text = `say ${open}hello${close} now`;
       const from = text.indexOf("hello");
-      expect(setHighlightColor(text, from, from + 5, null)).toBeNull();
+      const end = text.indexOf(" now");
+      for (const [s, e] of [[from, from + 5], [from + 1, from + 3], [4, end], [0, text.length]]) {
+        expect(setHighlightColor(text, s, e, "blue")).toBeNull();
+        expect(setHighlightColor(text, s, e, null)).toBeNull();
+      }
+    });
+
+    it("leaves a mark with spaces just inside its tags as it is", () => {
+      const text = `say ${RED} hello </mark> now`;
+      const from = text.indexOf("hello");
       expect(setHighlightColor(text, from, from + 5, "blue")).toBeNull();
+      expect(setHighlightColor(text, from, from + 5, null)).toBeNull();
+    });
+
+    it("refuses a selection with a row's mark inside it", () => {
+      const text = `say one ${RED}two</mark> three`;
+      expect(setHighlightColor(text, 4, text.length, "blue")).toBeNull();
+      expect(setHighlightColor(text, 4, text.length, null)).toBeNull();
     });
   });
 
+  // Merge review of 75e6ab532, finding 4: a colour is refused exactly when the page's own HTML
+  // parse would show other text inside the mark (it decodes character references).
+  it.each(["R&D", "AT&T", "A&B", "A & B", "a < b", "x &; y", "fish & chips;"])("colours %s as written", (word) => {
+    const text = `say ${word} now`;
+    const edit = setHighlightColor(text, 4, 4 + word.length, "red")!;
+    expect(edit.text).toBe(`say ${RED}${word}</mark> now`);
+    expect(edit.text.slice(edit.start, edit.end)).toBe(word);
+    const removed = setHighlightColor(edit.text, edit.start, edit.end, null)!;
+    expect(removed.text).toBe(text);
+  });
+
   // Finding 3: an HTML parser decodes character references, so a colour would change the words.
-  it.each(["&copy", "&copycat", "&amp", "&AMP", "&nbsp", "&lt", "&gt", "&quot", "&notin", "a & b"])(
+  it.each(["&copy", "&copycat", "&amp", "&AMP", "&nbsp", "&lt", "&gt", "&quot", "&notin", "&#35", "&#x41"])(
     "refuses a selection holding %s",
     (word) => {
       const text = `say ${word}; now`;
