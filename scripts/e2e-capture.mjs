@@ -704,6 +704,94 @@ try {
   const strays = fs.readdirSync(`${GRAPH}/pages`).filter(name => name !== "Home.md" && name.toLowerCase() === "home.md");
   if (strays.length) throw new Error(`the capture to another spelling created a second file: ${JSON.stringify(strays)}`);
   console.log("PASS: a capture titled with another spelling of an existing page filed into that page's file");
+
+  // UI-CAPTURE-UNPROVED-RETRY: a capture lands in a
+  // page whose file changed outside, so its save is refused and the text stays
+  // in the capture window. The user takes the disk version, which drops the
+  // captured block. Filing the same capture again must not report it saved:
+  // the window keeps the text, says it cannot confirm, and offers a new
+  // capture, which then files the text exactly once.
+  {
+    const UNPROVED = "unproved-capture-ok";
+    const OUTSIDE = "written outside the app";
+    const captureText = () => browser.execute(() => document.querySelector(".capture-shell")?.textContent ?? "");
+    const showCapture = async () => {
+      const again = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+      await waitForForwarderExit(again, 5_000);
+      again.unref();
+      await waitForWindow("Quick Capture", 10_000);
+      await browser.switchToWindow(restartedCapture);
+    };
+    await browser.switchToWindow(restartedMain);
+    await openPageByName(browser, "Home");
+    const outside = `${fs.readFileSync(homePath, "utf8").trimEnd()}\n- ${OUTSIDE}\n`;
+    await browser.$(".main-content .ls-block .block-content-wrapper").click();
+    await browser.keys(["End"]);
+    for (const key of " typed") await browser.keys([key]);
+    fs.writeFileSync(homePath, outside);
+    await browser.$(".conflict-banner").waitForExist({ timeout: 15_000, timeoutMsg: "the outside write under typing did not conflict" });
+    await browser.keys(["Escape"]);
+
+    await showCapture();
+    await browser.$(".capture-title").click();
+    await browser.keys(["Control", "a"]);
+    for (const key of "Home") await browser.keys([key]);
+    await browser.waitUntil(() => browser.execute(() => document.querySelector(".capture-title")?.value === "Home"), {
+      timeout: 5_000, timeoutMsg: "the capture title did not take the page name",
+    });
+    await browser.keys(["Enter"]);
+    for (const key of UNPROVED) await browser.keys([key]);
+    await expectAutocompleteValue(UNPROVED, "the capture editor did not take the text");
+    await browser.keys(["Control", "Shift", "Enter"]);
+    await browser.waitUntil(async () => (await captureText()).includes("text kept"), {
+      timeout: 15_000, timeoutMsg: "a capture into a conflicted page did not report its text kept",
+    });
+    if (fs.readFileSync(homePath, "utf8") !== outside) throw new Error("a capture into a conflicted page changed its file");
+
+    await browser.switchToWindow(restartedMain);
+    // A page with a file is resolved in its in-page review: keep the disk side everywhere, then apply.
+    const review = '.main-content .page-conflict[data-source="live-save"]';
+    if (!(await browser.$(review).isExisting())) await browser.$(".conflict-banner button").click();
+    // The review may have been read before the capture reached the page's draft: then the first Apply only
+    // refreshes the comparison, and the choice is made again.
+    let applies = 0;
+    for (; applies < 3 && await browser.$(".conflict-banner").isExisting(); applies++) {
+      await browser.$(`${review} .sync-merge-toolbar-actions`).waitForExist({ timeout: 15_000, timeoutMsg: "the conflict review offered no choices" });
+      await browser.$(`${review} .page-conflict-foot .settings-btn-primary`).waitForEnabled({ timeout: 15_000, timeoutMsg: "the conflict review never became ready" });
+      const sides = await browser.$$(`${review} .sync-merge-toolbar-actions button`);
+      if (sides.length !== 4) throw new Error(`the conflict review offers ${sides.length} whole-page choices, expected 4`);
+      await sides[3].click();
+      await browser.$(`${review} .page-conflict-foot .settings-btn-primary`).click();
+      try { await browser.$(".conflict-banner").waitForExist({ timeout: 8_000, reverse: true }); } catch {}
+    }
+    if (await browser.$(".conflict-banner").isExisting()) throw new Error(`taking the disk version left the conflict after ${applies} applies`);
+    console.log(`UNPROVED: the disk version was taken after ${applies} apply(s)`);
+    await browser.waitUntil(() => browser.execute((gone, kept) => {
+      const text = document.querySelector(".main-content .page-blocks")?.textContent ?? "";
+      return !text.includes(gone) && text.includes(kept);
+    }, UNPROVED, OUTSIDE), { timeout: 10_000, timeoutMsg: "the page did not show the disk version" });
+
+    await showCapture();
+    await browser.$(".capture-title").click();
+    await browser.keys(["Control", "Shift", "Enter"]);
+    await browser.waitUntil(async () => (await captureText()).includes("can't confirm this capture was saved"), {
+      timeout: 15_000, timeoutMsg: `the retried capture did not say it is unconfirmed; window=${JSON.stringify(await captureText())} file=${JSON.stringify(fs.readFileSync(homePath, "utf8"))}`,
+    });
+    if (!(await withEditors(browser, CAPTURE, (editors, wanted) => editors.some(editor => editor.value.includes(wanted)), UNPROVED))
+      && !(await captureText()).includes(UNPROVED)) throw new Error("the unconfirmed capture lost its text");
+    if (fs.readFileSync(homePath, "utf8") !== outside) throw new Error("the unconfirmed retry changed the file");
+    await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-unproved.png"));
+    await browser.$("[data-testid=capture-start-new]").click();
+    await browser.waitUntil(async () => (await captureText()).includes("Text kept for a new capture"), {
+      timeout: 5_000, timeoutMsg: "Start a new capture did not explain itself",
+    });
+    await browser.$(".capture-title").click();
+    await browser.keys(["Control", "Shift", "Enter"]);
+    const refiled = await waitForFileText(homePath, text => text.includes(UNPROVED));
+    if (refiled.split(UNPROVED).length !== 2) throw new Error("the new capture was filed more than once");
+    if (!refiled.includes(OUTSIDE)) throw new Error("the new capture lost the text written outside");
+    console.log("PASS: a capture dropped by taking the disk version stayed in the capture window, said it is unconfirmed, and a new capture filed it once");
+  }
   console.log("PASS: a window-manager close request hid Quick Capture with its draft and the next --capture showed it again");
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
 } catch (error) {
