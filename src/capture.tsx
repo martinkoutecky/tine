@@ -1,5 +1,5 @@
 import { t } from "./i18n";
-import { initDebug } from "./debug";
+import { dbg, initDebug } from "./debug";
 import { Toasts } from "./components/Toasts";
 import { LinkSchemePrompt } from "./components/LinkSchemePrompt";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
@@ -605,7 +605,8 @@ function Capture() {
     // The window that took it is told, so it keeps no proof nobody will ask for.
     if (retry?.target) {
       const abandoned: QuickCaptureAbandon = { id: retry.id, target: retry.target };
-      void import("@tauri-apps/api/event").then(({ emitTo }) => emitTo(abandoned.target, "quick-capture-abandon", abandoned)).catch(() => {});
+      void import("@tauri-apps/api/event").then(({ emitTo }) => emitTo(abandoned.target, "quick-capture-abandon", abandoned))
+        .catch((error) => dbg(`quick-capture-abandon not delivered to ${abandoned.target}: ${String(error)}`));
     }
     retry = undefined;
     setCaptureMessage(t(unproved() ? "capture-new-request-unproved" : "capture-new-request"));
