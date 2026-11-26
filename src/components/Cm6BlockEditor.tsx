@@ -60,6 +60,9 @@ import { parserReady } from "../render/parse";
 import { blockDirAttr } from "../render/textDirection";
 import "./cm6-editor.css";
 
+/** The input types Android Chrome sends for Enter, Backspace and Delete (CM's PendingKeys). */
+const STRUCTURE_INPUTS = new Set(["insertParagraph", "insertLineBreak", "deleteContentBackward", "deleteContentForward"]);
+
 export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const owner = getOwner();
   let host!: HTMLDivElement;
@@ -362,7 +365,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
             if (abandoned) v.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
             return false;
           },
-          beforeinput: event => { if ((event as InputEvent).isComposing) typing.begin(); return !current(); },
+          beforeinput: event => {
+            const input = event as InputEvent;
+            if (input.isComposing) typing.begin();
+            // Android sends Enter, Backspace and Delete as these, and CM turns them into keys a frame later.
+            else if (STRUCTURE_INPUTS.has(input.inputType)) typing.beforeKey();
+            return !current();
+          },
           input: event => { if (typing.input(event as InputEvent) && !typing.active()) completion.input(event as InputEvent); return false; },
           compositionstart: () => { typing.begin(); return false; },
           compositionend: () => { typing.end(); return false; },
@@ -462,9 +471,15 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     };
     host.ownerDocument.defaultView!.addEventListener("keydown", compositionKeys, true);
     host.addEventListener("keydown", structuralKeys, true);
+    // Android's EditContext takes the composition events the element would otherwise get (GH #767).
+    const context = (view.contentDOM as HTMLElement & { editContext?: EventTarget | null }).editContext;
+    context?.addEventListener("compositionstart", typing.begin);
+    context?.addEventListener("compositionend", typing.end);
     removeKeys = () => {
       host.ownerDocument.defaultView!.removeEventListener("keydown", compositionKeys, true);
       host.removeEventListener("keydown", structuralKeys, true);
+      context?.removeEventListener("compositionstart", typing.begin);
+      context?.removeEventListener("compositionend", typing.end);
     };
     /** `again`: a later request to this mounted view (see focusMountedEditor), applied, not taken. */
     const focusNow = (again?: { offset: CaretPos }) => {

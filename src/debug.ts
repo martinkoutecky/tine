@@ -90,6 +90,8 @@ export async function initDebug(): Promise<void> {
   // Console-only (GH #337): release builds ship the devtools, and a reporter needs
   // one named callable to reach the watcher's receipt ring. No UI beyond this.
   window.__tineWatcherLatency = () => backend().watcherLatencyRecent();
+  // Console-only, the same way (GH #767): the events one Enter press sends, without the typed text.
+  window.__tineImeTrace = () => import("./editor/imeTrace").then((trace) => trace.recordImeTrace());
   let expected = performance.now() + HEARTBEAT_MS;
   window.setInterval(() => {
     const now = performance.now();
