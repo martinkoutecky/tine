@@ -660,7 +660,7 @@ describe("keyboard binding strings", () => {
 
   it("records physical Control distinctly from Command on macOS (GH #378)", async () => {
     vi.resetModules();
-    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    vi.stubGlobal("navigator", { platform: "MacIntel", language: "en-US" });
     try {
       const macBindings = await import("./keybindings");
       expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");

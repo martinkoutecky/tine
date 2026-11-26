@@ -5,12 +5,12 @@ import { bindLiveOutlineSelection, bindOutlineSelection, createOutlineOwner, Out
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
-import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
+import { admitRead, beginPageHeaderEdit, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, liveDtoBlock, pageByName, pinPageNearViewport, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
-import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
+import { embedRootFold, setEmbedRootFold } from "./macroFold";
 import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
@@ -344,11 +344,10 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       // outline navigation would expose a different page's node (GH #748).
       // A runtime locator stays valid on that page when Copy block ref stamps
       // its first authored id; the row keeps its live key until the next load.
-      const source = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) }, { navigation: true });
       // Hydration needs source identity, not write permission. Published pages
       // are read-only too: Block guards edits and uses presentation-only folds,
       // while the shallow membership DTO has no descendants to render.
-      return source === id ? docNode(id) : undefined;
+      return liveDtoBlock(dto, { page: props.page, kind: props.kind, path: props.path }) ? docNode(id) : undefined;
     }
     const source = resolveResultRow({ id, dto, page: props.page, kind: props.kind, path: props.path }, "mount");
     return source?.id === id ? source : undefined;
@@ -582,11 +581,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // belong to the source; a block embed's root keeps its host override (GH #360).
   const [localCollapsed, setLocalCollapsed] = props.occurrence.localCollapsed;
   const isEmbed = () => props.surface === "embed";
-  const embedRootOverride = (id: string): boolean | null => {
-    if (!isEmbed() || id !== props.embedId || !props.hostBlockId) return null;
-    const value = blockProperty(props.hostBlockId, "collapsed")?.toLowerCase();
-    return value === "true" ? true : value === "false" ? false : null;
-  };
+  const embedRoot = (id: string) => isEmbed() && id === props.embedId ? props.hostBlockId : undefined;
   const relativeDepth = (id: string): number | null => {
     const roots = resultRootIds();
     if (roots.has(id)) return 0;
@@ -632,9 +627,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   const collapseSurface: CollapseSurfaceApi = {
     collapsed: (id, stored) => {
       if (isEmbed()) {
-        const override = embedRootOverride(id);
-        if (override !== null) return override;
-        return stored;
+        const host = embedRoot(id);
+        return host ? embedRootFold(host, stored) : stored;
       }
       const local = localCollapsed();
       // Bulk actions saved the source. Follow it live, including Undo, while
@@ -643,10 +637,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return Object.prototype.hasOwnProperty.call(local, id) ? local[id].v : defaultCollapsed(id, stored);
     },
     toggle: (id, current) => {
-      if (isEmbed() && id === props.embedId && props.hostBlockId) {
-        setBlockProperty(props.hostBlockId, "collapsed", String(!current));
-        return;
-      }
+      const host = embedRoot(id);
+      if (host) { setEmbedRootFold(host, !current); return; }
       if (isEmbed()) { setCollapsed(id, !current); return; }
       setLocalCollapsed((state) => ({ ...state, [id]: { v: !current } }));
     },

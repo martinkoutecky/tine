@@ -1,6 +1,6 @@
 import { afterAll, expect, it, vi } from "vitest";
 
-vi.hoisted(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "Mac OS X" }));
+vi.hoisted(() => vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "Mac OS X", language: "en-US" }));
 import { commandDefaults, eventToBindingString } from "./keybindings";
 
 afterAll(() => vi.unstubAllGlobals());
