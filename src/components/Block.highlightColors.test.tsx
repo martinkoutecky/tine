@@ -31,10 +31,10 @@ afterEach(() => {
   platform.mobile = false;
 });
 
-function mountEditor(raw: string, format: "md" | "org" = "md") {
+function mountEditor(raw: string, format: "md" | "org" = "md", caret = 0) {
   const block: BlockDto = { id: "highlight-colors", raw, collapsed: false, children: [] };
   loadSingle({ name: "Colours", kind: "page", title: "Colours", pre_block: null, blocks: [block], format });
-  startEditing(block.id, 0);
+  startEditing(block.id, caret);
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render((): JSX.Element => (
@@ -118,4 +118,51 @@ describe("highlight colour row under the selection toolbar", () => {
       dispose();
     }
   });
+
+  // Merge review of b218d18e3, finding 1: a literal buffer (code body, calculator) gets no colours.
+  it.each([
+    ["a fenced code body", "```js\nconst answer = 42\n```", "answer"],
+    ["a calculator", "```calc\n2 + 2\n```", "+ 2"],
+  ])("offers no colours in %s", async (_label, raw, word) => {
+    // The caret on the body's first line opens the body-only (literal) view.
+    const { editor, root, dispose } = mountEditor(raw, "md", raw.indexOf("\n") + 1);
+    try {
+      await vi.waitFor(() => expect(editor.value()).not.toBe(raw));
+      const from = editor.value().indexOf(word);
+      editor.selectByUser(from, from + word.length);
+      await vi.waitFor(() => expect(root.querySelector(".sel-toolbar")).not.toBeNull());
+      expect(root.querySelector(".sel-toolbar-colors")).toBeNull();
+      expect(doc.byId["highlight-colors"].raw).toBe(raw);
+    } finally {
+      dispose();
+    }
+  });
+
+  // Finding 5: a press that changes nothing leaves the typing burst whole.
+  it.each([["no colour on uncoloured text", ""], ["a refused colour", "refused"], ["the colour already there", "same"]])(
+    "keeps typing one Undo step across %s",
+    async (_label, kind) => {
+      const start = kind === "refused" ? "see [[P]]" : kind === "same" ? `say ${RED}hello</mark>` : "say";
+      const { editor, root, dispose } = mountEditor(start);
+      try {
+        editor.select(start.length);
+        editor.type(" hi");
+        await vi.waitFor(() => expect(doc.byId["highlight-colors"].raw).toBe(`${start} hi`));
+        const target = kind === "refused" ? "[[P]]" : kind === "same" ? "hello" : "hi";
+        const from = editor.value().indexOf(target);
+        editor.selectByUser(from, from + target.length);
+        await vi.waitFor(() => expect(swatch(root, "red")).not.toBeNull());
+        swatch(root, kind === "" ? "" : "red")!.click();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(doc.byId["highlight-colors"].raw).toBe(`${start} hi`);
+        editor.select(editor.value().length);
+        editor.type(" there");
+        await vi.waitFor(() => expect(doc.byId["highlight-colors"].raw).toBe(`${start} hi there`));
+        undo();
+        expect(doc.byId["highlight-colors"].raw).toBe(start);
+      } finally {
+        dispose();
+      }
+    },
+  );
 });

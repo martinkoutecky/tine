@@ -90,4 +90,91 @@ describe("setHighlightColor", () => {
     const second = setHighlightColor(first.text, first.text.length - 1, first.text.length, "red")!;
     expect(second.text).toBe(`x ${RED}a</mark> b ${RED}a</mark>`);
   });
+
+  // Merge review of b218d18e3, finding 2: the parser decides which highlight owns the selection.
+  describe("the highlight that owns the selection", () => {
+    const twoMarks = (a: string, b: string) => `say ${a}one</mark> and ${b}two</mark> now`;
+    it.each([
+      ["two marks of one colour, inner text selected", twoMarks(RED, RED), 0],
+      ["two marks of two colours, inner text selected", twoMarks(RED, BLUE), 0],
+      ["two marks with their tags selected", twoMarks(RED, BLUE), 1],
+    ])("removes nothing across %s", (_label, text, withTags) => {
+      const from = withTags ? 4 : text.indexOf("one");
+      const to = withTags ? text.lastIndexOf("</mark>") + "</mark>".length : text.indexOf("two") + 3;
+      expect(setHighlightColor(text, from, to, null)).toBeNull();
+      expect(setHighlightColor(text, from, to, "green")).toBeNull();
+    });
+
+    it.each([
+      ["inline code", `x \`${RED}hello</mark>\` y`],
+      ["a code fence", `x\n\`\`\`\n${RED}hello</mark>\n\`\`\``],
+      ["bold text", `x **${RED}hello</mark>** y`],
+      ["a property value", `x\nnote:: ${RED}hello</mark>`],
+    ])("leaves a literal copy of the markup in %s as it is", (_label, text) => {
+      const from = text.indexOf("hello"), to = from + 5;
+      expect(setHighlightColor(text, from, to, null)).toBeNull();
+      const edit = setHighlightColor(text, from, to, "blue");
+      expect(edit).toBeNull();
+    });
+
+    it("colours the whole text of a plain == highlight it is inside", () => {
+      const text = "say ===hello=== now";
+      const edit = setHighlightColor(text, 7, 12, "red")!;
+      expect(edit.text).toBe(`say ${RED}=hello</mark>= now`);
+      expect(edit.text.slice(edit.start, edit.end)).toBe("hello");
+    });
+
+    it("recolours and removes a mark from a selection inside it, keeping the same words selected", () => {
+      const text = `say ${RED}hello world</mark> now`;
+      const from = text.indexOf("world");
+      const blue = setHighlightColor(text, from, from + 5, "blue")!;
+      expect(blue.text).toBe(`say ${BLUE}hello world</mark> now`);
+      expect(blue.text.slice(blue.start, blue.end)).toBe("world");
+      const removed = setHighlightColor(blue.text, blue.start, blue.end, null)!;
+      expect(removed.text).toBe("say hello world now");
+      expect(removed.text.slice(removed.start, removed.end)).toBe("world");
+    });
+
+    it("changes nothing when the colour is already the one there", () => {
+      const first = setHighlightColor("say hello world", 4, 9, "red")!;
+      expect(setHighlightColor(first.text, first.start, first.end, "red")).toBeNull();
+    });
+
+    // Finding 8: a coloured mark spelled by hand, which the sanitizer renders, is recoloured and removed too.
+    it.each([
+      ["two spaces after the colon", '<mark style="background-color:  var(--ls-highlight-color-red, #fdd8d8)">'],
+      ["another hex fallback", '<mark style="background-color: var(--ls-highlight-color-red, #ff0000)">'],
+      ["an uppercase property", '<mark style="BACKGROUND-COLOR: var(--ls-highlight-color-red, #fdd8d8)">'],
+      ["a single-quoted attribute", "<mark style='background-color: var(--ls-highlight-color-red, #fdd8d8)'>"],
+      ["a literal hex background", '<mark style="background-color: #fdd8d8">'],
+      ["an uppercase tag", '<MARK STYLE="background-color: #fdd8d8">', "</MARK>"],
+    ])("recolours and removes a mark spelled with %s", (_label, open, close = "</mark>") => {
+      const text = `say ${open}hello${close} now`;
+      const from = text.indexOf("hello");
+      for (const [s, e] of [[from, from + 5], [4, text.indexOf(" now")]]) {
+        expect(setHighlightColor(text, s, e, "blue")?.text).toBe(`say ${BLUE}hello</mark> now`);
+        expect(setHighlightColor(text, s, e, null)?.text).toBe("say hello now");
+      }
+    });
+
+    it.each([
+      ["a second attribute", '<mark class="x" style="background-color: #fdd8d8">'],
+      ["a declaration the sanitizer drops", '<mark style="background-color: #fdd8d8; padding: 2px">'],
+      ["no background", '<mark style="color: #c00">'],
+    ])("leaves a mark with %s as it is", (_label, open) => {
+      const text = `say ${open}hello</mark> now`;
+      const from = text.indexOf("hello");
+      expect(setHighlightColor(text, from, from + 5, null)).toBeNull();
+      expect(setHighlightColor(text, from, from + 5, "blue")).toBeNull();
+    });
+  });
+
+  // Finding 3: an HTML parser decodes character references, so a colour would change the words.
+  it.each(["&copy", "&copycat", "&amp", "&AMP", "&nbsp", "&lt", "&gt", "&quot", "&notin", "a & b"])(
+    "refuses a selection holding %s",
+    (word) => {
+      const text = `say ${word}; now`;
+      expect(setHighlightColor(text, 4, 4 + word.length, "red")).toBeNull();
+    },
+  );
 });

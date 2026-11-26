@@ -4535,6 +4535,12 @@ mark {
   padding: 0 2px;
   border-radius: 2px;
 }
+/* A mark with its own background (a coloured highlight, whose style the sanitizer kept) is
+   drawn in the theme's strongest text colour, since the theme's mark text belongs to its own
+   mark background (contrast on every shipped theme: highlightContrast.test.ts). */
+mark[style*="background-color"] {
+  color: var(--text-title);
+}
 
 /* Block ref = link-like, NOT a chip (OG `.block-ref`, block.css:264-273): the text
    keeps the full-strength foreground colour, with a thin link-coloured underline and

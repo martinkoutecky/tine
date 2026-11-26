@@ -53,7 +53,6 @@ import {
   wrapLink,
   isPasteableUrl,
   videoPasteMacro,
-  setHighlightColor,
   type Edit,
   type InlineFormat,
 } from "../editor/format";
@@ -65,7 +64,7 @@ import {
   type SelectionAction,
 } from "../editor/selectionActions";
 import { selectionActionLabel } from "./SelectionActionLabel";
-import { HighlightColorRow } from "./HighlightColorRow";
+import { createHighlightColors } from "./HighlightColorRow";
 import { effectiveHeadingLevel, facetsOf, headingPropertyFacets, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
 import { touchPrimary } from "../inputCapability";
@@ -808,15 +807,13 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // non-empty selection exists in this block's editor.
   const [hasSel, setHasSel] = createSignal(false);
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
-  // Phones: the H button opens the highlight colours; desktop shows them always.
-  const [highlightColorsOpen, setHighlightColorsOpen] = createSignal(false);
   let selectionOverflowRef: HTMLDivElement | undefined;
   const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
     if (!editorMounted || !ref.isConnected || !liveNode()) return;
     const selected = ref.selectionStart !== ref.selectionEnd;
     setHasSel(selected);
-    if (!selected) { setSelectionOverflowOpen(false); setHighlightColorsOpen(false); }
+    if (!selected) { setSelectionOverflowOpen(false); highlightColors.close(); }
     closeAutocompleteIfOutside();
     queueMicrotask(selToolbar.position);
   };
@@ -862,19 +859,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     setSelectionOverflowOpen(false);
     queueMicrotask(updateSel);
   };
-  // Highlight colours are Markdown only; on phones H opens them instead of a permanent row.
-  const highlightColors = () => pageFmt() === "md" && (!touchPrimary() || highlightColorsOpen());
-  const pressSelectionAction = (action: SelectionAction) => {
-    if (action.id === "highlight" && touchPrimary() && pageFmt() === "md") {
-      setSelectionOverflowOpen(false);
-      setHighlightColorsOpen((open) => !open);
-    } else runSelectionAction(action);
-  };
-  const pickHighlightColor = (color: string | null) => {
-    const edit = setHighlightColor(ref.value, ref.selectionStart, ref.selectionEnd, color, ref.selectionDirection);
-    if (edit) applyEdit(edit);
-    queueMicrotask(updateSel);
-  };
+  const highlightColors = createHighlightColors({
+    format: pageFmt,
+    literal: () => isCalc() || codeShown() !== null,
+    read: () => ({ text: ref.value, start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection }),
+    apply: (edit) => { applyEdit(edit); queueMicrotask(updateSel); },
+    run: runSelectionAction,
+    closeOverflow: () => setSelectionOverflowOpen(false),
+  });
 
   // A completed scaffold maps into its body; existing source stays raw.
   const replaceCompletion = (raw: string, caret: number, close: () => void) => {
@@ -2317,7 +2309,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
                 title={action.title}
                 aria-label={action.title}
                 data-selection-action={action.id}
-                onClick={() => pressSelectionAction(action)}
+                onClick={() => highlightColors.press(action)}
               >{selectionActionLabel(action)}</button>
             )}</For>
           </div>
@@ -2335,10 +2327,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>
             </button>
           </Show>
-          <Show when={highlightColors()}>
-            <HighlightColorRow pick={pickHighlightColor}
-              plain={touchPrimary() ? runSelectionAction : undefined} />
-          </Show>
+          <highlightColors.Row />
           <Show when={selectionOverflowOpen()}>
             <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label={translate("editor-block-more-formatting")}>
               <For each={secondarySelectionActions}>{(action) => (
@@ -2347,7 +2336,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
                   title={action.title}
                   aria-label={action.title}
                   data-selection-action={action.id}
-                  onClick={() => pressSelectionAction(action)}
+                  onClick={() => highlightColors.press(action)}
                 >{selectionActionLabel(action)}</button>
               )}</For>
             </div>

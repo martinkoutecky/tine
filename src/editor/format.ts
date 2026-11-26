@@ -5,7 +5,9 @@
 
 import { headerTokens } from "../markers";
 import { parseBlock, parserReady } from "../render/parse";
-import { BLOCK_COLOR_NAMES, HIGHLIGHT_FALLBACK } from "../blockColors";
+import { HIGHLIGHT_FALLBACK } from "../blockColors";
+import { colorOnlyStyles } from "../render/htmlSanitize";
+import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 
 export interface Edit {
   text: string;
@@ -98,9 +100,61 @@ export function highlightMarkOpen(color: string): string {
   return `<mark style="background-color: var(--ls-highlight-color-${color}, ${HIGHLIGHT_FALLBACK[color]})">`;
 }
 const MARK_CLOSE = "</mark>";
-const PLAIN_HIGHLIGHT = INLINE_FORMAT_DELIMITERS.md.highlight;
-// Text an HTML parser reads differently from Markdown: a tag opener or a character reference.
-const HTML_SIGNIFICANT = /<|&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/i;
+// One `<mark …>text</mark>` element as HTML spells it: the tag and attribute names in any case,
+// attribute values in either quote or none, text with no tag and no character reference.
+const MARK_ELEMENT = /^<mark((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*>([^<&]*)<\/mark\s*>$/i;
+const MARK_ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
+/** The open-tag length of `html` when it is one coloured highlight: a `<mark>` whose only
+ * attribute is a `style` the sanitizer keeps whole and that sets `background-color`. O(html). */
+function colourMarkOpenLength(html: string): number | null {
+  const element = MARK_ELEMENT.exec(html);
+  if (!element) return null;
+  const attributes = [...element[1].matchAll(MARK_ATTRIBUTE)];
+  if (attributes.length !== 1 || attributes[0][1].toLowerCase() !== "style") return null;
+  const style = attributes[0][2] ?? attributes[0][3] ?? attributes[0][4] ?? "";
+  const declarations = style.split(";").filter((part) => part.trim()).length;
+  const [kept] = colorOnlyStyles([style]);
+  const keptDeclarations = kept ? kept.split("; ") : [];
+  if (keptDeclarations.length !== declarations || !keptDeclarations.some((d) => d.startsWith("background-color:"))) return null;
+  return html.toLowerCase().lastIndexOf("</mark") - element[2].length;
+}
+
+/** The highlight that owns `[s, e)` in the parser's reading of `text`: a coloured `<mark>`
+ * (`colour`) or a plain `==` highlight around one run of plain text, whose node equals the
+ * selection or whose text contains it. `from`/`to` is the node, `innerFrom`/`innerTo` its text. */
+type Owner = { colour: boolean; from: number; to: number; innerFrom: number; innerTo: number };
+function highlightOwner(text: string, s: number, e: number): Owner | null {
+  const lead = text.length - text.trimStart().length;
+  const cursor = utf8ToUtf16Cursor(text.trimStart());
+  const at = (byte: number) => lead + cursor(byte - 2);
+  let found: Owner | null = null;
+  const owns = (o: Owner) => (s === o.from && e === o.to) || (o.innerFrom <= s && e <= o.innerTo);
+  const visit = (value: unknown): void => {
+    if (found || !value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const node = value as { k?: string; text?: string; emph?: string; span?: [number, number]; children?: unknown[] };
+    if (node.span && node.span[0] >= 2) {
+      const from = at(node.span[0]), to = at(node.span[1]);
+      if (node.k === "inline_html" && node.text !== undefined && text.slice(from, to) === node.text) {
+        const open = colourMarkOpenLength(node.text);
+        const owner = open === null ? null
+          : { colour: true, from, to, innerFrom: from + open, innerTo: from + open + MARK_ELEMENT.exec(node.text)![2].length };
+        if (owner && owns(owner)) { found = owner; return; }
+      }
+      if (node.k === "emphasis" && node.emph === "Highlight" && node.children?.length === 1) {
+        const child = node.children[0] as { k?: string; text?: string; span?: [number, number]; span_map?: unknown };
+        if (child.k === "plain" && child.span && !child.span_map) {
+          const owner = { colour: false, from, to, innerFrom: at(child.span[0]), innerTo: at(child.span[1]) };
+          if (text.slice(owner.innerFrom, owner.innerTo) === child.text && owns(owner)) { found = owner; return; }
+        }
+      }
+    }
+    for (const key of Object.keys(node)) if (key !== "span") visit((node as Record<string, unknown>)[key]);
+  };
+  visit(parseBlock(text, false));
+  return found;
+}
 
 /** The block's AST with positions dropped and adjacent plain text merged; the highlight
  * written as `markup` reads as its `inner` text, and `seen.n` counts those (an identical
@@ -128,18 +182,29 @@ function shape(value: unknown, markup: string, inner: string, seen: { n: number 
   return out;
 }
 
-/** Colour the selection's highlight (Markdown only). `color` is one of
- * Logseq's built-in colors and wraps the selection in its `<mark style=…>` (replacing a
- * coloured highlight or a plain `==` highlight already around or inside the selection);
- * `null` removes a coloured highlight. Outer whitespace stays outside, as in
- * `toggleInlineFormat`, and the selection afterwards covers the same text.
+/** Whether `withMark` is `without` with one more highlight `markup` that the parser reads
+ * as exactly its text `inner`, everything else read the same. O(block bytes): two parses. */
+function readsAsText(withMark: string, without: string, markup: string, inner: string): boolean {
+  const seenWith = { n: 0 }, seenWithout = { n: 0 };
+  const a = JSON.stringify(shape(parseBlock(withMark, false), markup, inner, seenWith));
+  const b = JSON.stringify(shape(parseBlock(without, false), markup, inner, seenWithout));
+  return seenWith.n === seenWithout.n + 1 && a === b;
+}
+
+/** Colour the selection's highlight (Markdown prose only: the caller decides that the editor
+ * shows prose, see `HighlightColors`). `color` is one of Logseq's built-in colors and writes
+ * its `<mark style=…>`; `null` removes a coloured highlight. The parser decides which
+ * highlight owns the selection (a coloured mark or a plain `==` around plain text, equal to
+ * the selection or containing it): a colour replaces that highlight, `null` removes it.
+ * Without an owner, a colour wraps the selection with its outer whitespace left outside.
+ * The selection afterwards covers the same text.
  *
- * HTML content is not Markdown: Logseq and Tine show it literally, and a link inside it
- * stops being a link. So a colour is written only around plain text that the parser reads
- * the same way after the edit: the block's AST, with the new highlight read as its text,
- * must equal the AST before. Otherwise, before the parser is ready, and when there is
- * nothing to remove, the answer is `null` and the text stays as it is. O(block bytes):
- * two parses of the block and one of the selection. */
+ * HTML content is not Markdown: Logseq and Tine show it literally, decode character
+ * references in it, and a link inside it stops being a link. So a colour is written or
+ * removed only around one line of text with no `<` and no `&`, which the parser reads
+ * the same way with and without the highlight. Otherwise, before the parser is ready,
+ * and when nothing would change, the answer is `null`. O(block bytes): at most three
+ * parses of the block and one of the selection. */
 export function setHighlightColor(
   text: string,
   start: number,
@@ -147,44 +212,35 @@ export function setHighlightColor(
   color: string | null,
   direction?: "forward" | "backward" | "none",
 ): Edit | null {
-  if (!parserReady()) return null;
+  if (!parserReady() || (color !== null && !(color in HIGHLIGHT_FALLBACK))) return null;
   let s = start, e = end;
   while (s < e && ASCII_WHITESPACE.test(text[s])) s += 1;
   while (e > s && ASCII_WHITESPACE.test(text[e - 1])) e -= 1;
   if (s === e) return null;
-  // The wrapper already around (or included in) the selection, if any.
-  let base = text, wrapped: string | null = null;
-  for (const open of [...BLOCK_COLOR_NAMES.map(highlightMarkOpen), PLAIN_HIGHLIGHT]) {
-    const close = open === PLAIN_HIGHLIGHT ? PLAIN_HIGHLIGHT : MARK_CLOSE;
-    const sel = text.slice(s, e);
-    if (s >= open.length && text.slice(s - open.length, s) === open && text.slice(e, e + close.length) === close) {
-      base = text.slice(0, s - open.length) + sel + text.slice(e + close.length);
-      s -= open.length; e -= open.length;
-    } else if (sel.length >= open.length + close.length && sel.startsWith(open) && sel.endsWith(close)) {
-      base = text.slice(0, s) + sel.slice(open.length, sel.length - close.length) + text.slice(e);
-      e -= open.length + close.length;
-    } else continue;
-    wrapped = open;
-    break;
-  }
-  const withDirection = (edit: Edit): Edit => (direction === undefined ? edit : { ...edit, direction });
-  if (color === null) {
-    return wrapped && wrapped !== PLAIN_HIGHLIGHT ? withDirection({ text: base, start: s, end: e }) : null;
-  }
-  if (!(color in HIGHLIGHT_FALLBACK)) return null;
-  const inner = base.slice(s, e);
-  if (/[\r\n]/.test(inner) || HTML_SIGNIFICANT.test(inner)) return null;
+  const owner = highlightOwner(text, s, e);
+  if (color === null && !owner?.colour) return null;
+  const from = owner ? owner.innerFrom : s, to = owner ? owner.innerTo : e;
+  const inner = text.slice(from, to);
+  if (/[\r\n<&]/.test(inner)) return null;
   const [alone, ...more] = parseBlock(inner, false);
   const only = alone && "inline" in alone && Array.isArray(alone.inline) && alone.inline.length === 1 ? alone.inline[0] : null;
   if (more.length || only?.k !== "plain" || only.text !== inner || only.span_map) return null;
+  // The text without any highlight, and where the selection sits in it.
+  const at = owner ? owner.from : s;
+  const base = owner ? text.slice(0, owner.from) + inner + text.slice(owner.to) : text;
+  const selStart = owner ? at + Math.max(0, s - owner.innerFrom) : s;
+  const selEnd = owner ? at + Math.min(inner.length, e - owner.innerFrom) : e;
+  const withDirection = (edit: Edit): Edit => (direction === undefined ? edit : { ...edit, direction });
+  if (color === null) {
+    const markup = text.slice(owner!.from, owner!.to);
+    if (!readsAsText(text, base, markup, inner)) return null;
+    return withDirection({ text: base, start: selStart, end: selEnd });
+  }
   const open = highlightMarkOpen(color);
   const markup = open + inner + MARK_CLOSE;
-  const next = base.slice(0, s) + markup + base.slice(e);
-  const seenAfter = { n: 0 }, seenBefore = { n: 0 };
-  const after = JSON.stringify(shape(parseBlock(next, false), markup, inner, seenAfter));
-  const before = JSON.stringify(shape(parseBlock(base, false), markup, inner, seenBefore));
-  if (seenAfter.n !== seenBefore.n + 1 || after !== before) return null;
-  return withDirection({ text: next, start: s + open.length, end: s + open.length + inner.length });
+  const next = base.slice(0, at) + markup + base.slice(at + inner.length);
+  if (next === text || !readsAsText(next, base, markup, inner)) return null;
+  return withDirection({ text: next, start: selStart + open.length, end: selEnd + open.length });
 }
 
 /** Whether `text` is exactly one complete inline link in mldoc's own reading (`mldoc-link?`): the

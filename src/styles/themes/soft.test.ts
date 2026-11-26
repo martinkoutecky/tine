@@ -91,9 +91,6 @@ const TEXT_ON: Record<string, string[]> = {
 for (const name of ON_QUATERNARY) TEXT_ON[name].push("--ls-quaternary-background-color");
 TEXT_ON["--ls-link-text-color"].push("--ls-page-mark-bg-color");
 TEXT_ON["--ls-link-text-hover-color"].push("--ls-page-mark-bg-color");
-// Text in a coloured highlight, which draws in the mark's text colour.
-const HIGHLIGHTS = ["yellow", "red", "pink", "green", "blue", "purple", "gray"].map((name) => `--ls-highlight-color-${name}`);
-TEXT_ON["--ls-page-mark-color"].push(...HIGHLIGHTS);
 
 /** Overlay background -> foregrounds drawn through it (alpha-blended over the page and sidebar). */
 const OVERLAYS: Record<string, string[]> = {
@@ -178,7 +175,10 @@ describe("Soft palette (GH #649)", () => {
     });
 
     it(`${mode}: moves the whole surface system together, leaving no stock --ls-* color behind`, () => {
-      const stock = [...block(shim, mode).keys()].filter((name) => name.startsWith("--ls-"));
+      // Logseq's named highlight colours are the same in every palette, declared once in
+      // ls-shim.css; their text contrast on every shipped theme is highlightContrast.test.ts.
+      const stock = [...block(shim, mode).keys()]
+        .filter((name) => name.startsWith("--ls-") && !name.startsWith("--ls-highlight-color-"));
       expect(stock.length).toBeGreaterThan(20);
       expect(stock.filter((name) => !vars.has(name))).toEqual([]);
     });
