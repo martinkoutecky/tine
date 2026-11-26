@@ -6,6 +6,7 @@
       "productName": "Tine",
       "androidApplicationId": "page.tine.app",
       "deployName": "tine",
+      "linuxBinaryName": "tine",
       "iconDirectory": "icons",
       "ios": {
         "displayName": "TineOutline",
@@ -19,6 +20,7 @@
       "productName": "Tine Beta",
       "androidApplicationId": "page.tine.beta",
       "deployName": "tine-og",
+      "linuxBinaryName": "tine-beta",
       "iconDirectory": "icons-beta",
       "ios": {
         "displayName": "Tine Beta",
