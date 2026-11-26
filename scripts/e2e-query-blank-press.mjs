@@ -1,5 +1,5 @@
 // Native journey for GH #1000: a plain click inside a query's results (between
-// two page groups, on a result row's side padding) opens no editor, and the page
+// two page groups) opens no editor, and the page
 // does not jump. The press used to open the block that holds the query, whose
 // text replaced the results; the page then scrolled to its caret.
 import { spawn } from "node:child_process";
@@ -54,20 +54,13 @@ function aimAt(kind) {
   // The query sits in its host block's own .block-content: only an ancestor inside the results counts.
   const inside = (el, selector) => { const found = el.closest(selector); return !!found && region.contains(found); };
   let x, y;
-  if (kind === "between groups") {
-    const above = groups[groups.indexOf(middle) - 1].getBoundingClientRect();
-    const below = middle.getBoundingClientRect();
-    x = below.left + below.width / 2;
-    y = Math.round((above.bottom + below.top) / 2);
-  } else {
-    // The first point along the row's first line, from its right end, that no result control or text takes.
-    const row = middle.querySelector(".ls-block > .block-main").getBoundingClientRect();
-    y = row.top + Math.min(row.height / 2, 10);
-    for (x = row.right - 2; x > row.left; x -= 4) {
-      const hit = document.elementFromPoint(x, y);
-      if (hit && region.contains(hit) && !inside(hit, ".block-content, .block-controls, a, button")) break;
-    }
-  }
+  // In the native layout a result row's text fills the row, so the blank
+  // space a press can reach natively is the gap between two page groups; a
+  // press beside a row's text is covered by QueryResultBlankPress.test.tsx.
+  const above = groups[groups.indexOf(middle) - 1].getBoundingClientRect();
+  const below = middle.getBoundingClientRect();
+  x = below.left + below.width / 2;
+  y = Math.round((above.bottom + below.top) / 2);
   const hit = document.elementFromPoint(x, y);
   return { x: Math.round(x), y: Math.round(y), top: scroller.scrollTop,
     inResults: !!hit && region.contains(hit), onText: !!hit && inside(hit, ".block-content"),
@@ -104,7 +97,7 @@ try {
       && region.querySelectorAll(".ls-block:not(.ref-block)").length >= 40;
   }), { timeout: 25_000, timeoutMsg: "The query did not show 40 live results in 8 page groups" });
   const results = [];
-  for (const kind of ["between groups", "row side padding"]) {
+  for (const kind of ["between groups"]) {
     phase = kind;
     const aim = await browser.execute(aimAt, kind);
     if (!aim.inResults || aim.onText) throw new Error(`The ${kind} point is not blank space in the results: ${JSON.stringify(aim)}`);
@@ -117,7 +110,7 @@ try {
   }
   fs.writeFileSync(path.join(out, "presses.json"), JSON.stringify(results, null, 2) + "\n");
   if (fs.readFileSync(hostFile, "utf8") !== hostText) throw new Error("The page that holds the query changed on disk");
-  console.log("PASS: clicks between page groups and on a row's padding open no editor and keep the page in place");
+  console.log("PASS: a click between page groups opens no editor and keeps the page in place");
 } catch (error) {
   fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({
     commit: process.env.TINE_SOURCE_REVISION || "working tree", journey: "GH #1000 query blank press",
