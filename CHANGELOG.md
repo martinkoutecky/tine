@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- A file dropped from the file manager goes after the block under the pointer, and a drop beside the blocks now writes nothing and says "Drop a file onto a block to insert it.", as in Logseq. Before, such a drop could link the file into an older journal file that was not on screen. On Linux and macOS with a display scale above 100%, the drop point is no longer shifted up and to the left of the pointer (#1039, UI-GH1039-FILE-DROP-TARGET).
+- Settings → Graph → Git no longer wipes what you type: the sign-in username and the commit interval keep your text while the git status refreshes, and a refused sign-in keeps the username (only the token is cleared). If the repository's remote changes to another server while the sign-in form is open, the form starts fresh for that server instead of keeping the previous server's name and token (#1035, UI-GH1035-GIT-FIELDS-KEEP-TYPING).
+- On macOS, Cmd+Y redoes, as it does in Logseq, next to Cmd+Shift+Z; before, it did nothing. Ctrl+Y stays the system's yank there, and stays Redo's second key on Windows and Linux (#1044, UI-GH1044-MAC-CMD-Y-REDO).
+
 ## [0.9.2] - 2026-11-23
 
 ### Fixed

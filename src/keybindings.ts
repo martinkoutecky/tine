@@ -146,10 +146,10 @@ interface CommandDef {
   run?: () => void;
   /** Offered in the palette only while this holds (e.g. a desktop-only command). */
   available?: () => boolean;
-  /** A SECOND default chord that runs the same command: a platform convention a
-   *  user will certainly try and that Logseq does not bind, so the key reaches
-   *  the command it obviously means without displacing Logseq's own binding or
-   *  taking a second row in Settings. An alias is a default, not an override: the
+  /** A SECOND default chord that runs the same command (Logseq's second key, or a
+   *  platform convention a user will certainly try), so the key reaches the
+   *  command it obviously means without taking a second row in Settings. An
+   *  alias is a default, not an override: the
    *  moment the user binds the command themselves, their chord is the only one,
    *  because an alias they can neither see in the recorder nor reset must not
    *  outlive their choice. Global scope only; it loses every collision with a
@@ -440,12 +440,10 @@ const COMMANDS: CommandDef[] = [
   // Carry the Settings-configured number of days.
   { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
-  // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
-  // shows and remaps. Ctrl+Y is the Windows/Linux convention for redo and Logseq
-  // leaves it unbound, so pressing it was silence (GH #491, master 2721c0126). It
-  // rides along as an alias so the shortcuts list keeps one Redo row. Not on
-  // macOS: there Ctrl+Y is the system's Emacs-style yank inside every text field.
-  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
+  // Logseq binds redo to mod+shift+z and mod+y (GH #491, #1044). The first is the binding Settings shows and
+  // remaps; the second rides along as an alias, so the shortcuts list keeps one Redo row: Ctrl+Y on Windows
+  // and Linux, Cmd+Y on macOS (physical Ctrl+Y there stays the system's Emacs-style yank in every text field).
+  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "mod+y" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
   // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`

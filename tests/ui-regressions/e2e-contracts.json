@@ -426,7 +426,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-git-autocommit.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; the interval typed with real keys and left by Tab stores what the number field parses (-1 keeps the stored 10 and the field shows 10 again, 1e2 stores 100; #1035); renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
       "acceptableVariations":["Commit timing and Settings layout may vary while both commits land in this order with these subjects."],
       "nonRequirements":["Interval-driven commits (covered by Rust tests), push or pull, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

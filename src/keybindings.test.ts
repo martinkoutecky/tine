@@ -1368,8 +1368,9 @@ describe("secondary default chords (aliases)", () => {
   });
 
   // GH #491: Ctrl+Z undid, Ctrl+Y did nothing. Logseq binds redo to
-  // mod+shift+z and leaves Ctrl+Y unbound, so on Windows the key every other
-  // editor treats as redo reached no command at all.
+  // mod+shift+z and mod+y; Tine had only the first, so on Windows the key every
+  // other editor treats as redo reached no command at all. GH #1044: the same
+  // on macOS for Cmd+Y (src/components/Block.redoKeys.mac.test.tsx).
   //
   // These drive the real store rather than a spy: `run: redo` captures the
   // function reference when COMMANDS is built, so a module spy installed later
