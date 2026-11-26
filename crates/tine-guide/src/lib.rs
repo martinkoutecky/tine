@@ -587,6 +587,16 @@ mod journal_guide_tests {
             .contains("other than Logseq's default priority sort"));
     }
 
+    /// GH #1000: a click inside a query's results does not open the query.
+    #[test]
+    fn a_click_inside_query_results_is_documented() {
+        let queries = include_str!("templates/queries.md");
+        assert!(
+            queries.contains("A click inside a query's results belongs to the blocks shown there")
+        );
+        assert!(queries.contains("click the query's header beside its title, or the block's edge"));
+    }
+
     /// Card hB3Lv8 (Martin 2026-10-19): day-relative queries follow the date.
     #[test]
     fn day_relative_queries_following_the_date_are_documented() {

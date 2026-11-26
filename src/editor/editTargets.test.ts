@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { forbidsEditEntry } from "./editTargets";
+import { forbidsEditEntry, pressBelongsToQueryResults } from "./editTargets";
 
 // jsdom does no layout, so the geometry of a code block with a classic
 // horizontal scrollbar is stated directly: 200x60 box, 44 px of client height,
@@ -80,5 +80,48 @@ describe("forbidsEditEntry: mounted CodeMirror editors", () => {
     host.innerHTML = '<div data-block-editor="cm6"><div class="cm-scroller"><div class="cm-content" contenteditable="true"><div class="cm-line">task</div></div></div></div>';
     document.body.append(host);
     expect(forbidsEditEntry(press(host, host.querySelector(`.${className}`)!, 5, 5))).toBe(true);
+  });
+});
+
+describe("a press inside a query's results (GH #1000)", () => {
+  // host > query header + results region > [live group > result row > its content] + the query's own texts
+  function queryHost() {
+    const host = document.createElement("div");
+    host.innerHTML = '<div class="query-header">Query</div><div class="query-results-region" data-block-surface="query">'
+      + '<div class="query-group"><div class="live-ref-group"><div class="ls-block"><div class="block-main">'
+      + '<div class="block-content-wrapper"><div class="block-content">result</div></div></div></div></div></div>'
+      + '<div class="query-empty">No results</div><div class="query-summary"><p class="query-summary-note">3 blocks</p></div>'
+      + '<div class="query-results-board"><h4 class="query-board-heading">Doing</h4></div></div>';
+    document.body.append(host);
+    const q = (selector: string) => host.querySelector(selector)!;
+    return { host, q };
+  }
+  const INSIDE = [".block-main", ".ls-block", ".live-ref-group", ".query-group", ".query-results-region", ".query-empty", ".query-summary-note", ".query-board-heading"];
+
+  it("the block that holds the query does not take a plain press anywhere in its results", () => {
+    const { host, q } = queryHost();
+    for (const inside of INSIDE) expect(pressBelongsToQueryResults(press(host, q(inside), 5, 5)), inside).toBe(true);
+    expect(pressBelongsToQueryResults(press(host, q(".query-header"), 5, 5))).toBe(false);
+    expect(pressBelongsToQueryResults(press(host, host, 5, 5))).toBe(false);
+  });
+
+  it("a Shift-press still reaches the block, which extends the outline selection", () => {
+    const { host, q } = queryHost();
+    const e = new MouseEvent("mousedown", { bubbles: true, shiftKey: true });
+    Object.defineProperty(e, "target", { value: q(".query-group") });
+    Object.defineProperty(e, "currentTarget", { value: host });
+    expect(pressBelongsToQueryResults(e)).toBe(false);
+  });
+
+  it("a result's own press handler keeps a press on its text: the region is around it, not inside", () => {
+    const { q } = queryHost();
+    expect(pressBelongsToQueryResults(press(q(".block-content"), q(".block-content"), 5, 5))).toBe(false);
+  });
+
+  // Sheet cells, opening text, reference rows and the fence switch ask only the
+  // shared check; it answers for a query's results as it always did.
+  it("the shared check does not refuse a press in a query's results", () => {
+    const { host, q } = queryHost();
+    for (const inside of INSIDE) expect(forbidsEditEntry(press(host, q(inside), 5, 5)), inside).toBe(false);
   });
 });
