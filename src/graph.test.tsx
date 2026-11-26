@@ -99,9 +99,9 @@ async function loadHarness(
   });
   // `flushAll`'s answer for the switch: true, false (develop's unnamed failure)
   // or the barrier's reason (`flushAllUnsettled`).
-  const flushAll = vi.fn(async (): Promise<boolean | Unsettled> => true);
-  const flushAllUnsettled = vi.fn(async (): Promise<Unsettled | null> => {
-    const flushed = await flushAll();
+  const flushAll = vi.fn(async (_departure: boolean): Promise<boolean | Unsettled> => true);
+  const flushAllUnsettled = vi.fn(async (departure: boolean): Promise<Unsettled | null> => {
+    const flushed = await flushAll(departure);
     return flushed === true ? null : flushed === false ? { kind: "no-answer" } : flushed;
   });
   const resetFrozen: boolean[] = [];
@@ -148,7 +148,7 @@ async function loadHarness(
     activatePdfOwnership,
   }));
   vi.doMock("./document", () => ({
-    resetStore, flushAllUnsettled, flushAll: async () => await flushAllUnsettled() === null, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
+    resetStore, flushAllUnsettled, flushAll: async () => await flushAllUnsettled(false) === null, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
     createPage,
@@ -1044,6 +1044,37 @@ describe("a refused graph switch names its pages (tine#1041)", () => {
     const named = toasts().filter((toast) => toast.message.includes("pages/a.md"));
     expect(named).toHaveLength(1);
     expect(named[0].count).toBe(2);
+  });
+
+  // Step 2: a switch to another graph asks both barriers for a departure, so a
+  // page no window shows, kept by its exact draft, does not hold it. Opening
+  // the first graph and refreshing the same graph ask for full publication.
+  it("asks for a departure only when the target is another graph", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    expect(harness.flushAll.mock.calls).toEqual([[false]]);
+    harness.flushAll.mockClear();
+    await harness.loadGraphPath(META.root, { forceRefresh: true });
+    expect(harness.flushAll.mock.calls).toEqual([[false], [false]]);
+    harness.flushAll.mockClear();
+    await harness.loadGraphPath("/tmp/other-graph");
+    expect(harness.flushAll.mock.calls).toEqual([[true], [true]]);
+  });
+
+  // An old iOS container spelling of the open graph is a different string, so
+  // the first barrier takes it for a departure; after the rebase it is the
+  // same graph, and the last barrier asks for full publication.
+  it("an iOS path rebased onto the open graph ends with the full barrier", async () => {
+    const stale = "/var/mobile/Containers/Data/Application/OLD/Documents/template-graph";
+    const harness = await loadHarness(null, undefined, true, true, undefined, undefined, { platform: "ios" });
+    await harness.loadGraphPath(META.root);
+    harness.api.prepareGraphFolder.mockResolvedValue({ status: "ready", location: "local", path: META.root });
+    harness.flushAll.mockClear();
+    harness.flushAll.mockResolvedValueOnce(true).mockResolvedValueOnce(stuck("pages/a.md"));
+    await expect(harness.loadGraphPath(stale)).resolves.toEqual({ kind: "aborted" });
+    expect(harness.flushAll.mock.calls).toEqual([[true], [false]]);
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "error", message: expect.stringContaining("pages/a.md") });
   });
 
   it.each([

@@ -12,6 +12,10 @@ export interface SettleOptions {
   noConflict?: boolean;
   /** A block id the scoped pages' published bytes must contain (block refs, Q2). */
   witness?: string;
+  /** The window is leaving this graph for another (tine#1041): the host's wait
+   * is `departure`, which also passes a page no window shows whose exact draft
+   * the next launch recovers. Everything else is the same barrier. */
+  departure?: boolean;
 }
 
 export type SettleScope = readonly string[] | "all";
@@ -77,7 +81,7 @@ async function rounds(client: HostClient, scope: SettleScope, options: SettleOpt
     const needs = merge(taken, owed, options.witness);
     if (needs.length) {
       await client.saveNow(needs.map((need) => need.key));
-      const published = await client.publication(needs);
+      const published = options.departure ? await client.departure(needs) : await client.publication(needs);
       if (published !== true) return published.length ? { kind: "stuck", files: published } : client.retired ? UNBOUND : NO_ANSWER;
     }
     const after = await client.owed(paths);

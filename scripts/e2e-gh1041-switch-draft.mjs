@@ -1,9 +1,12 @@
 // tine#1041: a graph switch refused for a page the app does not show. Alpha's
 // page "Repro 964" is deleted on disk while it has unsaved typing (a
-// conflicted draft of a page with no file), and the app is killed. Relaunched,
-// the host recovers the draft and owes it on every switch barrier, while no
-// window page names it. The switch must be refused with a toast that names the
-// page and carries no action, and the graph stays alpha.
+// conflicted draft of a page with no file). While the window shows that page,
+// a switch must be refused with a toast that names the page and carries no
+// action, and the graph stays alpha. Then the app is killed. Relaunched on
+// another page, the host recovers the draft and no window page names it: the
+// switch to beta must go through, with the draft's text still in alpha's
+// drafts and the page's file still absent. Reopened on alpha, the app reports
+// the recovered edits and names the page.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -84,16 +87,15 @@ async function launch() {
   await ensureMainWindow(browser);
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
 }
-function draftsHold(text) {
+/** The draft namespaces (one directory per graph) that hold `text`. */
+function draftNamespaces(text) {
   const drafts = path.join(data, "drafts-v2");
-  if (!fs.existsSync(drafts)) return false;
-  for (const dir of fs.readdirSync(drafts, { withFileTypes: true }).filter(e => e.isDirectory())) {
-    for (const file of fs.readdirSync(path.join(drafts, dir.name), { withFileTypes: true }).filter(e => e.isFile())) {
-      if (fs.readFileSync(path.join(drafts, dir.name, file.name)).includes(Buffer.from(text))) return true;
-    }
-  }
-  return false;
+  if (!fs.existsSync(drafts)) return [];
+  return fs.readdirSync(drafts, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name)
+    .filter(name => fs.readdirSync(path.join(drafts, name), { withFileTypes: true }).filter(e => e.isFile())
+      .some(file => fs.readFileSync(path.join(drafts, name, file.name)).includes(Buffer.from(text))));
 }
+const draftsHold = text => draftNamespaces(text).length > 0;
 const graphName = () => browser.execute(() => document.querySelector(".graph-switch-name")?.textContent?.trim());
 const errorToasts = () => browser.execute(() => [...document.querySelectorAll(".toast")].filter(t => t.querySelector(".toast-msg"))
   .map(t => ({ text: t.querySelector(".toast-msg").textContent, actions: [...t.querySelectorAll(".toast-action:not(.toast-copy)")].map(b => b.textContent) })));
@@ -124,21 +126,50 @@ try {
   await browser.waitUntil(() => draftsHold("base mine"), { timeout: 30_000, timeoutMsg: "the typing never reached a durable draft" });
   await browser.$(".conflict-banner").waitForExist({ timeout: 30_000, timeoutMsg: "deleting the page under typing did not conflict" });
   assert(!fs.existsSync(path.join(alpha, KEY)), "the page's file came back before the choice");
+  const namespaces = draftNamespaces("base mine");
+  assert(namespaces.length === 1, `one graph's drafts hold the text: ${JSON.stringify(namespaces)}`);
   passed.push(stage);
-  await kill();
 
-  stage = "relaunched on another page: the refused switch names the page";
-  await launch();
-  await openPageByName(browser, "Notes");
-  // The relaunch's own notice ("recovered unsaved edits") names the page too: only a notice the switch adds counts.
-  const before = new Set((await errorToasts()).map(t => t.text));
-  await switchToBeta();
+  stage = "shown in the window: the refused switch names the page";
+  // Only a notice the switch adds counts (another notice may name the page too).
+  let before = new Set((await errorToasts()).map(t => t.text));
   const refusal = async () => (await errorToasts()).find(t => !before.has(t.text) && t.text.includes(KEY));
+  await switchToBeta();
   await browser.waitUntil(async () => !!(await refusal()), { timeout: 30_000, timeoutMsg: "the refused switch did not name the page" });
   const named = await refusal();
   assert(named.actions.length === 0, `the notice has no action: ${JSON.stringify(named.actions)}`);
-  assert(await graphName() === "alpha", "the switch went through over an unresolved draft");
+  assert(await graphName() === "alpha", "the switch went through over a conflicted page the window shows");
+  passed.push(stage);
+  await kill();
+
+  stage = "relaunched on another page: the switch goes through and the draft is kept";
+  await launch();
+  await openPageByName(browser, "Notes");
+  // Right after a launch the page's recovery copy may not be written yet; a
+  // switch in that moment is refused once, naming the page. Two repeats at most.
+  let attempts = 0;
+  for (; attempts < 3 && await graphName() !== "beta"; attempts++) {
+    before = new Set((await errorToasts()).map(t => t.text));
+    await switchToBeta();
+    await browser.waitUntil(async () => await graphName() === "beta" || !!(await refusal()),
+      { timeout: 30_000, timeoutMsg: "the switch neither went through nor was refused" });
+  }
+  assert(await graphName() === "beta", `the switch was refused ${attempts} times over a draft no window shows`);
+  await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("Beta notes")),
+    { timeout: 30_000, timeoutMsg: "beta's page did not show" });
+  assert(JSON.stringify(draftNamespaces("base mine")) === JSON.stringify(namespaces), "the draft left alpha's drafts");
+  assert(!fs.existsSync(path.join(alpha, KEY)), "the switch wrote the page's file");
   assert(fs.readFileSync(path.join(beta, "pages/Notes.md"), "utf8") === "- Beta notes\n", "beta changed");
+  passed.push(`${stage} (attempts: ${attempts})`);
+  await kill();
+
+  stage = "reopened on the first graph: the recovered edits are reported";
+  await launch();
+  assert(await graphName() === "alpha", "the relaunch did not open alpha");
+  await browser.waitUntil(async () => (await errorToasts()).some(t => t.text.includes("Recovered unsaved edits") && t.text.includes(KEY)),
+    { timeout: 30_000, timeoutMsg: "the relaunch did not report the recovered page" });
+  assert(JSON.stringify(draftNamespaces("base mine")) === JSON.stringify(namespaces), "the draft is gone after the return");
+  assert(!fs.existsSync(path.join(alpha, KEY)), "the return wrote the page's file");
   passed.push(stage);
 
   fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "pass", testedCommit: commit, workingDiff: true, passed }, null, 2));

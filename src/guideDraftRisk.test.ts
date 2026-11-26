@@ -9,6 +9,8 @@ const page = readFileSync("crates/tine-guide/src/templates/files-external-edits-
 
 it("explains that recovered text is put back and saved at the next start, named, and never written over a changed file", () => {
   expect(page).toMatch(/next start Tine puts it back on the page and saves it[^\n]*Recovered unsaved edits[^\n]*changed on disk[^\n]*nothing is written over unseen/);
+  // tine#1041: such a page no longer holds a switch to another graph while no window shows it.
+  expect(page).toContain("While no window shows such a page, it does not stop you from switching to another graph");
 });
 
 it("explains that closing the last window over a page that cannot be saved reopens the graph and names its pages", () => {

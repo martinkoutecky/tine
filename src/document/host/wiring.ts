@@ -116,7 +116,7 @@ function hostPort(): HostPort {
     close: (session, id, key) => b.pageClose(session, id, key).catch(failed),
     saveNow: (session, keys) => b.pageSaveNow(session, keys).catch(ignoreSaveHintFailure),
     // One bounded wait (F1); a failed call is a failed barrier, never success.
-    waitPublished: (session, needs) => b.pageWait(session, needs, 5000).catch(() => false),
+    waitPublished: (session, needs, departure) => b.pageWait(session, needs, 5000, departure).catch(() => false),
     // No answer (another session, a failed read) is unknown debt, never "none".
     owed: (session, paths) => b.pageOwed(session, paths).then((owed) => owed ?? false).catch(() => false as const),
   };
@@ -700,11 +700,12 @@ export async function flushAll(): Promise<boolean> {
 }
 
 /** `flushAll`'s barrier with its reason (a graph switch names what it refused
- * for): null when everything published, else why not. */
-export function flushAllUnsettled(): Promise<Unsettled | null> {
+ * for): null when everything published, else why not. `departure`: the caller
+ * is leaving this graph for another (`SettleOptions.departure`). */
+export function flushAllUnsettled(departure: boolean): Promise<Unsettled | null> {
   const c = host();
   if (!c) return Promise.resolve(unboundUnsettled());
-  return unsettled(c, "all", FLUSH_ALL);
+  return unsettled(c, "all", departure ? { ...FLUSH_ALL, departure } : FLUSH_ALL);
 }
 
 /** A block reference's target (§8, Q2): published bytes that contain `witness`. */

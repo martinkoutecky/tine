@@ -164,7 +164,10 @@ export interface HostPort {
    * refused files on a terminal notice for needed keys; false, a refusal naming none,
    * once the session is not current, the host is down, or the call failed; null
    * when one bounded wait (≤ 5 s) passed first: the client asks again. */
-  waitPublished(session: number, needs: readonly PublishedNeed[]): Promise<PublishedRevision[] | PublicationRefused | false | null>;
+  /** `departure`: the window is leaving this graph for another (tine#1041). The
+   * host then sets aside each need whose page no window shows and whose exact
+   * draft the next launch recovers; the revisions say nothing about those. */
+  waitPublished(session: number, needs: readonly PublishedNeed[], departure: boolean): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   /** Publication debt; `paths` (graph-relative files) filters through the host's
    * page identity, null lists all. Bounded by held pages; no filesystem scan.
    * False when there is no answer (the session is not current, or the read

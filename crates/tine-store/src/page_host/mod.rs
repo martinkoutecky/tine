@@ -1273,15 +1273,16 @@ impl<F: HostIo> Host<F> {
         {
             return false;
         }
-        let drafts = self.logical_drafts();
         self.keys.iter().all(|key| {
             let page = self.pages.get(key);
+            #[cfg(test)]
+            assert_eq!(self.draft_of(key), self.logical_drafts().get(key));
             page.is_none_or(|p| p.clean() || p.risk)
                 && match page.filter(|p| p.risk) {
-                    Some(p) => drafts.get(key).is_some_and(|r| r.holds(p)),
+                    Some(p) => self.exact_copy(key, p),
                     // A paired draft still owing a settlement keeps its
                     // records for the next launch, which reinstalls it.
-                    None => !drafts.contains_key(key) || self.pair_retains(key),
+                    None => self.draft_of(key).is_none() || self.pair_retains(key),
                 }
         })
     }

@@ -590,18 +590,32 @@ export class HostClient {
    * session or the client's retirement (which settles a pending wait at once,
    * R3). A true answer, whoever asked it (a close, a barrier, the data
    * revision), discharges the publication debt it covers (J6). */
-  async publication(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {
+  publication(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {
+    return this.hostWait(needs, false);
+  }
+
+  /** `publication`'s answer for a window leaving this graph for another
+   * (tine#1041): true once the host says every need either published or is a
+   * page no window shows, left to the exact draft the next launch recovers.
+   * It is not a publication answer: it marks nothing waited, settles no
+   * pending revision and discharges no debt. */
+  departure(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {
+    return this.hostWait(needs, true);
+  }
+
+  private async hostWait(needs: readonly PublishedNeed[], departure: boolean): Promise<true | readonly string[]> {
     const session = this.session;
     const covered = new Map(needs.map(({ key, version }) => {
       const page = this.byKey.get(key);
       return [key, { version, page }];
     }));
     while (!this.retired) {
-      const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
+      const result = await Promise.race([this.host.waitPublished(session, needs, departure), this.retirement]);
       if (this.retired || this.session !== session) return [];
       if (result === null) continue;
       if (!result) return [];
       if ("refused" in result) return result.refused;
+      if (departure) return true;
       for (const [key, { version, page }] of covered) {
         if (page && this.byKey.get(key) === page) {
           page.waited = Math.max(page.waited ?? version, version);

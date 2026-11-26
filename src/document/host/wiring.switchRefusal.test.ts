@@ -23,7 +23,7 @@ it("a draft only the host holds, which never publishes: the barrier names its ke
   await bindTestHost();
   vi.spyOn(backend(), "pageOwed").mockResolvedValue([{ key: KEY, version: 2 }]);
   const wait = vi.spyOn(backend(), "pageWait").mockResolvedValue({ refused: [KEY] });
-  expect(await flushAllUnsettled()).toEqual({ kind: "stuck", files: [KEY] });
+  expect(await flushAllUnsettled(false)).toEqual({ kind: "stuck", files: [KEY] });
   expect(wait.mock.calls[0]?.[1]).toEqual([{ key: KEY, version: 2 }]);
   expect(await flushAll()).toBe(false);
   // The rows this fix does not change: the panel and the badge still do not list it.
@@ -42,7 +42,24 @@ it("a window page whose save keeps failing (tine#1033's shape): the barrier name
   vi.spyOn(backend(), "pageOwed").mockResolvedValue([{ key: "pages/Failing.md", version: 2 }]);
   vi.spyOn(backend(), "pageWait").mockImplementation(async (_session, needs) =>
     ({ refused: needs.filter((need) => need.key === "pages/Failing.md").map((need) => need.key) }));
-  expect(await flushAllUnsettled()).toEqual({ kind: "stuck", files: ["pages/Failing.md"] });
+  expect(await flushAllUnsettled(false)).toEqual({ kind: "stuck", files: ["pages/Failing.md"] });
+});
+
+// Step 2: leaving for another graph. The host sets aside a draft only it holds
+// (no window shows the page, its exact copy is recovered at the next launch):
+// its wait answers with no revision for that key, the host still lists the key
+// as owed, and the barrier passes. A refusal is carried as before.
+it("a departure passes over a draft only the host holds; a refusal still names its key", async () => {
+  await bindTestHost();
+  vi.spyOn(backend(), "pageOwed").mockResolvedValue([{ key: KEY, version: 2 }]);
+  const wait = vi.spyOn(backend(), "pageWait").mockResolvedValue([]);
+  expect(await flushAllUnsettled(true)).toBeNull();
+  expect(wait.mock.calls.map((call) => [call[1], call[3]])).toEqual([[[{ key: KEY, version: 2 }], true]]);
+  wait.mockClear();
+  wait.mockResolvedValue({ refused: [KEY] });
+  expect(await flushAllUnsettled(true)).toEqual({ kind: "stuck", files: [KEY] });
+  expect(await flushAllUnsettled(false)).toEqual({ kind: "stuck", files: [KEY] });
+  expect(wait.mock.calls.map((call) => call[3])).toEqual([true, false]);
 });
 
 it.each([
@@ -55,7 +72,7 @@ it.each([
   await bindTestHost();
   vi.spyOn(backend(), "pageOwed").mockResolvedValue([{ key: KEY, version: 2 }]);
   arrange();
-  expect(await flushAllUnsettled()).toEqual({ kind: "no-answer" });
+  expect(await flushAllUnsettled(false)).toEqual({ kind: "no-answer" });
   expect(await flushAll()).toBe(false);
 });
 
@@ -68,18 +85,18 @@ it("still busy: work arriving across every round is refused as busy, as before",
     setRaw("Busy-block", `typed ${typed++}`, { timetracking: false });
     return needs.map(({ key, version }) => ({ key, version, rev: null }));
   });
-  expect(await flushAllUnsettled()).toEqual({ kind: "busy" });
+  expect(await flushAllUnsettled(false)).toEqual({ kind: "busy" });
 });
 
 it("no client with early edits: refused as unbound, as before", async () => {
   loadRoutedPage(dto("Early"));
   setRaw("Early-block", "typed before any binding", { timetracking: false });
-  expect(await flushAllUnsettled()).toEqual({ kind: "unbound" });
+  expect(await flushAllUnsettled(false)).toEqual({ kind: "unbound" });
   expect(await flushAll()).toBe(false);
 });
 
 it("no client and no edits: settled, as before", async () => {
-  expect(await flushAllUnsettled()).toBeNull();
+  expect(await flushAllUnsettled(false)).toBeNull();
   expect(await flushAll()).toBe(true);
 });
 
@@ -87,5 +104,5 @@ it("every need published: settled, as before", async () => {
   await bindTestHost();
   vi.spyOn(backend(), "pageOwed").mockResolvedValueOnce([{ key: KEY, version: 2 }]).mockResolvedValue([]);
   vi.spyOn(backend(), "pageWait").mockResolvedValue([{ key: KEY, version: 2, rev: null }]);
-  expect(await flushAllUnsettled()).toBeNull();
+  expect(await flushAllUnsettled(false)).toBeNull();
 });
