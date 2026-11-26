@@ -18,7 +18,8 @@ Each question has one owner in the code; details are in each file's header.
   `start_host` in `src-tauri/src/graph.rs`. It is the only writer of page edits
   and owns base revisions, conflicts and crash drafts.
 - **The window's side** is `src/document/host/`: `wiring.ts` is the only module
-  that issues `page_*` commands, and `client.ts` keeps no base revisions,
+  that issues `page_*` commands, except the retry of retained crash drafts
+  (`page_drafts_retry`, from `src/graph.ts` through `src/backend.ts`), and `client.ts` keeps no base revisions,
   retries, drafts or conflict detection of its own.
 
 ## Durable publication
