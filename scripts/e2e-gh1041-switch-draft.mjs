@@ -154,7 +154,7 @@ try {
     await browser.waitUntil(async () => await graphName() === "beta" || !!(await refusal()),
       { timeout: 30_000, timeoutMsg: "the switch neither went through nor was refused" });
   }
-  assert(await graphName() === "beta", `the switch was refused ${attempts} times over a draft of a page no window has started editing`);
+  assert(await graphName() === "beta", `the switch was refused ${attempts} times over a draft of a page no window has worked on`);
   // The switch lands on beta's journal; its own Notes page shows beta's text.
   await openPageByName(browser, "Notes");
   await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("Beta notes")),

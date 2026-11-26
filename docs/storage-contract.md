@@ -1660,11 +1660,15 @@ that no window is subscribed to, with nothing working on its key, no draft
 vehicle of it still owed to the launch census, no surfaced draft error naming
 it, and a durable draft that is exactly its text, base and version
 (`Host::exact_copy`, the answer the host's own stop gives for a page at risk).
-A window subscribes with `page_open`, which it sends when a block of the page
-enters editing, so a page that is only displayed is not subscribed; the
-subscription outlives the editor while the host owes the window a save (the
-window-close rule below), so a conflicted page holds the switch from the
-moment a window starts editing it until the conflict is resolved. The
+A window subscribes with `page_open`, which it sends when it first works on
+the page: a block of it enters editing, a command changes it without an
+editor (a task checkbox, a block id stamped for a copied reference, a move
+that names it as an endpoint), the page is created, or the pages a window
+has loaded are re-read after an explicit draft recovery. A page that is only
+displayed is not subscribed. The subscription outlives that work while the
+host owes the window a save (the window-close rule below), so a conflicted
+page holds the switch from the moment a window first works on it until the
+conflict is resolved. The
 returned revisions say nothing about a key set aside; its draft stays on disk
 and the next launch of the graph recovers and reports it. Only a switch to
 another graph asks with `departure`: a refresh of the same graph, restore,

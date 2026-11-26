@@ -46,7 +46,7 @@ it("a window page whose save keeps failing (tine#1033's shape): the barrier name
 });
 
 // Step 2: leaving for another graph. The host sets aside a draft only it holds
-// (no window has started editing the page, its exact copy is recovered at the next launch):
+// (no window has worked on the page, its exact copy is recovered at the next launch):
 // its wait answers with no revision for that key, the host still lists the key
 // as owed, and the barrier passes. A refusal is carried as before.
 it("a departure passes over a draft only the host holds; a refusal still names its key", async () => {

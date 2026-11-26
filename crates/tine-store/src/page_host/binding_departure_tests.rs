@@ -60,7 +60,7 @@ fn refused(files: &[&str]) -> (PageOperation, Vec<PublishedRevision>, Vec<String
     (PageOperation::Refused, vec![], files)
 }
 
-/// The reporter's case: a conflicted page no window has started editing, with an exact
+/// The reporter's case: a conflicted page no window has worked on, with an exact
 /// durable draft, does not hold a departure. The publication wait on the
 /// same need still refuses and names it.
 #[test]

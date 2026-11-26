@@ -165,7 +165,7 @@ export interface HostPort {
    * once the session is not current, the host is down, or the call failed; null
    * when one bounded wait (≤ 5 s) passed first: the client asks again. */
   /** `departure`: the window is leaving this graph for another (tine#1041). The
-   * host then sets aside each need whose page no window has started editing and whose exact
+   * host then sets aside each need whose page no window has worked on and whose exact
    * draft the next launch recovers; the revisions say nothing about those. */
   waitPublished(session: number, needs: readonly PublishedNeed[], departure: boolean): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   /** Publication debt; `paths` (graph-relative files) filters through the host's
