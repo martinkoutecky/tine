@@ -292,42 +292,6 @@ export function codeCardOffsetFromRange(
   return caret;
 }
 
-/** Where a range end inside coarse element `el` maps. Coarse elements map to
- *  an EDGE, not an interior byte, and the nearer one is picked: a click landing
- *  in the second half of the rendered text (e.g. to the right of a trailing
- *  `[[link]]`) resolves to the span end, so the caret sits after the construct
- *  instead of before it (GH #34). `exact` says whether that edge is where the
- *  end really lies: at the construct's rendered start, or at its rendered end
- *  when the end byte is known. Strictly inside, the edge names text the end
- *  did not reach. O(rendered text of `el`). */
-function coarseEdge(
-  el: Element,
-  data: Extract<SpanDomData, { kind: "coarse" }>,
-  range: Pick<Range, "startContainer" | "startOffset">,
-): { sourceByte: number; exact: boolean } {
-  const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
-  if (data.end != null && caret != null && text.length > 0 && caret * 2 >= text.length) {
-    return { sourceByte: data.end, exact: caret === text.length };
-  }
-  return { sourceByte: data.start, exact: caret === 0 };
-}
-
-/** Whether {@link editorOffsetFromRenderedRange} answers this range end only
- *  by snapping: the end lies strictly inside a construct with no exact
- *  text-to-source mapping (inline HTML, a page reference, a tag, math, a
- *  heading or quote wrapper's own text), so the offset it gives is an edge of
- *  that construct, not the end itself. A caret placed there is fine; a write
- *  over a selection with such an end would remove or keep text the user did
- *  not select, so writers refuse it. O(depth + rendered text of the construct). */
-export function rangeEndSnapsInsideCoarse(
-  root: Element,
-  range: Pick<Range, "startContainer" | "startOffset">,
-): boolean {
-  const el = closestSpanElement(root, range.startContainer);
-  const data = el && spanDataFromElement(el);
-  return !!el && data?.kind === "coarse" && !coarseEdge(el, data, range).exact;
-}
-
 export function editorOffsetFromRenderedRange(
   root: Element,
   range: Pick<Range, "startContainer" | "startOffset">,
@@ -342,7 +306,15 @@ export function editorOffsetFromRenderedRange(
 
   let sourceByte: number | null;
   if (data.kind === "coarse") {
-    sourceByte = coarseEdge(el, data, range).sourceByte;
+    // Coarse elements map to an EDGE, not an interior byte. Pick the nearer one:
+    // a click landing in the second half of the rendered text (e.g. to the right
+    // of a trailing `[[link]]`) resolves to the span end, so the caret sits after
+    // the construct instead of before it (GH #34).
+    sourceByte = data.start;
+    if (data.end != null) {
+      const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
+      if (caret != null && text.length > 0 && caret * 2 >= text.length) sourceByte = data.end;
+    }
   } else {
     const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
     if (caret == null) return null;
@@ -354,10 +326,65 @@ export function editorOffsetFromRenderedRange(
     );
   }
   if (sourceByte == null) return null;
+  return visibleOffsetFromSourceByte(raw, sourceByte, isHidden, format);
+}
 
+function visibleOffsetFromSourceByte(raw: string, sourceByte: number, isHidden: HidePolicy, format: PropFormat): number {
   const rawByte = rebulletedSourceByteToRawByte(raw, sourceByte);
   const rawUtf16 = utf8ByteToUtf16Offset(raw, rawByte);
   return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
+}
+
+/** Whether `range` covers every part of `el` the user can see or select: each
+ *  leaf of its subtree (a non-empty text node, or an element without children
+ *  such as an image, a line break, an audio or video player, a video's
+ *  `<source>`) lies inside the range. Comments and empty text draw nothing and
+ *  are skipped. A range that starts or ends inside the element's text, or
+ *  leaves out a medium before or after it, does not cover it. O(nodes of el). */
+function rangeCoversElement(range: Range, el: Element): boolean {
+  const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (n.nodeType === Node.TEXT_NODE) {
+      const len = n.textContent?.length ?? 0;
+      if (len > 0 && (range.comparePoint(n, 0) !== 0 || range.comparePoint(n, len) !== 0)) return false;
+    } else if (!n.firstChild) {
+      const parent = n.parentNode!;
+      const at = Array.prototype.indexOf.call(parent.childNodes, n) as number;
+      if (range.comparePoint(parent, at) !== 0 || range.comparePoint(parent, at + 1) !== 0) return false;
+    }
+  }
+  return true;
+}
+
+/** The editor-text range [start, end) a rendered text selection inside `root`
+ *  names, for a write that replaces exactly the selected text, or null when it
+ *  names none exactly. A selection end in a byte-exact span maps to its exact
+ *  offset. An end inside a construct with no exact text-to-source mapping
+ *  (inline HTML, a page reference, a tag, math, a heading or quote wrapper's
+ *  own text) maps only when the selection covers that whole construct
+ *  ({@link rangeCoversElement}), and then to the construct's start (for the
+ *  selection start) or end; otherwise null, since any edge would take or keep
+ *  text or media the user did not select. Caret placement for a click keeps
+ *  {@link editorOffsetFromRenderedRange}. O(depth + the two end constructs). */
+export function sourceRangeFromRenderedSelection(
+  root: Element,
+  range: Range,
+  raw: string,
+  isHidden: HidePolicy,
+  format: PropFormat = "md",
+): { start: number; end: number } | null {
+  const offset = (container: Node, at: number, edge: "start" | "end"): number | null => {
+    const el = closestSpanElement(root, container);
+    const data = el && spanDataFromElement(el);
+    if (!el || !data) return null;
+    if (data.kind === "plain") return editorOffsetFromRenderedRange(root, { startContainer: container, startOffset: at }, raw, isHidden, format);
+    if (!rangeCoversElement(range, el)) return null;
+    const sourceByte = edge === "start" ? data.start : data.end;
+    return sourceByte == null ? null : visibleOffsetFromSourceByte(raw, sourceByte, isHidden, format);
+  };
+  const start = offset(range.startContainer, range.startOffset, "start");
+  const end = start === null ? null : offset(range.endContainer, range.endOffset, "end");
+  return start === null || end === null || end < start ? null : { start, end };
 }
 
 /** Whether the plain span leaf `el` describes `raw`, the block `root` renders,

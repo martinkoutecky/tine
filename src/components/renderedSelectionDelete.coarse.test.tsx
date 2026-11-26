@@ -149,6 +149,39 @@ describe("rendered-selection delete with an end inside a construct that has no e
   });
 });
 
+// A medium inside inline HTML draws no text, so a selection that covers all of
+// the element's text can still leave the medium out: the selection must cover
+// the whole element (each of its leaves), not only its text.
+const MEDIA = [
+  ["an image without alt", '<img src="https://example.com/example.png">'],
+  ["an image with empty alt", '<img src="https://example.com/example.png" alt="">'],
+  ["an image with alt text", '<img src="https://example.com/example.png" alt="pic">'],
+  ["an audio player", '<audio controls src="https://example.com/a.mp3"></audio>'],
+  ["a video with src", '<video controls src="https://example.com/v.mp4"></video>'],
+  ["a video with a nested source", '<video controls><source src="https://example.com/v.mp4"></video>'],
+] as const;
+
+describe("rendered-selection delete leaves unselected media in inline HTML alone", () => {
+  const cases = MEDIA.flatMap(([kind, media]) =>
+    (["before", "after"] as const).flatMap((where) =>
+      (["Delete", "Backspace"] as const).map((key) => [kind, media, where, key] as const)));
+  it.each(cases)("%s %s the selected text, %s: nothing is written", (_kind, media, where, key) => {
+    const raw = where === "before" ? `a <b>${media}hello world</b> c` : `a <b>hello world${media}</b> c`;
+    const r = deleteSelection(raw, () => {
+      const t = textNode("hello world");
+      return [[t, 0], [t, 11]];
+    }, key);
+    expect(r.selected).toContain("hello world");
+    expect(r.raw).toBe(raw);
+    expect(r.editing).toBeNull();
+  });
+
+  it("a selection from prose to prose across the element and its medium deletes all of it", () => {
+    const r = deleteSelection(`a <b>${MEDIA[0][1]}hello world</b> c`, () => [[textNode("a "), 1], [textNode(" c"), 1]]);
+    expect(r.raw).toBe("ac");
+  });
+});
+
 describe("rendered-selection delete: unchanged cases", () => {
   it("a selection covering a whole inline HTML element deletes the element", () => {
     const r = deleteSelection("a <b>hello world</b> c", () => {
