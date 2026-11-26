@@ -52,7 +52,16 @@
       "color",
       "background-color",
       "text-decoration-color"
-    ]
+    ],
+    "highlightColors": {
+      "yellow": "#fef2a4",
+      "red": "#fdd8d8",
+      "pink": "#f9d8ec",
+      "green": "#ccebd7",
+      "blue": "#cee7fe",
+      "purple": "#eddbf9",
+      "gray": "#e8e8e8"
+    }
   },
   "native": {
     "genericAttributes": [

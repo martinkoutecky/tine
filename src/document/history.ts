@@ -323,6 +323,12 @@ export function pushMoveSelectionUndo(roots: readonly string[], pages: string[])
   moveBurst = entry && undoSuppressionDepth === 0 ? { entry, roots: [...roots], startedAt: now, lastAt: now } : null;
 }
 
+/** End the current typing burst, so the next text edit starts its own undo step
+ *  (a discrete editor command such as a highlight colour). O(1). */
+export function endTypingBurst(): void {
+  if (lastUndoTag?.startsWith("type:")) lastUndoTag = null;
+}
+
 /** Record an O(1) inverse patch for a single-block text edit (typing). A typing
  *  burst in one block coalesces to a single entry holding the pre-burst text. */
 export function pushRawUndo(id: string, prevRaw: string) {

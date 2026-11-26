@@ -48,3 +48,15 @@ editor-block-pasted-outline-was-refused = Pasted outline was refused
 editor-block-copy-result = Copy result
 editor-block-more-formatting = More formatting
 editor-block-selection-formatting = Format selected text
+editor-block-highlight-colors = Highlight colors
+editor-block-highlight-color = { $color ->
+    [yellow] Yellow highlight
+    [red] Red highlight
+    [pink] Pink highlight
+    [green] Green highlight
+    [blue] Blue highlight
+    [purple] Purple highlight
+    [gray] Gray highlight
+   *[other] { $color } highlight
+}
+editor-block-highlight-no-color = Remove highlight color

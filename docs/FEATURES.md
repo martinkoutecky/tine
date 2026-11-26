@@ -61,7 +61,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - **Raw inline/block HTML** — HTML the way Logseq renders it: `<ins>`, `<del>`,
   `<sup>`/`<sub>`, `<kbd>`, `<mark>`, `<abbr>`, `<a>`, a self-closed `<img/>`, small
   containers. It renders **live, sanitized** to a safe allowlist (both the app and
-  the HTML export) — scripts, event handlers (`onerror=`) and `style` are stripped.
+  the HTML export) — scripts and event handlers (`onerror=`) are stripped, and `style` keeps only colours.
   Two Logseq-parity notes: a *bare* `<img>` is literal in Logseq too (only a
   self-closed `<img/>` is raw HTML), and the Markdown carets `^x^`/`~x~` are literal
   in Logseq (not sub/superscript) — use the tags or `$math$`. (Sanitizer allowlist

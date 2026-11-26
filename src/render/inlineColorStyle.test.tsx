@@ -79,3 +79,27 @@ describe("only colour declarations survive the sanitizer", () => {
     expect(host.firstElementChild?.hasAttribute("style")).toBe(false);
   });
 });
+
+// the selection toolbar's colour row writes Logseq's theme-aware highlight.
+describe("coloured inline highlights", () => {
+  const declaration = "background-color: var(--ls-highlight-color-red, #fdd8d8)";
+
+  it("renders the toolbar's markup as a mark that keeps Logseq's variable and its fallback", () => {
+    const mark = mount(`say <mark style="${declaration}">hello</mark> world`).querySelector("mark") as HTMLElement;
+    expect(mark.textContent).toBe("hello");
+    expect(mark.getAttribute("style")).toBe(declaration);
+  });
+
+  it.each([
+    "background-color: var(--anything-else, #fdd8d8)",
+    "background-color: var(--ls-highlight-color-orange, #fdd8d8)",
+    "background-color: var(--ls-highlight-color-red, url(https://t.example/x))",
+    "background-color: var(--ls-highlight-color-red)",
+    "color: var(--ls-highlight-color-red, #fdd8d8)",
+    "background-color: url(https://t.example/x)",
+  ])("drops %s", (decl) => {
+    const mark = mount(`say <mark style="${decl}">hello</mark> world`).querySelector("mark") as HTMLElement;
+    expect(mark.textContent).toBe("hello");
+    expect(mark.hasAttribute("style")).toBe(false);
+  });
+});

@@ -41,3 +41,15 @@ editor-block-pasted-outline-was-refused = طرح کلی جای‌گذاری‌ش
 editor-block-copy-result = کپی نتیجه
 editor-block-more-formatting = قالب‌بندی بیشتر
 editor-block-selection-formatting = قالب‌بندی متن انتخاب‌شده
+editor-block-highlight-colors = رنگ‌های برجسته‌سازی
+editor-block-highlight-color = { $color ->
+    [yellow] برجسته‌سازی زرد
+    [red] برجسته‌سازی قرمز
+    [pink] برجسته‌سازی صورتی
+    [green] برجسته‌سازی سبز
+    [blue] برجسته‌سازی آبی
+    [purple] برجسته‌سازی بنفش
+    [gray] برجسته‌سازی خاکستری
+   *[other] برجسته‌سازی { $color }
+}
+editor-block-highlight-no-color = حذف رنگ برجسته‌سازی

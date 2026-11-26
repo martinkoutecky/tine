@@ -91,6 +91,9 @@ const TEXT_ON: Record<string, string[]> = {
 for (const name of ON_QUATERNARY) TEXT_ON[name].push("--ls-quaternary-background-color");
 TEXT_ON["--ls-link-text-color"].push("--ls-page-mark-bg-color");
 TEXT_ON["--ls-link-text-hover-color"].push("--ls-page-mark-bg-color");
+// Text in a coloured highlight, which draws in the mark's text colour.
+const HIGHLIGHTS = ["yellow", "red", "pink", "green", "blue", "purple", "gray"].map((name) => `--ls-highlight-color-${name}`);
+TEXT_ON["--ls-page-mark-color"].push(...HIGHLIGHTS);
 
 /** Overlay background -> foregrounds drawn through it (alpha-blended over the page and sidebar). */
 const OVERLAYS: Record<string, string[]> = {

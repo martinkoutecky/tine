@@ -115,3 +115,17 @@ lsdoc is untouched.
   transcribes at all. `img` and media `src` keep the sanitizer's scheme policy.
 - So an export shows what the app shows: a Hiccup or raw-HTML colour survives,
   and positioning, forms, `id`s and event handlers do not.
+
+## Amendment (2026-11-26): Logseq's highlight colours
+
+- **`background-color` also keeps one variable form:**
+  `var(--ls-highlight-color-<name>, #<hex>)`, where `<name>` is one of Logseq's
+  seven built-in colours (`browser.highlightColors` in the policy file, OG
+  `frontend/ui.cljs:59-66`) and the fallback is a hex colour literal. This is the
+  markup the selection toolbar's colour row writes; Logseq keeps the `style`
+  (DOMPurify 2.4.0, `frontend/security.cljs:5-11`) and resolves the variable
+  (`packages/ui/src/vars-classic.css:19-25`). The same `color_only_style` decides
+  it in both surfaces. Any other variable, a variable on another property, a
+  variable without a hex fallback, and a nested function are dropped, as before.
+  Tine defines the seven variables for light and dark in `src/styles/ls-shim.css`;
+  the export, which has no such variables, draws the fallback.

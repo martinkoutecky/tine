@@ -72,6 +72,7 @@ demoJournalPage
 depthOf
 dtoSubtreeMarkdown
 emptyPage
+endTypingBurst  # why: a highlight-colour press is one Undo step, apart from the typing around it; batch-inline-highlight-colours
 ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded

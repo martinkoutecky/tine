@@ -44,6 +44,9 @@ fn policy() -> &'static Policy {
 // (`build.rs`) so the app's wasm build carries neither the policy JSON nor a
 // reader for it.
 include!(concat!(env!("OUT_DIR"), "/style_properties.rs"));
+// The keys of the policy's `browser.highlightColors` (Logseq's `ui/built-in-colors`,
+// OG 6e7afa8eb src/main/frontend/ui.cljs:59-66) as `HIGHLIGHT_COLORS`, compiled in the same way.
+include!(concat!(env!("OUT_DIR"), "/highlight_colors.rs"));
 
 /// The export's one rule for where a note-authored link may navigate (Markdown
 /// links in `decorate`, raw-HTML and Hiccup anchors in `sanitize`). External
@@ -143,11 +146,40 @@ fn is_color_literal(v: &str) -> bool {
     total >= 1 && total - leading <= 80
 }
 
+/// Whether `v` is Logseq's theme-aware highlight colour with a fixed fallback,
+/// `var(--ls-highlight-color-<name>, #hex)`, and nothing wider:
+/// `<name>` one of [`HIGHLIGHT_COLORS`] (custom properties are case-sensitive, so
+/// exactly), the fallback one hex literal, optional ECMAScript whitespace inside the
+/// parentheses and around the comma, the function name ASCII-case-insensitive.
+/// Logseq defines these variables for both themes (OG 6e7afa8eb
+/// packages/ui/src/vars-classic.css:19-25); Tine defines them in `ls-shim.css`.
+fn is_highlight_var(v: &str) -> bool {
+    let Some(head) = v.get(..4) else {
+        return false;
+    };
+    if !head.eq_ignore_ascii_case("var(") {
+        return false;
+    }
+    let Some(body) = v[4..].strip_suffix(')') else {
+        return false;
+    };
+    let Some((name, fallback)) = body.split_once(',') else {
+        return false;
+    };
+    let fallback = js_trim(fallback);
+    js_trim(name)
+        .strip_prefix("--ls-highlight-color-")
+        .is_some_and(|color| HIGHLIGHT_COLORS.contains(&color))
+        && fallback.starts_with('#')
+        && is_color_literal(fallback)
+}
+
 /// The colour declarations of a `style` value, serialized `prop: value; …`;
 /// "" if none, the one rule for both the app (through the wasm export
 /// `color_only_styles`) and export: the property must be one of the policy's
 /// `browser.styleProperties`, and the value one closed colour literal (no
-/// url(), var(), calc(), image-set() or `!important`).
+/// url(), var(), calc(), image-set() or `!important`), or, for
+/// `background-color` only, Logseq's highlight variable ([`is_highlight_var`]).
 ///
 /// Every step reproduces the app's former JavaScript rule (`colorOnlyStyle`,
 /// kept as the oracle in `src/render/htmlSanitize.test.tsx`): split on `;`,
@@ -182,17 +214,19 @@ fn push_color_only_style(value: &str, out: &mut String) {
             STYLE_PROPERTIES.iter().find(|p| **p == lower)
         };
         let v = js_trim(v);
-        let Some(property) = matched.filter(|_| is_color_literal(v)) else {
+        let Some(property) = matched else {
             continue;
         };
         // A function body may contain letters (`from`, `none`) but never a nested call.
-        if v.find('(').is_some_and(|open| {
-            let body = v[open..].as_bytes();
-            COLOR_FUNCTION_BANNED.iter().any(|word| {
-                body.windows(word.len())
-                    .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
-            })
-        }) {
+        let literal = is_color_literal(v)
+            && !v.find('(').is_some_and(|open| {
+                let body = v[open..].as_bytes();
+                COLOR_FUNCTION_BANNED.iter().any(|word| {
+                    body.windows(word.len())
+                        .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
+                })
+            });
+        if !literal && !(*property == "background-color" && is_highlight_var(v)) {
             continue;
         }
         if out.len() > start {

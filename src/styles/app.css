@@ -3985,6 +3985,7 @@ html[data-system-insets="native-viewport"] {
   inset-inline-start: 0;
   z-index: 40;
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 3px;
   background: var(--bg-primary);
@@ -4041,6 +4042,30 @@ html[data-system-insets="native-viewport"] {
 }
 .sel-toolbar button:hover {
   background: var(--bg-tertiary);
+}
+/* the highlight colours, a second row (phones: opened by H). */
+.sel-toolbar-colors {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px 0;
+}
+.sel-toolbar button.sel-color {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+}
+.sel-toolbar button.sel-color:hover {
+  transform: scale(1.12);
+}
+.sel-toolbar button.sel-color-none {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1;
 }
 
 .mobile-keyboard-toolbar {

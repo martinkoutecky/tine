@@ -1,6 +1,14 @@
-// Logseq's built-in block background colors. The swatch values match the
-// context menu; the render tint is softer so text remains readable in cells.
-export const BLOCK_COLOR_NAMES = ["yellow", "red", "pink", "green", "blue", "purple", "gray"] as const;
+import policy from "../fixtures/html-sanitize-policy.json";
+
+// Logseq's built-in colors (OG 6e7afa8eb src/main/frontend/ui.cljs:59-66, `built-in-colors`),
+// in Logseq's order. The one list lives in the sanitizer policy, because the sanitizer admits
+// a coloured highlight's `var(--ls-highlight-color-<name>, <fallback>)` for exactly these names;
+// each maps to the fixed fallback a highlight writes for viewers without Logseq's variables.
+export const HIGHLIGHT_FALLBACK: Readonly<Record<string, string>> = policy.browser.highlightColors;
+export const BLOCK_COLOR_NAMES: readonly string[] = Object.keys(HIGHLIGHT_FALLBACK);
+
+// Block background colors. The swatch values match the context menu; the render tint is
+// softer so text remains readable in cells.
 
 export const BLOCK_COLOR_SWATCH: Record<string, string> = {
   yellow: "#fbe69e",

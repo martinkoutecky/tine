@@ -1,13 +1,14 @@
 import { createEffect, createSignal, createUniqueId, For, onCleanup, Show, useContext } from "solid-js";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 import { essentialSelectionActions, secondarySelectionActions, type SelectionAction } from "./selectionActions";
-import { insertLink, toggleInlineFormat, type Edit, type InlineFormat } from "./format";
+import { insertLink, setHighlightColor, toggleInlineFormat, type Edit, type InlineFormat } from "./format";
 import { doubleRefKind, SELECTION_WRAP, wrapSelectionEdit } from "./autopair";
 import { cycleMarkerSmart } from "./repeat";
 import { workflow } from "../ui";
 import { commentFromEditor } from "../commentActions";
 import { CaptureCtx } from "../components/Block";
 import { selectionActionLabel } from "../components/SelectionActionLabel";
+import { HighlightColorRow } from "../components/HighlightColorRow";
 import { registerTransientLayer } from "../transientLayers";
 import { touchPrimary } from "../inputCapability";
 import { t } from "../i18n";
@@ -30,6 +31,9 @@ export function cm6Formatting(ctx: {
   const cap = useContext(CaptureCtx);
   const [selected, setSelected] = createSignal(false);
   const [overflow, setOverflow] = createSignal(false);
+  // Phones: the H button opens the highlight colours; desktop shows them always.
+  const [colorsOpen, setColorsOpen] = createSignal(false);
+  const colors = () => ctx.format === "md" && (!touchPrimary() || colorsOpen());
   const placement = selectionToolbarPlacement(() => ctx.view()?.contentDOM, () => selected() && !touchPrimary(), () => {
     const view = ctx.view();
     if (!view) return null;
@@ -55,6 +59,17 @@ export function cm6Formatting(ctx: {
     if (!current()) return;
     const view = ctx.view()!, s = view.state.selection.main;
     apply(action.apply(view.state.doc.toString(), s.from, s.to, ctx.format, s.anchor > s.head ? "backward" : "forward"));
+  };
+  const press = (item: SelectionAction) => {
+    if (item.id !== "highlight" || !touchPrimary() || ctx.format !== "md") return action(item);
+    setOverflow(false);
+    setColorsOpen(open => !open);
+  };
+  const pickColor = (color: string | null) => {
+    if (!current()) return;
+    const view = ctx.view()!, s = view.state.selection.main;
+    const edit = setHighlightColor(view.state.doc.toString(), s.from, s.to, color, s.anchor > s.head ? "backward" : "forward");
+    if (edit) apply(edit);
   };
   const comment = () => {
     if (!current() || cap) return;
@@ -100,7 +115,7 @@ export function cm6Formatting(ctx: {
   const changed = (update: ViewUpdate) => {
     const hasSelection = !update.state.selection.main.empty;
     setSelected(hasSelection);
-    if (!hasSelection) setOverflow(false);
+    if (!hasSelection) { setOverflow(false); setColorsOpen(false); }
     if (update.selectionSet || update.docChanged) queueMicrotask(placement.position);
   };
   createEffect(() => {
@@ -119,7 +134,7 @@ export function cm6Formatting(ctx: {
   });
   const button = (item: SelectionAction, menu = false) => <button type="button" role={menu ? "menuitem" : undefined}
     classList={{ "sel-action-page-link": item.id === "page-link" }} title={item.title} aria-label={item.title}
-    data-selection-action={item.id} onClick={() => action(item)}>{selectionActionLabel(item)}</button>;
+    data-selection-action={item.id} onClick={() => press(item)}>{selectionActionLabel(item)}</button>;
   const Toolbar = () => <Show when={selected()}>
     <div ref={placement.toolbar} class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined}
       onPointerDown={event => event.preventDefault()} onMouseDown={event => event.preventDefault()}>
@@ -130,6 +145,7 @@ export function cm6Formatting(ctx: {
       <Show when={!cap}><button type="button" data-selection-action="comment" title={t("comment-toolbar-shortcut")} aria-label={t("comment-toolbar")} onClick={comment}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>
       </button></Show>
+      <Show when={colors()}><HighlightColorRow pick={pickColor} plain={touchPrimary() ? action : undefined} /></Show>
       <Show when={overflow()}><div ref={overflowRef} class="sel-toolbar-overflow" role="menu" aria-label={t("editor-block-more-formatting")}>
         <For each={secondarySelectionActions}>{item => button(item, true)}</For>
       </div></Show>

@@ -506,6 +506,9 @@ mod journal_guide_tests {
         }
         assert!(tips.contains("one Undo step"));
         assert!(tips.contains("complete subtrees for pasting"));
+        // the selection toolbar's highlight colour row.
+        assert!(tips.contains("the toolbar's second row colours the selected words"));
+        assert!(tips.contains("On a phone, tap **H** to open the row."));
         assert!(tips.contains(
             "**Copy block refs**, **Copy block embeds**, and **Copy link** sit in the same menu"
         ));

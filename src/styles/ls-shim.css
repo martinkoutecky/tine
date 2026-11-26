@@ -28,6 +28,16 @@ html[data-theme="light"] {
   --ls-page-mark-bg-color: #fef3ac;
   --ls-page-mark-color: #262626;
   --ls-tag-text-color: #8a45c4;
+  /* Logseq's highlight colours (OG 6e7afa8eb packages/ui/src/vars-classic.css:19-25 over the
+     Radix step-5 scales in packages/ui/src/radix.css): what a coloured inline highlight
+     resolves to, as in Logseq, where block colours use the same variables. */
+  --ls-highlight-color-gray: hsl(0, 0%, 90.9%);
+  --ls-highlight-color-red: hsl(360, 90.2%, 91.9%);
+  --ls-highlight-color-yellow: hsl(52, 97.9%, 82.0%);
+  --ls-highlight-color-green: hsl(141, 43.7%, 86.0%);
+  --ls-highlight-color-blue: hsl(209, 95.0%, 90.1%);
+  --ls-highlight-color-purple: hsl(275, 70.8%, 91.8%);
+  --ls-highlight-color-pink: hsl(323, 72.2%, 91.1%);
 
   --accent: var(--ls-block-bullet-active-color, #1f6fd0);
   --bg-primary: var(--ls-primary-background-color, #ffffff);
@@ -77,6 +87,14 @@ html[data-theme="dark"] {
   --ls-page-mark-bg-color: #5b5320;
   --ls-page-mark-color: #ecedf0;
   --ls-tag-text-color: #cf92ec;
+  /* Logseq's dark Radix step-5 values (packages/ui/src/radix.css, html.dark). */
+  --ls-highlight-color-gray: hsl(0, 0%, 17.9%);
+  --ls-highlight-color-red: hsl(356, 51.1%, 21.9%);
+  --ls-highlight-color-yellow: hsl(47, 100%, 12.1%);
+  --ls-highlight-color-green: hsl(154, 49.7%, 14.9%);
+  --ls-highlight-color-blue: hsl(213, 71.2%, 20.2%);
+  --ls-highlight-color-purple: hsl(279, 43.8%, 23.3%);
+  --ls-highlight-color-pink: hsl(320, 49.0%, 21.1%);
 
   --accent: var(--ls-block-bullet-active-color, #6cb0ff);
   --bg-primary: var(--ls-primary-background-color, #1a1b1e);

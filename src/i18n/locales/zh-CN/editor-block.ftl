@@ -87,3 +87,15 @@ editor-block-copy-result = 复制结果
 
 editor-block-more-formatting = 更多格式
 editor-block-selection-formatting = 设置所选文本格式
+editor-block-highlight-colors = 高亮颜色
+editor-block-highlight-color = { $color ->
+    [yellow] 黄色高亮
+    [red] 红色高亮
+    [pink] 粉色高亮
+    [green] 绿色高亮
+    [blue] 蓝色高亮
+    [purple] 紫色高亮
+    [gray] 灰色高亮
+   *[other] { $color } 高亮
+}
+editor-block-highlight-no-color = 移除高亮颜色
