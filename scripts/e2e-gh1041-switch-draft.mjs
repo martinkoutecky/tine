@@ -167,7 +167,7 @@ try {
 
   stage = "reopened on the first graph: the recovered edits are reported";
   await launch();
-  assert(await graphName() === "alpha", "the relaunch did not open alpha");
+  await browser.waitUntil(async () => await graphName() === "alpha", { timeout: 30_000, timeoutMsg: "the relaunch did not open alpha" });
   await browser.waitUntil(async () => (await errorToasts()).some(t => t.text.includes("Recovered unsaved edits") && t.text.includes(KEY)),
     { timeout: 30_000, timeoutMsg: "the relaunch did not report the recovered page" });
   assert(JSON.stringify(draftNamespaces("base mine")) === JSON.stringify(namespaces), "the draft is gone after the return");
