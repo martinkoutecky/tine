@@ -1468,15 +1468,35 @@ try {
   // the major upgrade, in addition to the transient-owner checks below.
   const findSidecarBefore = fs.readFileSync(sidecar, "utf8");
   await browser.$(".pdf-find-input").setValue("viewer");
-  await browser.waitUntil(() => browser.execute(() =>
-    window.getSelection()?.toString().toLowerCase() === "viewer"
-      && /1.*1/.test(document.querySelector(".pdf-find-count")?.textContent ?? "")), {
+  // The current match is painted with a CSS highlight and no longer selected
+  // (GH #1037: selecting it took the keyboard from the find box). A runtime
+  // without CSS highlights still marks it with the selection.
+  await browser.waitUntil(() => browser.execute(() => {
+    const painted = globalThis.CSS?.highlights && globalThis.Highlight
+      ? [...(globalThis.CSS.highlights.get("tine-pdf-find") ?? [])].map((range) => range.toString()).join("")
+      : window.getSelection()?.toString() ?? "";
+    return painted.toLowerCase() === "viewer"
+      && /1.*1/.test(document.querySelector(".pdf-find-count")?.textContent ?? "");
+  }), {
     timeout: 10_000,
     timeoutMsg: "PDF Find did not locate and select the fixture's text",
   });
   if (fs.readFileSync(sidecar, "utf8") !== findSidecarBefore) throw new Error("PDF Find changed annotation bytes");
-  await browser.$(".pdf-find-input").clearValue();
-  await browser.waitUntil(() => browser.execute(() => !window.getSelection()?.toString()), { timeout: 5000 });
+  // Emptied as a user empties it. The driver's own clear left the query, and
+  // so its painted match, in place in this runtime; while the match was the
+  // selection, focusing the box hid that.
+  await browser.$(".pdf-find-input").click();
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["Backspace"]);
+  await browser.waitUntil(async () => (await browser.$(".pdf-find-input").getValue()) === "", {
+    timeout: 5000,
+    timeoutMsg: "select all and Backspace did not empty the PDF Find box",
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    !globalThis.CSS?.highlights?.has("tine-pdf-find") && !window.getSelection()?.toString()), {
+    timeout: 5000,
+    timeoutMsg: "clearing the PDF Find box left its match marked",
+  });
   const transientSidecarBefore = fs.readFileSync(sidecar, "utf8");
   const transientViewBefore = await browser.execute(() => ({
     filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"),

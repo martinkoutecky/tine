@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   api: null as null | { submit(): void; cancel(): void },
   listeners: new Map<string, (e: { payload: unknown }) => void>(),
   requests: [] as Array<{ id: string; text: string }>,
+  abandoned: [] as Array<{ to: string; id: string; target: string }>,
   hide: vi.fn(),
 }));
 vi.mock("./components/Block", () => ({ Block: () => null,
@@ -20,8 +21,9 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: async (name: string, cb: (e: { payload: unknown }) => void) => {
     h.listeners.set(name, cb); return () => h.listeners.delete(name);
   },
-  emitTo: async (_: string, event: string, payload: { id: string; text: string }) => {
+  emitTo: async (to: string, event: string, payload: { id: string; text: string }) => {
     if (event === "quick-capture") h.requests.push(payload);
+    if (event === "quick-capture-abandon") h.abandoned.push({ to, ...(payload as unknown as { id: string; target: string }) });
   },
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({
@@ -132,6 +134,37 @@ it("F2: a closed-graph acknowledgement explains uncertainty and Cancel keeps the
   const fresh = await submit();
   expect(fresh.id).not.toBe(request.id);
   expect(fresh.text).toContain("only the still-missing thought");
+  await ack(fresh.id, { ok: true });
+});
+
+it("an acknowledgement that the save is unproved keeps the text and the retry, and offers a new capture", async () => {
+  setRaw(roots()[0], "maybe discarded thought");
+  const request = await submit();
+  await ack(request.id, { ok: false, landed: true });
+  expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
+  // The retry reaches a settled page that no save of Tine's is known to have written the capture to.
+  const retry = await submit();
+  expect(retry.id).toBe(request.id);
+  await ack(retry.id, { ok: false, landed: true, unproved: true });
+  expect(scratch()).toContain("maybe discarded thought");
+  expect(document.body.textContent).toContain("can't confirm this capture was saved");
+  // Hiding the window keeps that explanation, the text and the same request.
+  h.api!.cancel();
+  await Promise.resolve();
+  expect(document.body.textContent).toContain("can't confirm this capture was saved");
+  expect((await submit()).id).toBe(request.id);
+  await ack(request.id, { ok: false, landed: true, unproved: true });
+  const next = document.querySelector<HTMLButtonElement>("[data-testid=capture-start-new]")!;
+  expect(next).not.toBeNull();
+  next.click();
+  expect(scratch()).toContain("maybe discarded thought");
+  expect(document.body.textContent).toContain("already on the page");
+  expect(document.body.textContent).not.toContain("previous graph");
+  expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
+  // The window that took the attempt is told it was given up, once, by its id.
+  await vi.waitFor(() => expect(h.abandoned.filter((a) => a.id === request.id)).toEqual([{ to: "main", id: request.id, target: "main" }]));
+  const fresh = await submit();
+  expect(fresh.id).not.toBe(request.id);
   await ack(fresh.id, { ok: true });
 });
 

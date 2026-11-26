@@ -1068,6 +1068,12 @@ impl ReadSnapshot {
             &|doc: &Document| collect_document_referenced_names(doc, &config),
         );
         let asset_refs = std::sync::OnceLock::new();
+        // Only the native store reads the asset index (orphan listing, the
+        // trash recheck); the browser core never builds one, so it has none
+        // to carry. Carrying there would only link the liveness rule and
+        // the HTML sanitizer it reads into the Wasm module. A browser reader
+        // added later still gets a correct index: built on first read.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(carried) = old.and_then(|old| {
             asset_ref_index::AssetRefIndex::carry(
                 old.asset_refs.get()?,

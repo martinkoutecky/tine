@@ -17,7 +17,10 @@ beforeAll(() => initParser());
 
 const h = vi.hoisted(() => ({ receive: null as null | ((event: { payload: unknown }) => Promise<void>), ack: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_: string, receive: typeof h.receive) => { h.receive = receive; return () => { h.receive = null; }; },
+  listen: async (name: string, receive: typeof h.receive) => {
+    if (name !== "quick-capture") return () => {};
+    h.receive = receive; return () => { h.receive = null; };
+  },
   emitTo: h.ack,
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
@@ -36,7 +39,8 @@ it.each(["Destination", ""])("L9-08: retries a landed capture without inserting 
   const payload = { id: `retry-landed-${title}`, target: "main", bindingGeneration: 11, title, text: "- captured thought" };
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
-  wait.mockResolvedValue([]);
+  // The host's own save wrote the version it took: its wait says so.
+  wait.mockImplementation(async (_session, needs) => needs.map(({ key, version }) => ({ key, version, rev: "after" })));
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
   expect(pageByName(name)!.roots.map(id => doc.byId[id].raw).filter(raw => raw === "captured thought")).toHaveLength(1);

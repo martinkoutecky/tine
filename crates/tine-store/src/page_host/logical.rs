@@ -348,6 +348,14 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    /// `key`'s durable draft is exactly `page`: its buffer, base and version.
+    /// The one answer to "does the next launch recover this page as it is",
+    /// for the host's stop (`can_switch`) and for a window leaving the graph
+    /// (`wait_departure`, tine#1041).
+    pub(super) fn exact_copy(&self, key: &str, page: &Page) -> bool {
+        self.draft_of(key).is_some_and(|r| r.holds(page))
+    }
+
     /// A key's logical state, the one source of every barrier query
     /// (`owed`, `pages_published`, `pages_recoverable`, `wait_published`,
     /// `unsaved`; STEP3-DESIGN "Manager decisions on the P2b checkpoint
