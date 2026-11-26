@@ -31,16 +31,16 @@ afterEach(() => {
   platform.mobile = false;
 });
 
-function mountEditor(raw: string, format: "md" | "org" = "md", caret = 0) {
+function mountEditor(raw: string, format: "md" | "org" = "md", caret: number | null = 0) {
   const block: BlockDto = { id: "highlight-colors", raw, collapsed: false, children: [] };
   loadSingle({ name: "Colours", kind: "page", title: "Colours", pre_block: null, blocks: [block], format });
-  startEditing(block.id, caret);
+  if (caret !== null) startEditing(block.id, caret);
   const root = document.createElement("div");
   document.body.appendChild(root);
   const dispose = render((): JSX.Element => (
     <For each={pageByName("Colours")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  return { root, dispose, editor: editorIn(root) };
+  return { root, dispose, get editor() { return editorIn(root); } };
 }
 
 const swatch = (root: HTMLElement, color: string) =>
@@ -165,4 +165,31 @@ describe("highlight colour row under the selection toolbar", () => {
       }
     },
   );
+
+  // Merge review of 900b7f196, finding 1: the text colour follows the mark's effective (last
+  // kept) background, which the sanitizer answers; a note cannot set the marker itself.
+  it.each([
+    ["a row colour", `${RED}hello</mark>`, true],
+    ["a row colour with a space after var(", '<mark style="background-color: var( --ls-highlight-color-red, #fdd8d8)">hello</mark>', true],
+    ["a row colour with a tab after var(", '<mark style="background-color: var(\t--ls-highlight-color-red, #fdd8d8)">hello</mark>', true],
+    ["a row colour overridden by a later literal", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: #073642">hello</mark>', false],
+    ["a row colour overridden by black", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: black">hello</mark>', false],
+    ["a row colour overridden by rgb()", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: rgb(0, 0, 0)">hello</mark>', false],
+    ["a row colour overridden by hsl()", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: hsl(0, 0%, 0%)">hello</mark>', false],
+    ["a literal overridden by a row colour", '<mark style="background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8)">hello</mark>', true],
+    ["an authored literal", '<mark style="background-color: #073642">hello</mark>', false],
+    ["a forged marker", '<mark data-tine-highlight style="background-color: #073642">hello</mark>', false],
+  ])("renders %s with the matching text colour marker", async (_label, html, marked) => {
+    const { root, dispose } = mountEditor(`say ${html} now`, "md", null);
+    try {
+      const mark = await vi.waitFor(() => {
+        const found = root.querySelector(".block-content mark");
+        expect(found?.textContent).toBe("hello");
+        return found!;
+      });
+      expect(mark.hasAttribute("data-tine-highlight")).toBe(marked);
+    } finally {
+      dispose();
+    }
+  });
 });

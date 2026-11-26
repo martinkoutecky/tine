@@ -195,9 +195,13 @@ pub fn color_only_style(value: &str) -> String {
 }
 
 /// [`color_only_style`] appended to `out`, with no allocation of its own (the
-/// batch calls it once per value).
-fn push_color_only_style(value: &str, out: &mut String) {
+/// batch calls it once per value). Returns whether the effective background,
+/// the last kept `background-color`, is Logseq's highlight variable
+/// ([`is_highlight_var`]): the one answer to which text colour goes with the
+/// element's background (the app marks such a `<mark>`, see `colorOnlyStyles`).
+fn push_color_only_style(value: &str, out: &mut String) -> bool {
     let start = out.len();
+    let mut highlight = false;
     for declaration in value.split(';') {
         let Some((property, v)) = declaration.split_once(':') else {
             continue;
@@ -226,8 +230,13 @@ fn push_color_only_style(value: &str, out: &mut String) {
                         .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
                 })
             });
-        if !literal && !(*property == "background-color" && is_highlight_var(v)) {
+        let is_background = *property == "background-color";
+        let variable = is_background && is_highlight_var(v);
+        if !literal && !variable {
             continue;
+        }
+        if is_background {
+            highlight = variable;
         }
         if out.len() > start {
             out.push_str("; ");
@@ -236,6 +245,7 @@ fn push_color_only_style(value: &str, out: &mut String) {
         out.push_str(": ");
         out.push_str(v);
     }
+    highlight
 }
 
 /// `color_only_style` for many values in one call, so the app crosses into
@@ -243,7 +253,9 @@ fn push_color_only_style(value: &str, out: &mut String) {
 /// `values` is every value concatenated and `lengths[i]` the length of value
 /// `i` in UTF-16 code units (JavaScript's `length`): lengths, not a separator,
 /// so no attribute value can shift a boundary. Returns the kept declarations
-/// concatenated and their UTF-16 lengths, in input order. O(total bytes).
+/// concatenated, their UTF-16 lengths and whether each value's effective
+/// background is the highlight variable (see [`push_color_only_style`]), in
+/// input order. O(total bytes).
 ///
 /// A JavaScript caller's values reach Rust as one UTF-8 string, where a lone
 /// high surrogate ending one value and a lone low surrogate starting the next
@@ -251,10 +263,11 @@ fn push_color_only_style(value: &str, out: &mut String) {
 /// character straddling a boundary is read as U+FFFD on both sides: each value
 /// gets the answer it gets through `color_only_style`. Lengths that overrun the
 /// text read the missing part as empty (no panic: a panic aborts the instance).
-pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>) {
+pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>, Vec<bool>) {
     let bytes = values.as_bytes();
     let mut kept = String::with_capacity(values.len() / 2);
     let mut kept_lengths = Vec::with_capacity(lengths.len());
+    let mut highlights = Vec::with_capacity(lengths.len());
     let mut pos = 0usize;
     // The second half of a character that straddled the previous boundary,
     // owed to the next non-empty value (a character has at most two units).
@@ -301,9 +314,9 @@ pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>) {
             if straddle {
                 value.push('\u{FFFD}');
             }
-            push_color_only_style(&value, &mut kept);
+            highlights.push(push_color_only_style(&value, &mut kept));
         } else {
-            push_color_only_style(&values[start..end], &mut kept);
+            highlights.push(push_color_only_style(&values[start..end], &mut kept));
         }
         let added = &kept[before..];
         let units = if added.is_ascii() {
@@ -313,7 +326,7 @@ pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>) {
         };
         kept_lengths.push(units as u32);
     }
-    (kept, kept_lengths)
+    (kept, kept_lengths, highlights)
 }
 
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
@@ -552,7 +565,9 @@ mod tests {
         use super::{color_only_style, color_only_styles};
         let joined: Vec<u16> = values.concat();
         let lengths: Vec<u32> = values.iter().map(|v| v.len() as u32).collect();
-        let (kept, kept_lengths) = color_only_styles(&String::from_utf16_lossy(&joined), &lengths);
+        let (kept, kept_lengths, highlights) =
+            color_only_styles(&String::from_utf16_lossy(&joined), &lengths);
+        assert_eq!(highlights.len(), values.len());
         let kept: Vec<u16> = kept.encode_utf16().collect();
         assert_eq!(kept_lengths.len(), values.len());
         let mut at = 0;
@@ -727,8 +742,35 @@ mod tests {
 
     #[test]
     fn color_only_styles_reads_overrun_lengths_as_empty() {
-        let (kept, lengths) = super::color_only_styles("color:red", &[9, 4, 0]);
+        let (kept, lengths, highlights) = super::color_only_styles("color:red", &[9, 4, 0]);
         assert_eq!(kept, "color: red");
         assert_eq!(lengths, [10, 0, 0]);
+        assert_eq!(highlights, [false, false, false]);
+    }
+
+    /// The effective background is the last kept `background-color`: a later
+    /// literal hides an earlier highlight variable and the reverse, in any
+    /// spelling the rule keeps.
+    #[test]
+    fn color_only_styles_answers_whether_the_effective_background_is_a_highlight() {
+        let cases: [(&str, bool); 9] = [
+            ("background-color: var(--ls-highlight-color-red, #fdd8d8)", true),
+            ("background-color: var( --ls-highlight-color-red, #fdd8d8)", true),
+            ("background-color:var(\t--ls-highlight-color-red ,#fdd8d8 )", true),
+            ("background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: #073642", false),
+            ("background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: black", false),
+            ("background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8)", true),
+            ("background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: url(x)", true),
+            ("color: var(--ls-highlight-color-red, #fdd8d8)", false),
+            ("background-color: var(--ls-highlight-color-orange, #fdd8d8)", false),
+        ];
+        let joined: String = cases.iter().map(|(v, _)| *v).collect();
+        let lengths: Vec<u32> = cases
+            .iter()
+            .map(|(v, _)| v.encode_utf16().count() as u32)
+            .collect();
+        let (_, _, highlights) = super::color_only_styles(&joined, &lengths);
+        let expected: Vec<bool> = cases.iter().map(|(_, h)| *h).collect();
+        assert_eq!(highlights, expected);
     }
 }

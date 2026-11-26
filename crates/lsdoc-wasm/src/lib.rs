@@ -66,12 +66,22 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
 /// none): the export sanitizer's rule, so app and export agree. One call per
 /// sanitized fragment: `values` concatenated with their UTF-16 `lengths` in;
 /// the kept declarations concatenated out, their UTF-16 lengths written to
-/// `kept_lengths` (the same count as `lengths`). O(total bytes).
+/// `kept_lengths` (the same count as `lengths`), and `highlights[i]` set to 1
+/// when value `i`'s effective background is Logseq's highlight variable, else
+/// 0. O(total bytes).
 #[wasm_bindgen]
-pub fn color_only_styles(values: &str, lengths: &[u32], kept_lengths: &mut [u32]) -> String {
-    let (kept, counts) = tine_core::html_sanitize::color_only_styles(values, lengths);
+pub fn color_only_styles(
+    values: &str,
+    lengths: &[u32],
+    kept_lengths: &mut [u32],
+    highlights: &mut [u8],
+) -> String {
+    let (kept, counts, flags) = tine_core::html_sanitize::color_only_styles(values, lengths);
     for (slot, count) in kept_lengths.iter_mut().zip(counts) {
         *slot = count;
+    }
+    for (slot, flag) in highlights.iter_mut().zip(flags) {
+        *slot = u8::from(flag);
     }
     kept
 }

@@ -56,11 +56,12 @@ export const RAW_HTML_ATTRS = policy.browser.attributes;
 // The rule is the export sanitizer's (`color_only_style` in tine-core's html_sanitize,
 // through wasm), so the app and a published page keep the same declarations.
 
-/** The colour declarations each `style` value keeps ("" if none), in order: one
- *  wasm call for all of them, equal values computed once. Values travel as one
- *  string plus UTF-16 lengths (no separator an attribute value could contain).
- *  O(total bytes). */
-export function colorOnlyStyles(values: readonly string[]): string[] {
+/** The colour declarations each `style` value keeps ("" if none), in order, and
+ *  whether its effective background (the last kept `background-color`) is Logseq's
+ *  highlight variable: one wasm call for all of them, equal values computed once.
+ *  Values travel as one string plus UTF-16 lengths (no separator an attribute value
+ *  could contain). O(total bytes). */
+export function keptStyles(values: readonly string[]): { style: string; highlight: boolean }[] {
   if (values.length === 0) return [];
   const slot = new Map<string, number>();
   const unique: string[] = [];
@@ -71,12 +72,23 @@ export function colorOnlyStyles(values: readonly string[]): string[] {
   });
   const lengths = Uint32Array.from(unique, (value) => value.length);
   const keptLengths = new Uint32Array(unique.length);
-  const joined = color_only_styles(unique.join(""), lengths, keptLengths);
-  const kept: string[] = [];
+  const highlights = new Uint8Array(unique.length);
+  const joined = color_only_styles(unique.join(""), lengths, keptLengths, highlights);
+  const kept: { style: string; highlight: boolean }[] = [];
   let at = 0;
-  for (const n of keptLengths) kept.push(joined.slice(at, (at += n)));
+  keptLengths.forEach((n, i) => kept.push({ style: joined.slice(at, (at += n)), highlight: highlights[i] === 1 }));
   return index.map((i) => kept[i]);
 }
+
+/** The colour declarations each `style` value keeps ("" if none), in order. */
+export function colorOnlyStyles(values: readonly string[]): string[] {
+  return keptStyles(values).map((kept) => kept.style);
+}
+
+/** The attribute the sanitizer puts on a `<mark>` whose effective background is a
+ *  highlight colour, so the theme can pick its text colour (`app.css`). Not in the
+ *  attribute allowlist, so a note can never carry it itself. */
+export const HIGHLIGHT_MARK_ATTR = "data-tine-highlight";
 
 /** True if `src` is a local filesystem path (not a web / data / blob URL). */
 function isLocalSrc(src: string): boolean {
@@ -147,10 +159,10 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   }
   // DOMPurify runs IN_PLACE, so surviving elements keep identity: capture the colour
   // declarations first and put them back on whatever survives.
-  const colors = new Map<Element, string>();
+  const colors = new Map<Element, { style: string; highlight: boolean }>();
   const styled = [...root.querySelectorAll("[style]")];
-  colorOnlyStyles(styled.map((element) => element.getAttribute("style") ?? "")).forEach((kept, i) => {
-    if (kept) colors.set(styled[i], kept);
+  keptStyles(styled.map((element) => element.getAttribute("style") ?? "")).forEach((kept, i) => {
+    if (kept.style) colors.set(styled[i], kept);
   });
   DOMPurify.sanitize(root, {
     ALLOWED_TAGS: RAW_HTML_TAGS,
@@ -159,6 +171,10 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
     IN_PLACE: true,
   });
   for (const anchor of root.querySelectorAll("a[href]")) deferAnchorHref(anchor);
-  for (const [element, kept] of colors) if (root.contains(element)) element.setAttribute("style", kept);
+  for (const [element, kept] of colors) {
+    if (!root.contains(element)) continue;
+    element.setAttribute("style", kept.style);
+    if (kept.highlight && element.localName === "mark") element.setAttribute(HIGHLIGHT_MARK_ATTR, "");
+  }
   return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
 }

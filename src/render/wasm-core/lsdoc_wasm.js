@@ -1081,15 +1081,18 @@ function __tine_raw_canonical_group_field(value) {
  * none): the export sanitizer's rule, so app and export agree. One call per
  * sanitized fragment: `values` concatenated with their UTF-16 `lengths` in;
  * the kept declarations concatenated out, their UTF-16 lengths written to
- * `kept_lengths` (the same count as `lengths`). O(total bytes).
+ * `kept_lengths` (the same count as `lengths`), and `highlights[i]` set to 1
+ * when value `i`'s effective background is Logseq's highlight variable, else
+ * 0. O(total bytes).
  * @param {string} values
  * @param {Uint32Array} lengths
  * @param {Uint32Array} kept_lengths
+ * @param {Uint8Array} highlights
  * @returns {string}
  */
-function __tine_raw_color_only_styles(values, lengths, kept_lengths) {
-    let deferred4_0;
-    let deferred4_1;
+function __tine_raw_color_only_styles(values, lengths, kept_lengths, highlights) {
+    let deferred5_0;
+    let deferred5_1;
     try {
         const ptr0 = passStringToWasm0(values, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
@@ -1097,12 +1100,14 @@ function __tine_raw_color_only_styles(values, lengths, kept_lengths) {
         const len1 = WASM_VECTOR_LEN;
         var ptr2 = passArray32ToWasm0(kept_lengths, wasm.__wbindgen_malloc);
         var len2 = WASM_VECTOR_LEN;
-        const ret = wasm.color_only_styles(ptr0, len0, ptr1, len1, ptr2, len2, kept_lengths);
-        deferred4_0 = ret[0];
-        deferred4_1 = ret[1];
+        var ptr3 = passArray8ToWasm0(highlights, wasm.__wbindgen_malloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.color_only_styles(ptr0, len0, ptr1, len1, ptr2, len2, kept_lengths, ptr3, len3, highlights);
+        deferred5_0 = ret[0];
+        deferred5_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -2739,6 +2744,13 @@ function isLikeNone(x) {
 function passArray32ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 4, 4) >>> 0;
     getUint32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
 }

@@ -4535,11 +4535,11 @@ mark {
   padding: 0 2px;
   border-radius: 2px;
 }
-/* A mark whose background is one of the theme's highlight colours (the colour row's) is drawn
-   in the theme's strongest text colour, since the theme's mark text belongs to its own mark
-   background (contrast on every shipped theme: highlightContrast.test.ts). Any other mark keeps
-   the mark text colour. */
-mark[style*="background-color: var(--ls-highlight-color-"] {
+/* A mark whose effective background is one of the theme's highlight colours (the sanitizer
+   marks it) is drawn in the theme's strongest text colour, since the theme's mark text belongs
+   to its own mark background (contrast on every shipped theme: highlightContrast.test.ts). Any
+   other mark keeps the mark text colour. */
+mark[data-tine-highlight] {
   color: var(--text-title);
 }
 

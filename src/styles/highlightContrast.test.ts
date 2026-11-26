@@ -1,9 +1,10 @@
+// @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { galleryThemes } from "./themes";
 import { BLOCK_COLOR_NAMES } from "../blockColors";
 import { highlightMarkOpen } from "../editor/format";
-import { colorOnlyStyles } from "../render/htmlSanitize";
+import { HIGHLIGHT_MARK_ATTR, rawHtmlPresentation } from "../render/htmlSanitize";
 
 // Text in a coloured highlight (the selection toolbar's colour row) stays readable, at least
 // 4.5:1 (WCAG AA), on every shipped theme in both modes: the default theme and each gallery
@@ -54,22 +55,32 @@ function ratio(a: Rgb, b: Rgb): number {
 }
 
 describe("coloured highlight text contrast", () => {
-  // The rule app.css draws the colour row's marks with: a substring of the style attribute, and
-  // the variable their text is drawn in.
-  const rule = app.match(/\nmark\[style\*="([^"]+)"\]\s*\{\s*color:\s*var\((--[a-z0-9-]+)\);/);
-  const textVariable = rule![2];
-  // The style attribute a mark renders with: what the sanitizer keeps.
-  const rendered = (style: string) => colorOnlyStyles([style])[0];
+  // The rule app.css draws a mark the sanitizer marked as a highlight with, and the variable
+  // its text is drawn in.
+  const rule = app.match(new RegExp(`\\nmark\\[${HIGHLIGHT_MARK_ATTR}\\]\\s*\\{\\s*color:\\s*var\\((--[a-z0-9-]+)\\);`));
+  const textVariable = rule![1];
+  // Whether a mark with this style renders with the marker.
+  const marked = (style: string) =>
+    rawHtmlPresentation(`<mark style="${style}">x</mark>`).html.includes(`${HIGHLIGHT_MARK_ATTR}=`);
 
-  it("draws the colour row's marks, and only marks with a theme highlight background, in a theme variable", () => {
+  it("draws the colour row's marks, and only marks whose effective background is a highlight colour, in a theme variable", () => {
     expect(rule).toBeTruthy();
-    const row = BLOCK_COLOR_NAMES.map((name) => rendered(highlightMarkOpen(name).match(/style="([^"]*)"/)![1]));
-    expect(row.every((style) => style.includes(rule![1]))).toBe(true);
-    // Merge review of 75e6ab532, finding 2: a mark written with any other background keeps the
-    // mark text colour it had (on Solarized light, #073642 text on #073642 otherwise).
-    const authored = ["background-color: #073642", "background-color: black", "background-color: rgb(0, 0, 0)",
-      "background-color: hsl(0, 0%, 0%)", "background: #000", "color: var(--ls-highlight-color-red)"];
-    expect(authored.map(rendered).filter((style) => style?.includes(rule![1]))).toEqual([]);
+    // The text colour keys on the sanitizer's answer only, never on the style's spelling.
+    expect(app).not.toMatch(/mark\[style/);
+    const row = BLOCK_COLOR_NAMES.map((name) => highlightMarkOpen(name).match(/style="([^"]*)"/)![1]);
+    expect(row.filter((style) => !marked(style))).toEqual([]);
+    // Merge review of 75e6ab532, finding 2, and of 900b7f196, finding 1: a mark whose
+    // effective (last) background is anything else keeps the mark text colour it had (on
+    // Solarized light, #073642 text on #073642 otherwise), and a spelling the sanitizer keeps
+    // as a highlight colour gets the highlight text colour.
+    const red = "background-color: var(--ls-highlight-color-red, #fdd8d8)";
+    const other = ["#073642", "black", "#000", "rgb(0, 0, 0)", "hsl(0, 0%, 0%)"];
+    const authored = [...other.map((c) => `background-color: ${c}`), ...other.map((c) => `${red}; background-color: ${c}`),
+      "background: #000", "color: var(--ls-highlight-color-red, #fdd8d8)"];
+    expect(authored.filter(marked)).toEqual([]);
+    const spelled = ["background-color: var( --ls-highlight-color-red, #fdd8d8)", "background-color: var(\t--ls-highlight-color-red , #fdd8d8 )",
+      `background-color: #073642; ${red}`];
+    expect(spelled.filter((style) => !marked(style))).toEqual([]);
   });
 
   it("keeps every other mark's text in the theme's mark text colour", () => {

@@ -7,7 +7,7 @@ import { headerTokens } from "../markers";
 import { parseBlock, parserReady } from "../render/parse";
 import { BLOCK_COLOR_NAMES, HIGHLIGHT_FALLBACK } from "../blockColors";
 import { inertHtml } from "../render/htmlSanitize";
-import { utf16ToUtf8ByteOffset } from "../render/spans";
+import { rawByteToRebulletedSourceByte, rebulletedSourceByteToRawByte, utf16ToUtf8ByteOffset } from "../render/spans";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 
 export interface Edit {
@@ -111,10 +111,8 @@ const MARK_CLOSE = "</mark>";
  * only the owner's four offsets are mapped back, in one forward pass. O(block bytes + nodes). */
 type Owner = { colour: boolean; from: number; to: number; innerFrom: number; innerTo: number };
 function highlightOwner(text: string, s: number, e: number): Owner | null | "refuse" {
-  const body = text.trimStart(), lead = text.length - body.length;
-  // Parser spans are UTF-8 bytes of the trimmed text behind a two-byte "- " prefix.
-  const byteOf = (unit: number) => 2 + utf16ToUtf8ByteOffset(body, unit - lead);
-  const bs = byteOf(s), be = byteOf(e);
+  const sourceByte = (unit: number) => rawByteToRebulletedSourceByte(text, utf16ToUtf8ByteOffset(text, unit));
+  const bs = sourceByte(s), be = sourceByte(e);
   type Found = { colour: boolean; html?: string; bytes: [number, number, number, number] };
   let found: Found | null = null, refuse = false;
   const visit = (value: unknown): void => {
@@ -148,8 +146,8 @@ function highlightOwner(text: string, s: number, e: number): Owner | null | "ref
   if (refuse) return "refuse";
   if (!found) return null;
   const hit: Found = found; // assigned inside the walk, which TypeScript does not follow
-  const cursor = utf8ToUtf16Cursor(body);
-  const [from, innerFrom, innerTo, to] = hit.bytes.map((byte) => lead + cursor(byte - 2));
+  const cursor = utf8ToUtf16Cursor(text);
+  const [from, innerFrom, innerTo, to] = hit.bytes.map((byte) => cursor(rebulletedSourceByteToRawByte(text, byte)));
   if (hit.html !== undefined && text.slice(from, to) !== hit.html) return "refuse";
   return { colour: hit.colour, from, to, innerFrom, innerTo };
 }

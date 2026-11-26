@@ -44,10 +44,21 @@ export function utf8ByteToUtf16Offset(text: string, byteOffset: number): number 
   return UTF8_DECODER.decode(bytes.subarray(0, clamp(byteOffset, 0, bytes.length))).length;
 }
 
+/** How far a single-block parse's byte offsets sit from `raw`'s: the parser sees `raw`
+ *  trimmed at the start behind a two-byte "- " bullet. O(raw bytes). */
+function rebulletShift(raw: string): number {
+  return 2 - (utf8ByteLength(raw) - utf8ByteLength(raw.trimStart()));
+}
+
+/** A single-block parse's byte offset as a byte offset in `raw`. O(raw bytes). */
 export function rebulletedSourceByteToRawByte(raw: string, sourceByte: number): number {
-  const rawLen = utf8ByteLength(raw);
-  const lead = rawLen - utf8ByteLength(raw.trimStart());
-  return clamp(sourceByte - 2 + lead, 0, rawLen);
+  return clamp(sourceByte - rebulletShift(raw), 0, utf8ByteLength(raw));
+}
+
+/** The inverse: a byte offset in `raw` (at or after its leading whitespace) as the
+ *  single-block parse's byte offset. O(raw bytes). */
+export function rawByteToRebulletedSourceByte(raw: string, rawByte: number): number {
+  return rawByte + rebulletShift(raw);
 }
 
 export function sourceByteFromPlainTextByte(
@@ -446,8 +457,7 @@ export function renderedPointFromEditorOffset(
 ): { node: Node; offset: number } | null {
   const rawLen = utf8ByteLength(raw);
   const lead = rawLen - utf8ByteLength(raw.trimStart());
-  // Inverse of rebulletedSourceByteToRawByte (the parser sees a "- " bullet).
-  const sourceByte = visibleOffsetToRawByte(raw, offset, isHidden, format) - lead + 2;
+  const sourceByte = rawByteToRebulletedSourceByte(raw, visibleOffsetToRawByte(raw, offset, isHidden, format));
   const rawBytes = UTF8.encode(raw);
   const candidates: Array<{ el: Element; text: string; textByte: number; atEdge: boolean }> = [];
   for (const el of Array.from(root.querySelectorAll("[data-so]"))) {

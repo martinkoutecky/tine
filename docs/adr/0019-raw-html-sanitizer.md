@@ -129,3 +129,9 @@ lsdoc is untouched.
   variable without a hex fallback, and a nested function are dropped, as before.
   Tine defines the seven variables for light and dark in `src/styles/ls-shim.css`;
   the export, which has no such variables, draws the fallback.
+- **Text colour on a highlight background:** the same rule also answers whether
+  an element's effective background (its last kept `background-color`) is that
+  variable form. In the app the sanitizer then adds `data-tine-highlight` to such
+  a `<mark>`, and the theme draws only those marks in its title text colour; every
+  other mark keeps the mark text colour. The attribute is not in the allowlist, so
+  a note cannot set it. The export has no theme and adds nothing.
