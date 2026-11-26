@@ -9,6 +9,7 @@ interface Window {
   __tineMockCustomCss?: string;
   /** Devtools-only: the watcher's recent external-change latency receipts (GH #337). */
   __tineWatcherLatency?: () => Promise<unknown[]>;
+  __tineImeTrace?: () => Promise<string>;
 }
 
 // KaTeX's mhchem extension ships no types; it's imported only for its global
