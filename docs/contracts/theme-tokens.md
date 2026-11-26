@@ -329,7 +329,8 @@ While **Show/Hide author marks** is off nothing is reserved (the window carries 
 class `html.tine-author-marks-off`, which a stylesheet that draws the thread itself
 reads, as the Guide's example does). Logical properties
 throughout: a mirrored layout draws the thread on the left. At 390px (phone) the
-gutter is 68px plus the 44px fold area, so every row gives up 112px at its end.
+gutter is 68px plus the 44px fold area, so each row that keeps the strip gives up 112px at its end (a comment or reply
+row itself and the row that holds a block embed keep none; marks hidden, no row does).
 
 **Icons.** Set `--tine-author-icon-size` and a `background-image` on the chip
 (in practice `.author-chip[data-author="..." i]`) and it becomes that image, the
