@@ -2,6 +2,7 @@ import { blockRegions, parseBlock, renderPlanningOf } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline } from "../render/ast";
 import { typographicSegments } from "../render/typography";
+import { calloutLead } from "../render/body";
 
 export interface PreviewSpan {
   from: number;
@@ -21,7 +22,7 @@ export interface PreviewSpan {
   revealFrom?: number;
 }
 
-const cache = new WeakMap<Block[], PreviewSpan[]>();
+const cache = new WeakMap<Block[], { spans: PreviewSpan[]; glyphs: PreviewSpan[] }>();
 
 export function constructRevealed(span: { from: number; to: number; revealFrom?: number }, selections: readonly { from: number; to: number }[]): boolean {
   const from = span.revealFrom ?? span.from;
@@ -32,16 +33,27 @@ export function constructRevealed(span: { from: number; to: number; revealFrom?:
  * and descendants share the same reveal policy, including header tokens.
  * Source stays in the document: decorations never rewrite boundary bytes. */
 export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
+  return preview(raw, format).spans;
+}
+
+/** The `typography` spans of the same walk, apart: sorted and disjoint, so the editor draws only those in view
+ *  ({@link glyphDecorations}) and never walks them on a caret move. */
+export function previewGlyphs(raw: string, format: "md" | "org"): PreviewSpan[] {
+  return preview(raw, format).glyphs;
+}
+
+function preview(raw: string, format: "md" | "org"): { spans: PreviewSpan[]; glyphs: PreviewSpan[] } {
   const blocks = parseBlock(raw, format === "org");
   const cached = cache.get(blocks);
   if (cached) return cached;
-  const result: PreviewSpan[] = [];
+  const result: PreviewSpan[] = [], glyphs: PreviewSpan[] = [];
+  const out = { spans: result, glyphs };
   const cursor = utf8ToUtf16Cursor(raw);
   // parseBlock re-bullets trimmed raw with "- " / "* "; region ranges
   // already use raw coordinates. Same mapping as render/spans.ts.
   const lead = new TextEncoder().encode(raw.slice(0, raw.length - raw.trimStart().length)).length;
   const regions = blockRegions(raw, format);
-  if (regions.quarantined) return result;
+  if (regions.quarantined) return out;
   const add = (span: PreviewSpan) => {
     if (span.from >= 0 && span.to <= raw.length && span.from < span.to) result.push(span);
   };
@@ -55,10 +67,13 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
   // `typo`: a plain run here is drawn by the view's plain renderer (`renderPlain`), the only place the render pass
   // substitutes glyphs. Emphasis, sub- and superscript draw their children through it; a link, tag or other inline
   // node draws its own text, so its plain children stay raw (when such a node is concealed, its widget is the view's).
+  // A callout's title is drawn as raw text by the view (render/body.tsx), so its lead run stays raw here too.
+  const titles = new Set<unknown>();
   const visit = (value: unknown, typo = true): void => {
     if (Array.isArray(value)) { value.forEach(v => visit(v, typo)); return; }
     if (!value || typeof value !== "object") return;
     const n = value as Inline | Block;
+    if ("kind" in n && n.kind === "quote") { const title = calloutLead(n)?.lead; if (title) titles.add(title); }
     if ("k" in n && n.k !== "plain" && n.k !== "emphasis" && n.k !== "subscript" && n.k !== "superscript") typo = false;
     if (n.span) {
       const from = cursor(n.span[0] - 2 + lead);
@@ -82,8 +97,8 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
         // ordinary line breaks have nothing to conceal, except the glyphs the view substitutes in such a run
         // (an escaped run is concealed whole, and its widget is the view's plain renderer).
         const verbatimPlain = n.k === "plain" && raw.slice(from, to) === n.text;
-        if (verbatimPlain && typo) {
-          for (const seg of typographicSegments(n.text)) add({ from: from + seg.start, to: from + seg.end, kind: "typography", glyph: seg.glyph });
+        if (verbatimPlain && typo && !titles.has(n)) {
+          for (const seg of typographicSegments(n.text)) glyphs.push({ from: from + seg.start, to: from + seg.end, kind: "typography", glyph: seg.glyph });
         }
         if (n.k !== "break" && !verbatimPlain) {
           const kind = n.k === "emphasis" ? (n.emph === "Bold" ? "bold" : n.emph === "Italic" ? "italic" : n.emph)
@@ -111,8 +126,9 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
   };
   visit(blocks);
   result.sort((a, b) => a.from - b.from || b.to - a.to);
-  cache.set(blocks, result);
-  return result;
+  glyphs.sort((a, b) => a.from - b.from);
+  cache.set(blocks, out);
+  return out;
 }
 
 /** One rule for every construct, in previewSpans' source order. Boundaries
@@ -129,4 +145,58 @@ export function concealedSpans(spans: readonly PreviewSpan[], selections: readon
     coveredTo = span.to;
   }
   return result;
+}
+
+/** What the editor's glyph pass did, for the counting tests: glyph spans compared against a range, and glyph
+ *  decorations made. */
+export const glyphWork = { examined: 0, built: 0 };
+
+/** The first glyph ending at or after `pos` (glyphs are sorted and disjoint, so their ends are sorted too). */
+function firstGlyphFrom(glyphs: readonly PreviewSpan[], pos: number): number {
+  let lo = 0, hi = glyphs.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (glyphs[mid].to < pos) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
+/** Whether moving the selection from `before` to `after` changes which glyphs are revealed: a caret that touches no
+ *  glyph before or after costs one bisection per range and looks at no glyph beyond it. */
+export function glyphRevealChanges(glyphs: readonly PreviewSpan[], before: readonly { from: number; to: number }[], after: readonly { from: number; to: number }[]): boolean {
+  const touched = (ranges: readonly { from: number; to: number }[]) => {
+    const out = new Set<number>();
+    for (const r of ranges) {
+      for (let i = firstGlyphFrom(glyphs, r.from); i < glyphs.length; i++) {
+        glyphWork.examined++;
+        if (glyphs[i].from > r.to) break;
+        out.add(i);
+      }
+    }
+    return out;
+  };
+  const a = touched(before), b = touched(after);
+  return a.size !== b.size || [...a].some(i => !b.has(i));
+}
+
+/** The glyphs to draw in `visible`: those no selection touches and no concealed construct covers (a concealed
+ *  construct's widget is the view's renderer, which draws its own glyphs). `concealed` is concealedSpans' output:
+ *  sorted and disjoint. Work is bounded by the glyphs in view. */
+export function glyphDecorations<T>(glyphs: readonly PreviewSpan[], visible: readonly { from: number; to: number }[], concealed: readonly PreviewSpan[],
+  selections: readonly { from: number; to: number }[], make: (glyph: PreviewSpan) => T): T[] {
+  const out: T[] = [];
+  let next = 0; // a glyph is drawn once even where two visible ranges meet
+  for (const range of visible) {
+    let lo = 0, hi = concealed.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (concealed[mid].to < range.from) lo = mid + 1; else hi = mid; }
+    let c = lo;
+    for (let i = Math.max(next, firstGlyphFrom(glyphs, range.from)); i < glyphs.length && glyphs[i].from <= range.to; i++) {
+      const glyph = glyphs[i];
+      next = i + 1;
+      glyphWork.examined++;
+      while (c < concealed.length && concealed[c].to < glyph.from) c++;
+      if (c < concealed.length && concealed[c].from <= glyph.from && glyph.to <= concealed[c].to) continue;
+      if (constructRevealed(glyph, selections)) continue;
+      glyphWork.built++;
+      out.push(make(glyph));
+    }
+  }
+  return out;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { concealedSpans, previewSpans } from "./cm6Preview";
+import { concealedSpans, glyphDecorations, previewGlyphs, previewSpans } from "./cm6Preview";
 import { cm6PreviewCases } from "../tests/cm6PreviewCases";
 import { facetsOf } from "../render/facets";
 
@@ -108,33 +108,40 @@ describe("planning lines follow the view's date chip", () => {
 // the editor draws the glyphs the view draws (render/typography.ts is the one table), only in plain runs
 // the view's plain renderer draws, and shows the ASCII where a caret or selection touches it.
 describe("typographic glyphs follow the view", () => {
-  const glyphs = (raw: string) => previewSpans(raw, "md").filter(s => s.kind === "typography").map(s => [raw.slice(s.from, s.to), s.glyph]);
+  const glyphs = (raw: string) => previewGlyphs(raw, "md").map(s => [raw.slice(s.from, s.to), s.glyph]);
+  /** The glyphs the editor draws with the caret or selection at `sel`, the whole text in view. */
+  const drawn = (raw: string, sel: { from: number; to: number }) => {
+    const concealed = concealedSpans(previewSpans(raw, "md"), [sel]);
+    return glyphDecorations(previewGlyphs(raw, "md"), [{ from: 0, to: raw.length }], concealed, [sel], g => raw.slice(g.from, g.to));
+  };
   it("marks each replaced sequence of a plain run with the view's glyph", () => {
     expect(glyphs("a -- b -> c <--> d --- e => f")).toEqual([["--", "–"], ["->", "→"], ["<-->", "⟺"], ["---", "—"], ["=>", "⇒"]]);
   });
   it("leaves code, math, links, page refs, tags and properties raw, as the view does", () => {
     expect(glyphs("`c -- d` $x -- y$ [l -- m](https://e.org) [[p--q]] #t--g\nk:: v -- w")).toEqual([]);
   });
+  it("keeps a callout's title raw, as the view draws it, and its body's glyphs", () => {
+    expect(glyphs("> [!NOTE] a -- b\n> c -- d")).toEqual([["--", "–"]]);
+    expect(drawn("> [!NOTE] a -- b", { from: 11, to: 11 }), "caret on the title's a reveals the quote").toEqual([]);
+  });
   it("draws them inside emphasis once its markers are shown, after Unicode, with UTF-16 offsets", () => {
     const raw = "中文😀 **a -- b**";
-    const spans = previewSpans(raw, "md");
-    const bold = spans.find(s => s.kind === "bold")!;
-    const dash = spans.find(s => s.kind === "typography")!;
+    const bold = previewSpans(raw, "md").find(s => s.kind === "bold")!;
+    const [dash] = previewGlyphs(raw, "md");
     expect(raw.slice(dash.from, dash.to)).toBe("--");
-    expect(concealedSpans(spans, [{ from: 0, to: 0 }])).toEqual([bold]);
-    expect(concealedSpans(spans, [{ from: bold.from + 2, to: bold.from + 2 }])).toEqual([dash]);
+    expect(drawn(raw, { from: 0, to: 0 }), "the bold widget draws its own glyph").toEqual([]);
+    expect(drawn(raw, { from: bold.from + 2, to: bold.from + 2 })).toEqual(["--"]);
   });
   it("shows the ASCII where the caret or a selection touches the sequence", () => {
     const raw = "a -- b";
-    const spans = previewSpans(raw, "md");
-    const [dash] = spans;
-    expect(concealedSpans(spans, [{ from: 6, to: 6 }])).toEqual([dash]);
-    expect(concealedSpans(spans, [{ from: 0, to: 0 }])).toEqual([dash]);
-    for (const at of [2, 3, 4]) expect(concealedSpans(spans, [{ from: at, to: at }])).toEqual([]);
-    expect(concealedSpans(spans, [{ from: 0, to: 6 }])).toEqual([]);
+    expect(drawn(raw, { from: 6, to: 6 })).toEqual(["--"]);
+    expect(drawn(raw, { from: 0, to: 0 })).toEqual(["--"]);
+    for (const at of [2, 3, 4]) expect(drawn(raw, { from: at, to: at })).toEqual([]);
+    expect(drawn(raw, { from: 0, to: 6 })).toEqual([]);
   });
   it("leaves an escaped run to the view's plain renderer", () => {
     const raw = "\\*a -- b";
     expect(previewSpans(raw, "md").map(s => s.kind)).toEqual(["plain"]);
+    expect(previewGlyphs(raw, "md")).toEqual([]);
   });
 });

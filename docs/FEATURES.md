@@ -49,7 +49,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - ⊕ **Typographic replacements** (Settings → Appearance) — show `->` → `→`,
   `-->` → `⟶`, `--` → `–` (en), `---` → `—` (em) and friends as real glyphs,
   either *display only* (your Markdown stays ASCII; the view and the editor show the
-  glyphs, the editor the typed characters at the caret — like `\Delta` → Δ) or *while
+  glyphs in text, the editor the typed characters at the caret; as typed while Find in page is open — like `\Delta` → Δ) or *while
   typing* (rewrites the source itself). A Tine touch, not Logseq; **on (display only) by
   default** (**Off** shows text as typed, as in Logseq).
 - **In-block lists & checklists** — a `+`/`*`/ordered list *inside one bullet's

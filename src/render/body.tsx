@@ -250,40 +250,43 @@ function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, form
 // A `> [!NOTE]` callout (GitHub-flavoured) arrives as a `quote` whose first
 // paragraph's leading plain text is `[!TYPE] …` — re-detect it. (Org `#+BEGIN_NOTE`
 // is a `custom` block, handled in renderCustom.) Otherwise render a blockquote.
+// The lead run is returned too: the view draws the title as raw text, and so does the editor.
+export function calloutLead(b: Extract<AstBlock, { kind: "quote" }>): { lead: AstInline; match: RegExpExecArray } | null {
+  const first = b.children[0];
+  const lead = first?.kind === "paragraph" ? first.inline[0] : undefined;
+  const match = lead?.k === "plain" ? /^\[!(\w+)\]\s*(.*)$/.exec(lead.text) : null;
+  return lead && match ? { lead, match } : null;
+}
+
 function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string, macroExpansion = false, format: Format = "md", tableOptions?: TableV2Options): JSX.Element {
   const first = b.children[0];
-  if (first && first.kind === "paragraph") {
-    const lead = first.inline[0];
-    if (lead && lead.k === "plain") {
-      const m = /^\[!(\w+)\]\s*(.*)$/.exec(lead.text);
-      if (m) {
-        const type = m[1].toLowerCase();
-        // Split the lead paragraph at the FIRST soft break: the `[!TYPE]` text remainder
-        // (`m[2]`) plus the inline markup BEFORE the break is the TITLE; everything after
-        // begins the BODY. (lsdoc v0.2.3: `> [!NOTE] Heads **up**` keeps `**up**` in the
-        // title, not the body — previously it spilled into the body.)
-        const titleText = m[2];
-        const afterLead = first.inline.slice(1);
-        const brk = afterLead.findIndex((n) => n.k === "break");
-        const titleMarkup = brk === -1 ? afterLead : afterLead.slice(0, brk);
-        const bodyInlines = brk === -1 ? [] : afterLead.slice(brk + 1);
-        const titleEmpty = titleText.trim() === "" && titleMarkup.length === 0;
-        const bodyChildren: AstBlock[] = bodyInlines.length
-          ? [{ kind: "paragraph", inline: bodyInlines }, ...b.children.slice(1)]
-          : b.children.slice(1);
-        return (
-          <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
-            <div class="callout-title">
-              <Show when={!titleEmpty} fallback={type.toUpperCase()}>
-                {titleText}
-                {renderInlines(titleMarkup, blockId, true, macroExpansion, format)}
-              </Show>
-            </div>
-            <div class="callout-body">{renderBlocks(bodyChildren, blockId, undefined, macroExpansion, format, tableOptions)}</div>
-          </div>
-        );
-      }
-    }
+  const m = calloutLead(b)?.match;
+  if (m && first.kind === "paragraph") {
+    const type = m[1].toLowerCase();
+    // Split the lead paragraph at the FIRST soft break: the `[!TYPE]` text remainder
+    // (`m[2]`) plus the inline markup BEFORE the break is the TITLE; everything after
+    // begins the BODY. (lsdoc v0.2.3: `> [!NOTE] Heads **up**` keeps `**up**` in the
+    // title, not the body — previously it spilled into the body.)
+    const titleText = m[2];
+    const afterLead = first.inline.slice(1);
+    const brk = afterLead.findIndex((n) => n.k === "break");
+    const titleMarkup = brk === -1 ? afterLead : afterLead.slice(0, brk);
+    const bodyInlines = brk === -1 ? [] : afterLead.slice(brk + 1);
+    const titleEmpty = titleText.trim() === "" && titleMarkup.length === 0;
+    const bodyChildren: AstBlock[] = bodyInlines.length
+      ? [{ kind: "paragraph", inline: bodyInlines }, ...b.children.slice(1)]
+      : b.children.slice(1);
+    return (
+      <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
+        <div class="callout-title">
+          <Show when={!titleEmpty} fallback={type.toUpperCase()}>
+            {titleText}
+            {renderInlines(titleMarkup, blockId, true, macroExpansion, format)}
+          </Show>
+        </div>
+        <div class="callout-body">{renderBlocks(bodyChildren, blockId, undefined, macroExpansion, format, tableOptions)}</div>
+      </div>
+    );
   }
   return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId, undefined, macroExpansion, format, tableOptions)}</blockquote>;
 }
