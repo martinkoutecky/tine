@@ -73,7 +73,7 @@ function FailureRegion(props: {
   });
 
   return (
-    <div class="region-failure" role="alert" data-failed-region={props.region}
+    <div class="region-failure" role="alert" data-failed-region={props.region} data-foreign-source="notice"
       onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}
       onClick={event => event.stopPropagation()}>
       <div class="region-failure-title">{t("failure-boundary-could-not-be-displayed", { region: props.region })}</div>

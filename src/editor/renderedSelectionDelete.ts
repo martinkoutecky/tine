@@ -18,7 +18,7 @@
 import { node as docNode, setRaw, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
 import { splitProps, joinProps, BUILTIN_HIDE } from "../editor/properties";
-import { editorOffsetFromRenderedRange } from "../render/spans";
+import { editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput } from "../render/spans";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { queryAllWindows, selectionOf } from "../windowRealm";
@@ -34,8 +34,10 @@ function blockRowOf(node: Node | null): Element | null {
  *  step, one `save-block` dirty mark, then the block opens in the editor at the
  *  join point); false to leave the event to its default handling. Refuses
  *  (false) a collapsed or cross-block selection, a reference/embed/query
- *  rendering, the block being edited, a read-only page, annotation or calc
- *  blocks, an open modal, and any selection point that does not map to source.
+ *  rendering, a selection end that depends on generated output (a query's, a
+ *  failed-region or embed-depth notice), the
+ *  block being edited, a read-only page, annotation or calc blocks, an open
+ *  modal, and any selection point that does not map to source.
  *  Cost: O(length of that block). */
 export function deleteRenderedTextSelection(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
@@ -70,6 +72,15 @@ export function deleteRenderedTextSelection(): boolean {
   if (!page) return false;
   const fmt = page.format === "org" ? "org" : "md";
   if (isAnnotationBlock(node.raw, fmt) || calcSource(node.raw) !== null) return false;
+  // A query's output and the app's notices are generated: an end there names
+  // none of this block's text, and inside a heading, quote or callout it would
+  // snap to an edge of that construct and take the macro's source with it. So
+  // would an end in text of that construct that has no source position of its
+  // own (a callout's title): its edge is chosen by a length that counts the
+  // generated text. Checked after the refusals above, so a refused key
+  // searches nothing.
+  if (rangeEndDependsOnGeneratedOutput(wrapper, range.startContainer)
+    || rangeEndDependsOnGeneratedOutput(wrapper, range.endContainer)) return false;
 
   const start = editorOffsetFromRenderedRange(
     wrapper,
