@@ -51,6 +51,8 @@ function aimAt(kind) {
   const groups = [...region.querySelectorAll(":scope .query-group")];
   const middle = groups[Math.floor(groups.length / 2)];
   scroller.scrollTop += middle.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientHeight / 3;
+  // The query sits in its host block's own .block-content: only an ancestor inside the results counts.
+  const inside = (el, selector) => { const found = el.closest(selector); return !!found && region.contains(found); };
   let x, y;
   if (kind === "between groups") {
     const above = groups[groups.indexOf(middle) - 1].getBoundingClientRect();
@@ -63,12 +65,12 @@ function aimAt(kind) {
     y = row.top + Math.min(row.height / 2, 10);
     for (x = row.right - 2; x > row.left; x -= 4) {
       const hit = document.elementFromPoint(x, y);
-      if (hit?.closest(".query-results-region") && !hit.closest(".block-content, .block-controls, a, button")) break;
+      if (hit && region.contains(hit) && !inside(hit, ".block-content, .block-controls, a, button")) break;
     }
   }
   const hit = document.elementFromPoint(x, y);
   return { x: Math.round(x), y: Math.round(y), top: scroller.scrollTop,
-    inResults: !!hit?.closest(".query-results-region"), onText: !!hit?.closest(".block-content"),
+    inResults: !!hit && region.contains(hit), onText: !!hit && inside(hit, ".block-content"),
     hit: hit ? `${hit.tagName}.${hit.className}` : null };
 }
 function afterPress(done) {
