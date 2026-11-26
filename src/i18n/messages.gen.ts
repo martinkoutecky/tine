@@ -103,6 +103,7 @@ export interface MessageArgs {
   "block-parts-span": {};
   "block-parts-start": {};
   "block-parts-type": {};
+  "block-ref-actions-select-an-authored-block-to-remove": {};
   "block-ref-actions-select-blocks-or-edit-one-to-copy-their": {};
   "block-ref-actions-select-blocks-or-edit-one-to-set-depth": {};
   "block-ref-actions-too-much-selected-to-duplicate": {};
