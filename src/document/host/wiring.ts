@@ -35,7 +35,7 @@ import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
-import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
+import { HostClient, reviewedDiskToken, type BaselineRev, type BlockWatch, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
 import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
@@ -116,7 +116,7 @@ function hostPort(): HostPort {
     close: (session, id, key) => b.pageClose(session, id, key).catch(failed),
     saveNow: (session, keys) => b.pageSaveNow(session, keys).catch(ignoreSaveHintFailure),
     // One bounded wait (F1); a failed call is a failed barrier, never success.
-    waitPublished: (session, needs) => b.pageWait(session, needs, 5000).catch(() => false),
+    waitPublished: (session, needs, departure) => b.pageWait(session, needs, 5000, departure).catch(() => false),
     // No answer (another session, a failed read) is unknown debt, never "none".
     owed: (session, paths) => b.pageOwed(session, paths).then((owed) => owed ?? false).catch(() => false as const),
   };
@@ -676,6 +676,12 @@ export function refuseConflictedMove(pages: Iterable<string>): boolean {
 
 // ------------------------------------------------------------------ barriers
 
+/** Watch whether Tine's own save writes a version of `name` that held the blocks
+ * `ids` (`HostClient.watchBlocks`). Null when no client is bound. */
+export function watchCapture(name: string, ids: readonly string[]): BlockWatch | null {
+  return host()?.watchBlocks(name, ids) ?? null;
+}
+
 /** Send the page's input and wait until the host published it (`settle`). */
 export async function flushPage(name: string): Promise<boolean> {
   const c = host();
@@ -700,11 +706,12 @@ export async function flushAll(): Promise<boolean> {
 }
 
 /** `flushAll`'s barrier with its reason (a graph switch names what it refused
- * for): null when everything published, else why not. */
-export function flushAllUnsettled(): Promise<Unsettled | null> {
+ * for): null when everything published, else why not. `departure`: the caller
+ * is leaving this graph for another (`SettleOptions.departure`). */
+export function flushAllUnsettled(departure: boolean): Promise<Unsettled | null> {
   const c = host();
   if (!c) return Promise.resolve(unboundUnsettled());
-  return unsettled(c, "all", FLUSH_ALL);
+  return unsettled(c, "all", departure ? { ...FLUSH_ALL, departure } : FLUSH_ALL);
 }
 
 /** A block reference's target (§8, Q2): published bytes that contain `witness`. */

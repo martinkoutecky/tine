@@ -2,6 +2,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import type { GraphMeta } from "./types";
 import { editorIn, maybeEditorIn } from "./tests/editorDriver";
+import { mountCapture } from "./tests/captureApp";
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: async () => () => {},
@@ -30,10 +31,7 @@ it("cold capture edits and completes pages without general graph readers or erro
     { name: "Capture destination", kind: "page", path: "pages/Capture destination.md", date_key: null },
   ]);
   const generalCompletion = vi.spyOn(backend(), "quickSwitch");
-  const root = document.createElement("div");
-  root.id = "capture-root";
-  document.body.append(root);
-  await import("./capture");
+  const root = await mountCapture();
   await vi.waitFor(() => expect(maybeEditorIn(root)).not.toBeNull());
 
   const { toasts } = await import("./toasts");

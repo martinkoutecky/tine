@@ -27,7 +27,7 @@ export type Call =
   | { cmd: "discard"; id: number; key: string }
   | { cmd: "close"; id: number; key: string }
   | { cmd: "saveNow"; keys: string[] }
-  | { cmd: "wait"; needs: PublishedNeed[] }
+  | { cmd: "wait"; needs: PublishedNeed[]; departure: boolean }
   | { cmd: "owed"; paths: readonly string[] | null };
 
 export class FakeHost implements HostPort {
@@ -117,8 +117,8 @@ export class FakeHost implements HostPort {
   async saveNow(_session: number, keys: readonly string[]) { this.calls.push({ cmd: "saveNow", keys: [...keys] }); }
 
   /** `onWait` returning null models one bounded wait passing (F1). */
-  async waitPublished(_session: number, needs: readonly PublishedNeed[]) {
-    this.calls.push({ cmd: "wait", needs: [...needs] });
+  async waitPublished(_session: number, needs: readonly PublishedNeed[], departure: boolean) {
+    this.calls.push({ cmd: "wait", needs: [...needs], departure });
     const result = await this.onWait?.([...needs]);
     if (result === null) return null;
     // A publication proven here is no longer debt, as `page_owed` says.

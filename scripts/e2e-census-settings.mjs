@@ -55,8 +55,9 @@ try {
       return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
     }), { timeout: 5000, timeoutMsg: "Workspace submit button cannot receive a pointer click" });
     await browser.$('.workspace-edit-form button[type="submit"]').click();
-    await browser.waitUntil(() => browser.execute((name) => document.querySelector(".workspace-switcher-btn")?.getAttribute("aria-label")?.includes(name)
-      || document.querySelector(".workspace-switcher-name")?.textContent?.includes(name), name), { timeout: 10_000 });
+    // The switcher's button names the active workspace in both forms (sidebar row, toolbar icon button).
+    await browser.waitUntil(() => browser.execute((name) => [...document.querySelectorAll("[data-workspace-switcher] > button[aria-haspopup='menu']")]
+      .some((button) => button.getAttribute("aria-label")?.includes(name)), name), { timeout: 10_000 });
     console.log(`PASS: command creates ${name} using ${compact ? "compact" : "sidebar"} switcher`);
   }
   const registries = fs.readdirSync(path.join(run, "data"), { recursive: true }).filter((file) => String(file).endsWith("-workspaces.json"));
