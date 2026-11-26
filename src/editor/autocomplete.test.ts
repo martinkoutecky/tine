@@ -28,6 +28,7 @@ import slashFixturePart3 from "./fixtures/slash-ranking-prefix-base-15bbddc/part
 import slashFixturePart4 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-4.json";
 import { setActiveLocale } from "../i18n";
 import * as wasm from "../render/wasm/lsdoc_wasm.js";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 it("keeps Unicode command input active and matches localized < labels (GH #107)", async () => {
   for (const [raw, kind, query] of [["/表", "command", "表"], ["text /待办", "command", "待办"], ["<引用", "advanced-command", "引用"], ["/e\u0301", "command", "e\u0301"]] as const) {
@@ -121,8 +122,8 @@ describe("orderAcItems (autocomplete default action)", () => {
         const rows = names.map((name) => ({ name, item: name, matchClass: name === "北京" || name === "北景" ? "transliteration" as const : "fuzzy" as const }));
         const ordered = orderAcItems(rows, { name: query, item: "CREATE" }, { query, policy });
         const native = ordered.filter((name) => name !== "CREATE" && !["北京", "北景"].includes(name));
-        for (const name of native) expect(ordered.indexOf(name)).toBeLessThan(ordered.indexOf("北京"));
-        expect(ordered.indexOf("CREATE")).toBeLessThan(ordered.indexOf("北京"));
+        for (const name of native) expectOrderedIn(ordered, name, "北京");
+        expectOrderedIn(ordered, "CREATE", "北京");
       }
     }
   });

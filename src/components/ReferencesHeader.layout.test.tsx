@@ -7,6 +7,7 @@ import type { BlockDto, RefGroup } from "../types";
 import { ReferenceSection } from "./LinkedReferences";
 import { StaleReferenceCount } from "./StaleReferenceCount";
 import { resetReferenceSectionState } from "../referenceSectionState";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 vi.mock("./LiveRefGroup", () => ({ LiveRefGroup: () => <div class="test-ref-group" /> }));
 const block = (id: string): BlockDto => ({ id, raw: "Target", collapsed: false, children: [] });
@@ -26,7 +27,7 @@ it("puts Collapse all in the header row, left of the copy and filter buttons", a
     expect(bulk.textContent).toBe("Collapse all");
     expect(root.querySelectorAll(".reference-bulk-controls")).toHaveLength(1);
     const order = [...header.children];
-    expect(order.indexOf(bulk)).toBeLessThan(order.indexOf(header.querySelector(".reference-export-toggle")!));
+    expectOrderedIn(order, bulk, header.querySelector(".reference-export-toggle")!);
     // pressing it folds the groups without folding the whole section
     bulk.querySelector("button")!.click();
     expect(root.querySelectorAll(".test-ref-group")).toHaveLength(0);

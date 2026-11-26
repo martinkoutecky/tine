@@ -13,6 +13,7 @@ import type { BlockDto, Format } from "../types";
 import { blockRegions } from "../render/parse";
 import { pasteOutlineInto } from "../tests/pasteOutline";
 import { trailingVisibleEmptyLeaf } from "./tree";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({
   id, raw, children, collapsed: false,
@@ -96,7 +97,7 @@ describe.each(["md", "org"] as const)("body structure around %s threads", fmt =>
     const children = node("parent").children;
     const inserted = children.find(id => id !== "comment" && id !== "child")!;
     expect(node(inserted).raw).toBe("");
-    expect(children.indexOf(inserted)).toBeLessThan(children.indexOf("child"));
+    expectOrderedIn(children, inserted, "child");
     expect(node("comment").parent).toBe("parent");
   });
 

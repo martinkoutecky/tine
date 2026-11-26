@@ -10,7 +10,6 @@ import { openPage } from "../router";
 import { paneRouter, resetPaneLayoutToSingle } from "../panes";
 import {
   applySidebarSession,
-  pageIdentityKey,
   closeContextMenu,
   contextMenu,
   rightSidebar,
@@ -18,6 +17,7 @@ import {
   setRightSidebar,
   setRightSidebarOpen,
 } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 import { Sidebar } from "./Sidebar";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";

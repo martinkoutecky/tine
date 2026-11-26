@@ -1,7 +1,7 @@
 // Block and page embeds ({{embed ((uuid))}} / {{embed [[page]]}}), split out of Macro.tsx (size ratchet).
 import { For, Show, createSignal, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { pageIdentityKey } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
 import { blockHasPageEmbed, blockRef, formatForBlock, pageByName, resolveBlockRef, resolveGuidePageDto, node as docNode } from "../document";

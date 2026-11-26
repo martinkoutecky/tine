@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 /**
  * The system-inset contract (GH #205, master a0afeb665 + e3b1c3868), checked
@@ -37,7 +38,7 @@ describe("mobile safe-area insets", () => {
   it("gives Android's already-inset native viewport sole ownership", () => {
     const installation = "installSystemInsetOwner();";
     expect(main).toContain(installation);
-    expect(main.indexOf(installation)).toBeLessThan(main.indexOf("applyTheme();"));
+    expectOrderedIn(main, installation, "applyTheme();");
     expect(css).toContain('html[data-system-insets="native-viewport"]');
     for (const side of ["top", "right", "bottom", "left"]) {
       expect(css).toContain(`--system-inset-${side}: 0px;`);

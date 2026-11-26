@@ -24,7 +24,6 @@ import { parseBlockPos, type PageFollower, type PageTarget } from "./routeTypes"
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
-import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationTarget } from "./pageIndex";
 import { forgetDeletedFavorite } from "./favorites";
@@ -1472,8 +1471,6 @@ export function openLightbox(src: string, gallery?: string[]) {
 // display filename. Null = closed.
 export const [audioPlayer, setAudioPlayer] =
   createSignal<{ url: string; name: string } | null>(null);
-
-export { pageIdentityKey };
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);

@@ -12,6 +12,7 @@ import { linkAutocompletePolicy, setLinkAutocompletePolicy } from "./editor/link
 import { selectedThemeColors, applyTheme } from "./themeGallery";
 import { setSmoothScroll, smoothScrollEnabled } from "./smoothScroll";
 import { initThemePackages } from "./themes/manager";
+import { changeStickyParents, stickyParents } from "./stickyParents";
 
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
@@ -34,6 +35,20 @@ it("restores device preferences and reports a rejected write", async () => {
   expect(mediaEditorCommand("editor-test")).toBe(beforeMedia);
   expect(copyStripCollapsed()).toBe(beforeCopy);
   expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(4);
+});
+
+it("restores sticky parent bullets to the confirmed value when a save fails", async () => {
+  const write = vi.spyOn(backend(), "setAppString").mockResolvedValue(undefined);
+  const before = stickyParents();
+  changeStickyParents(!before);
+  await flush();
+  expect(write).toHaveBeenLastCalledWith("sticky_parent_bullets", before ? "0" : "1");
+  write.mockRejectedValue(new Error("disk full"));
+  changeStickyParents(before);
+  expect(stickyParents()).toBe(before);
+  await flush();
+  expect(stickyParents()).toBe(!before);
+  expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(1);
 });
 
 it("restores editor and navigation settings on a rejected write", async () => {

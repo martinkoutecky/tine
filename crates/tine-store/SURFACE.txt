@@ -181,7 +181,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 23)
+## Reads (ceiling: 26)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
@@ -225,6 +225,13 @@ fn store::Store::page_of
 # test-oracle: tests hold a page as a page host does, with no host running (A-V4b).
 fn store::Store::hold_page
 fn store::Store::read
+# The one answer to "may this path be opened as a regular file" (23 -> 26): Store::read and
+# Store::open_read take a FileId and validate graph paths, so they cannot open a device-picked
+# file or an external PDF; the app's own opener was a second copy of the check. The policy
+# enum states each caller's final-symlink rule; the error says why a path was refused.
+fn regular_file::open_regular_file
+enum regular_file::FinalSymlink
+enum regular_file::OpenRegularError
 fn store::Store::whole_graph
 # GH #181: a one-shot lookup (a cold-start link) that misses in a served launch
 # checkpoint asks again after the launch diff, which may have added its target.
@@ -727,7 +734,7 @@ field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
 # SB1-ACCEPT2 merge with SB2-DIAG: both branches added one re-export (13 -> 14).
-## Re-exports (ceiling: 17)
+## Re-exports (ceiling: 18)
 # SB1's existing app-facing directory identity/containment witness, above.
 use crate::root_binding::BoundDirectory
 use crate::storage_diag::DraftAdoptionReason
@@ -738,6 +745,8 @@ use crate::page_host::{ApplyRefusal,DiskToken,DraftOwnership,DraftStatus,Effecta
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
+# The regular-file opener above, for the app's device and external-PDF reads (17 -> 18).
+use crate::regular_file::{open_regular_file,FinalSymlink,OpenRegularError}
 use crate::transaction::{CheckPlan,Content,Guarantee,IoError,MoveRewrite,PagePlan,Refusal,RenameCheck,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 # CM step 2 P2/P3 (15 -> 16): the check's carriers live beside the check in
 # transaction/model_check.rs (size ratchet seam); the same items, re-exported by transaction.

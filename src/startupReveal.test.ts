@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const root = path.resolve(import.meta.dirname, "..");
 const config = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
@@ -14,7 +15,7 @@ describe("stable desktop startup reveal (GH #132)", () => {
     expect(capability.permissions).toContain("core:window:allow-show");
     expect(main).toContain("revealMainWindowAfterStableFrame");
     expect(main).toContain("queueMicrotask");
-    expect(main.indexOf("applyTheme();")).toBeLessThan(main.indexOf("revealMainWindowAfterStableFrame"));
+    expectOrderedIn(main, "applyTheme();", "revealMainWindowAfterStableFrame");
   });
 
   it("has a bounded native fallback so frontend failure cannot leave an invisible app", () => {
@@ -49,14 +50,12 @@ describe("start minimized to the tray (GH #625)", () => {
 
   it("the frontend reveal stands down for a window native created hidden on purpose", () => {
     const reveal = main.slice(main.indexOf("async function revealMainWindowAfterStableFrame"));
-    expect(reveal.indexOf("__TINE_START_HIDDEN__")).toBeGreaterThan(-1);
-    expect(reveal.indexOf("__TINE_START_HIDDEN__")).toBeLessThan(reveal.indexOf(".show()"));
+    expectOrderedIn(reveal, "__TINE_START_HIDDEN__", ".show()");
   });
 
   it("the native fallback stands down only while main is deliberately hidden", () => {
     const fallback = native.slice(native.indexOf("fn schedule_main_window_reveal_fallback"));
-    expect(fallback.indexOf("main_start_hidden_pending")).toBeGreaterThan(-1);
-    expect(fallback.indexOf("main_start_hidden_pending")).toBeLessThan(fallback.indexOf("window.show()"));
+    expectOrderedIn(fallback, "main_start_hidden_pending", "window.show()");
   });
 
   it("only a created tray can hide main: the decision is behaviour(prefs, tray_present)", () => {

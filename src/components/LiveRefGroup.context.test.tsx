@@ -13,6 +13,7 @@ import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
 import { route } from "../router";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 beforeAll(async () => {
   await initParser();
@@ -240,8 +241,7 @@ describe("LiveRefGroup reference context", () => {
       const crumbs = [...root.querySelectorAll(".ref-breadcrumb")].map((c) => c.textContent?.replace(/\s+/g, "").trim());
       expect(crumbs).toEqual(["ParentA", "ParentB"]);
       const text = root.textContent ?? "";
-      expect(text.indexOf("Sibling one")).toBeLessThan(text.indexOf("Sibling two"));
-      expect(text.indexOf("Sibling two")).toBeLessThan(text.indexOf("Other"));
+      expectOrderedIn(text, "Sibling one", "Sibling two", "Other");
     } finally {
       dispose();
     }

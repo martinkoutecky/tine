@@ -7,6 +7,7 @@ import { applyCustomCssChange, injectCustomCss } from "./graph";
 import { loadGlobalCss, openCssEditor, setCssEditorText, flushCssEditor, retireGraphCssEditor } from "./cssEditor";
 import * as published from "./publishedBackend";
 import { setToasts, toasts } from "./toasts";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
 
@@ -47,7 +48,7 @@ it("layers device CSS before graph CSS and disables both in safe mode", () => {
   const styles = [...document.head.querySelectorAll("style")];
   const global = styles.find((el) => el.id === "tine-global-css")!;
   const graph = styles.find((el) => el.id === "tine-custom-css")!;
-  expect(styles.indexOf(global)).toBeLessThan(styles.indexOf(graph));
+  expectOrderedIn(styles, global, graph);
   css.setCustomCssDisabled(true);
   expect(global.textContent).toBe("");
   expect(graph.textContent).toBe("");

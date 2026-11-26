@@ -15,7 +15,9 @@ in a Rust core behind Tauri IPC.
 
 We will put all of that in a **GUI-free pure-Rust crate, `crates/tine-core`**,
 unit-tested in isolation, and expose it through a **thin set of Tauri IPC commands**
-(~41) that do little beyond marshalling. The Tauri layer holds the in-memory page
+(~41 at the time; superseded by growth: the `generate_handler!` list in
+`src-tauri/src/lib.rs`, the one list of commands, had 259 entries in November
+2026) that do little beyond marshalling. The Tauri layer holds the in-memory page
 cache (`RwLock<Arc<Graph>>` — read commands clone the `Arc` and release the lock
 immediately), keyed by a graph generation counter.
 

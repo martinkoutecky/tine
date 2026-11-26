@@ -10,7 +10,7 @@ import { ExportModal } from "./ExportModal";
 import { closeExportModal, openExportModal } from "../ui";
 import { StickyAncestor } from "./StickyAncestor";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
-import { pageIdentityKey } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 import "../graph";
 import { renamePageOnDisk } from "../document";
 import { EmbedMacro } from "./EmbedMacro";
