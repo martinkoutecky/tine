@@ -124,7 +124,9 @@ it("M3: with an EditContext, a finished composition is saved, and Enter then spl
   expect(texts()).toEqual(["hello 你好", "", "next"]);
 });
 
-it("M1 via beforeinput: an Enter the keyboard sends as insertParagraph after the late change keeps the text", async () => {
+it("Enter sent as insertParagraph after the late final composition change keeps the text", async () => {
+  // Not claimed: the split. CodeMirror reads the late change and the paragraph together, as one change that is
+  // not a lone newline, so it inserts a line break instead of replaying Enter (CM view 6.43.15 applyDOMChangeInner).
   const view = mount();
   const content = view.contentDOM;
   content.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
@@ -133,13 +135,29 @@ it("M1 via beforeinput: an Enter the keyboard sends as insertParagraph after the
   const line = content.querySelector(".cm-line")!;
   lateFinalText(content, "hello 你好");
   await settle();
-  content.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true }));
-  const next = document.createElement("div"); next.className = "cm-line"; next.append(document.createElement("br"));
-  line.after(next);
+  insertParagraph(content, line);
+  await settle();
+  await runFrames();
+  expect(texts().join("|").replace("\n", "")).toBe("hello 你好|next");
+});
+
+it("Enter sent as insertParagraph, replayed by CodeMirror as a key, splits once over the text on screen", async () => {
+  const view = mount();
+  const content = view.contentDOM;
+  view.dispatch({ changes: { from: 6, insert: "你好" }, selection: { anchor: 8 }, userEvent: "input.type" });
+  await settle();
+  insertParagraph(content, content.querySelector(".cm-line")!);
   await settle();
   await runFrames();
   expect(texts()).toEqual(["hello 你好", "", "next"]);
 });
+
+/** What Chrome does for insertParagraph at the end of the line: beforeinput, then a new line element. */
+function insertParagraph(content: HTMLElement, line: Element) {
+  content.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true }));
+  const next = document.createElement("div"); next.className = "cm-line"; next.append(document.createElement("br"));
+  line.after(next);
+}
 
 it("the opt-in Enter trace records event names, codes and lengths, and none of the typed text", async () => {
   const view = mount();

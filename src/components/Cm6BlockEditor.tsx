@@ -60,9 +60,6 @@ import { parserReady } from "../render/parse";
 import { blockDirAttr } from "../render/textDirection";
 import "./cm6-editor.css";
 
-/** The input types Android Chrome sends for Enter, Backspace and Delete (CM's PendingKeys). */
-const STRUCTURE_INPUTS = new Set(["insertParagraph", "insertLineBreak", "deleteContentBackward", "deleteContentForward"]);
-
 export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const owner = getOwner();
   let host!: HTMLDivElement;
@@ -365,13 +362,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
             if (abandoned) v.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
             return false;
           },
-          beforeinput: event => {
-            const input = event as InputEvent;
-            if (input.isComposing) typing.begin();
-            // Android sends Enter, Backspace and Delete as these, and CM turns them into keys a frame later.
-            else if (STRUCTURE_INPUTS.has(input.inputType)) typing.beforeKey();
-            return !current();
-          },
+          beforeinput: event => { if ((event as InputEvent).isComposing) typing.begin(); return !current(); },
           input: event => { if (typing.input(event as InputEvent) && !typing.active()) completion.input(event as InputEvent); return false; },
           compositionstart: () => { typing.begin(); return false; },
           compositionend: () => { typing.end(); return false; },
