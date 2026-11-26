@@ -1,5 +1,6 @@
 import { afterAll, expect, it, vi } from "vitest";
 import { backend } from "./backend";
+import { mountCapture } from "./tests/captureApp";
 
 const h = vi.hoisted(() => ({ preload: vi.fn(async () => {}), listeners: new Set<string>() }));
 vi.mock("./appIdentity", () => ({ APP_UPDATE_CHANNEL: "beta", APP_PRODUCT_NAME: "Tine" }));
@@ -34,8 +35,7 @@ it("waits for a stored classic choice before preloading hidden Quick Capture, th
   vi.spyOn(backend(), "getCaptureEnterFiles").mockResolvedValue(false);
   vi.spyOn(backend(), "captureTarget").mockResolvedValue("main");
   vi.spyOn(backend(), "onGraphConfigChanged").mockResolvedValue(() => {});
-  const root = document.createElement("div"); root.id = "capture-root"; document.body.append(root);
-  await import("./capture");
+  await mountCapture();
   await vi.waitFor(() => expect(h.listeners.has("capture-shown")).toBe(true));
   expect(cm6EditorLoading()).toBe(true);
   expect(h.preload).not.toHaveBeenCalled();

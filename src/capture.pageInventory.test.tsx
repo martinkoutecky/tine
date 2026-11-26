@@ -10,6 +10,7 @@ import { allPageNames, navigationName, resolvedTarget } from "./pageIndex";
 import { toasts } from "./toasts";
 import { initParser } from "./render/parse";
 import type { GraphMeta } from "./types";
+import { mountCapture } from "./tests/captureApp";
 
 vi.mock("./components/Block", () => ({ Block: () => null,
   CaptureCtx: { Provider: (p: { children: unknown }) => p.children },
@@ -30,8 +31,7 @@ beforeAll(async () => {
   vi.spyOn(backend(), "captureTarget").mockResolvedValue("main");
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(17);
   vi.spyOn(backend(), "pageInventory").mockImplementation(inventory);
-  const root = document.createElement("div"); root.id = "capture-root"; document.body.append(root);
-  await import("./capture");
+  await mountCapture();
   await vi.waitFor(() => expect(document.querySelector(".capture-shell")).not.toBeNull());
 });
 
