@@ -242,19 +242,21 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
   // as its source's root row, and answers as that row's arrow does: it folds
   // when the source has a body, reads `collapsed::` else the source's fold, and
   // writes its own `collapsed::`. It has no children, so nothing below is walked.
+  // A row some surface answers for (a query result) keeps that surface's answer.
   const embedSource = new Map<string, string>();
+  const sourceOf = (id: string) => surfaceOf(id) ? undefined : embedSource.get(id);
   const standAsRoot = (id: string) => {
     const source = embedHostSource(id);
     if (source) embedSource.set(id, source);
   };
   const isCollapsed = (id: string) => {
-    const source = embedSource.get(id);
+    const source = sourceOf(id);
     if (source) return embedRootFold(id, storedFold(source));
     const stored = storedFold(id); // `collapsed::`, else a query's authored `:collapsed? true`
     return surfaceOf(id)?.collapsed(id, stored) ?? stored;
   };
-  const foldable = (id: string) => blockHasFoldableBody(embedSource.get(id) ?? id);
-  const setFold = (id: string, collapsed: boolean) => embedSource.has(id) ? setEmbedRootFold(id, collapsed) : setCollapsed(id, collapsed);
+  const foldable = (id: string) => blockHasFoldableBody(sourceOf(id) ?? id);
+  const setFold = (id: string, collapsed: boolean) => sourceOf(id) ? setEmbedRootFold(id, collapsed) : setCollapsed(id, collapsed);
   pageRoots?.forEach(standAsRoot);
   const children = (ids: string[]) => {
     const out = new Set<string>();

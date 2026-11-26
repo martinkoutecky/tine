@@ -247,6 +247,25 @@ describe("query blocks keep their earlier answer (GH #1032 guards)", () => {
     } finally { dispose(); }
   });
 
+  it("an embed that is both an outline child of a query and one of its results keeps its earlier answer: the query folds", async () => {
+    const source = page("Source", [S1()]);
+    const groups = new Map<string, RefGroup>([["s1", { page: "Source", kind: "page", blocks: [{ ...S1(), children: [] }] }]]);
+    vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map((id) => groups.get(id) ?? null));
+    loadSingle(page("Tasks", [block("query", "{{query (task TODO)}}", [block("hr", "{{embed ((s1))}}")])]));
+    ensurePageLoaded(source);
+    answer([{ page: "Tasks", kind: "page", blocks: [{ id: "hr", raw: "{{embed ((s1))}}", collapsed: false, children: [] }] }]);
+    const { root, dispose } = mount(["query"]);
+    try {
+      await tick(8);
+      expect(root.querySelector(".query-group")?.textContent).toContain("Child of one");
+      selectBlock("query");
+      runGlobalCommand("editor/collapse-children"); await tick();
+      expect(doc.byId.query.raw).toContain("collapsed:: true");
+      expect(doc.byId.hr.raw).toBe("{{embed ((s1))}}");
+      expect(doc.byId.s1.raw).toBe("Source one");
+    } finally { dispose(); }
+  });
+
   it("on a read-only page, a query with an ordinary leaf child is still refused", async () => {
     loadSingle(page("Tasks", [block("src", "Holder", [block("todo", "TODO Result row", [block("kid", "Kid row")])])]));
     loadSingle(page("Locked", [block("query", "{{query (task TODO)}}", [block("x", "Leaf child")])], "md", true));
