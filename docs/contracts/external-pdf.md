@@ -8,16 +8,18 @@ Android keep their existing outside-link behavior and cannot call this reader.
 
 A relative file link to a PDF opens the same reader from the same Markdown `!` or
 Org position: `file:../x.pdf`, `../x.pdf`, `..\x.pdf`, `docs/x.pdf`, `./x.pdf` and
-`file:x.pdf`. It resolves with the one file-link resolver (`relativeFileLink.ts`,
+`file:x.pdf`; so does an absolute path without `file://` (`/home/u/x.pdf`,
+`C:\dir\x.pdf`, `C:/dir/x.pdf`), which names the same file as its `file://`
+spelling, needs no graph root, and matches OG `media-link`, which takes the written
+path as is. It resolves with the one file-link resolver (`relativeFileLink.ts`,
 GH #457: from the graph root, authored `..` steps kept, lexical, no filesystem
 probe), and the reader receives the resulting absolute `file://` URL
-(`relativePdfFileUrl` in `externalPdfPath.ts`), so every rule below applies to it
+(`pdfFileLinkUrl` in `externalPdfPath.ts`), so every rule below applies to it
 unchanged. Spellings of one file share one reader tab. These keep their existing
 opener: an `assets/` link and a bare `x.pdf` (the graph-asset reader, with
 annotations), any path that resolves into the graph's `assets/` (so
-`file:assets/x.pdf` keeps the file opener), a plain Markdown link, an absolute path
-without `file://`, any non-PDF link, a link with `#`/`?` after the name, and a link
-on a graph whose root is unknown. OG 6e7afa8eb resolves a relative PDF under the graph's `assets/` after
+`file:assets/x.pdf` keeps the file opener), a plain Markdown link, any non-PDF link, a link with `#`/`?` after the name, and a relative
+link on a graph whose root is unknown. OG 6e7afa8eb resolves a relative PDF under the graph's `assets/` after
 stripping leading dots (`resolve-asset-real-path-url`) and has no graph-root form;
 Tine keeps its #457 graph-root rule, so `../x.pdf` names the file above the graph.
 

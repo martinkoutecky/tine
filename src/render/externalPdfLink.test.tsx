@@ -120,7 +120,7 @@ it.each([
   ["[notes](../papers/a.txt)", "md", "external", "file:///home/user/papers/a.txt"],
   ["[notes](docs/a.txt)", "md", "graph", "docs/a.txt"],
   ["[[file:../papers/a.txt][notes]]", "org", "external", "file:///home/user/papers/a.txt"],
-  ["![paper](/home/me/a.pdf)", "md", "external", "file:///home/me/a.pdf"],
+  ["[paper](/home/me/a.pdf)", "md", "external", "file:///home/me/a.pdf"],
   // Resolving into the graph's assets/ keeps whatever the spelling did before: the file: forms bypass the asset route.
   ["![paper](file:assets/a.pdf)", "md", "graph", "assets/a.pdf"],
   ["![paper](file:docs/../Assets/a.pdf)", "md", "graph", "Assets/a.pdf"],
@@ -141,7 +141,49 @@ it.each([
   } finally { dispose(); }
 });
 
-it.each(["![paper](../assets/a.pdf)", "![paper](assets/a.pdf)", "![paper](a.pdf)"])(
+// GH #732 (sixth comment): a bare absolute path opens in the reader exactly as
+// its file:// spelling does (OG media-link takes the path as written), also on a
+// graph whose root is unknown. It used to go to the system opener.
+it.each([
+  ["![paper](/home/me/a b.pdf)", "md", "file:///home/me/a%20b.pdf", "/home/me/a b.pdf"],
+  ["[[/home/me/a b.pdf][paper]]", "org", "file:///home/me/a%20b.pdf", "/home/me/a b.pdf"],
+  ["![paper](C:\\papers\\文.pdf)", "md", "file:///C:/papers/%E6%96%87.pdf", "C:/papers/文.pdf"],
+  ["![paper](C:/papers/文.pdf)", "md", "file:///C:/papers/%E6%96%87.pdf", "C:/papers/文.pdf"],
+] as const)("opens the absolute PDF path %s in the reader", async (source, format, url, path) => {
+  for (const graphRoot of [root, ""]) {
+    setGraphMeta(graphRoot ? { ...graphMeta()!, root: graphRoot } : null);
+    const open = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+    const external = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+    const graphFile = vi.spyOn(backend(), "openGraphFile").mockResolvedValue();
+    const asset = vi.spyOn(backend(), "readAsset");
+    const api = backend(), original = api.readExternalPdf;
+    const read = vi.fn().mockResolvedValue(new Uint8Array([1]));
+    api.readExternalPdf = read;
+    const { host, dispose } = mountLink(source, format);
+    try {
+      const link = host.querySelector<HTMLAnchorElement>("a.pdf-link");
+      expect(link, `reader link (root ${graphRoot || "unknown"})`).not.toBeNull();
+      expect(link!.title).toBe(path);
+      link!.click();
+      expect(open).toHaveBeenCalledExactlyOnceWith(url, "paper", undefined, undefined,
+        expect.objectContaining({ externalRead: expect.any(Function) }));
+      await open.mock.calls[0][4]!.externalRead!();
+      expect(read).toHaveBeenCalledExactlyOnceWith(url, api.graphBindingGeneration());
+      for (const spy of [external, graphFile, asset]) expect(spy).not.toHaveBeenCalled();
+    } finally { dispose(); vi.restoreAllMocks(); if (original) api.readExternalPdf = original; else delete api.readExternalPdf; }
+  }
+});
+
+it("a bare absolute path and its file:// spelling share one reader tab", () => {
+  const open = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+  const { host, dispose } = mountLink("![a](/home/me/x.pdf) ![b](file:///home/me/x.pdf)", "md");
+  try {
+    for (const link of host.querySelectorAll<HTMLAnchorElement>("a.pdf-link")) link.click();
+    expect(open.mock.calls.map(call => call[0])).toEqual(Array(2).fill("file:///home/me/x.pdf"));
+  } finally { dispose(); }
+});
+
+it.each(["![paper](../assets/a.pdf)", "![paper](assets/a.pdf)", "![paper](a.pdf)", "![paper](/home/user/graph/assets/a.pdf)"])(
   "%s keeps the graph-asset reader with annotations", (source) => {
     setGraphMeta({ ...graphMeta()!, root });
     const open = vi.spyOn(panes, "openPdf").mockReturnValue(null);
