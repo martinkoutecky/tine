@@ -462,9 +462,15 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     };
     host.ownerDocument.defaultView!.addEventListener("keydown", compositionKeys, true);
     host.addEventListener("keydown", structuralKeys, true);
+    // Android's EditContext takes the composition events the element would otherwise get (GH #767).
+    const context = (view.contentDOM as HTMLElement & { editContext?: EventTarget | null }).editContext;
+    context?.addEventListener("compositionstart", typing.begin);
+    context?.addEventListener("compositionend", typing.end);
     removeKeys = () => {
       host.ownerDocument.defaultView!.removeEventListener("keydown", compositionKeys, true);
       host.removeEventListener("keydown", structuralKeys, true);
+      context?.removeEventListener("compositionstart", typing.begin);
+      context?.removeEventListener("compositionend", typing.end);
     };
     /** `again`: a later request to this mounted view (see focusMountedEditor), applied, not taken. */
     const focusNow = (again?: { offset: CaretPos }) => {
