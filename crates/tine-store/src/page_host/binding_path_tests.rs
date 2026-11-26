@@ -54,11 +54,16 @@ fn a_fileless_held_journal_reads_a_backdated_sync_delivery_with_a_watcher_event(
     }
 }
 
-/// The watcher of `live` drops every OS notification (a missed event).
+/// The watcher of `live` drops every OS notification (a missed event), and
+/// its thread has stopped: the reconcile it runs once after installing the
+/// watch does not check `deaf`, and `Live::build` does not wait for it, so on
+/// a loaded machine it ran after a test's delivery and indexed the file the
+/// test delivers "unobserved".
 fn deaf(live: &Live) {
     (live.store.watch.core_for_load())
         .deaf
         .store(true, std::sync::atomic::Ordering::Release);
+    live.store.watch.stop_background_for_test();
 }
 
 /// A sync client's delivery: a temporary file carrying its source's old

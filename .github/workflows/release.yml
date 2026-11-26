@@ -163,7 +163,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
             libayatana-appindicator3-dev patchelf \
             build-essential curl wget file libssl-dev libxdo-dev \
-            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston zsync faketime
+            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston zsync faketime rpm
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -398,9 +398,17 @@ jobs:
             exit 1
           fi
 
+      # Tine Beta installs next to Tine: its packages share no file with the
+      # latest stable release's and declare no package relation (tine#1011).
+      - name: Verify the Linux packages install next to stable's
+        if: startsWith(matrix.platform, 'ubuntu-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-linux-package-paths.mjs ./target/release/bundle/deb ./target/release/bundle/rpm
+
       - name: Write Linux E2E candidate receipt
         if: matrix.lane == 'linux-x64'
-        run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.build.before.json --app target/release/tine
+        run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.build.before.json --app "target/release/$RELEASE_LINUX_BINARY"
 
       - name: Write Windows E2E candidate receipt
         if: matrix.lane == 'windows-x64'
@@ -448,6 +456,8 @@ jobs:
         env:
           E2E_ALLOW_SYNTHETIC_FOCUS: "1"
           TINE_E2E_MODE: release
+          # The packaging step names the built binary after the identity.
+          TINE_APP: target/release/${{ env.RELEASE_LINUX_BINARY }}
         run: npm run e2e:linux:release
 
       - name: Gate Linux x64 on the signed plugin catalogue lifecycle
