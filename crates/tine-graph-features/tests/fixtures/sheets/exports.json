@@ -453,17 +453,5 @@
     ],
     "filterError": null,
     "omitted": 0
-  },
-  {
-    "page": "Tail-queries",
-    "path": [
-      2
-    ],
-    "fp": "8b2521215590ccd5",
-    "view": "grid",
-    "cols": 1,
-    "header": false,
-    "footer": null,
-    "omitted": 0
   }
 ]

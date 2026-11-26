@@ -369,17 +369,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   });
 
   const sheet = createMemo(() => sheetConfig(hostAllProperties()));
-  /** The host block's raw text: the live block, or the read-only `hostRaw`. */
-  const hostRawText = (): string => {
-    const id = props.blockId;
-    return id ? docNode(id)?.raw ?? "" : props.hostRaw?.raw ?? "";
-  };
   const detachedOwnerId = createUniqueId();
   const sheetOwnerId = () => props.blockId ?? detachedOwnerId;
   const currentView = (): QueryView => reading()?.view.view ?? "list";
   // One sheet per block (tine#874): the host's one answer says what its query draws.
   const blockFace = createMemo((): QueryView =>
-    blockSheet(sheet(), hostRawText, runnable()?.block_presentation ?? currentView()).query!);
+    blockSheet(sheet(), runnable()?.block_presentation ?? currentView()));
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
   const legacyTable = () => blockFace() === "list"
     && hostProperty("tine.view") === null
@@ -1003,7 +998,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const info = advInfo();
     return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));
   };
-  const simpleView = (): QueryView => blockSheet(sheet(), hostRawText, legacyTable() ? "table" : currentView()).query!;
+  const simpleView = (): QueryView => blockSheet(sheet(), legacyTable() ? "table" : currentView());
 
   const whyEmpty = () => (
     <Show when={ranEmpty() && friendlySearch() === null}>

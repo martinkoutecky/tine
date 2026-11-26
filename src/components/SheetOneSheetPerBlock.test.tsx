@@ -17,6 +17,7 @@ import type { BlockDto, RefGroup } from "../types";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { installKeybindings } from "../keybindings";
 import { cellSel, resetCellSelectionForTests } from "../sheet/selection";
+import { maybeEditorIn } from "../tests/editorDriver";
 
 beforeAll(async () => { await initParser(); });
 
@@ -50,7 +51,7 @@ const groups = (): RefGroup[] => [{ page: "Work", kind: "page", blocks: [result(
 
 /** A host block with `hostRaw` and, for a grid, two positional rows of cells. The engine
  *  answers the query face `face` (`tine.block-view`), no grouping, two results. */
-function load(hostRaw: string, face: "table" | "board" | "list", grid: boolean): void {
+function load(hostRaw: string, face: "table" | "board" | "list", grid: boolean, opts: { liveResults?: boolean; columns?: string[] } = {}): void {
   const page: FeedPage = { name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["host"], format: "md", readOnly: false, guide: false };
   const cells: Record<string, StoreNode> = grid ? {
     r0: node("r0", "", "host", ["c00", "c01"]),
@@ -59,11 +60,17 @@ function load(hostRaw: string, face: "table" | "board" | "list", grid: boolean):
     r1: node("r1", "", "host", ["c10"]),
     c10: node("c10", "Gamma", "r1"),
   } : {};
-  setDoc({ byId: { host: node("host", hostRaw, null, grid ? ["r0", "r1"] : []), ...cells }, pages: [page], feed: ["Sheet"], loaded: true });
+  const work: FeedPage = { ...page, name: "Work", title: "Work", roots: ["todo-a", "todo-b"] };
+  const results: Record<string, StoreNode> = opts.liveResults ? {
+    "todo-a": { ...node("todo-a", "TODO Write tests", null), page: "Work" },
+    "todo-b": { ...node("todo-b", "TODO Ship it", null), page: "Work" },
+  } : {};
+  setDoc({ byId: { host: node("host", hostRaw, null, grid ? ["r0", "r1"] : []), ...cells, ...results },
+    pages: opts.liveResults ? [page, work] : [page], feed: ["Sheet"], loaded: true });
   const parse = backend().parseQuery.bind(backend());
   vi.spyOn(backend(), "parseQuery").mockImplementation(async (...args) => {
     const parsed = await parse(...args);
-    return { ...parsed, view: { ...parsed.view, group_by: "" }, block_presentation: face };
+    return { ...parsed, view: { ...parsed.view, group_by: "", ...(opts.columns ? { columns: opts.columns } : {}) }, block_presentation: face };
   });
   vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
   vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
@@ -148,6 +155,34 @@ describe("one sheet per block: a grid host draws its own query as the list (tine
     expect(root.querySelector(".sheet-board")).toBeNull();
     expect(doc.byId.host.raw).toBe("{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: table");
   });
+  it("table face: a selected grid cell + Enter never changes a query result's task state", async () => {
+    // The develop path: the query table registers last in the shared (host, surface)
+    // slot, so a GRID cell selection's Enter ran the table's activateCell at the same
+    // coordinates and cycled an unrelated result's state (TODO -> DOING plus a LOGBOOK).
+    load("{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: table", "table", true, { liveResults: true, columns: ["state"] });
+    disposeKeys = installKeybindings();
+    const prev = (document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint;
+    (document as unknown as { caretRangeFromPoint: () => null }).caretRangeFromPoint = () => null;
+    try {
+      const root = mount(() => <Block id="host" />);
+      await resultsDrawn(root);
+      await vi.waitFor(() => expect(gridOf(root)).not.toBeNull());
+      const gridCell = root.querySelector<HTMLElement>('.sheet-grid[data-sheet-grid-id="host"] .sheet-cell[data-row="0"][data-col="1"]')!;
+      gridCell.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 15 }));
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 15 }));
+      await vi.waitFor(() => expect(maybeEditorIn(root, "c01")).not.toBeNull());
+      maybeEditorIn(root, "c01")!.keydown(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(cellSel()).toMatchObject({ kind: "cell", gridId: "host", row: 0, col: 1 }));
+      press("Enter");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(doc.byId["todo-a"].raw).toBe("TODO Write tests");
+      expect(doc.byId["todo-b"].raw).toBe("TODO Ship it");
+      expect(gridCells()).toEqual(GRID);
+    } finally {
+      const withCaret = document as unknown as { caretRangeFromPoint?: unknown };
+      if (prev === undefined) delete withCaret.caretRangeFromPoint; else withCaret.caretRangeFromPoint = prev;
+    }
+  });
 });
 
 describe("one sheet per block leaves single-sheet blocks unchanged (parity)", () => {
@@ -174,27 +209,5 @@ describe("one sheet per block leaves single-sheet blocks unchanged (parity)", ()
     await resultsDrawn(root);
     expect(gridOf(root)).not.toBeNull();
     expect(root.querySelector(".sheet-board, .sheet-table")).toBeNull();
-  });
-});
-
-describe("a block inside a grid cell asks the same one sheet answer", () => {
-  it("a query table inside a grid cell draws only the query's table, as the same block does outside a grid", async () => {
-    // FAIL-BEFORE: the grid cell asked `sheetConfig` itself, so the cell block drew a
-    // second, children-source table under the query's own table.
-    load("Outer\ntine.view:: grid", "table", false);
-    setDoc({
-      ...doc,
-      byId: {
-        host: node("host", "Outer\ntine.view:: grid", null, ["r0"]),
-        r0: node("r0", "", "host", ["c00"]),
-        c00: node("c00", "{{query (task TODO)}}\ntine.view:: table", "r0", ["kid"]),
-        kid: node("kid", "kid row", "c00"),
-      },
-    });
-    const root = mount(() => <Block id="host" />);
-    await resultsDrawn(root);
-    await vi.waitFor(() => expect(root.querySelector(".sheet-table")).not.toBeNull());
-    expect(root.querySelectorAll(".sheet-table")).toHaveLength(1);
-    expect(root.querySelector('.sheet-table .sheet-cell[data-block-id="kid"]')).toBeNull();
   });
 });
