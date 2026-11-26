@@ -53,6 +53,7 @@ import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
 import { blockSheet } from "../sheet/childrenSheet";
+import { OccurrenceHostContext } from "../refOccurrence";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
@@ -372,9 +373,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const detachedOwnerId = createUniqueId();
   const sheetOwnerId = () => props.blockId ?? detachedOwnerId;
   const currentView = (): QueryView => reading()?.view.view ?? "list";
-  // One sheet per block (tine#874): the host's one answer says what its query draws.
+  // One sheet per block (tine#874): the grid mount of this occurrence, if any, says so.
+  const occurrence = useContext(OccurrenceHostContext);
+  const gridMounted = () => !!props.blockId && occurrence?.id === props.blockId && !!occurrence.mountsGrid?.();
   const blockFace = createMemo((): QueryView =>
-    blockSheet(sheet(), runnable()?.block_presentation ?? currentView()));
+    blockSheet(gridMounted(), runnable()?.block_presentation ?? currentView()));
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
   const legacyTable = () => blockFace() === "list"
     && hostProperty("tine.view") === null
@@ -998,7 +1001,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const info = advInfo();
     return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));
   };
-  const simpleView = (): QueryView => blockSheet(sheet(), legacyTable() ? "table" : currentView());
+  const simpleView = (): QueryView => blockSheet(gridMounted(), legacyTable() ? "table" : currentView());
 
   const whyEmpty = () => (
     <Show when={ranEmpty() && friendlySearch() === null}>

@@ -2,12 +2,16 @@
 // board drew BOTH sheets under one selection key (host, surface), so keys meant for one
 // acted on the other: Delete on a selected board card cleared the grid cell at its
 // coordinates, card arrows then Backspace deleted a grid row, and a selected table cell
-// + Delete cleared a grid cell. The block's one sheet answer (`blockSheet`) now draws a
-// grid host's query as the list; nothing is written, so the view properties stay.
+// + Delete cleared a grid cell. Where an occurrence draws the block's grid, the grid mount
+// tells the block's own query so (through `Rendered`'s `OccurrenceHostContext`) and the query draws as the list;
+// nothing is written, so the view properties stay. A query shown on its own (journal
+// sections, raw-only rendering) draws no grid and keeps its table or board.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { QueryMacro } from "./Macro";
+import { AstBody } from "../render/body";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
@@ -209,5 +213,51 @@ describe("one sheet per block leaves single-sheet blocks unchanged (parity)", ()
     await resultsDrawn(root);
     expect(gridOf(root)).not.toBeNull();
     expect(root.querySelector(".sheet-board, .sheet-table")).toBeNull();
+  });
+});
+
+describe("one sheet per block inside a grid cell (tine#874)", () => {
+  it("a cell block that is a grid and has its own table query draws its grid and the list", async () => {
+    const cellRaw = "{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: table";
+    load("Outer grid\ntine.view:: grid", "table", false);
+    const page: FeedPage = { name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["host"], format: "md", readOnly: false, guide: false };
+    setDoc({ byId: {
+      host: node("host", "Outer grid\ntine.view:: grid", null, ["r0"]),
+      r0: node("r0", "", "host", ["cell"]),
+      cell: node("cell", cellRaw, "r0", ["k0"]),
+      k0: node("k0", "", "cell", ["k00"]),
+      k00: node("k00", "Inner", "k0"),
+    }, pages: [page], feed: ["Sheet"], loaded: true });
+    const root = mount(() => <Block id="host" />);
+    await resultsDrawn(root);
+    await vi.waitFor(() => expect(root.querySelector('.sheet-grid[data-sheet-grid-id="cell"]')).not.toBeNull());
+    expect(root.querySelector(".sheet-table, .sheet-board")).toBeNull();
+    expect(doc.byId.cell.raw).toBe(cellRaw);
+  });
+});
+
+describe("a query shown without its grid keeps its sheet (tine#874, review r2 finding 1)", () => {
+  it.each(["table", "board"] as const)("journal sections: a grid host's query rendered on its own keeps its %s", async face => {
+    const hostRaw = `{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: ${face}`;
+    load(hostRaw, face, true);
+    // The call shape of `TodaySections.tsx`: the query alone, with its host block's raw text.
+    const root = mount(() => <QueryMacro body="query (task TODO)" currentPage="Sheet" hideWhenEmpty
+      hostRaw={{ raw: hostRaw, format: "md" }} />);
+    await resultsDrawn(root);
+    await vi.waitFor(() => expect(root.querySelector(`.sheet-${face}`)).not.toBeNull());
+    expect(gridOf(root)).toBeNull();
+    expect(doc.byId.host.raw).toBe(hostRaw);
+  });
+
+  it("raw-only rendering: a grid host's body rendered from its raw text keeps its table", async () => {
+    const hostRaw = "{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: table";
+    load(hostRaw, "table", true);
+    // `render/body.tsx`'s query route (reached from `RefBlocks.tsx`): the body alone, even
+    // under the host's own id, mounts no grid.
+    const root = mount(() => <AstBody raw={hostRaw} format="md" blockId="host" />);
+    await resultsDrawn(root);
+    await vi.waitFor(() => expect(root.querySelector(".sheet-table")).not.toBeNull());
+    expect(gridOf(root)).toBeNull();
+    expect(doc.byId.host.raw).toBe(hostRaw);
   });
 });

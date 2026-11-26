@@ -809,6 +809,8 @@ function SheetBlock(props: {
     return value ? effectiveHeadingLevel(value, depthOf(props.id)) : null;
   });
   const config = createMemo(() => (facets() ? sheetConfig(facets()!.properties) : null));
+  // This cell draws its block's own nested grid; the block's own query asks this (tine#874).
+  const mountsGrid = () => config()?.view === "grid";
   const macro = createMemo(() => {
     const n = node();
     return n ? detectMacro(n.raw, fmt()) : null;
@@ -871,6 +873,7 @@ function SheetBlock(props: {
                     headingLevel={headingLevel}
                     macro={macro}
                     owner={props.cell ? cellOwner(props.cell) : undefined}
+                    mountsGrid={mountsGrid}
                     inertBody
                   />
                 }
@@ -885,10 +888,10 @@ function SheetBlock(props: {
               </Show>
             </div>
           </div>
-          <Show when={!node()?.collapsed && (children().length > 0 || config()?.view === "grid" || config()?.view === "table" || config()?.view === "board")}>
+          <Show when={!node()?.collapsed && (children().length > 0 || mountsGrid() || config()?.view === "table" || config()?.view === "board")}>
             <SheetContainerOverlayContext.Provider value={null}>
               <Switch>
-                <Match when={config()?.view === "grid"}>
+                <Match when={mountsGrid()}>
                   <SheetGridInner id={props.id} depth={props.depth} />
                 </Match>
                 <Match when={config()?.view === "table"}>

@@ -13,11 +13,11 @@ export function childrenSheetConfig(properties: readonly [string, string][], raw
   return cfg;
 }
 
-/** The face a block's own query draws. One sheet per block (tine#874): a grid draws its
- * children, so its own query draws as the list, never as a second table or board (two
+/** The face a block's own query draws. One sheet per block (tine#874): where this
+ * occurrence also draws the block's grid (`gridMounted`, answered by the grid mount via
+ * `OccurrenceHostContext`), the query draws as the list, never as a second table or board (two
  * sheets of one block share one selection key, so keys meant for one acted on the
- * other). Nothing is written: removing the grid property brings the table or board
- * back. Reads only the grid property and the query's face: O(1), no body scan. */
-export function blockSheet<F extends string>(cfg: SheetConfig, queryFace: F): F | "list" {
-  return cfg.view === "grid" && (queryFace === "table" || queryFace === "board") ? "list" : queryFace;
+ * other). A query shown without its grid keeps its face. Nothing is written. O(1). */
+export function blockSheet<F extends string>(gridMounted: boolean, queryFace: F): F | "list" {
+  return gridMounted && (queryFace === "table" || queryFace === "board") ? "list" : queryFace;
 }

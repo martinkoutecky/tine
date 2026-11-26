@@ -252,6 +252,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
   // The children-source sheet this block owns (a query block's table/board is the macro's).
   const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
+  // This occurrence draws the block's children grid; its body's own query asks this (tine#874).
+  const mountsGrid = () => sheet().view === "grid";
   // Bulletless comments keep their own presentation instead of outline threading.
   const threadLineDecoration = (withoutBullet: boolean): ThreadLineDecoration => {
     if (!(hasChildren() && sheet().view === null) || withoutBullet) return NO_THREAD_LINES;
@@ -405,6 +407,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   headingLevel={headingLevel}
                   macro={macro}
                   owner={instanceId}
+                  mountsGrid={mountsGrid}
                   outlineScope={outlineScope}
                   refCountBadge={<>
                     <Show when={showsAuthor() && !bulletless()}>
@@ -428,9 +431,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <BlockReferences id={props.id} />
         </div>
       </Show>
-      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || mountsGrid() || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
-          <Match when={sheet().view === "grid"}>
+          <Match when={mountsGrid()}>
             <SheetContainer>
               <SheetGrid id={props.id} />
             </SheetContainer>

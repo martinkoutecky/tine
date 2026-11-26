@@ -98,7 +98,7 @@ icon:: ▦
 - ### Create one yourself — query
 	- 1. Type `/Query` and create a query for the blocks you want, such as tasks tagged `#sheets-demo`.
 	- 2. Keep the query in one block, then run `/Table` or `/Board` on that same block to view the results.
-	- A block draws one sheet: if the query's block is also a grid, its results show as a list, and the table or board comes back when the block stops being a grid.
+	- A block draws one sheet: where the query's block shows as a grid, its results show as a list beside the grid. The table or board comes back when the block stops being a grid, and a query shown on its own, such as a journal section, keeps it.
 	- 3. For a board, use the **Group by** dropdown (see below) to pick the column axis.
 	- In a query table, a sort that cannot be saved with the query is labeled **Table-only sort**. Click that label to clear that local order; the saved query order stays as it was.
 	- 4. What you should see: query results render as a live sheet view without copying the source blocks.
