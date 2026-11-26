@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { pageByName, setRaw, insertOutlineAfter, blockSubtreeMarkdown } from "./document";
 import { CAPTURE_SCRATCH_NAME } from "./captureSeed";
 import { initParser } from "./render/parse";
+import { mountCapture } from "./tests/captureApp";
 
 const h = vi.hoisted(() => ({
   api: null as null | { submit(): void; cancel(): void },
@@ -32,8 +33,7 @@ beforeAll(async () => {
   vi.spyOn(backend(), "getCaptureEnterFiles").mockResolvedValue(false);
   vi.spyOn(backend(), "captureTarget").mockResolvedValue("main");
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(17);
-  const root = document.createElement("div"); root.id = "capture-root"; document.body.append(root);
-  await import("./capture");
+  await mountCapture();
   await vi.waitFor(() => expect(h.api).not.toBeNull());
 });
 const roots = () => pageByName(CAPTURE_SCRATCH_NAME)!.roots;
