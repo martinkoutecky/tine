@@ -613,6 +613,7 @@
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
+        { "class": "core-operation", "userOutcome": "Started under another plain file name, the program's usage lines and a refusal's hint (answered by the serve owner it starts) print that name; under a name that is not one plain word they print tine (#1011).", "blocking": true, "authority": "GH #1011; the Beta's Linux packages install the command as tine-beta" },
         { "class": "core-operation", "userOutcome": "Page-property CLI edits, aliases and new-page header imports work with serve and app owners in Markdown and Org; a title edit updates the open page, and existing-page header-shape refusals explain page-property recovery (#839).", "blocking": true, "authority": "docs/contracts/cli-output.md page.prop; GH #839" },
         { "class": "exact-safety-interoperability", "userOutcome": "Explicit blank add authors refuse without changing the file; blank client TINE_AUTHOR defaults to agent and nonblank names are trimmed, even with an existing owner.", "blocking": true, "authority": "GH #930; docs/contracts/cli-output.md" },
         { "class": "core-operation", "userOutcome": "Six parallel tine add commands to one page all land while the real app owns the graph, with the page open in its window and with it closed (#842).", "blocking": true, "authority": "docs/contracts/cli-output.md Writes; GH #842" },

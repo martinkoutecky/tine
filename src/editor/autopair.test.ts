@@ -30,6 +30,84 @@ describe("autoPairInsertOnInput — single pair insert", () => {
   });
 });
 
+describe("autoPairInsertOnInput — a quote after a word closes (GH #1020)", () => {
+  // `type(v, c, ch)` inserts `ch` at `c` first, as the browser does.
+  it("adds no second quote after a letter or a number", () => {
+    expect(type('{{y "hello}}', 10, '"')).toEqual({ value: '{{y "hello"}}', caret: 11 }); // the report
+    expect(type('say "hello', 10, '"')).toEqual({ value: 'say "hello"', caret: 11 }); // end of the block
+    expect(type('"hello now', 6, '"')).toEqual({ value: '"hello" now', caret: 7 }); // before a space
+    expect(type('"ano', 4, '"')).toEqual({ value: '"ano"', caret: 5 });
+    expect(type('"žluťoučký', 10, '"')).toEqual({ value: '"žluťoučký"', caret: 11 }); // not only ASCII
+    expect(type('"2026', 5, '"')).toEqual({ value: '"2026"', caret: 6 });
+    expect(type("`code", 5, "`")).toEqual({ value: "`code`", caret: 6 });
+  });
+
+  it("knows letters outside the BMP, combining marks and number signs", () => {
+    // `before` ends in the word; the quote is typed at its end.
+    const closes = (before: string) => expect(type(before, before.length, '"')).toEqual({ value: before + '"', caret: before.length + 1 });
+    closes('"\u{20BB7}'); // a CJK letter stored as a surrogate pair
+    closes('"\u{10437}'); // Deseret
+    closes('"\u{1D7E0}'); // a mathematical digit
+    closes('"cafe\u0301'); // e + combining acute
+    closes('"\u0915\u0940'); // Devanagari letter + vowel sign
+    closes('"\u00BD'); // one half
+    expect(type("say \u0301", 5, '"')).toEqual({ value: 'say \u0301""', caret: 6 }); // a mark with no letter opens
+  });
+
+  it("still pairs a quote that opens: at the start, after a space, an opener or punctuation", () => {
+    expect(type("say ", 4, '"')).toEqual({ value: 'say ""', caret: 5 });
+    expect(type("{{y }}", 4, '"')).toEqual({ value: '{{y ""}}', caret: 5 });
+    expect(type("()", 1, '"')).toEqual({ value: '("")', caret: 2 });
+    expect(type("a: ", 3, "`")).toEqual({ value: "a: ``", caret: 4 });
+    expect(type("_", 1, '"')).toEqual({ value: '_""', caret: 2 }); // an emphasis mark is not a word
+  });
+
+  it("adds nothing to a second or third closing quote after a word", () => {
+    const keys = (value: string, caret: number, text: string) => {
+      let state = { value, caret };
+      for (const ch of text) state = type(state.value, state.caret, ch);
+      return state;
+    };
+    // A double-backtick code span: two closing backticks stay two.
+    expect(keys("``a`b", 5, "``")).toEqual({ value: "``a`b``", caret: 7 }); // end of the block
+    expect(keys("``a`b now", 5, "``")).toEqual({ value: "``a`b`` now", caret: 7 }); // before a space
+    expect(keys("(``a`b)", 6, "``")).toEqual({ value: "(``a`b``)", caret: 8 }); // before a closer
+    expect(keys('""word', 6, '""')).toEqual({ value: '""word""', caret: 8 });
+    expect(keys('""word then', 6, '""')).toEqual({ value: '""word"" then', caret: 8 });
+    expect(keys('(""word)', 7, '""')).toEqual({ value: '(""word"")', caret: 9 });
+    expect(keys("```word", 7, "```")).toEqual({ value: "```word```", caret: 10 });
+    // A closing quote already there, one more typed after it.
+    expect(type('"word"', 6, '"')).toEqual({ value: '"word""', caret: 7 });
+    // Stepping over an existing quote, then typing one more.
+    expect(keys('word"', 4, '""')).toEqual({ value: 'word""', caret: 6 });
+  });
+
+  it("after a word, every typed quote inserts exactly itself", () => {
+    for (const q of ['"', "`"]) for (const run of ["", q, q + q, q + q + q]) for (const next of ["", " ", ")", "]", "}"]) {
+      const before = "word" + run;
+      expect(type(before + next, before.length, q)).toEqual({ value: before + q + next, caret: before.length + 1 });
+    }
+  });
+
+  it("a run of quotes with no word before it still pairs and steps over", () => {
+    expect(type('"', 1, '"')).toEqual({ value: '"""', caret: 2 }); // one already there, no word
+    expect(type('say "', 5, '"')).toEqual({ value: 'say """', caret: 6 });
+    expect(type('word"', 4, '"')).toEqual({ value: 'word"', caret: 5 }); // steps over, right after a word
+    expect(type("word", 0, '"')).toEqual({ value: '"word', caret: 1 }); // before a word: nothing more
+  });
+
+  it("leaves brackets alone: they open after a word as before", () => {
+    expect(type("f", 1, "(")).toEqual({ value: "f()", caret: 2 });
+    expect(type("see", 3, "[")).toEqual({ value: "see[]", caret: 4 });
+  });
+
+  it("typing the text of the report key by key gives it back", () => {
+    let state = { value: "", caret: 0 };
+    for (const ch of '{{y "hello"}}') state = type(state.value, state.caret, ch);
+    expect(state).toEqual({ value: '{{y "hello"}}', caret: 13 });
+  });
+});
+
 describe("autoPairInsertOnInput — skip-over", () => {
   it("types through a closer that already follows the caret", () => {
     // In `(|)`, typing `)` steps over instead of stacking `())`.

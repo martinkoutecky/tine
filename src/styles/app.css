@@ -3607,12 +3607,18 @@ html[data-system-insets="native-viewport"] {
      made a blank block jump +4px on click (issue #12 residual). Match 30px so the
      rendered box == the editor box whether or not the block has content. */
   min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
-  /* calt OFF. Inter's contextual alternates (calt) drew `->` as an arrow, but the
-     SAME feature contextually re-positions the asterisk (`*(` centered vs `)*`
-     raised — a visible glitch while editing `*(…)*`). Arrows now come from an
-     explicit render-time replacement (render/typography.ts), which also works in
-     export, so we don't need the font feature. `no-contextual` disables calt while
-     keeping normal (fi/fl) ligatures. */
+}
+
+/* calt OFF wherever a block's text is shown or edited, in this one rule (GH #1019: the
+   CodeMirror editor host sits outside `.block-content` and was left out, so its `**`
+   markers sat at different heights). Inter's contextual alternates (calt) drew `->`
+   as an arrow, but the SAME feature contextually re-positions the asterisk (`*(`
+   centered vs `)*` raised). Arrows come from the Typographic replacements setting
+   (render/typography.ts), which also works in export, never from the font.
+   `no-contextual` disables calt while keeping normal (fi/fl) ligatures. */
+.block-content,
+.block-editor,
+.cm6-block-editor {
   font-variant-ligatures: no-contextual;
 }
 
@@ -4203,9 +4209,6 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
   color: var(--text-primary);
   padding: var(--ls-block-content-pad-y) 0;
   margin: 0;
-  /* calt OFF while editing too (see .block-content): consistent asterisk heights,
-     and the raw `->` stays raw in the textarea (the arrow glyph appears on render). */
-  font-variant-ligatures: no-contextual;
   overflow: hidden;
   display: block;
 }

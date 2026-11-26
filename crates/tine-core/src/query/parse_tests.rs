@@ -49,6 +49,54 @@ fn gh628_inputs_resolve_without_changing_numeric_dates_or_string_identity() {
     }
 }
 
+/// GH #1017: a date disjunction lowers one filter per date kind present, each
+/// with the trailing predicates, so the lowered query grows with the query's
+/// size, never with inner options times trailing predicates.
+#[test]
+fn gh1017_lowered_date_disjunction_grows_linearly_in_options_and_predicates() {
+    let nodes = |n: usize| {
+        let options = (0..n)
+            .map(|i| match i % 2 {
+                0 => "[?h :block/page ?p]",
+                _ => "[?h :block/ref-pages ?p]",
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let predicates = (0..n)
+            .map(|i| format!("[(< ?d {})]", 20261201 + i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let source = format!(
+            "[:find (pull ?h [*]) :where [?h :block/marker \"TODO\"] (or-join [?h ?d] (and (or {options}) [?p :block/journal-day ?d]) [?h :block/scheduled ?d]) {predicates}]"
+        );
+        let (query, _, ignored) = advanced_pred(&source, None, TODAY);
+        assert!(ignored.is_empty(), "{n}: {ignored:?}");
+        let filter = serde_json::to_string(&query.expect("lowered").filter).unwrap();
+        filter.matches("\"kind\":").count()
+    };
+    let [quarter, half, full] = [256, 512, 1024].map(nodes);
+    // Exactly linear: doubling the options and the predicates doubles the
+    // increment (options × predicates would quadruple it).
+    assert_eq!(full - half, 2 * (half - quarter), "{quarter} {half} {full}");
+    // Three kinds (journal page, referenced journal, scheduled), each one
+    // date binding plus the 1,024 predicates, a few nodes per leaf.
+    assert!(full <= 3 * 4 * (1024 + 4), "{full}");
+}
+
+/// GH #1017: many date disjunctions on one date variable are all refused, and
+/// the query does not run.
+#[test]
+fn gh1017_repeated_date_disjunctions_on_one_date_are_refused() {
+    for n in [2, 1024] {
+        let groups =
+            "(or-join [?h ?d] [?h :block/scheduled ?d] [?h :block/deadline ?d]) ".repeat(n);
+        let source = format!("[:find (pull ?h [*]) :where [?h :block/marker \"TODO\"] {groups}]");
+        let (query, _, ignored) = advanced_pred(&source, None, TODAY);
+        assert!(query.is_none(), "{n}");
+        assert!(!ignored.is_empty(), "{n}");
+    }
+}
+
 #[test]
 fn gh628_arbitrary_joins_rules_projections_and_transforms_refuse_whole() {
     let today = crate::date::JournalDate::from_ordinal(20261008);
