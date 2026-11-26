@@ -56,23 +56,30 @@ export const RAW_HTML_ATTRS = policy.browser.attributes;
 // The rule is the export sanitizer's (`color_only_style` in tine-core's html_sanitize,
 // through wasm), so the app and a published page keep the same declarations.
 
-/** The colour declarations each `style` value keeps ("" if none), in order, and
- *  whether its effective background (the last kept `background-color`) is Logseq's
- *  highlight variable: one wasm call for all of them, equal values computed once.
- *  Values travel as one string plus UTF-16 lengths (no separator an attribute value
- *  could contain). O(total bytes). */
-export function keptStyles(values: readonly string[]): { style: string; highlight: boolean }[] {
+/** The colour declarations each `style` value keeps ("" if none), in order, and whether
+ *  it is the colour row's highlight. `mayHighlight[i]` says value `i` sits on an element
+ *  that may carry one (see `rawHtmlPresentation`); the wasm rule decides the rest (one of
+ *  the row's seven strings exactly, else the plain colour rule). One wasm call for all of
+ *  them, equal values computed once. Values travel as one string plus UTF-16 lengths (no
+ *  separator an attribute value could contain). O(total bytes). */
+export function keptStyles(values: readonly string[], mayHighlight: readonly boolean[] = []): { style: string; highlight: boolean }[] {
   if (values.length === 0) return [];
   const slot = new Map<string, number>();
   const unique: string[] = [];
-  const index = values.map((value) => {
-    let i = slot.get(value);
-    if (i === undefined) slot.set(value, (i = unique.push(value) - 1));
+  const allowed: number[] = [];
+  const index = values.map((value, n) => {
+    const may = mayHighlight[n] === true ? 1 : 0;
+    const key = `${may}${value}`;
+    let i = slot.get(key);
+    if (i === undefined) {
+      slot.set(key, (i = unique.push(value) - 1));
+      allowed.push(may);
+    }
     return i;
   });
   const lengths = Uint32Array.from(unique, (value) => value.length);
   const keptLengths = new Uint32Array(unique.length);
-  const highlights = new Uint8Array(unique.length);
+  const highlights = Uint8Array.from(allowed);
   const joined = color_only_styles(unique.join(""), lengths, keptLengths, highlights);
   const kept: { style: string; highlight: boolean }[] = [];
   let at = 0;
@@ -85,9 +92,9 @@ export function colorOnlyStyles(values: readonly string[]): string[] {
   return keptStyles(values).map((kept) => kept.style);
 }
 
-/** The attribute the sanitizer puts on a `<mark>` whose effective background is a
- *  highlight colour, so the theme can pick its text colour (`app.css`). Not in the
- *  attribute allowlist, so a note can never carry it itself. */
+/** The attribute the sanitizer puts on the colour row's highlight, so the theme can pick
+ *  its text colour (`app.css`). Not in the attribute allowlist, so a note can never carry
+ *  it itself. */
 export const HIGHLIGHT_MARK_ATTR = "data-tine-highlight";
 
 /** True if `src` is a local filesystem path (not a web / data / blob URL). */
@@ -161,7 +168,10 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   // declarations first and put them back on whatever survives.
   const colors = new Map<Element, { style: string; highlight: boolean }>();
   const styled = [...root.querySelectorAll("[style]")];
-  keptStyles(styled.map((element) => element.getAttribute("style") ?? "")).forEach((kept, i) => {
+  // Only a `<mark>` whose one attribute is `style` may be the row's highlight: a class or
+  // any other attribute can bring its own background (e.g. `.settings-jump-flash`).
+  const mayHighlight = styled.map((element) => element.localName === "mark" && element.attributes.length === 1);
+  keptStyles(styled.map((element) => element.getAttribute("style") ?? ""), mayHighlight).forEach((kept, i) => {
     if (kept.style) colors.set(styled[i], kept);
   });
   DOMPurify.sanitize(root, {
@@ -174,7 +184,7 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   for (const [element, kept] of colors) {
     if (!root.contains(element)) continue;
     element.setAttribute("style", kept.style);
-    if (kept.highlight && element.localName === "mark") element.setAttribute(HIGHLIGHT_MARK_ATTR, "");
+    if (kept.highlight) element.setAttribute(HIGHLIGHT_MARK_ATTR, "");
   }
   return { html: root.innerHTML, localImages: [...root.querySelectorAll("img")].map((image) => paths.get(image) ?? null), iframe: null };
 }

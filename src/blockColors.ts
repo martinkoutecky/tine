@@ -1,11 +1,12 @@
 import policy from "../fixtures/html-sanitize-policy.json";
 
 // Logseq's built-in colors (OG 6e7afa8eb src/main/frontend/ui.cljs:59-66, `built-in-colors`),
-// in Logseq's order. The one list lives in the sanitizer policy, because the sanitizer admits
-// a coloured highlight's `var(--ls-highlight-color-<name>, <fallback>)` for exactly these names;
-// each maps to the fixed fallback a highlight writes for viewers without Logseq's variables.
-export const HIGHLIGHT_FALLBACK: Readonly<Record<string, string>> = policy.browser.highlightColors;
-export const BLOCK_COLOR_NAMES: readonly string[] = Object.keys(HIGHLIGHT_FALLBACK);
+// in Logseq's order, each with the one `style` the colour row writes for it,
+// `background-color: var(--ls-highlight-color-<name>, <fallback>)` (the fixed fallback is for
+// viewers without Logseq's variables). The one list lives in the sanitizer policy, because the
+// sanitizer admits exactly these seven strings.
+export const HIGHLIGHT_STYLES: Readonly<Record<string, string>> = policy.browser.highlightStyles;
+export const BLOCK_COLOR_NAMES: readonly string[] = Object.keys(HIGHLIGHT_STYLES);
 
 // Block background colors. The swatch values match the context menu; the render tint is
 // softer so text remains readable in cells.

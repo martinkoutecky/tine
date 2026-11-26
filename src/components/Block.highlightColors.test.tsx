@@ -166,17 +166,16 @@ describe("highlight colour row under the selection toolbar", () => {
     },
   );
 
-  // Merge review of 900b7f196, finding 1: the text colour follows the mark's effective (last
-  // kept) background, which the sanitizer answers; a note cannot set the marker itself.
+  // The text colour follows the sanitizer's one answer: only the row's own spelling on a plain
+  // mark gets the marker (state model, acceptance tests 1-3, 8-11); a note cannot set it.
   it.each([
     ["a row colour", `${RED}hello</mark>`, true],
-    ["a row colour with a space after var(", '<mark style="background-color: var( --ls-highlight-color-red, #fdd8d8)">hello</mark>', true],
-    ["a row colour with a tab after var(", '<mark style="background-color: var(\t--ls-highlight-color-red, #fdd8d8)">hello</mark>', true],
+    ["a row colour with a trailing semicolon", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8);">hello</mark>', true],
+    ["a row colour with a space after var(", '<mark style="background-color: var( --ls-highlight-color-red, #fdd8d8)">hello</mark>', false],
+    ["a row colour with a tab after var(", '<mark style="background-color: var(\t--ls-highlight-color-red, #fdd8d8)">hello</mark>', false],
     ["a row colour overridden by a later literal", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: #073642">hello</mark>', false],
-    ["a row colour overridden by black", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: black">hello</mark>', false],
-    ["a row colour overridden by rgb()", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: rgb(0, 0, 0)">hello</mark>', false],
-    ["a row colour overridden by hsl()", '<mark style="background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: hsl(0, 0%, 0%)">hello</mark>', false],
-    ["a literal overridden by a row colour", '<mark style="background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8)">hello</mark>', true],
+    ["a literal overridden by a row colour", '<mark style="background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8)">hello</mark>', false],
+    ["a row colour with a class", '<mark class="settings-jump-flash" style="background-color: var(--ls-highlight-color-red, #fdd8d8)">hello</mark>', false],
     ["an authored literal", '<mark style="background-color: #073642">hello</mark>', false],
     ["a forged marker", '<mark data-tine-highlight style="background-color: #073642">hello</mark>', false],
   ])("renders %s with the matching text colour marker", async (_label, html, marked) => {

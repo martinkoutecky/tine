@@ -33,4 +33,22 @@ describe("setHighlightColor cost", () => {
     expect(edit?.text.endsWith('#fdd8d8)">last</mark>')).toBe(true);
     expect(walked.units).toBeLessThanOrEqual(text.length);
   });
+
+  // Merge review of c791bdf7b, finding 2: each direction of the offset conversion measures
+  // the block once. Every UTF-8 encode longer than a tenth of the block is counted; besides
+  // the conversions only the parser's own calls may encode (which use encodeInto).
+  it("encodes a long block's text at most three times to recolour a mark near its end", async () => {
+    const { highlightMarkOpen } = await import("./format");
+    const text = "x " + "word ".repeat(4000) + `${highlightMarkOpen("red")}last</mark> end`;
+    const at = text.indexOf("last");
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    try {
+      const edit = setHighlightColor(text, at, at + 4, "blue");
+      expect(edit?.text.endsWith('#cee7fe)">last</mark> end')).toBe(true);
+      const long = encode.mock.calls.filter(([input]) => (input ?? "").length > text.length / 10);
+      expect(long.length).toBeLessThanOrEqual(3);
+    } finally {
+      encode.mockRestore();
+    }
+  });
 });

@@ -5,9 +5,9 @@
 
 import { headerTokens } from "../markers";
 import { parseBlock, parserReady } from "../render/parse";
-import { BLOCK_COLOR_NAMES, HIGHLIGHT_FALLBACK } from "../blockColors";
+import { BLOCK_COLOR_NAMES, HIGHLIGHT_STYLES } from "../blockColors";
 import { inertHtml } from "../render/htmlSanitize";
-import { rawByteToRebulletedSourceByte, rebulletedSourceByteToRawByte, utf16ToUtf8ByteOffset } from "../render/spans";
+import { rawByteToRebulletedSourceByte, rebulletedSourceToRaw, utf8ByteLength } from "../render/spans";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 
 export interface Edit {
@@ -98,7 +98,7 @@ export function toggleInlineFormat(
  * it (mldoc reads `<mark …>…</mark>` as one Inline_Html; DOMPurify keeps the style), and so does
  * Tine's sanitizer, which admits exactly this declaration. */
 export function highlightMarkOpen(color: string): string {
-  return `<mark style="background-color: var(--ls-highlight-color-${color}, ${HIGHLIGHT_FALLBACK[color]})">`;
+  return `<mark style="${HIGHLIGHT_STYLES[color]}">`;
 }
 const MARK_CLOSE = "</mark>";
 
@@ -108,11 +108,14 @@ const MARK_CLOSE = "</mark>";
  * contains it. `from`/`to` is the node, `innerFrom`/`innerTo` its text. `"refuse"` when any
  * other inline HTML overlaps the selection: a mark (or anything) written by hand is never
  * rewritten. One walk of the AST compares parser byte spans with the selection's bytes;
- * only the owner's four offsets are mapped back, in one forward pass. O(block bytes + nodes). */
+ * only the owner's four offsets are mapped back, in one forward pass. Each direction measures
+ * the text once. O(block bytes + nodes). */
 type Owner = { colour: boolean; from: number; to: number; innerFrom: number; innerTo: number };
 function highlightOwner(text: string, s: number, e: number): Owner | null | "refuse" {
-  const sourceByte = (unit: number) => rawByteToRebulletedSourceByte(text, utf16ToUtf8ByteOffset(text, unit));
-  const bs = sourceByte(s), be = sourceByte(e);
+  // The selection's bytes, measuring the text once (its prefix, then the selection).
+  const prefix = utf8ByteLength(text.slice(0, s));
+  const bs = rawByteToRebulletedSourceByte(text, prefix);
+  const be = rawByteToRebulletedSourceByte(text, prefix + utf8ByteLength(text.slice(s, e)));
   type Found = { colour: boolean; html?: string; bytes: [number, number, number, number] };
   let found: Found | null = null, refuse = false;
   const visit = (value: unknown): void => {
@@ -146,8 +149,8 @@ function highlightOwner(text: string, s: number, e: number): Owner | null | "ref
   if (refuse) return "refuse";
   if (!found) return null;
   const hit: Found = found; // assigned inside the walk, which TypeScript does not follow
-  const cursor = utf8ToUtf16Cursor(text);
-  const [from, innerFrom, innerTo, to] = hit.bytes.map((byte) => cursor(rebulletedSourceByteToRawByte(text, byte)));
+  const cursor = utf8ToUtf16Cursor(text), toRaw = rebulletedSourceToRaw(text);
+  const [from, innerFrom, innerTo, to] = hit.bytes.map((byte) => cursor(toRaw(byte)));
   if (hit.html !== undefined && text.slice(from, to) !== hit.html) return "refuse";
   return { colour: hit.colour, from, to, innerFrom, innerTo };
 }
@@ -217,7 +220,7 @@ export function setHighlightColor(
   color: string | null,
   direction?: "forward" | "backward" | "none",
 ): Edit | null {
-  if (!parserReady() || (color !== null && !(color in HIGHLIGHT_FALLBACK))) return null;
+  if (!parserReady() || (color !== null && !(color in HIGHLIGHT_STYLES))) return null;
   let s = start, e = end;
   while (s < e && ASCII_WHITESPACE.test(text[s])) s += 1;
   while (e > s && ASCII_WHITESPACE.test(text[e - 1])) e -= 1;

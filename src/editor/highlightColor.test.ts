@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { highlightMarkOpen, setHighlightColor } from "./format";
 import { BLOCK_COLOR_NAMES } from "../blockColors";
-import { colorOnlyStyles } from "../render/htmlSanitize";
+import { keptStyles } from "../render/htmlSanitize";
 
 // a colour swatch under the selection toolbar wraps the selection in
 // Logseq's theme-aware highlight, replaces a colour already there, and "no colour" removes it.
@@ -22,9 +22,9 @@ describe("setHighlightColor", () => {
     expect(BLOCK_COLOR_NAMES).toEqual(["yellow", "red", "pink", "green", "blue", "purple", "gray"]);
   });
 
-  it("writes, for every colour, a declaration the sanitizer keeps unchanged", () => {
+  it("writes, for every colour, the highlight the sanitizer keeps unchanged", () => {
     const styles = BLOCK_COLOR_NAMES.map((name) => highlightMarkOpen(name).match(/style="([^"]*)"/)![1]);
-    expect(colorOnlyStyles(styles)).toEqual(styles);
+    expect(keptStyles(styles, styles.map(() => true))).toEqual(styles.map((style) => ({ style, highlight: true })));
   });
 
   it("replaces the colour around the selection with the second one", () => {

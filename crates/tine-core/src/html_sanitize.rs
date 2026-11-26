@@ -44,9 +44,11 @@ fn policy() -> &'static Policy {
 // (`build.rs`) so the app's wasm build carries neither the policy JSON nor a
 // reader for it.
 include!(concat!(env!("OUT_DIR"), "/style_properties.rs"));
-// The keys of the policy's `browser.highlightColors` (Logseq's `ui/built-in-colors`,
-// OG 6e7afa8eb src/main/frontend/ui.cljs:59-66) as `HIGHLIGHT_COLORS`, compiled in the same way.
-include!(concat!(env!("OUT_DIR"), "/highlight_colors.rs"));
+// The seven `style` strings the colour row writes, `background-color:
+// var(--ls-highlight-color-<name>, <fallback>)` (the values of the policy's
+// `browser.highlightStyles`; Logseq's `ui/built-in-colors`, OG 6e7afa8eb
+// src/main/frontend/ui.cljs:59-66), as `HIGHLIGHT_STYLES`, compiled in the same way.
+include!(concat!(env!("OUT_DIR"), "/highlight_styles.rs"));
 
 /// The export's one rule for where a note-authored link may navigate (Markdown
 /// links in `decorate`, raw-HTML and Hiccup anchors in `sanitize`). External
@@ -146,40 +148,28 @@ fn is_color_literal(v: &str) -> bool {
     total >= 1 && total - leading <= 80
 }
 
-/// Whether `v` is Logseq's theme-aware highlight colour with a fixed fallback,
-/// `var(--ls-highlight-color-<name>, #hex)`, and nothing wider:
-/// `<name>` one of [`HIGHLIGHT_COLORS`] (custom properties are case-sensitive, so
-/// exactly), the fallback one hex literal, optional ECMAScript whitespace inside the
-/// parentheses and around the comma, the function name ASCII-case-insensitive.
-/// Logseq defines these variables for both themes (OG 6e7afa8eb
-/// packages/ui/src/vars-classic.css:19-25); Tine defines them in `ls-shim.css`.
-fn is_highlight_var(v: &str) -> bool {
-    let Some(head) = v.get(..4) else {
-        return false;
-    };
-    if !head.eq_ignore_ascii_case("var(") {
-        return false;
-    }
-    let Some(body) = v[4..].strip_suffix(')') else {
-        return false;
-    };
-    let Some((name, fallback)) = body.split_once(',') else {
-        return false;
-    };
-    let fallback = js_trim(fallback);
-    js_trim(name)
-        .strip_prefix("--ls-highlight-color-")
-        .is_some_and(|color| HIGHLIGHT_COLORS.contains(&color))
-        && fallback.starts_with('#')
-        && is_color_literal(fallback)
+/// The colour row's highlight, if a `style` value is exactly one of the seven
+/// [`HIGHLIGHT_STYLES`] after ECMAScript trim and at most one trailing `;`
+/// removed: byte-equal, so it holds one valid declaration and nothing a browser
+/// could read differently. The one answer to "is this the row's highlight";
+/// the caller decides which elements may carry one (a `<mark>`, see
+/// [`color_only_styles`] and [`sanitize`]). Logseq defines the variables for
+/// both themes (OG 6e7afa8eb packages/ui/src/vars-classic.css:19-25); Tine
+/// defines them in `ls-shim.css`. O(value).
+pub fn highlight_style(value: &str) -> Option<&'static str> {
+    let value = js_trim(value);
+    let value = value.strip_suffix(';').unwrap_or(value);
+    HIGHLIGHT_STYLES
+        .iter()
+        .copied()
+        .find(|style| *style == value)
 }
 
 /// The colour declarations of a `style` value, serialized `prop: value; …`;
 /// "" if none, the one rule for both the app (through the wasm export
 /// `color_only_styles`) and export: the property must be one of the policy's
 /// `browser.styleProperties`, and the value one closed colour literal (no
-/// url(), var(), calc(), image-set() or `!important`), or, for
-/// `background-color` only, Logseq's highlight variable ([`is_highlight_var`]).
+/// url(), var(), calc(), image-set() or `!important`).
 ///
 /// Every step reproduces the app's former JavaScript rule (`colorOnlyStyle`,
 /// kept as the oracle in `src/render/htmlSanitize.test.tsx`): split on `;`,
@@ -195,13 +185,9 @@ pub fn color_only_style(value: &str) -> String {
 }
 
 /// [`color_only_style`] appended to `out`, with no allocation of its own (the
-/// batch calls it once per value). Returns whether the effective background,
-/// the last kept `background-color`, is Logseq's highlight variable
-/// ([`is_highlight_var`]): the one answer to which text colour goes with the
-/// element's background (the app marks such a `<mark>`, see `colorOnlyStyles`).
-fn push_color_only_style(value: &str, out: &mut String) -> bool {
+/// batch calls it once per value).
+fn push_color_only_style(value: &str, out: &mut String) {
     let start = out.len();
-    let mut highlight = false;
     for declaration in value.split(';') {
         let Some((property, v)) = declaration.split_once(':') else {
             continue;
@@ -218,25 +204,18 @@ fn push_color_only_style(value: &str, out: &mut String) -> bool {
             STYLE_PROPERTIES.iter().find(|p| **p == lower)
         };
         let v = js_trim(v);
-        let Some(property) = matched else {
+        let Some(property) = matched.filter(|_| is_color_literal(v)) else {
             continue;
         };
         // A function body may contain letters (`from`, `none`) but never a nested call.
-        let literal = is_color_literal(v)
-            && !v.find('(').is_some_and(|open| {
-                let body = v[open..].as_bytes();
-                COLOR_FUNCTION_BANNED.iter().any(|word| {
-                    body.windows(word.len())
-                        .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
-                })
-            });
-        let is_background = *property == "background-color";
-        let variable = is_background && is_highlight_var(v);
-        if !literal && !variable {
+        if v.find('(').is_some_and(|open| {
+            let body = v[open..].as_bytes();
+            COLOR_FUNCTION_BANNED.iter().any(|word| {
+                body.windows(word.len())
+                    .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
+            })
+        }) {
             continue;
-        }
-        if is_background {
-            highlight = variable;
         }
         if out.len() > start {
             out.push_str("; ");
@@ -245,7 +224,6 @@ fn push_color_only_style(value: &str, out: &mut String) -> bool {
         out.push_str(": ");
         out.push_str(v);
     }
-    highlight
 }
 
 /// `color_only_style` for many values in one call, so the app crosses into
@@ -253,9 +231,7 @@ fn push_color_only_style(value: &str, out: &mut String) -> bool {
 /// `values` is every value concatenated and `lengths[i]` the length of value
 /// `i` in UTF-16 code units (JavaScript's `length`): lengths, not a separator,
 /// so no attribute value can shift a boundary. Returns the kept declarations
-/// concatenated, their UTF-16 lengths and whether each value's effective
-/// background is the highlight variable (see [`push_color_only_style`]), in
-/// input order. O(total bytes).
+/// concatenated and their UTF-16 lengths, in input order. O(total bytes).
 ///
 /// A JavaScript caller's values reach Rust as one UTF-8 string, where a lone
 /// high surrogate ending one value and a lone low surrogate starting the next
@@ -263,7 +239,16 @@ fn push_color_only_style(value: &str, out: &mut String) -> bool {
 /// character straddling a boundary is read as U+FFFD on both sides: each value
 /// gets the answer it gets through `color_only_style`. Lengths that overrun the
 /// text read the missing part as empty (no panic: a panic aborts the instance).
-pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>, Vec<bool>) {
+///
+/// `may_highlight[i]` (missing reads as false) says value `i` is on an element
+/// that may carry the colour row's highlight; such a value that is
+/// [`highlight_style`] keeps exactly that declaration and `highlights[i]` is
+/// true. Every other value gets [`color_only_style`] and false.
+pub fn color_only_styles(
+    values: &str,
+    lengths: &[u32],
+    may_highlight: &[bool],
+) -> (String, Vec<u32>, Vec<bool>) {
     let bytes = values.as_bytes();
     let mut kept = String::with_capacity(values.len() / 2);
     let mut kept_lengths = Vec::with_capacity(lengths.len());
@@ -272,7 +257,7 @@ pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>, Ve
     // The second half of a character that straddled the previous boundary,
     // owed to the next non-empty value (a character has at most two units).
     let mut carry = false;
-    for &length in lengths {
+    for (i, &length) in lengths.iter().enumerate() {
         let mut remaining = length as usize;
         let head = carry && remaining > 0;
         if head {
@@ -314,9 +299,17 @@ pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>, Ve
             if straddle {
                 value.push('\u{FFFD}');
             }
-            highlights.push(push_color_only_style(&value, &mut kept));
+            highlights.push(push_style(
+                &value,
+                may_highlight.get(i) == Some(&true),
+                &mut kept,
+            ));
         } else {
-            highlights.push(push_color_only_style(&values[start..end], &mut kept));
+            highlights.push(push_style(
+                &values[start..end],
+                may_highlight.get(i) == Some(&true),
+                &mut kept,
+            ));
         }
         let added = &kept[before..];
         let units = if added.is_ascii() {
@@ -327,6 +320,21 @@ pub fn color_only_styles(values: &str, lengths: &[u32]) -> (String, Vec<u32>, Ve
         kept_lengths.push(units as u32);
     }
     (kept, kept_lengths, highlights)
+}
+
+/// One value of [`color_only_styles`]: the row's highlight when allowed and
+/// exact (true), else [`color_only_style`] (false).
+fn push_style(value: &str, may_highlight: bool, out: &mut String) -> bool {
+    match highlight_style(value).filter(|_| may_highlight) {
+        Some(style) => {
+            out.push_str(style);
+            true
+        }
+        None => {
+            push_color_only_style(value, out);
+            false
+        }
+    }
 }
 
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
@@ -362,6 +370,13 @@ pub fn sanitize(html: &str) -> String {
         .url_schemes(schemes)
         .attribute_filter(|element, attribute, value| {
             if attribute == "style" {
+                // The export cannot see a mark's other attributes here; it has no
+                // theme, so a highlight on a mark with a class still draws its fallback.
+                if element == "mark" {
+                    if let Some(style) = highlight_style(value) {
+                        return Some(style.into());
+                    }
+                }
                 let kept = color_only_style(value);
                 return (!kept.is_empty()).then(|| kept.into());
             }
@@ -566,8 +581,8 @@ mod tests {
         let joined: Vec<u16> = values.concat();
         let lengths: Vec<u32> = values.iter().map(|v| v.len() as u32).collect();
         let (kept, kept_lengths, highlights) =
-            color_only_styles(&String::from_utf16_lossy(&joined), &lengths);
-        assert_eq!(highlights.len(), values.len());
+            color_only_styles(&String::from_utf16_lossy(&joined), &lengths, &[]);
+        assert!(highlights.iter().all(|h| !h));
         let kept: Vec<u16> = kept.encode_utf16().collect();
         assert_eq!(kept_lengths.len(), values.len());
         let mut at = 0;
@@ -742,35 +757,85 @@ mod tests {
 
     #[test]
     fn color_only_styles_reads_overrun_lengths_as_empty() {
-        let (kept, lengths, highlights) = super::color_only_styles("color:red", &[9, 4, 0]);
+        let (kept, lengths, highlights) = super::color_only_styles("color:red", &[9, 4, 0], &[]);
         assert_eq!(kept, "color: red");
         assert_eq!(lengths, [10, 0, 0]);
         assert_eq!(highlights, [false, false, false]);
     }
 
-    /// The effective background is the last kept `background-color`: a later
-    /// literal hides an earlier highlight variable and the reverse, in any
-    /// spelling the rule keeps.
+    /// The colour row's highlight is exactly one of its seven strings, after
+    /// trim and one optional `;`; any other spelling is not one.
     #[test]
-    fn color_only_styles_answers_whether_the_effective_background_is_a_highlight() {
-        let cases: [(&str, bool); 9] = [
-            ("background-color: var(--ls-highlight-color-red, #fdd8d8)", true),
-            ("background-color: var( --ls-highlight-color-red, #fdd8d8)", true),
-            ("background-color:var(\t--ls-highlight-color-red ,#fdd8d8 )", true),
-            ("background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: #073642", false),
-            ("background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: black", false),
-            ("background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8)", true),
-            ("background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: url(x)", true),
-            ("color: var(--ls-highlight-color-red, #fdd8d8)", false),
-            ("background-color: var(--ls-highlight-color-orange, #fdd8d8)", false),
-        ];
-        let joined: String = cases.iter().map(|(v, _)| *v).collect();
-        let lengths: Vec<u32> = cases
-            .iter()
-            .map(|(v, _)| v.encode_utf16().count() as u32)
-            .collect();
-        let (_, _, highlights) = super::color_only_styles(&joined, &lengths);
-        let expected: Vec<bool> = cases.iter().map(|(_, h)| *h).collect();
-        assert_eq!(highlights, expected);
+    fn a_highlight_is_one_of_the_rows_seven_strings_exactly() {
+        let red = "background-color: var(--ls-highlight-color-red, #fdd8d8)";
+        assert_eq!(super::HIGHLIGHT_STYLES.len(), 7);
+        for style in super::HIGHLIGHT_STYLES {
+            for spelled in [
+                style.to_string(),
+                format!("{style};"),
+                format!(" \t{style}; \n"),
+            ] {
+                assert_eq!(
+                    super::highlight_style(&spelled),
+                    Some(*style),
+                    "{spelled:?}"
+                );
+            }
+        }
+        for other in [
+            format!("{red};;"),
+            format!("{red} ;"),
+            red.replace("var(", "var( "),
+            red.replace("var(", "var(\u{a0}"),
+            red.replace("var(", "var(\u{b}"),
+            red.replace(", ", ","),
+            red.replace("#fdd8d8", "#FDD8D8"),
+            red.replace("#fdd8d8", "#fff"),
+            red.replace("background-color", "Background-Color"),
+            format!("{red}; color: #000"),
+            format!("background-color: #073642; {red}"),
+            format!("{red}; background-color: #073642"),
+            "background-color: var(--ls-highlight-color-orange, #fdd8d8)".into(),
+        ] {
+            assert_eq!(super::highlight_style(&other), None, "{other:?}");
+        }
+    }
+
+    /// Only a value on an element that may carry the highlight keeps it; every
+    /// other value, and every other spelling, gets the plain colour rule (which
+    /// drops every `var()`).
+    #[test]
+    fn color_only_styles_keeps_the_highlight_only_where_allowed() {
+        let red = "background-color: var(--ls-highlight-color-red, #fdd8d8)";
+        let spaced = "background-color: var( --ls-highlight-color-red, #fdd8d8)";
+        let values = [red, red, spaced, "color: red"];
+        let joined: String = values.concat();
+        let lengths: Vec<u32> = values.iter().map(|v| v.len() as u32).collect();
+        let (kept, kept_lengths, highlights) =
+            super::color_only_styles(&joined, &lengths, &[true, false, true, true]);
+        assert_eq!(kept, format!("{red}color: red"));
+        assert_eq!(kept_lengths, [red.len() as u32, 0, 0, 10]);
+        assert_eq!(highlights, [true, false, false, false]);
+    }
+
+    /// The export keeps the highlight on a mark (it has no theme to choose a
+    /// text colour, so there is no marker) and drops it elsewhere, as before.
+    #[test]
+    fn export_keeps_the_rows_highlight_on_a_mark_only() {
+        let red = "background-color: var(--ls-highlight-color-red, #fdd8d8)";
+        assert_eq!(
+            sanitize(&format!("<mark style=\"{red};\">t</mark>")),
+            format!("<mark style=\"{red}\">t</mark>")
+        );
+        assert_eq!(
+            sanitize(&format!("<span style=\"{red}\">t</span>")),
+            "<span>t</span>"
+        );
+        assert_eq!(
+            sanitize(&format!(
+                "<mark style=\"{red}; background-color: #073642\">t</mark>"
+            )),
+            "<mark style=\"background-color: #073642\">t</mark>"
+        );
     }
 }

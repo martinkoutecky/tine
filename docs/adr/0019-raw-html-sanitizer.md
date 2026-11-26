@@ -118,20 +118,23 @@ lsdoc is untouched.
 
 ## Amendment (2026-11-26): Logseq's highlight colours
 
-- **`background-color` also keeps one variable form:**
-  `var(--ls-highlight-color-<name>, #<hex>)`, where `<name>` is one of Logseq's
-  seven built-in colours (`browser.highlightColors` in the policy file, OG
-  `frontend/ui.cljs:59-66`) and the fallback is a hex colour literal. This is the
-  markup the selection toolbar's colour row writes; Logseq keeps the `style`
+- **One widening, seven exact strings.** A `style` whose value, ECMAScript-trimmed
+  and with at most one trailing `;` removed, is byte-equal to one of the seven
+  strings the selection toolbar's colour row writes,
+  `background-color: var(--ls-highlight-color-<name>, <fallback>)` (the values of
+  `browser.highlightStyles` in the policy file; the names are Logseq's
+  `frontend/ui.cljs:59-66` built-in colours), keeps that declaration on a `<mark>`.
+  `highlight_style` in `html_sanitize.rs` is the one test. Logseq keeps the `style`
   (DOMPurify 2.4.0, `frontend/security.cljs:5-11`) and resolves the variable
-  (`packages/ui/src/vars-classic.css:19-25`). The same `color_only_style` decides
-  it in both surfaces. Any other variable, a variable on another property, a
-  variable without a hex fallback, and a nested function are dropped, as before.
-  Tine defines the seven variables for light and dark in `src/styles/ls-shim.css`;
-  the export, which has no such variables, draws the fallback.
-- **Text colour on a highlight background:** the same rule also answers whether
-  an element's effective background (its last kept `background-color`) is that
-  variable form. In the app the sanitizer then adds `data-tine-highlight` to such
-  a `<mark>`, and the theme draws only those marks in its title text colour; every
-  other mark keeps the mark text colour. The attribute is not in the allowlist, so
-  a note cannot set it. The export has no theme and adds nothing.
+  (`packages/ui/src/vars-classic.css:19-25`); Tine defines the seven variables for
+  light and dark in `src/styles/ls-shim.css`, and the export, which has no such
+  variables, draws the fallback.
+- **Everything else is unchanged.** Any other spelling, a second declaration, the
+  string on any element other than `<mark>`, and (in the app) a `<mark>` with any
+  attribute besides `style` get the colour rule above, which drops every `var()`.
+  So other marks render exactly as before.
+- **Text colour.** In the app such a mark (its only attribute `style`) also gets
+  `data-tine-highlight`, and the theme draws only those marks in its title text
+  colour. The attribute is not in the allowlist, so a note cannot set it. The
+  export cannot see a mark's other attributes in its attribute filter and has no
+  theme, so it keeps the string on any `<mark>` and adds no marker.

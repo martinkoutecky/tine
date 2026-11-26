@@ -69,18 +69,15 @@ describe("coloured highlight text contrast", () => {
     expect(app).not.toMatch(/mark\[style/);
     const row = BLOCK_COLOR_NAMES.map((name) => highlightMarkOpen(name).match(/style="([^"]*)"/)![1]);
     expect(row.filter((style) => !marked(style))).toEqual([]);
-    // Merge review of 75e6ab532, finding 2, and of 900b7f196, finding 1: a mark whose
-    // effective (last) background is anything else keeps the mark text colour it had (on
-    // Solarized light, #073642 text on #073642 otherwise), and a spelling the sanitizer keeps
-    // as a highlight colour gets the highlight text colour.
+    // Every other spelling or background keeps the mark text colour it has on development
+    // (on Solarized light, #073642 text on #073642 otherwise); the full parity table is
+    // src/render/highlightParity.test.tsx.
     const red = "background-color: var(--ls-highlight-color-red, #fdd8d8)";
     const other = ["#073642", "black", "#000", "rgb(0, 0, 0)", "hsl(0, 0%, 0%)"];
     const authored = [...other.map((c) => `background-color: ${c}`), ...other.map((c) => `${red}; background-color: ${c}`),
+      `background-color: #073642; ${red}`, "background-color: var( --ls-highlight-color-red, #fdd8d8)",
       "background: #000", "color: var(--ls-highlight-color-red, #fdd8d8)"];
     expect(authored.filter(marked)).toEqual([]);
-    const spelled = ["background-color: var( --ls-highlight-color-red, #fdd8d8)", "background-color: var(\t--ls-highlight-color-red , #fdd8d8 )",
-      `background-color: #073642; ${red}`];
-    expect(spelled.filter((style) => !marked(style))).toEqual([]);
   });
 
   it("keeps every other mark's text in the theme's mark text colour", () => {

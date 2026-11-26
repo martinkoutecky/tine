@@ -1,0 +1,228 @@
+{
+ "about": "Raw HTML inputs whose rendered output must equal origin/develop's (model-highlight-foreground acceptance tests 1-7 and 9-11). `develop` is develop's rawHtmlPresentation(html).html, recorded by running origin/develop 09721cb32's src/render/htmlSanitize.ts and its vendored wasm over `html`.",
+ "base": "09721cb328469a9919e144d694bf7faa6e249cfc",
+ "cases": [
+  {
+   "name": "1 a later literal hides the variable",
+   "model": 1,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: #073642\">x</mark>",
+   "develop": "<mark style=\"background-color: #073642\">x</mark>"
+  },
+  {
+   "name": "2 a later variable after a literal",
+   "model": 2,
+   "html": "<mark style=\"background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark style=\"background-color: #073642\">x</mark>"
+  },
+  {
+   "name": "3 space after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var( --ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 tab after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var(\t--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 VT after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var(\u000b--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 NBSP after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var( --ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 em space after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var( --ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 BOM after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var(﻿--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 line separator after var(",
+   "model": 3,
+   "html": "<mark style=\"background-color: var( --ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "3 VT after the name",
+   "model": 3,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red\u000b, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "4 the variable then bogus",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: bogus\">x</mark>",
+   "develop": "<mark style=\"background-color: bogus\">x</mark>"
+  },
+  {
+   "name": "4 the variable then rgb(10)",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: rgb(10)\">x</mark>",
+   "develop": "<mark style=\"background-color: rgb(10)\">x</mark>"
+  },
+  {
+   "name": "4 the variable then rgba(10)",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: rgba(10)\">x</mark>",
+   "develop": "<mark style=\"background-color: rgba(10)\">x</mark>"
+  },
+  {
+   "name": "4 the variable then hsl(foo)",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: hsl(foo)\">x</mark>",
+   "develop": "<mark style=\"background-color: hsl(foo)\">x</mark>"
+  },
+  {
+   "name": "4 the variable then hsla(foo)",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: hsla(foo)\">x</mark>",
+   "develop": "<mark style=\"background-color: hsla(foo)\">x</mark>"
+  },
+  {
+   "name": "4 the variable then hwb(black)",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: hwb(black)\">x</mark>",
+   "develop": "<mark style=\"background-color: hwb(black)\">x</mark>"
+  },
+  {
+   "name": "4 the variable then lab(",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: lab(\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "4 the variable then lch(",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: lch(\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "4 the variable then oklab(",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: oklab(\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "4 the variable then oklch(",
+   "model": 4,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: oklch(\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "5 literal, variable, bogus",
+   "model": 5,
+   "html": "<mark style=\"background-color: #073642; background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: bogus\">x</mark>",
+   "develop": "<mark style=\"background-color: #073642; background-color: bogus\">x</mark>"
+  },
+  {
+   "name": "6 with a foreground",
+   "model": 6,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); color: #fff\">x</mark>",
+   "develop": "<mark style=\"color: #fff\">x</mark>"
+  },
+  {
+   "name": "6 with a decoration colour",
+   "model": 6,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); text-decoration-color: red\">x</mark>",
+   "develop": "<mark style=\"text-decoration-color: red\">x</mark>"
+  },
+  {
+   "name": "6 twice",
+   "model": 6,
+   "html": "<mark style=\"background-color: var(--ls-highlight-color-red, #fdd8d8); background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "7 Solarized dark background",
+   "model": 7,
+   "html": "<mark style=\"background-color: #073642\">x</mark>",
+   "develop": "<mark style=\"background-color: #073642\">x</mark>"
+  },
+  {
+   "name": "7 Solarized dark background with a foreground",
+   "model": 7,
+   "html": "<mark style=\"background-color: #073642; color: #fdf6e3\">x</mark>",
+   "develop": "<mark style=\"background-color: #073642; color: #fdf6e3\">x</mark>"
+  },
+  {
+   "name": "9 a forged marker with the row's style",
+   "model": 9,
+   "html": "<mark data-tine-highlight style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "9 a forged marker with a literal",
+   "model": 9,
+   "html": "<mark data-tine-highlight=\"\" style=\"background-color: #073642\">x</mark>",
+   "develop": "<mark style=\"background-color: #073642\">x</mark>"
+  },
+  {
+   "name": "9 a forged marker alone",
+   "model": 9,
+   "html": "<mark data-tine-highlight>x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "10 the row's style on a span",
+   "model": 10,
+   "html": "<span style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</span>",
+   "develop": "<span>x</span>"
+  },
+  {
+   "name": "10 the row's style on a div",
+   "model": 10,
+   "html": "<div style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</div>",
+   "develop": "<div>x</div>"
+  },
+  {
+   "name": "10 the row's style on a b",
+   "model": 10,
+   "html": "<b style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</b>",
+   "develop": "<b>x</b>"
+  },
+  {
+   "name": "11 the row's style with class=\"settings-jump-flash\"",
+   "model": 11,
+   "html": "<mark class=\"settings-jump-flash\" style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark class=\"settings-jump-flash\">x</mark>"
+  },
+  {
+   "name": "11 the row's style with class=\"reference-excerpt-mark\"",
+   "model": 11,
+   "html": "<mark class=\"reference-excerpt-mark\" style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark class=\"reference-excerpt-mark\">x</mark>"
+  },
+  {
+   "name": "11 the row's style with id=\"x\"",
+   "model": 11,
+   "html": "<mark id=\"x\" style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark>x</mark>"
+  },
+  {
+   "name": "11 the row's style with title=\"x\"",
+   "model": 11,
+   "html": "<mark title=\"x\" style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\">x</mark>",
+   "develop": "<mark title=\"x\">x</mark>"
+  },
+  {
+   "name": "check 2 finding 3: a highlight span around an inheriting mark",
+   "model": 10,
+   "html": "<div style=\"background-color: #073642\"><span style=\"background-color: var(--ls-highlight-color-red, #fdd8d8)\"><mark style=\"background-color: inherit; color: #fdf6e3\">x</mark></span></div>",
+   "develop": "<div style=\"background-color: #073642\"><span><mark style=\"background-color: inherit; color: #fdf6e3\">x</mark></span></div>"
+  }
+ ]
+}

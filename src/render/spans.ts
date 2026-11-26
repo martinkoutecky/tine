@@ -45,18 +45,25 @@ export function utf8ByteToUtf16Offset(text: string, byteOffset: number): number 
 }
 
 /** How far a single-block parse's byte offsets sit from `raw`'s: the parser sees `raw`
- *  trimmed at the start behind a two-byte "- " bullet. O(raw bytes). */
+ *  trimmed at the start behind a two-byte "- " bullet. O(leading whitespace). */
 function rebulletShift(raw: string): number {
-  return 2 - (utf8ByteLength(raw) - utf8ByteLength(raw.trimStart()));
+  return 2 - utf8ByteLength(raw.slice(0, raw.length - raw.trimStart().length));
+}
+
+/** Maps a single-block parse's byte offsets to byte offsets in `raw`, measuring `raw` once
+ *  (O(raw bytes)); each answer is then O(1). */
+export function rebulletedSourceToRaw(raw: string): (sourceByte: number) => number {
+  const shift = rebulletShift(raw), rawLen = utf8ByteLength(raw);
+  return (sourceByte) => clamp(sourceByte - shift, 0, rawLen);
 }
 
 /** A single-block parse's byte offset as a byte offset in `raw`. O(raw bytes). */
 export function rebulletedSourceByteToRawByte(raw: string, sourceByte: number): number {
-  return clamp(sourceByte - rebulletShift(raw), 0, utf8ByteLength(raw));
+  return rebulletedSourceToRaw(raw)(sourceByte);
 }
 
 /** The inverse: a byte offset in `raw` (at or after its leading whitespace) as the
- *  single-block parse's byte offset. O(raw bytes). */
+ *  single-block parse's byte offset. O(leading whitespace). */
 export function rawByteToRebulletedSourceByte(raw: string, rawByte: number): number {
   return rawByte + rebulletShift(raw);
 }

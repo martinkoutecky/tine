@@ -53,14 +53,14 @@
       "background-color",
       "text-decoration-color"
     ],
-    "highlightColors": {
-      "yellow": "#fef2a4",
-      "red": "#fdd8d8",
-      "pink": "#f9d8ec",
-      "green": "#ccebd7",
-      "blue": "#cee7fe",
-      "purple": "#eddbf9",
-      "gray": "#e8e8e8"
+    "highlightStyles": {
+      "yellow": "background-color: var(--ls-highlight-color-yellow, #fef2a4)",
+      "red": "background-color: var(--ls-highlight-color-red, #fdd8d8)",
+      "pink": "background-color: var(--ls-highlight-color-pink, #f9d8ec)",
+      "green": "background-color: var(--ls-highlight-color-green, #ccebd7)",
+      "blue": "background-color: var(--ls-highlight-color-blue, #cee7fe)",
+      "purple": "background-color: var(--ls-highlight-color-purple, #eddbf9)",
+      "gray": "background-color: var(--ls-highlight-color-gray, #e8e8e8)"
     }
   },
   "native": {

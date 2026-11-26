@@ -107,9 +107,10 @@ function __tine_raw_canonical_group_field(value) {
  * none): the export sanitizer's rule, so app and export agree. One call per
  * sanitized fragment: `values` concatenated with their UTF-16 `lengths` in;
  * the kept declarations concatenated out, their UTF-16 lengths written to
- * `kept_lengths` (the same count as `lengths`), and `highlights[i]` set to 1
- * when value `i`'s effective background is Logseq's highlight variable, else
- * 0. O(total bytes).
+ * `kept_lengths` (the same count as `lengths`). `highlights[i]` is 1 on input
+ * when value `i` is on an element that may carry the colour row's highlight,
+ * and on output 1 exactly when it is that highlight (kept as written), else 0.
+ * O(total bytes).
  * @param {string} values
  * @param {Uint32Array} lengths
  * @param {Uint32Array} kept_lengths
