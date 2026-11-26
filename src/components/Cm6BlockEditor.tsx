@@ -549,9 +549,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
   });
   onCleanup(() => {
+    typing.dispose(); // first: it may still save a held composition, which needs the live editor
     pendingScrollAnchor?.cancel();
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
-    alive = false; typing.dispose(); clipboard.dispose(); removeCommandBridge?.(); removeKeys?.();
+    alive = false; clipboard.dispose(); removeCommandBridge?.(); removeKeys?.();
     // Detaching Android's EditContext during blur blocks typing in the next
     // input. Let native focus finish moving before CM clears that context.
     if (view && "editContext" in view.contentDOM && view.contentDOM.editContext) queueMicrotask(() => view?.destroy());

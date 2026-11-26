@@ -11,6 +11,7 @@ export function workflowInputs(lane, conf, repository, identity = IDENTITY) {
   if (!spec) throw new Error(`unknown release lane: ${lane}`);
   const find = (suffix) => spec.assets.find((name) => name.endsWith(suffix));
   const values = { RELEASE_PRODUCT_NAME: identity.productName };
+  if (lane.startsWith("linux-")) values.RELEASE_LINUX_BINARY = identity.linuxBinaryName;
   const appimage = find(".AppImage");
   if (appimage) {
     values.RELEASE_APPIMAGE = spec.sourceAssets[appimage];

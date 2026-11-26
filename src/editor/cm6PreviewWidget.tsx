@@ -24,11 +24,15 @@ function PriorityChip(props: { label: string }) {
   return <span class={`block-priority priority-${props.label}`}>[#{props.label}]</span>;
 }
 
-/** Reuse the read renderer, with a disposable Solid owner for each CM widget.
+/** The Solid root of each drawn element. CodeMirror may draw one widget again (it rebuilds a line while an input
+ * method composes) and then destroys the element it replaced, so a root belongs to its element, not to the widget:
+ * disposing by widget emptied the element still on screen (GH #767). */
+const roots = new WeakMap<HTMLElement, () => void>();
+
+/** Reuse the read renderer, with a disposable Solid owner for each drawn element.
  * A pointer edits the host source instead of following a link or mutating a
  * nested rendered control. This boundary is shared by every construct. */
 export class PreviewWidget extends WidgetType {
-  private dispose?: () => void;
   constructor(readonly span: PreviewSpan, readonly raw: string, readonly format: "md" | "org", readonly owner: Owner | null, readonly blockId: string) { super(); }
   eq(other: PreviewWidget) {
     return this.raw === other.raw && this.format === other.format && this.blockId === other.blockId
@@ -39,7 +43,7 @@ export class PreviewWidget extends WidgetType {
     el.className = "cm6-preview";
     el.dataset.cm6Construct = this.span.kind;
     const { span, format, blockId } = this;
-    this.dispose = runWithOwner(this.owner, () => render(() => {
+    const dispose = runWithOwner(this.owner, () => render(() => {
       // The view's own date chip (Rendered.tsx). The pointer reveals the source instead of opening the date picker.
       if (span.planning) return <span class={`date-chip ${span.planning.ts === "Deadline" ? "deadline" : "scheduled"}`}><CalGlyph /> {span.planning.value}</span>;
       if (span.inline) return renderInlines([span.inline], blockId, true, false, format);
@@ -63,6 +67,7 @@ export class PreviewWidget extends WidgetType {
       if (span.kind === "task") return <TaskMarker label={span.label!} />;
       return <PriorityChip label={span.label!} />;
     }, el));
+    if (dispose) roots.set(el, dispose);
     const languageControl = (event: Event) => (event.target as Element | null)?.closest?.("button.code-language");
     const reveal = (event: MouseEvent | PointerEvent) => {
       if (event.button !== 0 || languageControl(event)) return;
@@ -80,6 +85,6 @@ export class PreviewWidget extends WidgetType {
     el.addEventListener("click", event => { if (!languageControl(event)) { event.preventDefault(); event.stopPropagation(); } }, true);
     return el;
   }
-  destroy() { this.dispose?.(); this.dispose = undefined; }
+  destroy(dom: HTMLElement) { roots.get(dom)?.(); roots.delete(dom); }
   ignoreEvent() { return true; }
 }
