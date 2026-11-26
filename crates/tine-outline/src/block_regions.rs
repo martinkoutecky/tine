@@ -745,8 +745,7 @@ impl BlockRegions {
         splice(raw, edits)
     }
     /// Planning written where a block without title text begins goes after an
-    /// empty first line, as OG `frontend.util.text/add-timestamp` writes it:
-    /// a block's first line is its title, and Logseq takes no date from it.
+    /// empty first line: a block's first line is its title, and Logseq takes no date from it.
     fn planning_line(raw: &str, at: usize, text: String) -> String {
         if at == 0 {
             format!("{}{text}", newline(raw))

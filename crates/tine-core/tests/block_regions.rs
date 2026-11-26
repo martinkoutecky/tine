@@ -864,7 +864,7 @@ fn planning(which: &str, value: &str) -> Edit {
 
 /// GH #1012: Logseq reads a block's first line as its title and takes no date
 /// from it, so planning written on a block without title text goes after an
-/// empty first line, as OG `frontend.util.text/add-timestamp` writes it. Every
+/// empty first line. Every
 /// kind the edit accepts, both formats, CRLF, and a second kind picked after
 /// the first (which goes below the first, as on a titled block).
 #[test]
