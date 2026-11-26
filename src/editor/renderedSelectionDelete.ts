@@ -18,7 +18,7 @@
 import { node as docNode, setRaw, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
 import { splitProps, joinProps, BUILTIN_HIDE } from "../editor/properties";
-import { editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput } from "../render/spans";
+import { editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput, rangeEndSnapsInsideCoarse } from "../render/spans";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { queryAllWindows, selectionOf } from "../windowRealm";
@@ -35,7 +35,8 @@ function blockRowOf(node: Node | null): Element | null {
  *  join point); false to leave the event to its default handling. Refuses
  *  (false) a collapsed or cross-block selection, a reference/embed/query
  *  rendering, a selection end that depends on generated output (a query's, a
- *  failed-region or embed-depth notice), the
+ *  failed-region or embed-depth notice), a selection end strictly inside a
+ *  construct with no exact text mapping (inline HTML, a link chip, math), the
  *  block being edited, a read-only page, annotation or calc blocks, an open
  *  modal, and any selection point that does not map to source.
  *  Cost: O(length of that block). */
@@ -81,6 +82,12 @@ export function deleteRenderedTextSelection(): boolean {
   // searches nothing.
   if (rangeEndDependsOnGeneratedOutput(wrapper, range.startContainer)
     || rangeEndDependsOnGeneratedOutput(wrapper, range.endContainer)) return false;
+  // An end strictly inside a construct with no exact text mapping (inline
+  // HTML, a page reference, a tag, math) maps only to an edge of the whole
+  // construct, so the splice would take text that was not selected, or keep
+  // text that was. Leave the selection as it is and write nothing.
+  if (rangeEndSnapsInsideCoarse(wrapper, range)
+    || rangeEndSnapsInsideCoarse(wrapper, { startContainer: range.endContainer, startOffset: range.endOffset })) return false;
 
   const start = editorOffsetFromRenderedRange(
     wrapper,

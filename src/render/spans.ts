@@ -292,6 +292,42 @@ export function codeCardOffsetFromRange(
   return caret;
 }
 
+/** Where a range end inside coarse element `el` maps. Coarse elements map to
+ *  an EDGE, not an interior byte, and the nearer one is picked: a click landing
+ *  in the second half of the rendered text (e.g. to the right of a trailing
+ *  `[[link]]`) resolves to the span end, so the caret sits after the construct
+ *  instead of before it (GH #34). `exact` says whether that edge is where the
+ *  end really lies: at the construct's rendered start, or at its rendered end
+ *  when the end byte is known. Strictly inside, the edge names text the end
+ *  did not reach. O(rendered text of `el`). */
+function coarseEdge(
+  el: Element,
+  data: Extract<SpanDomData, { kind: "coarse" }>,
+  range: Pick<Range, "startContainer" | "startOffset">,
+): { sourceByte: number; exact: boolean } {
+  const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
+  if (data.end != null && caret != null && text.length > 0 && caret * 2 >= text.length) {
+    return { sourceByte: data.end, exact: caret === text.length };
+  }
+  return { sourceByte: data.start, exact: caret === 0 };
+}
+
+/** Whether {@link editorOffsetFromRenderedRange} answers this range end only
+ *  by snapping: the end lies strictly inside a construct with no exact
+ *  text-to-source mapping (inline HTML, a page reference, a tag, math, a
+ *  heading or quote wrapper's own text), so the offset it gives is an edge of
+ *  that construct, not the end itself. A caret placed there is fine; a write
+ *  over a selection with such an end would remove or keep text the user did
+ *  not select, so writers refuse it. O(depth + rendered text of the construct). */
+export function rangeEndSnapsInsideCoarse(
+  root: Element,
+  range: Pick<Range, "startContainer" | "startOffset">,
+): boolean {
+  const el = closestSpanElement(root, range.startContainer);
+  const data = el && spanDataFromElement(el);
+  return !!el && data?.kind === "coarse" && !coarseEdge(el, data, range).exact;
+}
+
 export function editorOffsetFromRenderedRange(
   root: Element,
   range: Pick<Range, "startContainer" | "startOffset">,
@@ -306,15 +342,7 @@ export function editorOffsetFromRenderedRange(
 
   let sourceByte: number | null;
   if (data.kind === "coarse") {
-    // Coarse elements map to an EDGE, not an interior byte. Pick the nearer one:
-    // a click landing in the second half of the rendered text (e.g. to the right
-    // of a trailing `[[link]]`) resolves to the span end, so the caret sits after
-    // the construct instead of before it (GH #34).
-    sourceByte = data.start;
-    if (data.end != null) {
-      const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
-      if (caret != null && text.length > 0 && caret * 2 >= text.length) sourceByte = data.end;
-    }
+    sourceByte = coarseEdge(el, data, range).sourceByte;
   } else {
     const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
     if (caret == null) return null;
