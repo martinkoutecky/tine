@@ -285,8 +285,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   // (the `heading::` property is not in the editor text), the depth for `heading:: true`.
   const headingLevel = createMemo(() => effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id)));
   // The layout-changing previews (constructs, block widgets) are this field's; glyphs come from `glyphLayer`, built
-  // only for what is in view. `concealed` is null when nothing is drawn (literal, source mode, parser not ready).
+  // only for what is in view. `concealed` is null when nothing is drawn (literal, parser not ready).
   type Preview = { decorations: DecorationSet; raw: string; spans: readonly PreviewSpan[]; glyphs: readonly PreviewSpan[]; concealed: readonly PreviewSpan[] | null };
+  const NOTHING_CONCEALED: readonly PreviewSpan[] = [];
   const NO_PREVIEW: Preview = { decorations: Decoration.none, raw: "", spans: [], glyphs: [], concealed: null };
   /** `prev` is passed on a selection-only change: the document (and so its parse) is the same, and when the same
    *  constructs stay concealed the previous decorations are kept as they are. */
@@ -295,12 +296,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     const same = prev?.concealed ? prev : undefined;
     const raw = same ? same.raw : state.doc.toString();
     const spans = same ? same.spans : previewSpans(raw, format);
-    // Explicit source mode keeps the entire fenced block raw, wherever the caret is.
-    if (spans.some(span => span.kind === "src" || span.kind === "example")) return NO_PREVIEW;
-    const concealed = concealedSpans(spans, state.selection.ranges);
+    // Explicit source mode keeps every construct of a fenced block raw, wherever the caret is. Plain runs keep their
+    // glyphs, as the view draws them per run (render/plainText.tsx).
+    const sourceMode = spans.some(span => span.kind === "src" || span.kind === "example");
+    const concealed = sourceMode ? NOTHING_CONCEALED : concealedSpans(spans, state.selection.ranges);
     if (same && same.concealed!.length === concealed.length && concealed.every((span, i) => span === same.concealed![i])) return same;
     const ranges = concealed.map(span => Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
-    const level = headingLevel();
+    const level = sourceMode ? null : headingLevel();
     const headerEnd = state.doc.line(1).to;
     if (level !== null && headerEnd > 0) ranges.push(Decoration.mark({ class: `heading-text h${level}` }).range(0, headerEnd));
     return { decorations: Decoration.set(ranges, true), raw, spans, glyphs: same ? same.glyphs : previewGlyphs(raw, format), concealed };
@@ -318,9 +320,11 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     decorations: DecorationSet;
     constructor(v: EditorView) { this.decorations = this.build(v); }
     update(u: ViewUpdate) {
+      // Turning glyphs on again (Find closing, the setting) arrives as a refresh.
+      if (!glyphsShown()) { this.decorations = Decoration.none; return; }
       const now = u.state.field(decorations);
       if (u.docChanged || u.viewportChanged || now !== u.startState.field(decorations) || u.transactions.some(refreshes)
-        || (u.selectionSet && glyphRevealChanges(now.glyphs, u.startState.selection.ranges, u.state.selection.ranges)))
+        || (u.selectionSet && glyphRevealChanges(now.glyphs, u.startState.selection.ranges, u.state.selection.ranges, u.view.visibleRanges)))
         this.decorations = this.build(u.view);
     }
     build(v: EditorView): DecorationSet {

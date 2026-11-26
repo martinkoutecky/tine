@@ -158,22 +158,31 @@ function firstGlyphFrom(glyphs: readonly PreviewSpan[], pos: number): number {
   return lo;
 }
 
-/** Whether moving the selection from `before` to `after` changes which glyphs are revealed: a caret that touches no
- *  glyph before or after costs one bisection per range and looks at no glyph beyond it. */
-export function glyphRevealChanges(glyphs: readonly PreviewSpan[], before: readonly { from: number; to: number }[], after: readonly { from: number; to: number }[]): boolean {
-  const touched = (ranges: readonly { from: number; to: number }[]) => {
-    const out = new Set<number>();
-    for (const r of ranges) {
-      for (let i = firstGlyphFrom(glyphs, r.from); i < glyphs.length; i++) {
+type Ranges = readonly { from: number; to: number }[];
+
+/** Whether moving the selection from `before` to `after` reveals or hides a glyph in `visible`. A glyph can flip only
+ *  where exactly one of the two selections lies, so only the glyphs in that symmetric difference, inside the visible
+ *  ranges, are looked at: shrinking a long selection by a character looks at the glyphs at that character. */
+export function glyphRevealChanges(glyphs: readonly PreviewSpan[], before: Ranges, after: Ranges, visible: Ranges): boolean {
+  const covers = (ranges: Ranges, x: number) => ranges.some(r => r.from <= x && x <= r.to);
+  const flips = (x: number) => covers(before, x) !== covers(after, x);
+  const points = [...new Set([...before, ...after].flatMap(r => [r.from, r.to]))].sort((x, y) => x - y);
+  const diff: { from: number; to: number }[] = [];
+  points.forEach((x, i) => {
+    if (flips(x)) diff.push({ from: x, to: x });
+    const y = points[i + 1];
+    if (y !== undefined && flips((x + y) / 2)) diff.push({ from: x, to: y });
+  });
+  for (const d of diff) {
+    for (const v of visible) {
+      const from = Math.max(d.from, v.from), to = Math.min(d.to, v.to);
+      for (let i = firstGlyphFrom(glyphs, from); from <= to && i < glyphs.length && glyphs[i].from <= to; i++) {
         glyphWork.examined++;
-        if (glyphs[i].from > r.to) break;
-        out.add(i);
+        if (constructRevealed(glyphs[i], before) !== constructRevealed(glyphs[i], after)) return true;
       }
     }
-    return out;
-  };
-  const a = touched(before), b = touched(after);
-  return a.size !== b.size || [...a].some(i => !b.has(i));
+  }
+  return false;
 }
 
 /** The glyphs to draw in `visible`: those no selection touches and no concealed construct covers (a concealed

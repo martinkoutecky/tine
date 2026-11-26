@@ -2155,6 +2155,7 @@ mod customize_look_guide_tests {
             "**On (display only)**, the default",
             "clicking into a block does not change how it looks",
             "**Off** shows them as typed",
+            "While Find in page is open, they show as typed",
             // GH #773: individual tags and page links can be themed by name.
             "a.tag[data-ref=\"ai-note\"]",
             "lowercased page name",

@@ -23,8 +23,8 @@ beforeAll(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); dispose?.(); dispose = undefined; endEdit("page-navigation"); resetStore(); setTypographyModeSig(initial); document.body.innerHTML = ""; });
 
-function mount(raw: string, caret = raw.length) {
-  loadSingle({ name: "Typo", title: "Typo", kind: "page", format: "md", pre_block: null,
+function mount(raw: string, caret = raw.length, format: "md" | "org" = "md") {
+  loadSingle({ name: "Typo", title: "Typo", kind: "page", format, pre_block: null,
     blocks: [{ id: "typo", raw, collapsed: false, children: [] }] });
   startEditing("typo", caret);
   const root = document.createElement("div"); document.body.append(root);
@@ -102,6 +102,31 @@ it("draws none inside a concealed construct either while Find is open (its widge
   expect(shown()).toBe("a – b c");
 });
 
+// The view draws glyphs per plain run, so prose keeps them in a block that also holds a code fence; the fence stays raw.
+describe("a block with a code fence", () => {
+  const cases: [string, "md" | "org", string][] = [
+    ["backtick fence", "md", "a -- b\n```js\nx -- y\n```\nc -> d"],
+    ["tilde fence", "md", "a -- b\n~~~\nx -- y\n~~~\nc -> d"],
+    ["calc fence", "md", "a -- b\n```calc\n1 -- 2\n```\nc -> d"],
+    ["fence in a quote", "md", "> a -- b\n> ```\n> x -- y\n> ```\n> c -> d"],
+    ["fence in a list", "md", "a -- b\n  - ```\n    x -- y\n    ```\nc -> d"],
+    ["Org source", "org", "a -- b\n#+BEGIN_SRC js\nx -- y\n#+END_SRC\nc -> d"],
+    ["Org example", "org", "a -- b\n#+BEGIN_EXAMPLE\nx -- y\n#+END_EXAMPLE\nc -> d"],
+    ["Org colon example", "org", "a -- b\n: x -- y\nc -> d"],
+  ];
+  for (const [name, format, raw] of cases) {
+    it(`${name}: prose keeps its glyphs away from the caret, the fence its ASCII`, () => {
+      const { root } = mount(raw, raw.indexOf("a") + 1, format);
+      const text = [...root.querySelectorAll(".cm-line")].map(line => line.textContent).join("\n");
+      expect(text).toContain("a – b");
+      expect(text).toContain("c → d");
+      expect(text).not.toContain("a -- b");
+      expect(text).toMatch(/[xy1] -- [y2]/);
+      expect(text).not.toMatch(/[x1] – /);
+    });
+  }
+});
+
 // A caret move costs what it changes on screen, not the size of the block: glyph decorations are built only for what is
 // in view, and a move that reveals or hides no glyph and changes no concealed construct builds none.
 describe("glyph work per caret move", () => {
@@ -146,6 +171,41 @@ describe("glyph work per caret move", () => {
     expect(line(), "the bold widget is the view's renderer").toBe("x – y z");
     editor.select(at(1, 1));
     expect(line()).toBe("**x – y** z");
+  });
+
+  // No construct here, so a selection change is decided by the glyph check alone, not by a construct's reveal.
+  const prose = Array.from({ length: LINES }, (_, i) => `line ${i} -- end`).join("\n");
+  const visibleGlyphs = (view: EditorView) => previewGlyphs(prose, "md").filter(g => view.visibleRanges.some(r => g.from <= r.to && g.to >= r.from)).length;
+
+  it("(e) select-all then collapse examines only the glyphs in view", () => {
+    const { editor, view } = mount(prose, 0);
+    editor.select(0, prose.length);
+    count();
+    editor.select(at(5, 1));
+    expect(visibleGlyphs(view())).toBeLessThan(LINES);
+    expect(glyphWork.examined, "the check stops at the first flip; the rebuild looks at the glyphs in view").toBeLessThanOrEqual(visibleGlyphs(view()) + 4);
+    expect(glyphWork.built).toBeLessThanOrEqual(visibleGlyphs(view()));
+  });
+
+  it("(f) shrinking a long selection by a space that reveals nothing examines only the glyphs at that space", () => {
+    const { editor } = mount(big, 0);
+    editor.select(0, at(1000, 5));
+    const ours = count();
+    editor.select(0, at(1000, 4));
+    expect(glyphWork.examined).toBeLessThanOrEqual(1);
+    expect(glyphWork.built).toBe(0);
+    expect(ours()).toBe(0);
+  });
+
+  it("(g) does no glyph work on a selection change while glyphs are not drawn", () => {
+    const { editor } = mount(prose, 0);
+    openInPageFind();
+    editor.select(0, prose.length);
+    count();
+    editor.select(at(5, 1));
+    expect(glyphWork.examined).toBe(0);
+    expect(glyphWork.built).toBe(0);
+    closeInPageFind({ restoreFocus: false });
   });
 
   it("(d) a viewport examines only the glyphs inside it", () => {
