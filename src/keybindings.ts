@@ -522,7 +522,7 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
   // GH #764 (D-20261101-L5): palette and keymap only, no default key. Acts on a block selection.
   { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
-  // GH #918: the block context menu's Remove author, offered only where that menu offers it.
+  // GH #918: the block context menu's Remove author. Always listed; with no authored block it says so.
   { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", run: () => removeAuthor(), global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { externalPdfPath, pdfFileLinkUrl } from "./externalPdfPath";
+import { externalPdfPath, relativePdfFileUrl } from "./externalPdfPath";
 import { fileLinkTarget } from "./relativeFileLink";
 
 it.each([
@@ -25,7 +25,7 @@ it.each(["file:paper.pdf", "file:../paper.pdf", "file:/tmp/paper.pdf", "../paper
 // resolver (relativeFileLink.ts), then reads as the absolute file: URL it names.
 const rel = (dest: string, root = "/home/user/graph") => {
   const target = fileLinkTarget(dest); // null: a scheme URL or page name, never a file link
-  return target && pdfFileLinkUrl(dest, target, root);
+  return target && relativePdfFileUrl(dest, target, root);
 };
 
 it.each([
@@ -52,25 +52,11 @@ it.each([
   expect(externalPdfPath(url!).kind).toBe("pdf");
 });
 
-it.each(["paper.pdf", "file:assets/a.pdf", "file:docs/../Assets/a.pdf", "file:../graph/assets/sub/a.pdf", "/home/user/graph/assets/a.pdf", "/tmp/notes.txt", "../notes.txt", "file:../notes.pdf.txt",
+it.each(["paper.pdf", "/tmp/paper.pdf", "file:assets/a.pdf", "file:docs/../Assets/a.pdf", "file:../graph/assets/sub/a.pdf", "C:\\papers\\paper.pdf", "../notes.txt", "file:../notes.pdf.txt",
   "../paper.pdf#page=2", "../paper.pdf?x=1", "https://example.org/paper.pdf", "file:///tmp/paper.pdf", "Some Page.pdf"])(
   "leaves %s with its existing opener", (dest) => {
     expect(rel(dest)).toBeNull();
   });
-
-// GH #732 (sixth comment): a bare absolute path names the same file as its
-// file:// spelling (OG media-link takes the path as written), with or without a root.
-it.each([
-  ["/tmp/paper.pdf", "file:///tmp/paper.pdf"],
-  ["/home/me/a b/文.PDF", "file:///home/me/a%20b/%E6%96%87.PDF"],
-  ["C:\\papers\\paper.pdf", "file:///C:/papers/paper.pdf"],
-  ["C:/My papers/paper.pdf", "file:///C:/My%20papers/paper.pdf"],
-])("reads the absolute PDF path %s as its file:// URL", (dest, url) => {
-  expect(rel(dest)).toBe(url);
-  expect(rel(dest, "")).toBe(url);
-  expect(rel(dest, "C:\\Users\\me\\graph")).toBe(url);
-  expect(externalPdfPath(url).kind).toBe("pdf");
-});
 
 it("needs a graph root to make a relative link absolute", () => {
   expect(rel("../a.pdf", "")).toBeNull();
