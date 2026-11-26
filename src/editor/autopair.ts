@@ -64,14 +64,19 @@ function shouldAutoClose(next: string | undefined): boolean {
   return !next || /\s/.test(next) || CLOSERS.has(next);
 }
 
-/** A quote or backtick typed right after a letter or a number (with its combining
- *  marks) closes what an earlier one opened (`"hello` + `"`), so it gets no partner
- *  (GH #1020). `at` is the index of the typed character. Brackets have a distinct
- *  opener and never hit this. CodeMirror and VS Code have a rule of the same kind:
- *  no new string starts after a word character. Reads at most 8 UTF-16 units, which
- *  covers a letter outside the BMP and its marks. */
+/** A quote or backtick typed after a letter or a number (with its combining marks)
+ *  closes what an earlier one opened (`"hello` + `"`), so it gets no partner
+ *  (GH #1020). So does each further one typed directly after it: the word is looked
+ *  for before the whole run of that delimiter, so two closing backticks stay two.
+ *  `at` is the index of the typed character. Brackets have a distinct opener and
+ *  never hit this. CodeMirror and VS Code have a rule of the same kind: no new
+ *  string starts after a word character. Reads the run plus at most 8 UTF-16
+ *  units, which covers a letter outside the BMP and its marks. */
 function closesAfterWord(typed: string, value: string, at: number): boolean {
-  return PAIRS[typed] === typed && /[\p{L}\p{N}]\p{M}*$/u.test(value.slice(Math.max(0, at - 8), at));
+  if (PAIRS[typed] !== typed) return false;
+  let start = at;
+  while (start > 0 && value[start - 1] === typed) start--;
+  return /[\p{L}\p{N}]\p{M}*$/u.test(value.slice(Math.max(0, start - 8), start));
 }
 
 /** Post-input auto-pairing (run from `onInput`, AFTER the browser inserted the

@@ -62,6 +62,40 @@ describe("autoPairInsertOnInput — a quote after a word closes (GH #1020)", () 
     expect(type("_", 1, '"')).toEqual({ value: '_""', caret: 2 }); // an emphasis mark is not a word
   });
 
+  it("adds nothing to a second or third closing quote after a word", () => {
+    const keys = (value: string, caret: number, text: string) => {
+      let state = { value, caret };
+      for (const ch of text) state = type(state.value, state.caret, ch);
+      return state;
+    };
+    // A double-backtick code span: two closing backticks stay two.
+    expect(keys("``a`b", 5, "``")).toEqual({ value: "``a`b``", caret: 7 }); // end of the block
+    expect(keys("``a`b now", 5, "``")).toEqual({ value: "``a`b`` now", caret: 7 }); // before a space
+    expect(keys("(``a`b)", 6, "``")).toEqual({ value: "(``a`b``)", caret: 8 }); // before a closer
+    expect(keys('""word', 6, '""')).toEqual({ value: '""word""', caret: 8 });
+    expect(keys('""word then', 6, '""')).toEqual({ value: '""word"" then', caret: 8 });
+    expect(keys('(""word)', 7, '""')).toEqual({ value: '(""word"")', caret: 9 });
+    expect(keys("```word", 7, "```")).toEqual({ value: "```word```", caret: 10 });
+    // A closing quote already there, one more typed after it.
+    expect(type('"word"', 6, '"')).toEqual({ value: '"word""', caret: 7 });
+    // Stepping over an existing quote, then typing one more.
+    expect(keys('word"', 4, '""')).toEqual({ value: 'word""', caret: 6 });
+  });
+
+  it("after a word, every typed quote inserts exactly itself", () => {
+    for (const q of ['"', "`"]) for (const run of ["", q, q + q, q + q + q]) for (const next of ["", " ", ")", "]", "}"]) {
+      const before = "word" + run;
+      expect(type(before + next, before.length, q)).toEqual({ value: before + q + next, caret: before.length + 1 });
+    }
+  });
+
+  it("a run of quotes with no word before it still pairs and steps over", () => {
+    expect(type('"', 1, '"')).toEqual({ value: '"""', caret: 2 }); // one already there, no word
+    expect(type('say "', 5, '"')).toEqual({ value: 'say """', caret: 6 });
+    expect(type('word"', 4, '"')).toEqual({ value: 'word"', caret: 5 }); // steps over, right after a word
+    expect(type("word", 0, '"')).toEqual({ value: '"word', caret: 1 }); // before a word: nothing more
+  });
+
   it("leaves brackets alone: they open after a word as before", () => {
     expect(type("f", 1, "(")).toEqual({ value: "f()", caret: 2 });
     expect(type("see", 3, "[")).toEqual({ value: "see[]", caret: 4 });
