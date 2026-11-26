@@ -11,6 +11,7 @@ import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, 
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
 import { embedRootFold, setEmbedRootFold } from "./macroFold";
+import { viewFoldSurface } from "./block/readOnlyFold";
 import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
@@ -675,7 +676,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   if (props.surface === "query") onCleanup(registerQueryResultFold({
     hostId: () => props.hostBlockId,
     roots: liveRoots,
-    surface: collapseSurface,
+    // A result folds where its own arrow folds it: a read-only one in the session's view map.
+    surface: {
+      collapsed: (id, stored) => (viewFoldSurface(id, collapseSurface) ?? collapseSurface).collapsed(id, stored),
+      toggle: (id, current) => (viewFoldSurface(id, collapseSurface) ?? collapseSurface).toggle(id, current),
+    },
     store: props.occurrence,
   }));
   let lastBulkVersion: number | undefined;

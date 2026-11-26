@@ -44,12 +44,14 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
   };
   if (props.hostBlockId) onCleanup(registerQueryAnswerFold({
     hostId: () => props.hostBlockId,
-    groups: () => [...untrack(props.groups)].map(([key, group]) => ({
-      // Synthetic rows (page properties, the opening prose) are not outline blocks.
-      ids: group.blocks.filter((block) => !block.page_property && !block.page_preamble).map((block) => block.id),
-      store: stores.get(key),
-      write: (ids: readonly string[], collapsed: boolean) => writeLocalFolds(storeFor(key), ids, collapsed),
-    })),
+    *groups() {
+      for (const [key, group] of untrack(props.groups)) yield {
+        store: stores.get(key),
+        // Synthetic rows (page properties, the opening prose) are not outline blocks.
+        ids: () => group.blocks.filter((block) => !block.page_property && !block.page_preamble).map((block) => block.id),
+        write: (ids: readonly string[], collapsed: boolean) => writeLocalFolds(storeFor(key), ids, collapsed),
+      };
+    },
   }));
   createEffect(() => {
     const all = [...props.groups().keys()];

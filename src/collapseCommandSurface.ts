@@ -70,11 +70,13 @@ export function queryResultFolds(hostId: string): QueryResultFold[] {
 }
 
 /** Every result group of a query's answer, drawn or not, registered by the group list that
- *  owns their local state (GH #1004). `store` is that group's state once it exists. */
+ *  owns their local state (GH #1004). `store` is that group's state once it exists; `ids`
+ *  reads the answer's root ids, so a caller reads them only for a group it needs. */
 export interface QueryAnswerFold {
   hostId: () => string | undefined;
-  groups: () => Iterable<{ ids: readonly string[]; store: object | undefined; write: (ids: readonly string[], collapsed: boolean) => void }>;
+  groups: () => Iterable<{ store: object | undefined; ids: () => readonly string[]; write: UndrawnResults["write"] }>;
 }
+export interface UndrawnResults { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void }
 const answerFolds = new Set<QueryAnswerFold>();
 clearOnBindingInvalidated(() => answerFolds.clear());
 
@@ -83,15 +85,14 @@ export function registerQueryAnswerFold(answer: QueryAnswerFold): () => void {
   return () => { answerFolds.delete(answer); };
 }
 
-/** The result groups of query block `hostId` that no drawn group in `drawn` answers for with
- *  live roots: each with the answer's root ids and the writer of its local folds.
- *  O(registered answers + their groups). */
-export function undrawnQueryResults(hostId: string, drawn: readonly QueryResultFold[]): { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void }[] {
-  const live = new Set(drawn.filter((group) => group.roots().length > 0).map((group) => group.store));
-  const out: { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void }[] = [];
+/** The result groups of query block `hostId` whose state is not in `live` (the stores of
+ *  the drawn groups with live roots), each with the answer's root ids and the writer of its
+ *  local folds. O(registered answers + their groups + the hits of the groups returned). */
+export function undrawnQueryResults(hostId: string, live: ReadonlySet<object>): UndrawnResults[] {
+  const out: UndrawnResults[] = [];
   for (const answer of answerFolds) {
     if (answer.hostId() !== hostId) continue;
-    for (const group of answer.groups()) if (!group.store || !live.has(group.store)) out.push(group);
+    for (const group of answer.groups()) if (!group.store || !live.has(group.store)) out.push({ ids: group.ids(), write: group.write });
   }
   return out;
 }

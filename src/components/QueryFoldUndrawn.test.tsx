@@ -15,7 +15,8 @@ import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { resetNearObserverForTests } from "../lazyObserve";
 import { paletteCommands, installKeybindings } from "../keybindings";
 import { endEdit, startEditing } from "../editorController";
-import type { RefGroup } from "../types";
+import type { BlockDto, PageRead, RefGroup } from "../types";
+import { setGraphConfigProblem } from "../graphConfig";
 
 const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
 vi.mock("../document/host/wiring", () => new Proxy({}, {
@@ -45,6 +46,8 @@ beforeAll(async () => {
 });
 afterAll(() => disposeKeys());
 afterEach(() => {
+  setGraphConfigProblem(null);
+  near.drawn = 4;
   near.seen = 0;
   near.held = [];
   resetNearObserverForTests();
@@ -76,11 +79,24 @@ const node = (id: string, raw: string, parent: string | null, page: string, chil
 const feedPage = (name: string, roots: string[], readOnly = false): FeedPage =>
   ({ name, kind: "page", title: name, preBlock: null, roots, format: "md", readOnly, guide: false });
 
+interface LoadOptions {
+  /** Hit pages not in the working set: the backend serves them when their group is drawn. */
+  unloaded?: number[];
+  /** Served pages are Org. */
+  org?: boolean;
+  /** `kid-1` is folded in its file. */
+  kidFolded?: boolean;
+  /** Extra hits on pages never drawn, whose DTO `id` reads are counted in `idReads`. */
+  counted?: { pages: number; hits: number };
+}
+const idReads = { n: 0 };
+
 /** The query `q` on page Tasks (with an ordinary sibling `note` that has a child), and
  *  `pages` pages that each hold one hit `hit-i` with a child `kid-i`; `kid-1` has a child
  *  `grand-1`. `readOnlyPage` marks one hit page read-only. */
-function load(readOnlyPage?: number, pages = 30) {
+function load(readOnlyPage?: number, pages = 30, options: LoadOptions = {}) {
   PAGES = pages;
+  const unloaded = new Set(options.unloaded ?? []);
   const byId: Record<string, StoreNode> = {
     q: node("q", "{{query (and [[Ticket]])}}", null, "Tasks"),
     note: node("note", "Note", null, "Tasks", ["note-kid"]),
@@ -88,18 +104,36 @@ function load(readOnlyPage?: number, pages = 30) {
   };
   const feed = [feedPage("Tasks", ["q", "note"])];
   const groups: RefGroup[] = [];
+  const served = new Map<string, PageRead>();
   for (let i = 1; i <= PAGES; i++) {
-    byId[`hit-${i}`] = node(`hit-${i}`, `Ticket ${i} [[Ticket]]`, null, pageName(i), [`kid-${i}`]);
-    byId[`kid-${i}`] = node(`kid-${i}`, `Detail ${i}`, `hit-${i}`, pageName(i), i === 1 ? ["grand-1"] : []);
-    feed.push(feedPage(pageName(i), [`hit-${i}`], i === readOnlyPage));
-    groups.push({ page: pageName(i), kind: "page", blocks: [{
+    if (unloaded.has(i)) {
+      const format = options.org ? "org" : "md";
+      served.set(pageName(i), { id: `pages/${pageName(i)}.${format}`, name: pageName(i), kind: "page", title: pageName(i), pre_block: null,
+        format, read_only: i === readOnlyPage, guide: false, blocks: [{ id: `hit-${i}`, raw: `Ticket ${i} [[Ticket]]`, collapsed: false,
+          children: [{ id: `kid-${i}`, raw: `Detail ${i}`, collapsed: false, children: [] }] }] });
+    } else {
+      byId[`hit-${i}`] = node(`hit-${i}`, `Ticket ${i} [[Ticket]]`, null, pageName(i), [`kid-${i}`]);
+      byId[`kid-${i}`] = { ...node(`kid-${i}`, `Detail ${i}`, `hit-${i}`, pageName(i), i === 1 ? ["grand-1"] : []), collapsed: i === 1 && !!options.kidFolded };
+      feed.push(feedPage(pageName(i), [`hit-${i}`], i === readOnlyPage));
+    }
+    groups.push({ page: pageName(i), kind: "page", ...(unloaded.has(i) && options.org ? { format: "org" as const } : {}), blocks: [{
       id: `hit-${i}`, raw: `Ticket ${i} [[Ticket]]`, collapsed: false,
       children: [{ id: `kid-${i}`, raw: `Detail ${i}`, collapsed: false, children: [] }],
     }] });
   }
+  for (let p = 0; p < (options.counted?.pages ?? 0); p++) {
+    const blocks = Array.from({ length: options.counted!.hits / options.counted!.pages }, (_, k) => {
+      const dto = { raw: `Counted ${p}.${k} [[Ticket]]`, collapsed: false, children: [] } as unknown as BlockDto;
+      const id = `counted-${p}-${k}`;
+      Object.defineProperty(dto, "id", { enumerable: true, get: () => { idReads.n += 1; return id; } });
+      return dto;
+    });
+    groups.push({ page: `Counted page ${p}`, kind: "page", blocks });
+  }
   byId["grand-1"] = node("grand-1", "Grand 1", "kid-1", pageName(1));
   setDoc({ byId, pages: feed, feed: ["Tasks"], loaded: true });
   vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult(groups));
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name) => served.get(name) ?? null);
 }
 function mount() {
   const root = document.createElement("div");
@@ -220,6 +254,62 @@ describe("fold commands over query groups not drawn yet (GH #1004)", () => {
       await release();
       expect(doc.byId["note"].collapsed).toBe(true);
       expect(all((i) => shown(root, `kid-${i}`))).toEqual([]);
+    } finally { dispose(); }
+  });
+  // A result whose page loads read-only only after the press folds in the session's view map,
+  // as its arrow does; the press's entry for it must not make it count as folded.
+  it.each([
+    ["an Org page that loads read-only", false],
+    ["a graph whose config makes pages read-only", true],
+  ])("a result on %s does not stop a later Expand at the results", async (_name, configReadOnly) => {
+    near.drawn = 1;
+    if (configReadOnly) setGraphConfigProblem({ kind: "config-read", message: "unreadable" });
+    load(configReadOnly ? undefined : 2, 2, { unloaded: [2], org: !configReadOnly, kidFolded: true });
+    const { root, dispose } = mount();
+    try {
+      await settle();
+      expect(shown(root, "hit-2")).toBe(false);
+      selectBlock("q");
+      run("editor/collapse-children");
+      await settle();
+      expect(shown(root, "kid-1")).toBe(false);
+      await release();
+      await vi.waitFor(() => expect(doc.byId["hit-2"]).toBeDefined());
+      await settle();
+      expect(shown(root, "kid-2")).toBe(true); // read-only: shown open, whatever the press wrote
+      (root.querySelector('.query-group [data-block-id="hit-1"] .collapse-toggle') as HTMLElement).click();
+      await settle();
+      expect(shown(root, "kid-1")).toBe(true);
+      expect(shown(root, "grand-1")).toBe(false);
+      selectBlock("q");
+      run("editor/expand-children");
+      await settle();
+      expect(shown(root, "grand-1")).toBe(true);
+    } finally { dispose(); }
+  });
+
+  // Cost: the answer's ids of groups not drawn are read only by a press that writes them.
+  it("Set depth reads no id of a result not drawn; Collapse reads each once", async () => {
+    near.drawn = 8;
+    load(undefined, 8, { counted: { pages: 4, hits: 1992 } });
+    const { root, dispose } = mount();
+    try {
+      await settle();
+      expect(shown(root, "kid-8")).toBe(true);
+      selectBlock("q");
+      idReads.n = 0;
+      run("editor/set-depth-1");
+      expect(idReads.n).toBe(0);
+      await settle();
+      expect(shown(root, "kid-1")).toBe(false);
+      run("editor/expand-children");
+      await settle();
+      expect(shown(root, "kid-1")).toBe(true);
+      idReads.n = 0;
+      run("editor/collapse-children");
+      expect(idReads.n).toBe(1992);
+      await settle();
+      expect(shown(root, "kid-8")).toBe(false);
     } finally { dispose(); }
   });
 });

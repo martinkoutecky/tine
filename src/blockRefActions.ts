@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandRow, queryResultFolds, undrawnQueryResults, type CommandCollapseSurface } from "./collapseCommandSurface";
+import { collapseCommandRow, queryResultFolds, undrawnQueryResults, type CommandCollapseSurface, type UndrawnResults } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -8,7 +8,6 @@ import { collapseCommandRow, queryResultFolds, undrawnQueryResults, type Command
 import {
   blockRef,
   blockHasFoldableBody,
-  blockPageReadOnly,
   buildClipboardPayload,
   hasSelection,
   blockHasPageEmbed,
@@ -227,12 +226,12 @@ interface FoldWalk {
   setFold: (id: string, collapsed: boolean) => void;
   surfaceOf: (id: string) => CommandCollapseSurface | undefined;
   children: (ids: string[]) => string[];
-  /** GH #1004: the result rows of query groups not drawn with live rows, named by the
-   *  `children()` call that returned `level` (none for any other array). They are
-   *  written with the level's value and never read: the level is chosen from live rows. */
+  /** GH #1004: the result rows of query groups not drawn with live rows, under the ids
+   *  whose `children()` call returned `level` (none for any other array). Read only when
+   *  asked; they are written with the level's value and never read: the level is chosen
+   *  from live rows. */
   undrawn: (level: string[]) => UndrawnResults[];
 }
-type UndrawnResults = { ids: readonly string[]; write: (ids: readonly string[], collapsed: boolean) => void };
 
 function foldWalk(pageFallback: boolean): FoldWalk | null {
   let parents: string[] = hasSelection() ? topSelected() : commandTargetIds();
@@ -271,10 +270,10 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
   const foldable = (id: string) => blockHasFoldableBody(sourceOf(id) ?? id);
   const setFold = (id: string, collapsed: boolean) => sourceOf(id) ? setEmbedRootFold(id, collapsed) : setCollapsed(id, collapsed);
   pageRoots?.forEach(standAsRoot);
-  const undrawnOf = new WeakMap<string[], UndrawnResults[]>();
+  const levelOf = new WeakMap<string[], { ids: string[]; out: Set<string>; live: Set<object> }>();
   const children = (ids: string[]) => {
     const out = new Set<string>();
-    const pending: UndrawnResults[] = [];
+    const live = new Set<object>();
     for (const id of ids) {
       const own = rowSurface.get(id);
       for (const child of docNode(id)?.children ?? []) {
@@ -282,28 +281,33 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
         if (!surfaceOf(child)) standAsRoot(child);
         out.add(child);
       }
-      const drawn = queryResultFolds(id);
-      for (const group of drawn) for (const row of group.roots()) {
-        if (!docNode(row)) continue;
-        if (!rowSurface.has(row)) rowSurface.set(row, group.surface);
-        out.add(row);
+      for (const group of queryResultFolds(id)) {
+        const roots = group.roots();
+        if (roots.length) live.add(group.store);
+        for (const row of roots) {
+          if (!docNode(row)) continue;
+          if (!rowSurface.has(row)) rowSurface.set(row, group.surface);
+          out.add(row);
+        }
       }
-      pending.push(...undrawnQueryResults(id, drawn));
     }
     const level = [...out];
-    // One id, one fold per press: a row already named keeps its first answer. A read-only
-    // hit folds in the session's presentation map, which no command writes.
-    const named = new Set(out);
-    const undrawn: UndrawnResults[] = [];
-    for (const group of pending) {
-      const rows = group.ids.filter((row) => !named.has(row) && !blockPageReadOnly(row));
-      for (const row of rows) named.add(row);
-      if (rows.length) undrawn.push({ ids: rows, write: group.write });
-    }
-    if (undrawn.length) undrawnOf.set(level, undrawn);
+    levelOf.set(level, { ids, out, live });
     return level;
   };
-  const undrawn = (level: string[]) => undrawnOf.get(level) ?? [];
+  const undrawn = (level: string[]) => {
+    const call = levelOf.get(level);
+    if (!call) return [];
+    // One id, one fold per press: a row already named keeps its first answer.
+    const named = new Set(call.out);
+    const result: UndrawnResults[] = [];
+    for (const id of call.ids) for (const group of undrawnQueryResults(id, call.live)) {
+      const rows = group.ids.filter((row) => !named.has(row));
+      for (const row of rows) named.add(row);
+      if (rows.length) result.push({ ids: rows, write: group.write });
+    }
+    return result;
+  };
   return { parents, pageRoots, isCollapsed, foldable, setFold, surfaceOf, children, undrawn };
 }
 

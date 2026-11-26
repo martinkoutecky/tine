@@ -354,6 +354,7 @@ mod journal_guide_tests {
             "Depth 2 opens the block and its children and folds the grandchildren",
             "once its children are all folded",
             "a folded block opens by itself first",
+            "On a selected query block they fold or open its results, also results further down that are not drawn yet",
             "Copy block refs of the selected blocks",
             "Search for the selected text",
         ] {
