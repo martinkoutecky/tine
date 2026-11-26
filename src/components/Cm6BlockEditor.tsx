@@ -19,7 +19,7 @@ import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { concealedSpans, previewSpans } from "../editor/cm6Preview";
-import { PreviewWidget } from "../editor/cm6PreviewWidget";
+import { GlyphWidget, PreviewWidget } from "../editor/cm6PreviewWidget";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { cm6Formatting } from "../editor/cm6Formatting";
 import { cm6Structure } from "../editor/cm6Structure";
@@ -52,7 +52,7 @@ import { AstBody } from "../render/body";
 import { CopyButton } from "../render/inline";
 import { t as translate } from "../i18n";
 import { touchPrimary } from "../inputCapability";
-import { openContextMenu } from "../ui";
+import { openContextMenu, typographyMode } from "../ui";
 import { renderedClickOffset } from "./blockGestures";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { effectiveHeadingLevel } from "../render/facets";
@@ -287,11 +287,14 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const buildDecorations = (state: EditorState): DecorationSet => {
     if (!parserReady() || literal()) return Decoration.none;
     const raw = state.doc.toString();
-    const spans = previewSpans(raw, format);
+    const parsed = previewSpans(raw, format);
     // Explicit source mode keeps the entire fenced block raw, wherever the caret is.
-    if (spans.some(span => span.kind === "src" || span.kind === "example")) return Decoration.none;
-    const ranges = concealedSpans(spans, state.selection.ranges).map(span =>
-      Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
+    if (parsed.some(span => span.kind === "src" || span.kind === "example")) return Decoration.none;
+    // The view substitutes glyphs only in the "render" mode (render/plainText.tsx); the editor follows it.
+    const spans = typographyMode() === "render" ? parsed : parsed.filter(span => span.kind !== "typography");
+    const ranges = concealedSpans(spans, state.selection.ranges).map(span => span.glyph !== undefined
+      ? Decoration.replace({ widget: new GlyphWidget(span.glyph) }).range(span.from, span.to)
+      : Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
     const level = headingLevel();
     const headerEnd = state.doc.line(1).to;
     if (level !== null && headerEnd > 0) ranges.push(Decoration.mark({ class: `heading-text h${level}` }).range(0, headerEnd));
@@ -552,6 +555,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   createEffect(() => {
     headingLevel();
+    typographyMode();
     untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
   });
   onCleanup(() => {

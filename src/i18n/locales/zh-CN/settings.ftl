@@ -439,9 +439,9 @@ settings-ui-show-the-around-page-references-saved-to-ui-show = 在页面引用�
 
 settings-ui-typographic-replacements = 排版替换
 
-settings-ui-show-arrows-and-dashes-as-glyphs-en-dash-em = 将箭头和短横线显示为字形：`->` → →，`-->` → ⟶，`--` → –（短破折号），`---` → —（长破折号）。“阅读时”保留 Markdown 中的 ASCII，仅更改渲染视图（类似 `\Delta` → Δ）；“输入时”会直接改写源文本。默认关闭，与 Logseq 一致：按输入原样显示。
+settings-ui-show-arrows-and-dashes-as-glyphs-en-dash-em = 将箭头和短横线显示为字形：`->` → →，`-->` → ⟶，`--` → –（短破折号），`---` → —（长破折号）。“仅显示”（默认）保留 Markdown 中的 ASCII，只改变显示效果，编辑器中也是如此，光标所在处显示原始字符（类似 `\Delta` → Δ）；“输入时”会直接改写源文本。关闭时按输入原样显示，与 Logseq 一致。
 
-settings-ui-on-while-reading = 开启（阅读时）
+settings-ui-on-while-reading = 开启（仅显示）
 
 settings-ui-on-while-typing = 开启（输入时）
 

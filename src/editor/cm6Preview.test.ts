@@ -104,3 +104,37 @@ describe("planning lines follow the view's date chip", () => {
     expect(previewSpans(text, "md").map(s => [s.kind, text.slice(s.from, s.to)])).toEqual([["bullet", "# Title"], ["planning", "\nDEADLINE: <2026-10-31 Fri>"]]);
   });
 });
+
+// the editor draws the glyphs the view draws (render/typography.ts is the one table), only in plain runs
+// the view's plain renderer draws, and shows the ASCII where a caret or selection touches it.
+describe("typographic glyphs follow the view", () => {
+  const glyphs = (raw: string) => previewSpans(raw, "md").filter(s => s.kind === "typography").map(s => [raw.slice(s.from, s.to), s.glyph]);
+  it("marks each replaced sequence of a plain run with the view's glyph", () => {
+    expect(glyphs("a -- b -> c <--> d --- e => f")).toEqual([["--", "–"], ["->", "→"], ["<-->", "⟺"], ["---", "—"], ["=>", "⇒"]]);
+  });
+  it("leaves code, math, links, page refs, tags and properties raw, as the view does", () => {
+    expect(glyphs("`c -- d` $x -- y$ [l -- m](https://e.org) [[p--q]] #t--g\nk:: v -- w")).toEqual([]);
+  });
+  it("draws them inside emphasis once its markers are shown, after Unicode, with UTF-16 offsets", () => {
+    const raw = "中文😀 **a -- b**";
+    const spans = previewSpans(raw, "md");
+    const bold = spans.find(s => s.kind === "bold")!;
+    const dash = spans.find(s => s.kind === "typography")!;
+    expect(raw.slice(dash.from, dash.to)).toBe("--");
+    expect(concealedSpans(spans, [{ from: 0, to: 0 }])).toEqual([bold]);
+    expect(concealedSpans(spans, [{ from: bold.from + 2, to: bold.from + 2 }])).toEqual([dash]);
+  });
+  it("shows the ASCII where the caret or a selection touches the sequence", () => {
+    const raw = "a -- b";
+    const spans = previewSpans(raw, "md");
+    const [dash] = spans;
+    expect(concealedSpans(spans, [{ from: 6, to: 6 }])).toEqual([dash]);
+    expect(concealedSpans(spans, [{ from: 0, to: 0 }])).toEqual([dash]);
+    for (const at of [2, 3, 4]) expect(concealedSpans(spans, [{ from: at, to: at }])).toEqual([]);
+    expect(concealedSpans(spans, [{ from: 0, to: 6 }])).toEqual([]);
+  });
+  it("leaves an escaped run to the view's plain renderer", () => {
+    const raw = "\\*a -- b";
+    expect(previewSpans(raw, "md").map(s => s.kind)).toEqual(["plain"]);
+  });
+});

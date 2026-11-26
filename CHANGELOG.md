@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A journal day's title tooltip now says "Double-click to rename", as a page's does, since renaming a day (moving its notes to a page) has no menu row (D-20261119-DRM).
 
 ### Changed
+- Typographic replacements are on by default (arrows and dashes such as `->` and `--` show as → and –; your files keep what you typed), and the editor shows the same glyphs, with the typed characters only where the cursor touches them, so clicking into a block no longer changes how they look. Settings → Appearance → **Typographic replacements** → **Off** shows them as typed (reverses the GH #583 default; the classic editor still shows the typed characters while editing).
 - The published conceptual model in `docs/conceptual-model/` is now the model Tine's rename and merge follow (model K, D-20261116-CM536): its rules, its proved guarantees with the assumptions they rest on, and the Lean proofs that build it.
 - Folder publications and the new quick-share format carry selected page sources and reduced reading settings for the browser core. Existing generation-1 links keep their pinned viewer (D-20261122-G1F, D-20261122-G2S).
 - Folder publications and generation-2 quick shares run queries in the reader, using the viewing day for relative dates. Re-sharing a generation-1 link creates a new link and preserves the original share (D-20261122-G2S, A-20261122-RS1).

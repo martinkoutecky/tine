@@ -2150,10 +2150,11 @@ mod customize_look_guide_tests {
             // Discussion #714: the transient toggle class for theme animations.
             "`just-toggled`",
             "never there when a page loads",
-            // GH #583: arrows render as typed unless the user opts in.
+            // glyphs by default, the same in the editor; Off shows them as typed.
             "**Typographic replacements**",
-            "It is **Off** by default",
-            "**On (while reading)**",
+            "**On (display only)**, the default",
+            "clicking into a block does not change how it looks",
+            "**Off** shows them as typed",
             // GH #773: individual tags and page links can be themed by name.
             "a.tag[data-ref=\"ai-note\"]",
             "lowercased page name",

@@ -1,6 +1,7 @@
 import { blockRegions, parseBlock, renderPlanningOf } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline } from "../render/ast";
+import { typographicSegments } from "../render/typography";
 
 export interface PreviewSpan {
   from: number;
@@ -10,6 +11,8 @@ export interface PreviewSpan {
   block?: Block;
   headerTags?: string[];
   label?: string;
+  /** A `typography` span: the glyph the view draws for this ASCII sequence (`render/typography.ts`). */
+  glyph?: string;
   /** A standalone SCHEDULED/DEADLINE line, drawn as the view's date chip. */
   planning?: { ts: "Scheduled" | "Deadline"; value: string };
   /** Where the reveal test starts when it differs from `from`: the planning span also replaces the line break
@@ -49,10 +52,14 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
     if (range && label) add({ from: cursor(range[0]), to: cursor(range[1]), kind, label });
   }
   const chips = new Map(renderPlanningOf(blocks).map((p) => [p.span_start, p]));
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) { value.forEach(visit); return; }
+  // `typo`: a plain run here is drawn by the view's plain renderer (`renderPlain`), the only place the render pass
+  // substitutes glyphs. Emphasis, sub- and superscript draw their children through it; a link, tag or other inline
+  // node draws its own text, so its plain children stay raw (when such a node is concealed, its widget is the view's).
+  const visit = (value: unknown, typo = true): void => {
+    if (Array.isArray(value)) { value.forEach(v => visit(v, typo)); return; }
     if (!value || typeof value !== "object") return;
     const n = value as Inline | Block;
+    if ("k" in n && n.k !== "plain" && n.k !== "emphasis" && n.k !== "subscript" && n.k !== "superscript") typo = false;
     if (n.span) {
       const from = cursor(n.span[0] - 2 + lead);
       let to = cursor(n.span[1] - 2 + lead);
@@ -72,8 +79,13 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
         add({ from: start, to, kind: "planning", planning: { ts: chip.kind, value: chip.value }, ...(start < from ? { revealFrom: lineStart } : {}) });
       } else if ("k" in n) {
         // Plain runs can own escapes. Only byte-identical plain text and
-        // ordinary line breaks have nothing to conceal.
-        if (n.k !== "break" && !(n.k === "plain" && raw.slice(from, to) === n.text)) {
+        // ordinary line breaks have nothing to conceal, except the glyphs the view substitutes in such a run
+        // (an escaped run is concealed whole, and its widget is the view's plain renderer).
+        const verbatimPlain = n.k === "plain" && raw.slice(from, to) === n.text;
+        if (verbatimPlain && typo) {
+          for (const seg of typographicSegments(n.text)) add({ from: from + seg.start, to: from + seg.end, kind: "typography", glyph: seg.glyph });
+        }
+        if (n.k !== "break" && !verbatimPlain) {
           const kind = n.k === "emphasis" ? (n.emph === "Bold" ? "bold" : n.emph === "Italic" ? "italic" : n.emph)
             : n.k === "link" && n.url.type === "page_ref" ? "page" : n.k === "verbatim" ? "code" : n.k;
           add({ from, to, kind, inline: n });
@@ -95,7 +107,7 @@ export function previewSpans(raw: string, format: "md" | "org"): PreviewSpan[] {
         }
       }
     }
-    Object.values(value).forEach(visit);
+    Object.values(value).forEach(v => visit(v, typo));
   };
   visit(blocks);
   result.sort((a, b) => a.from - b.from || b.to - a.to);
