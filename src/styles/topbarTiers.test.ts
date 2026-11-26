@@ -32,7 +32,7 @@ describe("og-g a006f130 responsive topbar (GH #205)", () => {
   it("states every topbar tier in rem, so the tiers engage under WebKit interface zoom (GH #926)", () => {
     expect(uncommented(css)).not.toMatch(/@container topbar \(max-width:\s*[\d.]+px\)/);
   });
-  it("keeps Settings and the overflow menu on screen below the last fixed tier (GH #926)", () => {
+  it("adds a floor tier that hides the compact workspace switcher and lets the left cluster scroll (GH #926)", () => {
     const floor = uncommented(tier("12.125rem"));
     expect(floor).toMatch(/\[data-workspace-switcher-compact\][\s\S]*?display:\s*none/);
     expect(floor).toMatch(/\.topbar \.topbar-left\s*\{[^}]*min-width:\s*0;[^}]*overflow-x:\s*auto/);

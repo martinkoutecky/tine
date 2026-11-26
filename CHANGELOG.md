@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- On phones 375 to 414 points wide, and at higher interface zoom, the Settings button no longer sits past the right edge of the top bar: the less-used buttons move into the "…" menu instead (discussion #968, #926). Checked in browser engines (Chromium, WebKitGTK); not verified on a real iPhone.
+- On phones 375 to 430 points wide at the default interface zoom, the Settings button is on screen again instead of past the right edge of the top bar: the less-used buttons move into the "…" menu (discussion #968, #926). At some higher zoom levels part of the button can still be cut off. Checked in browser engines (Chromium, WebKitGTK); not verified on a real iPhone.
 
 ## [0.9.2] - 2026-11-23
 
