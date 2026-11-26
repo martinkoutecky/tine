@@ -3,7 +3,8 @@ import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createComputed, createRoot, createSignal, untrack } from "solid-js";
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { renderedBlocks } from "./lazyObserve";
-import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
+import { notifyClearOutlineSelection, notifyEditingStarted, resumeCellOwner } from "./modeHooks";
+import type { SheetCellCtx } from "./sheet/context";
 import { activeWindow, isElementTag, requestFrame } from "./windowRealm";
 import { clearOnBindingInvalidated } from "./binding";
 import { recordDiagnostic } from "./debug";
@@ -123,13 +124,16 @@ export interface HistoryEditorContext {
   selectionEnd: number;
   /** Visible-source body start when code editing was chosen; absent for source. */
   codeBodyStart?: number;
-  owner: string | null;
+  /** The grid cell the edit was in; a restore resumes there (`resumeInCell`). */
+  cell: SheetCellCtx | null;
   surface: string;
 }
 
 export interface HistoryEditorTarget {
   blockId: string;
   owner: string | null;
+  /** The grid cell this editor edits in, else null. */
+  cell: SheetCellCtx | null;
   surface: string;
   selection: () => { start: number; end: number; codeBodyStart?: number };
   focused?: () => boolean;
@@ -209,7 +213,7 @@ export function captureHistoryEditorContext(): HistoryEditorContext | null {
     blockId,
     selectionStart: start,
     selectionEnd: end,
-    owner: target?.owner ?? owner,
+    cell: target?.cell ?? null,
     surface: targetSurface,
   };
   if (codeBodyStart !== undefined) context.codeBodyStart = codeBodyStart;
@@ -229,10 +233,18 @@ export function restoreHistoryEditorContext(
   }
   const end = Math.min(Math.max(0, context.selectionEnd), restoredTextLength);
   const start = Math.min(Math.max(0, context.selectionStart), end);
+  // Selecting the cell ends the active edit, which drops a pending restore: resolve the cell first.
+  const resume = context.cell ? resumeCellOwner(context.blockId, context.cell) : null;
   const pending = { ...context, selectionStart: start, selectionEnd: end };
   setPendingHistoryEditorRestore(pending);
+  if (resume?.owner) {
+    startEditing(context.blockId, start, resume.owner, null, true);
+    return true;
+  }
   pendingFocusSurface.set(context.blockId, context.surface);
-  startEditing(context.blockId, start, null, context.surface, true);
+  // An edit that has left its mounted cell never keeps the cell's sheet surface: an ordinary
+  // editor takes it. Otherwise (no grid capture, or its grid unmounted) the captured surface.
+  startEditing(context.blockId, start, null, resume ? null : context.surface, true);
   return true;
 }
 

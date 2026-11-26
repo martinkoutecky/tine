@@ -68,6 +68,16 @@ try {
   await textIs("alpha");
   assert.deepEqual(await recordCell(stage), { focused: true, row: "0", col: "0" });
 
+  stage = "type, Undo, type stays in the cell";
+  await browser.keys("x");
+  await textIs("alphax");
+  await browser.keys(["Control", "z", "NULL"]);
+  await textIs("alpha");
+  assert.deepEqual(await recordCell(stage), { focused: true, row: "0", col: "0" });
+  await browser.keys("q");
+  await textIs("alphaq");
+  await waitForFileText(FILE, text => /- alphaq\n\s+- beta/.test(text));
+
   stage = "across cells and Right at row end";
   await end();
   await browser.keys(["ArrowRight"]);
@@ -108,7 +118,7 @@ try {
   assert.equal(await browser.$('.sheet-cell-selected[data-row="1"][data-col="0"]').isExisting(), true);
   const saved = await waitForFileText(FILE, text => text.includes("second child kept"));
   assert.match(saved, /- gamma\n\s+- first child\n\s+- second child kept/);
-  assert.match(saved, /- alpha\n\s+- beta/);
+  assert.match(saved, /- alphaq\n\s+- beta/);
   assert.match(saved, /- delta/);
   await browser.keys(["Escape"]);
   assert.equal(await browser.$(`.ls-block[data-block-id="${gridId}"] > .block-main.selected`).isExisting(), true);

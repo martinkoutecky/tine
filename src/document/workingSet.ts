@@ -212,7 +212,8 @@ function reopenEditor(pageName: string, carried: CarriedEditor): void {
     }
   }
   if (!id) return;
-  if (carried.context) restoreHistoryEditorContext({ ...carried.context, blockId: id }, doc.byId[id].raw.length);
+  // A cell address is positional and can name another block after a reload: carry no cell.
+  if (carried.context) restoreHistoryEditorContext({ ...carried.context, blockId: id, cell: null }, doc.byId[id].raw.length);
   else startEditing(id, 0);
 }
 

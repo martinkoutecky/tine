@@ -3,11 +3,12 @@
 // today's sheet keys; only cells of a `tine.view:: grid` edit like an outline.
 import { batch } from "solid-js";
 import { blockIsGridView, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
-import { editingId, editingOwner, startEditing, takeCaretFor, type CaretPos } from "../editorController";
+import { caretRequest, editingId, editingOwner, startEditing, takeCaretFor, type CaretPos } from "../editorController";
+import { installCellResume } from "../modeHooks";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import type { SheetCellCtx } from "./context";
 import { gridEntry, gridNeighbour, type GridMove, type GridTarget } from "./gridNeighbour";
-import { cellBlockId, cellOwner, selectCellAfterEdit, setCellSel } from "./selection";
+import { cellBlockId, cellOwner, occurrenceMounted, selectCellAfterEdit, setCellSel } from "./selection";
 import { wrapCompactGridCell } from "./mutations";
 
 /** True for a cell of a grid view, the only sheet surface that edits like an outline. */
@@ -64,23 +65,34 @@ export function gridBlocksCommand(id: string, cell: SheetCellCtx, command: strin
   return false;
 }
 
+/** The one answer to "which editor continues an edit restarted on `id`" for a grid cell
+ * (GH #874). Null when `cell`'s own grid occurrence is not mounted: the rule does not apply.
+ * Else, when `id` is the cell's text or nested in it, selects the cell (its occurrence
+ * reveals it) and gives the cell's owner; otherwise owner null, an ordinary restart. O(depth). */
+export function resumeInCell(id: string, cell: SheetCellCtx): { owner: string | null } | null {
+  if (!editsLikeOutline(cell) || !occurrenceMounted(cell)) return null;
+  const host = cellBlockId(cell);
+  let parent: string | null = id;
+  while (parent && parent !== host) parent = node(parent)?.parent ?? null;
+  if (!host || parent !== host) return { owner: null };
+  setCellSel(cell);
+  return { owner: cellOwner(cell) };
+}
+installCellResume(resumeInCell);
+
 /** Document outline commands publish their focus with ordinary outline ownership.
- * Reattach that focus to this cell in the same reactive batch, before either editor
- * remounts. Selection commands end editing and retain their cell-bounded scope. */
+ * Reattach a restart made by `action` to this cell in the same reactive batch, before
+ * either editor remounts; a restart made before the key reached the editor (a global
+ * Undo) keeps its own answer. Selection commands end editing and retain their scope. */
 export function runGridOutline<T>(cell: SheetCellCtx | null | undefined, action: () => T): T {
   if (!cell || !editsLikeOutline(cell)) return action();
   return batch(() => {
+    const request = caretRequest();
     const result = action();
     const id = editingId();
-    if (id && editingOwner() === null) {
-      let parent: string | null = id;
-      const host = cellBlockId(cell);
-      while (parent && parent !== host) parent = node(parent)?.parent ?? null;
-      if (parent === host) {
-        const caret = takeCaretFor(id) ?? 0;
-        setCellSel(cell);
-        startEditing(id, caret, cellOwner(cell));
-      }
+    if (id && editingOwner() === null && caretRequest() !== request && caretRequest()?.id === id) {
+      const owner = resumeInCell(id, cell)?.owner;
+      if (owner) startEditing(id, takeCaretFor(id) ?? 0, owner);
     }
     return result;
   });

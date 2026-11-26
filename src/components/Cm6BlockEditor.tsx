@@ -390,6 +390,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     completion.mount();
     formatting.mount();
     onCleanup(registerHistoryEditorTarget({ blockId: props.id, owner: editingOwner(), surface: props.surface,
+      cell: cell && editsLikeOutline(cell) ? cell : null,
       selection: () => { const s = view!.state.selection.main; return codeView.selection(s.from, s.to); },
       viewport: () => ({ editor: view!.contentDOM, scroller: nearestScrollableY(view!.contentDOM) }),
       focused: () => !!view?.hasFocus }));

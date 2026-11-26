@@ -1027,6 +1027,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const unregisterHistoryTarget = registerHistoryEditorTarget({
       blockId: props.id,
       owner: editingOwner(),
+      cell: sheetCell && editsLikeOutline(sheetCell) ? sheetCell : null,
       surface: surfaceKey,
       selection: () => codeView.selection(ref.selectionStart, ref.selectionEnd),
       viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),

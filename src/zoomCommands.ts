@@ -29,7 +29,7 @@ function paneSurface(router: PaneRouter): string {
 
 function keepEditing(id: string, context: HistoryEditorContext, router: PaneRouter): void {
   // OG re-opens the editor on the block after the page navigation (setTimeout 0).
-  setTimeout(() => { const n = docNode(id); if (n) restoreHistoryEditorContext({ ...context, blockId: id, selectionEnd: context.selectionStart, owner: null, surface: paneSurface(router) }, n.raw.length); }, 0);
+  setTimeout(() => { const n = docNode(id); if (n) restoreHistoryEditorContext({ ...context, blockId: id, selectionEnd: context.selectionStart, cell: null, surface: paneSurface(router) }, n.raw.length); }, 0);
 }
 
 /** Zoom into the selected block, else the block being edited (the last one when

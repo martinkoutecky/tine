@@ -11,7 +11,7 @@ it.each(["same", "other-surface", "wheel"])("raw replay respects %s editor owner
   const mount = (top: number, surface: string) => {
     const editor = document.createElement("textarea"); scroller.append(editor); editor.focus();
     editor.getBoundingClientRect = () => ({ top } as DOMRect);
-    const unregister = registerHistoryEditorTarget({ blockId: "source", owner: null, surface,
+    const unregister = registerHistoryEditorTarget({ blockId: "source", owner: null, cell: null, surface,
       selection: () => ({ start: 0, end: 0 }), focused: () => document.activeElement === editor,
       viewport: () => ({ editor, scroller }) });
     cleanups.push(unregister);

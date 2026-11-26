@@ -210,6 +210,7 @@ describe("editor_focus_missed (GH #939)", () => {
     const unregister = registerHistoryEditorTarget({
       get blockId() { reads++; return "other-939"; },
       owner: null,
+      cell: null,
       surface: "probe",
       selection: () => ({ start: 0, end: 0 }),
     });

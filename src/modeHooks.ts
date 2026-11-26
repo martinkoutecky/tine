@@ -1,3 +1,5 @@
+import type { SheetCellCtx } from "./sheet/context";
+
 type OutlineSelectionListener = (id: string) => void;
 type EditingStartListener = (id: string, owner: string | null) => void;
 type ModeResetListener = () => void;
@@ -9,6 +11,13 @@ let clearOutlineSelection: (() => void) | null = null;
 
 export function installClearOutlineSelection(fn: () => void): void { clearOutlineSelection = fn; }
 export function notifyClearOutlineSelection(): void { clearOutlineSelection?.(); }
+
+// The grid module answers which cell continues a restarted edit (`resumeInCell`);
+// the controller cannot import `sheet/`.
+type CellResume = (id: string, cell: SheetCellCtx) => { owner: string | null } | null;
+let cellResume: CellResume | null = null;
+export function installCellResume(fn: CellResume): void { cellResume = fn; }
+export function resumeCellOwner(id: string, cell: SheetCellCtx): { owner: string | null } | null { return cellResume?.(id, cell) ?? null; }
 
 export function registerOutlineSelectionListener(fn: OutlineSelectionListener): () => void {
   outlineSelectionListeners.add(fn);

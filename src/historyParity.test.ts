@@ -33,7 +33,7 @@ type PendingHistoryEditorRestore = {
   blockId: string;
   selectionStart: number;
   selectionEnd: number;
-  owner: string | null;
+  cell: null;
   surface: string;
 };
 type EditorControllerApi = typeof editorControllerModule & {
@@ -225,9 +225,12 @@ describe("history parity", () => {
       blockId: "a",
       selectionStart: 2,
       selectionEnd: 3,
-      owner: "owner-a",
+      cell: null,
       surface: `pane:${historyPane}`,
     });
+    // A non-cell edit restores with owner null: the captured surface's ordinary editor takes it.
+    expect(editor.editingOwner()).toBeNull();
+    expect(editor.editingSurface()).toBe(`pane:${historyPane}`);
 
     // Snapshot entries carry the same context payload as raw typing entries.
     selection.start = 1;

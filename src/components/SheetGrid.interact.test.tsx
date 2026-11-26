@@ -10,7 +10,8 @@ import { initParser } from "../render/parse";
 import { blockProperty, blockIsGridView, hasSelection, isSelected, resetStore, selectBlock, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { editingId, endEdit } from "../editorController";
+import { editingId, editingOwner, editingSurface, endEdit, startEditing } from "../editorController";
+import { zoomInOnTarget } from "../zoomCommands";
 import { installKeybindings } from "../keybindings";
 import { setFocusedPaneId } from "../panes";
 import { resetCommentAuthorNameForTests } from "../commentIdentity";
@@ -1677,5 +1678,197 @@ describe("SheetGrid interaction", () => {
     expect(doc.byId[newRow].children.map((id) => doc.byId[id].raw)).toEqual(["", "R", "S"]);
 
     dispose();
+  });
+});
+
+// GH #874: Undo and Redo continue an edit in the editor instance that made it, a grid
+// cell included. Each case presses the keys on the focused editor, then types.
+describe("SheetGrid Undo and Redo keep the caret", () => {
+  const cellOwnerMain = "sheet:main:grid:0:0";
+
+  function mountUndo(opts: { duplicate?: boolean; zoom?: string } = {}): HTMLDivElement {
+    disposeKeys = installKeybindings();
+    return mount(() => <>
+      <Block id="grid" />
+      {opts.duplicate && <SurfaceContext.Provider value="pane:right"><Block id="grid" /></SurfaceContext.Provider>}
+      {opts.zoom && <div data-zoom><SurfaceContext.Provider value={opts.zoom}><Block id="c1" /></SurfaceContext.Provider></div>}
+    </>).root;
+  }
+
+  function historyKey(target: EditorDriver | Element, redo = false): KeyboardEvent {
+    const event = keydown("kind" in target ? target.element : target, "z", { ctrlKey: true, shiftKey: redo });
+    expect(event.defaultPrevented).toBe(true);
+    return event;
+  }
+
+  /** The focused editor, asserted to lie inside `scope`. */
+  function focusedEditorIn(scope: Element | null): EditorDriver {
+    const editor = activeEditor(scope as HTMLElement);
+    expect(editor.element.contains(document.activeElement)).toBe(true);
+    return editor;
+  }
+
+  function cellIn(root: HTMLElement, surface: string, row = 0): HTMLElement {
+    return root.querySelector(`.sheet-cell[data-sheet-surface-id="${surface}"][data-row="${row}"][data-col="0"]`)!;
+  }
+
+  async function editCell(root: HTMLElement, at: number, surface = "main"): Promise<EditorDriver> {
+    doubleClick(cellIn(root, surface));
+    await tick();
+    const editor = focusedEditorIn(cellIn(root, surface));
+    editor.select(at);
+    return editor;
+  }
+
+  it.each([["c1", "Alpha"], ["c1child", "Child"]])("Undo of typing in %s resumes in the cell and takes the next key", async (id, initial) => {
+    loadSheetDocWithOutlineChild();
+    const root = mountUndo();
+    if (id === "c1") await editCell(root, initial.length);
+    else {
+      root.querySelector('[data-sheet-block-id="c1child"]')!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      await tick();
+      focusedEditorIn(cell(root, 0, 0)).select(initial.length);
+    }
+    activeEditor(root).type("x");
+    expect(doc.byId[id].raw).toBe(initial + "x");
+
+    historyKey(activeEditor(root));
+    await tick();
+    expect(doc.byId[id].raw).toBe(initial);
+    expect(editingOwner()).toBe(cellOwnerMain);
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    focusedEditorIn(cell(root, 0, 0)).type("q");
+    expect(doc.byId[id].raw).toBe(initial + "q");
+  });
+
+  it("Redo in the cell resumes in the cell", async () => {
+    loadSheetDoc();
+    const root = mountUndo();
+    (await editCell(root, 5)).type("x");
+    historyKey(activeEditor(root));
+    await tick();
+    historyKey(focusedEditorIn(cell(root, 0, 0)), true);
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alphax");
+    expect(editingOwner()).toBe(cellOwnerMain);
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    focusedEditorIn(cell(root, 0, 0)).type("q");
+    expect(doc.byId.c1.raw).toBe("Alphaxq");
+  });
+
+  it("Undo from a cell of an ordinary-view edit reopens the ordinary view", async () => {
+    loadSheetDoc();
+    const root = mountUndo({ zoom: "pane:zoom" });
+    const zoom = root.querySelector("[data-zoom]")!;
+    startEditing("c1", 5, null, "pane:zoom");
+    await tick();
+    focusedEditorIn(zoom).type("x");
+    await editCell(root, 0);
+
+    historyKey(focusedEditorIn(cell(root, 0, 0)));
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(editingOwner()).toBeNull();
+    expect(editingSurface()).toBe("pane:zoom");
+    expect(cellSel()).toBeNull();
+    focusedEditorIn(zoom).type("q");
+    expect(doc.byId.c1.raw).toBe("Alphaq");
+  });
+
+  it("Undo from the ordinary view of a cell edit reopens the cell, and Redo the ordinary view", async () => {
+    loadSheetDoc();
+    const root = mountUndo({ zoom: "pane:zoom" });
+    const zoom = root.querySelector("[data-zoom]")!;
+    (await editCell(root, 5)).type("x");
+    startEditing("c1", 2, null, "pane:zoom");
+    await tick();
+
+    historyKey(focusedEditorIn(zoom));
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(editingOwner()).toBe(cellOwnerMain);
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    // History captured the Redo context in the ordinary view, where Undo was invoked.
+    historyKey(focusedEditorIn(cell(root, 0, 0)), true);
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alphax");
+    expect(editingOwner()).toBeNull();
+    expect(editingSurface()).toBe("pane:zoom");
+    expect(cellSel()).toBeNull();
+    focusedEditorIn(zoom).type("q");
+    expect(doc.byId.c1.raw.replace("q", "")).toBe("Alphax");
+  });
+
+  it("Undo of a cell edit in the second occurrence, invoked from the first, reopens the second", async () => {
+    loadSheetDoc();
+    const root = mountUndo({ duplicate: true });
+    (await editCell(root, 5, "pane:right")).type("x");
+    await editCell(root, 0, "main");
+
+    historyKey(focusedEditorIn(cellIn(root, "main")));
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(editingOwner()).toBe("sheet:pane:right:grid:0:0");
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", surfaceId: "pane:right", row: 0, col: 0 });
+    focusedEditorIn(cellIn(root, "pane:right")).type("q");
+    expect(doc.byId.c1.raw).toBe("Alphaq");
+  });
+
+  it("Undo of an edit in row 200 reveals that row in a remounted grid and reopens it", async () => {
+    const extra = Array.from({ length: 200 }, (_, i) => `x${i}`);
+    setDoc({
+      byId: {
+        grid: node("grid", "Grid\ntine.view:: grid", null, [...extra, "r1"]),
+        r1: node("r1", "", "grid", ["c1"]),
+        c1: node("c1", "Alpha", "r1"),
+        ...Object.fromEntries(extra.flatMap((id) => [[id, node(id, "", "grid", [`${id}c`])], [`${id}c`, node(`${id}c`, "Other", id)]])),
+      },
+      pages: [page(["grid"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const first = mountUndo();
+    setCellSel({ gridId: "grid", row: 200, col: 0 });
+    await tick();
+    doubleClick(cellIn(first, "main", 200));
+    await tick();
+    const editor = focusedEditorIn(cellIn(first, "main", 200));
+    editor.select(5);
+    editor.type("x");
+    setCellSel(null);
+    for (const dispose of mountedRoots) dispose();
+    // A fresh occurrence renders only its first page of rows.
+    const { root } = mount(() => <Block id="grid" />);
+    await tick();
+    expect(cellIn(root, "main", 199)).not.toBeNull();
+    expect(cellIn(root, "main", 200)).toBeNull();
+
+    historyKey(document.body);
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(editingOwner()).toBe("sheet:main:grid:200:0");
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "grid", row: 200, col: 0 });
+    focusedEditorIn(cellIn(root, "main", 200)).type("q");
+    expect(doc.byId.c1.raw).toBe("Alphaq");
+  });
+
+  it("zoom from a cell continues in the zoomed view, and Undo there stays in it", async () => {
+    loadSheetDoc();
+    const root = mountUndo({ zoom: "main" });
+    const zoom = root.querySelector("[data-zoom]")!;
+    await editCell(root, 5);
+    expect(zoomInOnTarget()).toBe(true);
+    await tick();
+    expect(editingOwner()).toBeNull();
+    expect(editingSurface()).toBe("main");
+    focusedEditorIn(zoom).type("x");
+
+    historyKey(focusedEditorIn(zoom));
+    await tick();
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(editingOwner()).toBeNull();
+    expect(cellSel()).toBeNull();
+    focusedEditorIn(zoom).type("q");
+    expect(doc.byId.c1.raw.replace("q", "")).toBe("Alpha");
   });
 });

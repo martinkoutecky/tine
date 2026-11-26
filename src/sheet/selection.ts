@@ -419,6 +419,11 @@ export function cellAt(sel: CellSelInput): MatrixCell | null {
   return { blockId, row: sel.row, col: sel.col, rowSpan: 1, colSpan: 1 };
 }
 
+/** True when `sel`'s own occurrence is mounted (its exact view adapter is registered). */
+export function occurrenceMounted(sel: CellSelInput): boolean {
+  return adapters.has(instanceKey(sel.gridId, sel.surfaceId));
+}
+
 export function cellBlockId(sel: CellSelInput): string | null {
   const adapter = adapterFor(sel.gridId, sel.surfaceId);
   if (adapter?.blockIdAt) return adapter.blockIdAt(sel.row, sel.col, sel.rowId, sel.columnId);
