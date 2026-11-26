@@ -113,11 +113,9 @@ describe("a press inside a query's results (GH #1000)", () => {
     expect(pressBelongsToQueryResults(e)).toBe(false);
   });
 
-  it("a result row's own handlers keep a press on the row: the region is around them, not inside", () => {
+  it("a result's own press handler keeps a press on its text: the region is around it, not inside", () => {
     const { q } = queryHost();
-    for (const own of [".block-content", ".block-content-wrapper"]) {
-      expect(pressBelongsToQueryResults(press(q(own), q(".block-content"), 5, 5)), own).toBe(false);
-    }
+    expect(pressBelongsToQueryResults(press(q(".block-content"), q(".block-content"), 5, 5))).toBe(false);
   });
 
   // Sheet cells, opening text, reference rows and the fence switch ask only the

@@ -85,17 +85,13 @@ export function forbidsEditEntry(e: MouseEvent): boolean {
   return !!hit && host.contains(hit);
 }
 
-// GH #1000: a plain press inside a query's results does not start the edit
-// gesture of the block that holds the query. The results draw other blocks, so
-// a press there is theirs or nobody's (the marker GH #726 set for the context
-// menu, and the rule `.embed-block` has above). Opening the query there replaced
-// the results with its editor and the page jumped. Asked only by the two places
-// that start an outline block's edit gesture; every other caller of
-// `forbidsEditEntry` (sheet cells, opening text, reference rows, the fence
-// switch) keeps its own gesture. A Shift-press still extends the outline
-// selection. The region must lie inside the handler's element: a result row is
-// inside the region, so its own handlers are not refused. Logseq opens the
-// query from such a press.
+// GH #1000: a plain press inside a query's results. The results draw other
+// blocks, so the block that holds the query does not start its edit gesture
+// there: opening the query replaced the results with its editor and the page
+// jumped. One caller, Rendered's press handler, which cancels the press (default
+// and propagation) and opens nothing. A Shift-press is not one: it still extends
+// the outline selection. The region must lie inside the handler's element, so a
+// result row's own handlers, inside the region, are not refused.
 export function pressBelongsToQueryResults(e: MouseEvent): boolean {
   if (e.shiftKey) return false;
   const region = (e.target as Element | null)?.closest?.(`[${BLOCK_SURFACE_ATTR}]`);

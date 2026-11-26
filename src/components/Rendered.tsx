@@ -128,7 +128,9 @@ function RenderedContent(props: {
   const onMouseDown = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (readOnly()) return; // read-only org page — never enter the editor
-    if (forbidsEditEntry(e) || pressBelongsToQueryResults(e)) return;
+    if (forbidsEditEntry(e)) return;
+    // GH #1000: a press in a query's results opens nothing and stays here, without the default (no text range forms)
+    if (pressBelongsToQueryResults(e)) { e.preventDefault(); e.stopPropagation(); return; }
     e.stopPropagation(); // keep the row wrapper from arming a second gesture
     beginEditGesture(
       e,
