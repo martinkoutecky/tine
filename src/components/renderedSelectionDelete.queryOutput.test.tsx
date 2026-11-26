@@ -8,6 +8,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
+import * as queryMacro from "../editor/queryMacro";
 import { resetStore } from "../document";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { editingId } from "../editorController";
@@ -15,6 +16,7 @@ import { installKeybindings } from "../keybindings";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { Block } from "./Block";
+import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 
 beforeAll(async () => {
   await initParser();
@@ -32,7 +34,10 @@ afterEach(() => {
 const QUERY = "{{query (task TODO)}}";
 
 /** Mount one block holding `raw` on a writable page; its query answers nothing. */
-async function mountQueryBlock(raw: string): Promise<{ dispose: () => void; output: HTMLElement }> {
+async function mountQueryBlock(
+  raw: string,
+  notice?: { depth?: number; fail?: boolean; awaited: string },
+): Promise<{ dispose: () => void; output: HTMLElement }> {
   const page: FeedPage = {
     name: "Host", kind: "page", title: "Host", preBlock: null,
     roots: ["host"], format: "md", readOnly: false, guide: false,
@@ -40,14 +45,26 @@ async function mountQueryBlock(raw: string): Promise<{ dispose: () => void; outp
   const node: StoreNode = { id: "host", raw, collapsed: false, parent: null, page: "Host", children: [] };
   setDoc({ byId: { host: node }, pages: [page], feed: ["Host"], loaded: true });
   vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
+  if (notice?.fail) {
+    // The query component alone asks about the bare macro; every host here has
+    // more text around it, so only the component's own render throws.
+    const real = queryMacro.queryMacroExtent;
+    vi.spyOn(queryMacro, "queryMacroExtent").mockImplementation((text, ...rest) => {
+      if (text === QUERY) throw new Error("the query could not be drawn");
+      return real(text, ...rest);
+    });
+  }
+  const awaited = notice?.awaited ?? ".query-empty";
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const disposeBlock = render(() => <Block id="host" />, root);
+  const disposeBlock = render(() => (
+    <LinkDepthContext.Provider value={notice?.depth ?? 0}><Block id="host" /></LinkDepthContext.Provider>
+  ), root);
   const disposeKeys = installKeybindings();
-  await vi.waitFor(() => expect(root.querySelector(".query-empty")).not.toBeNull());
+  await vi.waitFor(() => expect(root.querySelector(awaited)).not.toBeNull());
   return {
     dispose: () => { disposeKeys(); disposeBlock(); },
-    output: root.querySelector(".query-empty") as HTMLElement,
+    output: root.querySelector(awaited) as HTMLElement,
   };
 }
 
@@ -144,6 +161,68 @@ describe("Delete over a selection in a query's generated output", () => {
     const m = await mountQueryBlock(`# ${QUERY}`);
     try {
       expect(m.output.closest(".query-block")?.getAttribute("data-foreign-source")).toBe("query");
+    } finally {
+      m.dispose();
+    }
+  });
+
+  // A notice drawn in place of a query is generated text too.
+  const notices: [string, { depth?: number; fail?: boolean; awaited: string }][] = [
+    ["the embed-depth warning", { depth: MAX_DEPTH_OF_LINKS + 1, awaited: ".link-depth-warning" }],
+    ["a failed region's notice", { fail: true, awaited: ".region-failure" }],
+  ];
+  const noticeHosts: [string, string][] = [
+    ["a heading", `# ${QUERY}`],
+    ["a heading:: property after text", `intro ${QUERY}\nheading:: 2`],
+    ["a quote", `> ${QUERY}`],
+    ["a callout", `> [!NOTE]\n> ${QUERY}`],
+  ];
+  describe.each(notices)("when %s stands in for the query", (_notice, how) => {
+    it.each(noticeHosts)("keeps the query in %s", async (_name, source) => {
+      const m = await mountQueryBlock(source, how);
+      try {
+        const first = firstText(m.output);
+        const last = lastText(m.output);
+        const ranges: [[Node, number], [Node, number]][] = [
+          [[first, 0], [first, 2]],
+          [[first, 0], [last, last.data.length]],
+        ];
+        for (const key of ["Delete", "Backspace"]) {
+          for (const [start, end] of ranges) {
+            select(start, end);
+            keydown(key);
+            expect(raw()).toBe(source);
+            expect(editingId()).toBeNull();
+          }
+        }
+      } finally {
+        m.dispose();
+      }
+    });
+  });
+
+  // A callout's title has no source position of its own: its ends map to an
+  // edge of the whole callout, chosen by how far into the callout's rendered
+  // text they lie, and that text counts what the query drew. With a short
+  // result the end of the title is past the middle, so the range ran to the
+  // callout's far edge and took the query with it.
+  it("keeps a query in a callout when the selection lies in the callout's title", async () => {
+    const source = `> [!NOTE] A title long enough to pass the middle\n> ${QUERY}`;
+    const m = await mountQueryBlock(source);
+    try {
+      const wrapper = document.querySelector('[data-block-id="host"] > .block-main .block-content-wrapper') as HTMLElement;
+      const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+      let title: Text | null = null;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if ((n.textContent ?? "").includes("long enough")) { title = n as Text; break; }
+      }
+      expect(title).toBeTruthy();
+      for (const key of ["Delete", "Backspace"]) {
+        select([title!, title!.data.indexOf("A title")], [title!, title!.data.length]);
+        keydown(key);
+        expect(raw()).toBe(source);
+        expect(editingId()).toBeNull();
+      }
     } finally {
       m.dispose();
     }
