@@ -13,7 +13,7 @@ export interface SettleOptions {
   /** A block id the scoped pages' published bytes must contain (block refs, Q2). */
   witness?: string;
   /** The window is leaving this graph for another (tine#1041): the host's wait
-   * is `departure`, which also passes a page no window shows whose exact draft
+   * is `departure`, which also passes a page no window is editing whose exact draft
    * the next launch recovers. Everything else is the same barrier. */
   departure?: boolean;
 }

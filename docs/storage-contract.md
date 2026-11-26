@@ -1652,7 +1652,22 @@ publication) answers `{refused: files}`: the current graph-relative files of
 the needed keys whose own state refused, and only those, as the host spells
 them now (a key is opaque and is never shown). A refused graph switch names
 them (tine#1041). It
-keeps the page while the notice stands. Any other refusal answers false (a
+keeps the page while the notice stands.
+A wait asked with `departure` (the window is leaving this graph for another)
+first sets aside each need the host may leave to its draft: a settled
+conflicted page at or past the needed version, asked without a block witness,
+that no window is subscribed to, with nothing working on its key, no surfaced
+draft error, and a durable draft that is exactly its text, base and version
+(`Host::exact_copy`, the answer the host's own stop gives for a page at risk).
+A window subscribes with `page_open`, which it sends when a block of the page
+enters editing, so a page that is only displayed is not subscribed. The
+returned revisions say nothing about a key set aside; its draft stays on disk
+and the next launch of the graph recovers and reports it. Only a switch to
+another graph asks with `departure`: a refresh of the same graph, restore,
+print, rename, window close and quit keep the full answer. Cost per wait step
+and need: one scan of the request queue for the key, and for an eligible key
+one comparison of the draft with the page; no file I/O and no IPC. Proof:
+`page_host/binding_departure_tests.rs`, `scripts/e2e-gh1041-switch-draft.mjs`. Any other refusal answers false (a
 failed call, a stale session, a host that ended); it keeps the page and asks
 again after a pause. A new session
 or the client's retirement ends the debt with the page; retirement settles a

@@ -596,7 +596,7 @@ export class HostClient {
 
   /** `publication`'s answer for a window leaving this graph for another
    * (tine#1041): true once the host says every need either published or is a
-   * page no window shows, left to the exact draft the next launch recovers.
+   * page no window is editing, left to the exact draft the next launch recovers.
    * It is not a publication answer: it marks nothing waited, settles no
    * pending revision and discharges no debt. */
   departure(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {

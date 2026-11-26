@@ -1047,7 +1047,7 @@ describe("a refused graph switch names its pages (tine#1041)", () => {
   });
 
   // Step 2: a switch to another graph asks both barriers for a departure, so a
-  // page no window shows, kept by its exact draft, does not hold it. Opening
+  // page no window is editing, kept by its exact draft, does not hold it. Opening
   // the first graph and refreshing the same graph ask for full publication.
   it("asks for a departure only when the target is another graph", async () => {
     const harness = await loadHarness(null);
