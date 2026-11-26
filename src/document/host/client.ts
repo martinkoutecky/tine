@@ -579,12 +579,18 @@ export class HostClient {
     return this.host.saveNow(this.session, keys);
   }
 
-  /** Whether every need published under this session: asks again while each
-   * bounded host wait passes, false on a terminal notice, a new session or the
-   * client's retirement (which settles a pending wait at once, R3). A true
-   * answer, whoever asked it (a close, a barrier, the data revision),
-   * discharges the publication debt it covers (J6). */
+  /** Whether every need published under this session (`publication`). */
   async published(needs: readonly PublishedNeed[]): Promise<boolean> {
+    return await this.publication(needs) === true;
+  }
+
+  /** True once every need published under this session: asks again while each
+   * bounded host wait passes. Otherwise the files the host refused for (a
+   * terminal notice), or none: a refusal naming no file, a failed call, a new
+   * session or the client's retirement (which settles a pending wait at once,
+   * R3). A true answer, whoever asked it (a close, a barrier, the data
+   * revision), discharges the publication debt it covers (J6). */
+  async publication(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {
     const session = this.session;
     const covered = new Map(needs.map(({ key, version }) => {
       const page = this.byKey.get(key);
@@ -592,28 +598,28 @@ export class HostClient {
     }));
     while (!this.retired) {
       const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
-      if (this.retired || this.session !== session) return false;
+      if (this.retired || this.session !== session) return [];
       if (result === null) continue;
-      if (result) {
-        for (const [key, { version, page }] of covered) {
-          if (page && this.byKey.get(key) === page) {
-            page.waited = Math.max(page.waited ?? version, version);
-          }
+      if (!result) return [];
+      if ("refused" in result) return result.refused;
+      for (const [key, { version, page }] of covered) {
+        if (page && this.byKey.get(key) === page) {
+          page.waited = Math.max(page.waited ?? version, version);
         }
-        for (const { key, version, rev } of result) {
-          const saved = covered.get(key);
-          if (!saved) continue;
-          const { page } = saved;
-          // The host's own-publication witness settles every pending revision
-          // at or below the version it published, whenever the wait started.
-          const base = page && this.byKey.get(key) === page ? page.pending.takeVersion(version) : null;
-          if (page && base) this.proved(page, base.instance, version, rev);
-        }
-        this.onChange();
       }
-      return result !== false;
+      for (const { key, version, rev } of result) {
+        const saved = covered.get(key);
+        if (!saved) continue;
+        const { page } = saved;
+        // The host's own-publication witness settles every pending revision
+        // at or below the version it published, whenever the wait started.
+        const base = page && this.byKey.get(key) === page ? page.pending.takeVersion(version) : null;
+        if (page && base) this.proved(page, base.instance, version, rev);
+      }
+      this.onChange();
+      return true;
     }
-    return false;
+    return [];
   }
 
   /** The host's publication debt under this session; false (unknown) after a

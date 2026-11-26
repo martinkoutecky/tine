@@ -40,9 +40,10 @@ pub(crate) fn author_name(explicit: Option<&str>) -> Result<String, String> {
     if let Some(name) = explicit {
         let name = name.trim();
         if name.is_empty() {
-            return Err(
-                "--author needs a name; `tine prop remove BLOCK tine.author` removes one".into(),
-            );
+            return Err(format!(
+                "--author needs a name; `{} prop remove BLOCK tine.author` removes one",
+                super::command_name()
+            ));
         }
         return Ok(name.into());
     }
@@ -209,6 +210,16 @@ fn stale(page: &PageId, message: impl Into<String>, extra: Value) -> ErrorBody {
     }
     body.detail = Some(detail);
     body
+}
+
+/// The page-properties refusal, naming the command the user can run. The
+/// catalog text is a literal that says `tine`.
+pub(super) fn page_properties_refusal(command: &str) -> String {
+    crate::i18n_shell::shell_text("en", "shell-cli-page-properties-refusal").replacen(
+        "tine prop set",
+        &format!("{command} prop set"),
+        1,
+    )
 }
 
 pub(super) fn refused(
@@ -889,7 +900,7 @@ pub(super) fn write_page_in_turn(
                 return Err(refused(
                     "page-properties",
                     Some(&read.page),
-                    crate::i18n_shell::shell_text("en", "shell-cli-page-properties-refusal"),
+                    page_properties_refusal(super::command_name()),
                 ));
             }
             return Err(refused(

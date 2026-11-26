@@ -430,6 +430,12 @@
       "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; tens-of-thousands scale and filter cost are measured in unit tests and the scale screenshot; phone drawer completion has component coverage."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh1041-switch-draft.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After a forced quit leaves a conflicted draft of a page deleted on disk, and the app reopens on another page, a graph switch is refused with a notice that names that page's path and has no action, and the graph is not switched.","blocking":true,"authority":"GH #1041; UI-GH1041-SWITCH-REFUSED-NAMES-PAGES"}],
+      "acceptableVariations": ["Notice wording beyond naming the page's path, notice layout, draft, save and render latency."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; orphan adoption as the way in; the count after three keys, opaque keys and other refusal reasons are covered by unit and render tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-all-graphs.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
       "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],
@@ -607,6 +613,7 @@
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
+        { "class": "core-operation", "userOutcome": "Started under another plain file name, the program's usage lines and a refusal's hint (answered by the serve owner it starts) print that name; under a name that is not one plain word they print tine (#1011).", "blocking": true, "authority": "GH #1011; the Beta's Linux packages install the command as tine-beta" },
         { "class": "core-operation", "userOutcome": "Page-property CLI edits, aliases and new-page header imports work with serve and app owners in Markdown and Org; a title edit updates the open page, and existing-page header-shape refusals explain page-property recovery (#839).", "blocking": true, "authority": "docs/contracts/cli-output.md page.prop; GH #839" },
         { "class": "exact-safety-interoperability", "userOutcome": "Explicit blank add authors refuse without changing the file; blank client TINE_AUTHOR defaults to agent and nonblank names are trimmed, even with an existing owner.", "blocking": true, "authority": "GH #930; docs/contracts/cli-output.md" },
         { "class": "core-operation", "userOutcome": "Six parallel tine add commands to one page all land while the real app owns the graph, with the page open in its window and with it closed (#842).", "blocking": true, "authority": "docs/contracts/cli-output.md Writes; GH #842" },
@@ -1293,7 +1300,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart. A composition left open when another window takes native focus (Quick Capture dismisses itself and keeps the draft, no compositionend) does not block ordinary typing or File capture after Quick Capture is reopened; the composition events are synthetic, the focus loss is real. A window-manager close request (Alt+F4) hides Quick Capture instead of destroying it: the draft is still there when the next --capture shows it, and typing and filing still work.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart. A composition left open when another window takes native focus (Quick Capture dismisses itself and keeps the draft, no compositionend) does not block ordinary typing or File capture after Quick Capture is reopened; the composition events are synthetic, the focus loss is real. A window-manager close request (Alt+F4) hides Quick Capture instead of destroying it: the draft is still there when the next --capture shows it, and typing and filing still work. A capture titled with another spelling of an existing page's name (`home` for pages/Home.md) files into that page's file, keeping its earlier text, and creates no second file.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

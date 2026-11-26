@@ -2378,6 +2378,42 @@ mod og_20d_guide_tests {
         }
     }
 
+    /// tine#1011: a packaged Tine Beta is started as `tine-beta`. A page that tells the
+    /// reader to run `tine …` gives that one substitution where its first command stands;
+    /// no step spells a second command.
+    #[test]
+    fn pages_with_tine_commands_give_the_packaged_beta_substitution() {
+        // These name a command while describing something else; nobody is told to run it.
+        let mentions = [
+            "Reference/Files, external edits, and backups",
+            "Reference/Platforms and mobile",
+        ];
+        let mut ruled = 0;
+        for t in GUIDE_TEMPLATES.iter() {
+            let Some(first) = t.markdown.lines().find(|line| line.contains("`tine ")) else {
+                continue;
+            };
+            assert!(
+                !t.markdown.contains("`tine-beta "),
+                "{} spells out a Beta command line",
+                t.title
+            );
+            if mentions.contains(&t.title) {
+                continue;
+            }
+            assert!(
+                first.contains("type `tine-beta`"),
+                "{}: the first `tine` command comes without the packaged Beta's: {first}",
+                t.title
+            );
+            ruled += 1;
+        }
+        assert_eq!(
+            ruled, 3,
+            "command line, quick capture, bring an existing graph"
+        );
+    }
+
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
     /// command and og's create-only export contract, and the guide index links it.
     #[test]
@@ -2386,6 +2422,7 @@ mod og_20d_guide_tests {
         for promised in [
             "tine --help",
             "tine --version",
+            "has its own command, `tine-beta`, so it can sit next to Tine",
             "tine open GRAPH",
             "tine capture",
             "tine export static GRAPH",

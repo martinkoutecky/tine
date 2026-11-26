@@ -70,6 +70,13 @@ export function deriveIdentityFiles(root, ship) {
     if (!pattern.test(conf)) throw new Error(`${confFile}: no match for ${pattern}`);
     conf = conf.replace(pattern, `$1${JSON.stringify(value)}`);
   }
+  // An identity's .deb and .rpm must share no path with another identity's, or
+  // the two cannot be installed together (tine#1011). The bundler names the
+  // command and the icons after `linuxBinaryName` (scripts/build-release-bundles.mjs
+  // passes it); the man pages' destinations are named here, from the same field.
+  const manPage = /^(\s+"\/?usr\/share\/man\/man1\/)[^"]+(": "\.\.\/docs\/tine)([^"]*)"/gm;
+  if (!manPage.test(conf)) throw new Error(`${confFile}: no man page destinations`);
+  conf = conf.replace(manPage, (_, start, source, rest) => `${start}${identity.linuxBinaryName}${rest}${source}${rest}"`);
   conf = conf.replace(/("icon": \[)([\s\S]*?)(\n    \])/,
     (_, start, entries, end) => start + entries.replace(/"icons(?:-beta)?\//g, `"${identity.iconDirectory}/`) + end);
   out[confFile] = conf;
