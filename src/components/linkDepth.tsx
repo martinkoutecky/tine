@@ -7,5 +7,5 @@ export const MAX_DEPTH_OF_LINKS = 5;
 export const LinkDepthContext = createContext(0);
 
 export function LinkDepthWarning(): JSX.Element {
-  return <p class="warning text-sm link-depth-warning">{t("link-depth-embed-depth-is-too-deep")}</p>;
+  return <p class="warning text-sm link-depth-warning" data-foreign-source="notice">{t("link-depth-embed-depth-is-too-deep")}</p>;
 }

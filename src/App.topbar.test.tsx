@@ -64,6 +64,26 @@ describe("topbar workspace placement", () => {
     expect(host.querySelector("[data-workspace-switcher-sidebar] [data-workspace-switcher]")).toBeNull();
   });
 
+  // GH #1024: in the toolbar the Workspace control is one of the grey icon buttons, without a caret; the
+  // sidebar's labelled switcher keeps its caret.
+  it.each(["fallback", "chosen"])("draws the %s toolbar Workspace control as an icon button without a caret", async (mount) => {
+    const host = document.body.appendChild(document.createElement("div"));
+    if (mount === "chosen") saveToolbarChoice({ bar: ["workspaces", "settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar"] });
+    setLeftSidebarOpen(mount === "chosen");
+    dispose = render(() => <App />, host);
+    const control = await vi.waitFor(() => {
+      const found = host.querySelector<HTMLElement>('header.topbar [data-workspace-switcher-compact="true"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const button = control.querySelector<HTMLButtonElement>("button[aria-haspopup='menu']")!;
+    expect(button.classList.contains("icon-btn")).toBe(true);
+    expect(button.getAttribute("aria-label")).toMatch(/workspace/i);
+    expect(control.querySelector(".workspace-switcher-caret")).toBeNull();
+    expect(button.querySelector(".workspace-switcher-mark")?.textContent).toBe("W");
+    if (mount === "chosen") expect(host.querySelector("[data-workspace-switcher-sidebar] .workspace-switcher-caret")).not.toBeNull();
+  });
+
   it("shares the page in view from the topbar, and is disabled when no page is open", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

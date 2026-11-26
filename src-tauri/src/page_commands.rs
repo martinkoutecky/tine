@@ -263,12 +263,16 @@ const PAGE_WAIT_BOUND: Duration = Duration::from_secs(5);
 /// For the window `session` (F1): witnessed own revisions once every need is published;
 /// `{ refused: files }` on a terminal notice for needed keys, naming their current
 /// files; false (a refusal naming none) when the session is no longer current or the host is down; null at
-/// `bound_ms` (at most 5 s), never success there (S1).
+/// `bound_ms` (at most 5 s), never success there (S1). With `departure` (the
+/// window is leaving this graph for another, tine#1041) the wait is
+/// `wait_departure`: an answer of revisions then lists only the needs that
+/// published, not the ones left to their exact drafts.
 #[tauri::command]
 pub(crate) async fn page_wait(
     session: u64,
     needs: Vec<PublishedNeed>,
     bound_ms: u64,
+    departure: bool,
     ctx: GraphContext<'_>,
 ) -> Result<Option<serde_json::Value>, String> {
     let needs: Vec<_> = needs
@@ -277,7 +281,11 @@ pub(crate) async fn page_wait(
         .collect();
     let bound = Duration::from_millis(bound_ms).min(PAGE_WAIT_BOUND);
     hosted(ctx, move |host| {
-        let (outcome, revisions, stuck) = host.wait_published(session, &needs, bound);
+        let (outcome, revisions, stuck) = if departure {
+            host.wait_departure(session, &needs, bound)
+        } else {
+            host.wait_published(session, &needs, bound)
+        };
         match outcome {
             PageOperation::Applied => Some(serde_json::json!(revisions)),
             // `wait_published` answers only Applied, Pending or Refused.

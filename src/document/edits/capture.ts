@@ -24,12 +24,12 @@ import { markDirty, flushPage, baseRevFor } from "../host/wiring";
  *  write reached disk. */
 export async function appendToTodayJournal(
   markdown: string,
-  inserted?: (name: string) => void,
+  inserted?: (name: string, ids: string[]) => void,
   shape?: (nodes: OutlineNode[]) => OutlineNode[],
 ): Promise<boolean> {
   const name = journalTitle(appNow());
   const nodes = parseOutline(markdown);
-  return captureOutlineInto(name, "journal", "exact", shape ? shape(nodes) : nodes, () => inserted?.(name));
+  return captureOutlineInto(name, "journal", "exact", shape ? shape(nodes) : nodes, (ids) => inserted?.(name, ids));
 }
 
 /** Append `markdown` at the END of journal `day` exactly (never a recomputed
@@ -63,19 +63,20 @@ export async function appendToJournalDay(
 /** Quick capture into a (new or existing) page the user named. The typed title
  *  writes to the page it resolves to, as a link with that text opens it (any
  *  spelling of the name, an alias, a date spelling of a journal day);
- *  `inserted` receives that page's name. Same single-writer guarantees as
+ *  `inserted` receives that page's name and the new root block ids, as soon as
+ *  they are in the store and before the flush. Same single-writer guarantees as
  *  {@link appendToTodayJournal}: routes through the live store + immediate flush,
  *  so it can't race a main-view edit of the same page into a conflict. */
 export async function captureToPage(
   title: string,
   markdown: string,
-  inserted?: (name: string) => void,
+  inserted?: (name: string, ids: string[]) => void,
   shape?: (nodes: OutlineNode[]) => OutlineNode[],
 ): Promise<boolean> {
   const name = title.trim();
   if (!name) return false;
   const nodes = parseOutline(markdown);
-  return captureOutlineInto(name, "page", "typed", shape ? shape(nodes) : nodes, (_, page) => inserted?.(page));
+  return captureOutlineInto(name, "page", "typed", shape ? shape(nodes) : nodes, (ids, page) => inserted?.(page, ids));
 }
 
 /** Append ONE query block (`query` macro text plus its `key:: value` properties,

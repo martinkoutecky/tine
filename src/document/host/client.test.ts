@@ -704,6 +704,22 @@ describe("close and move edges", () => {
     }
   });
 
+  // tine#1041: the host's departure answer says a need published or was left to
+  // its draft, so it must not discharge the page's publication debt.
+  it("a departure answer is no publication: the page stays owed until its own wait answers", async () => {
+    const { host, client, answers } = await owing();
+    let left: true | readonly string[] | undefined;
+    void client.departure([{ key: KEY, version: 4 }]).then((answer) => { left = answer; });
+    await tick();
+    expect(host.last("wait")).toEqual({ cmd: "wait", needs: [{ key: KEY, version: 4 }], departure: true });
+    answers[1](true);
+    await tick();
+    expect([left, client.owes("P"), client.isOpen("P"), host.count("close")]).toEqual([true, true, true, 0]);
+    answers[0](true);
+    await tick();
+    expect([client.owes("P"), host.count("close")]).toEqual([false, 1]);
+  });
+
   it("retirement settles a pending publication wait false and asks no more (R3)", async () => {
     const ctx = await setup();
     const { host, client } = ctx;

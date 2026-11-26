@@ -41,6 +41,30 @@ fn published(state: &State<ProductionIo, SystemClock>, pages: &Needs) -> Option<
     Some(witnesses)
 }
 
+/// Whether a window leaving the graph may leave this need behind (tine#1041):
+/// a conflicted page no window is subscribed to, settled at or past the
+/// needed version, whose exact durable draft the next launch recovers, with
+/// nothing working on its key. Every part is the host's state in this step;
+/// the draft part is `Host::exact_copy`, the answer the host's own stop gives
+/// for a page at risk. A need with a block witness is never left behind.
+fn left_to_its_draft(
+    state: &State<ProductionIo, SystemClock>,
+    (key, version, witness): &(String, u64, Option<String>),
+) -> bool {
+    let host = &state.progress.host;
+    let Logical::Settled(page) = host.logical(key) else {
+        return false;
+    };
+    page.conflict
+        && page.version >= *version
+        && witness.is_none()
+        && !host.subscriptions.contains(key)
+        && !host.busy(key)
+        && !host.vehicle_debt.contains(key)
+        && !state.progress.draft_error_names(key)
+        && host.exact_copy(key, page)
+}
+
 /// What a barrier wait's step found (§4.4).
 enum Barrier {
     /// Published, once these witnesses hold.
@@ -137,6 +161,31 @@ impl PageHost {
         needs: &Needs,
         bound: std::time::Duration,
     ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
+        self.wait(session, needs, bound, false)
+    }
+
+    /// `wait_published` for a window that is leaving this graph for another
+    /// (tine#1041): each step first sets aside the needs `left_to_its_draft`
+    /// holds for, then is `wait_published`'s step on the rest. A need set
+    /// aside is not published and gets no revision: the caller must not read
+    /// `Applied` as publication of it. One that stops qualifying is waited on
+    /// again from that step.
+    pub fn wait_departure(
+        &self,
+        session: u64,
+        needs: &Needs,
+        bound: std::time::Duration,
+    ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
+        self.wait(session, needs, bound, true)
+    }
+
+    fn wait(
+        &self,
+        session: u64,
+        needs: &Needs,
+        bound: std::time::Duration,
+        departure: bool,
+    ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
         let deadline = tine_core::clock::Instant::now() + bound;
         // After a witness that did not hold, the next ask waits for a step.
         let mut again = false;
@@ -149,7 +198,17 @@ impl PageHost {
                 }
                 let now = tine_core::clock::Instant::now();
                 if !std::mem::take(&mut first) {
-                    if let Some(witnesses) = published(state, &needs) {
+                    let rest: Vec<_>;
+                    let needs = if departure {
+                        rest = (needs.iter())
+                            .filter(|need| !left_to_its_draft(state, need))
+                            .cloned()
+                            .collect();
+                        &rest
+                    } else {
+                        &needs
+                    };
+                    if let Some(witnesses) = published(state, needs) {
                         let revisions = needs
                             .iter()
                             .filter_map(|(key, ..)| {
