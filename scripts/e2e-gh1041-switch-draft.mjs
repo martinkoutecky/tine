@@ -155,6 +155,8 @@ try {
       { timeout: 30_000, timeoutMsg: "the switch neither went through nor was refused" });
   }
   assert(await graphName() === "beta", `the switch was refused ${attempts} times over a draft no window shows`);
+  // The switch lands on beta's journal; its own Notes page shows beta's text.
+  await openPageByName(browser, "Notes");
   await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("Beta notes")),
     { timeout: 30_000, timeoutMsg: "beta's page did not show" });
   assert(JSON.stringify(draftNamespaces("base mine")) === JSON.stringify(namespaces), "the draft left alpha's drafts");
