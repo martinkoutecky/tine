@@ -5,7 +5,8 @@
 // any other version (or after the file changed since the Open) is a stale
 // conflict that writes nothing, a discard rereads the file, a barrier on a conflicted
 // or failed page (or whose file lacks the barrier's witness) fails, and such a
-// page stays owed; with `retryFailed`, a failed write is retried first, as the
+// page stays owed; a barrier that holds reports, as the host does, the version of
+// the page's last own write (none for a page this host never wrote); with `retryFailed`, a failed write is retried first, as the
 // host's backoff does. Not a test file itself.
 
 import { vi } from "vitest";
@@ -23,8 +24,11 @@ export interface FakeDisk {
 
 interface Held {
   name: string; version: number; rev: string | null; conflict: boolean; failed: boolean;
-  /** The text a failed write still owes its file (what the host retries). */
-  owed?: { dto: PageDto; kinds: EditKinds };
+  /** The text a failed write still owes its file (what the host retries), and
+   *  the version it was taken at. */
+  owed?: { dto: PageDto; kinds: EditKinds; version: number };
+  /** The host's own-save watermark: the version and revision of its last write. */
+  saved?: { version: number; rev: string };
 }
 
 export interface DiskHostOptions {
@@ -58,6 +62,7 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
     if (rev(key, state.name) !== state.rev) { state.conflict = true; return; }
     try {
       state.rev = disk.write(key, state.owed.dto, state.owed.kinds);
+      state.saved = { version: state.owed.version, rev: state.rev };
       state.failed = false;
       state.owed = undefined;
     } catch { /* still failing: the host keeps retrying */ }
@@ -91,7 +96,10 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
       if (stale) state.conflict = true;
       else {
         // A newer text that reached the file supersedes what a failed write still owed.
-        try { state.rev = disk.write(key, dto, kinds); state.conflict = false; state.failed = false; state.owed = undefined; } catch { state.failed = true; state.owed = { dto, kinds }; }
+        try {
+          state.rev = disk.write(key, dto, kinds);
+          Object.assign(state, { conflict: false, failed: false, owed: undefined, saved: { version: state.version, rev: state.rev } });
+        } catch { state.failed = true; state.owed = { dto, kinds, version: state.version }; }
       }
       took(id, key, state);
       return null;
@@ -113,7 +121,11 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
         const state = half.state!;
         state.version = ++version;
         if (rev(half.key, state.name) !== state.rev) state.conflict = true;
-        else try { state.rev = disk.write(half.key, half.dto, kinds); } catch { state.failed = true; state.owed = { dto: half.dto, kinds }; }
+        else try {
+          state.rev = disk.write(half.key, half.dto, kinds);
+          // As a submit: a newer text that reached the file supersedes a failed write.
+          Object.assign(state, { failed: false, owed: undefined, saved: { version: state.version, rev: state.rev } });
+        } catch { state.failed = true; state.owed = { dto: half.dto, kinds, version: state.version }; }
       }
       for (const half of halves) took(id, half.key, half.state!);
       return null;
@@ -140,8 +152,8 @@ export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHos
         if (state && (state.conflict || state.failed)) return false;
         return !need.witness || JSON.stringify(state ? disk.read(need.key, state.name) : null).includes(need.witness);
       }) ? needs.flatMap(({ key }) => {
-        const state = held.get(key);
-        return state ? [{ key, version: state.version, rev: state.rev }] : [];
+        const saved = held.get(key)?.saved;
+        return saved ? [{ key, ...saved }] : [];
       }) : false),
     // A delete the host applies: the fake disk models the files a test saves,
     // not every page the test loaded, so a delete answers as for a file that exists.

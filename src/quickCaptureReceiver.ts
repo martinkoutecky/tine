@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { appendToTodayJournal, captureToPage, flushPage } from "./document";
+import { appendToTodayJournal, captureToPage, flushPage, watchCapture } from "./document";
 import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type WriteOwner } from "./owned";
 import { pushToast } from "./toasts";
 import { msg } from "./i18n";
@@ -19,7 +19,11 @@ import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
  * Requests must carry the native capture-show binding generation; stale or
  * missing generations acknowledge false. The surface owner covers registration
  * and callbacks; writes capture bindingOwner before starting. Save failure
- * acknowledges false and preserves the sender's scratch. Dispose
+ * acknowledges false and preserves the sender's scratch. A retry of an
+ * inserted capture never inserts again: it acknowledges true only when the
+ * page is settled AND a save of Tine's own wrote a version that held the
+ * captured blocks (`watchCapture`); settled without that proof acknowledges
+ * false with `unproved`. Dispose
  * the returned listener when the app surface retires. */
 export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
   const owner = ownedWhen(live);
@@ -28,7 +32,9 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
   const receiptOwner = ownedWhen(() => true);
   const inFlight = new Map<string, Promise<boolean>>();
   // Pending insertions are retained independently of the completed-id cap.
-  const landed = new Map<string, { name: string; owner: WriteOwner }>();
+  const landed = new Map<string, { name: string; owner: WriteOwner; watch: ReturnType<typeof watchCapture> }>();
+  // Retries whose page settled without the proof above.
+  const unproved = new Set<string>();
   const uncertain = new Set<string>();
   // A failed receipt lookup proves neither insertion nor non-insertion. Keep
   // the retry identity, but offer only a plain retry until custody is known.
@@ -64,6 +70,7 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     if (id) void emitTo("capture", "quick-capture-ack", { id, ok,
       ...(!ok && (landed.has(id) || uncertain.has(id) || unconfirmed.has(id)) ? { landed: true } : {}),
       ...(!ok && uncertain.has(id) ? { closedGraph: true } : {}),
+      ...(!ok && unproved.has(id) ? { unproved: true } : {}),
     } satisfies QuickCaptureAck);
   };
   if (!owner()) return () => {};
@@ -143,9 +150,20 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
             return false;
           }
         }
-        const inserted = (name: string) => { if (id) landed.set(id, { name, owner: saveOwner }); };
+        const inserted = (name: string, ids: string[]) => {
+          if (id) landed.set(id, { name, owner: saveOwner, watch: watchCapture(name, ids) });
+        };
+        // The barrier says the page is settled now; only the watch says a save
+        // held this capture (Use disk settles the page without it).
+        const retried = async (inserted: NonNullable<typeof prior>) => {
+          unproved.delete(id!);
+          if (!inserted.owner() || !await flushPage(inserted.name)) return false;
+          if (inserted.watch?.proved) return true;
+          unproved.add(id!);
+          return false;
+        };
         const result = await writeOwned(saveOwner, prior
-          ? (prior.owner() ? flushPage(prior.name) : Promise.resolve(false))
+          ? retried(prior)
           : destination.kind === "page" ? captureToPage(destination.name, text, inserted, shape) : appendToTodayJournal(text, inserted, shape));
         ok = result.kind === "current" && result.value;
         if (ok && id) {
@@ -181,10 +199,18 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
     const ok = await promise;
     if (id) {
       inFlight.delete(id);
-      if (ok) { landed.delete(id); rememberCompleted(id, ok); }
+      if (ok) {
+        landed.get(id)?.watch?.release();
+        landed.delete(id);
+        rememberCompleted(id, ok);
+      }
     }
     ack(id, ok);
   }), (unlisten) => unlisten());
-  return registration.kind === "current" ? registration.value : () => {};
+  if (registration.kind !== "current") return () => {};
+  return () => {
+    for (const { watch } of landed.values()) watch?.release();
+    registration.value();
+  };
 }
 

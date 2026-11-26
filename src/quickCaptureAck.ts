@@ -13,6 +13,9 @@ export interface QuickCaptureAck {
   landed?: boolean;
   /** The receiver cannot prove this insertion after reload/rebinding. */
   closedGraph?: boolean;
+  /** The destination page is settled, but no save of Tine's own is known to have
+   * written a version that held this capture (it may have been discarded). */
+  unproved?: boolean;
 }
 
 export const QUICK_CAPTURE_ACK_TIMEOUT_MS = 5000;

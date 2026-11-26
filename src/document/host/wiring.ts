@@ -35,7 +35,7 @@ import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
-import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
+import { HostClient, reviewedDiskToken, type BaselineRev, type BlockWatch, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
 import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
@@ -675,6 +675,12 @@ export function refuseConflictedMove(pages: Iterable<string>): boolean {
 }
 
 // ------------------------------------------------------------------ barriers
+
+/** Watch whether Tine's own save writes a version of `name` that held the blocks
+ * `ids` (`HostClient.watchBlocks`). Null when no client is bound. */
+export function watchCapture(name: string, ids: readonly string[]): BlockWatch | null {
+  return host()?.watchBlocks(name, ids) ?? null;
+}
 
 /** Send the page's input and wait until the host published it (`settle`). */
 export async function flushPage(name: string): Promise<boolean> {

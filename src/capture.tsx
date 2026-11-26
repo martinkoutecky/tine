@@ -98,6 +98,8 @@ function Capture() {
   const [captureStatus, setCaptureStatus] = createSignal<"idle" | "saving" | "error">("idle");
   const [captureMessage, setCaptureMessage] = createSignal("");
   const [previousGraph, setPreviousGraph] = createSignal(false);
+  // The graph window could not confirm a retried capture was ever saved.
+  const [unproved, setUnproved] = createSignal(false);
   const submitBinding = () => shortcuts()["editor/quick-capture-file"] ?? "mod+shift+enter";
   const bulletHint = () => !bindingAlternatives(submitBinding()).length
     ? "Edit as usual; use File capture to submit"
@@ -507,6 +509,7 @@ function Capture() {
         disposePendingCapture();
         setCaptureStatus("error");
         setPreviousGraph(false);
+        setUnproved(false);
         setCaptureMessage(t("capture-retry-unconfirmed"));
         scheduleFit();
       };
@@ -557,7 +560,9 @@ function Capture() {
           void finish(e.payload.ok).then(() => {
             if (!submitOwner()) return;
             setPreviousGraph(!!e.payload.closedGraph);
+            setUnproved(!!e.payload.unproved);
             if (e.payload.closedGraph) setCaptureMessage(t("capture-previous-graph"));
+            else if (e.payload.unproved) setCaptureMessage(t("capture-unproved"));
           });
         });
         if (pendingCapture !== pending) {
@@ -581,7 +586,7 @@ function Capture() {
     // or an uncertain retry identity.
     if (retry || unconfirmedText) {
       setCaptureStatus("error");
-      if (retry && !previousGraph()) setCaptureMessage(t("capture-retry-unconfirmed"));
+      if (retry && !previousGraph() && !unproved()) setCaptureMessage(t("capture-retry-unconfirmed"));
       void hideWindow();
       return;
     }
@@ -597,9 +602,10 @@ function Capture() {
     // Explicitly retire the uncertain attempt, keeping every character for the
     // user to reconcile against the previous graph before filing a new request.
     retry = undefined;
+    setCaptureMessage(t(unproved() ? "capture-new-request-unproved" : "capture-new-request"));
     setPreviousGraph(false);
+    setUnproved(false);
     setCaptureStatus("idle");
-    setCaptureMessage(t("capture-new-request"));
   };
 
   const captureApi: CaptureApi = {
@@ -777,7 +783,7 @@ function Capture() {
               classList={{ "capture-status-error": captureStatus() === "error" }}
             >
               {captureMessage()}
-              <Show when={previousGraph()}>
+              <Show when={previousGraph() || unproved()}>
                 <button type="button" data-testid="capture-start-new" disabled={captureStatus() === "saving"} onClick={startNewCapture}>{t("capture-start-new")}</button>
               </Show>
             </div>

@@ -135,6 +135,35 @@ it("F2: a closed-graph acknowledgement explains uncertainty and Cancel keeps the
   await ack(fresh.id, { ok: true });
 });
 
+it("an acknowledgement that the save is unproved keeps the text and the retry, and offers a new capture", async () => {
+  setRaw(roots()[0], "maybe discarded thought");
+  const request = await submit();
+  await ack(request.id, { ok: false, landed: true });
+  expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
+  // The retry reaches a settled page that no save of Tine's is known to have written the capture to.
+  const retry = await submit();
+  expect(retry.id).toBe(request.id);
+  await ack(retry.id, { ok: false, landed: true, unproved: true });
+  expect(scratch()).toContain("maybe discarded thought");
+  expect(document.body.textContent).toContain("can't confirm this capture was saved");
+  // Hiding the window keeps that explanation, the text and the same request.
+  h.api!.cancel();
+  await Promise.resolve();
+  expect(document.body.textContent).toContain("can't confirm this capture was saved");
+  expect((await submit()).id).toBe(request.id);
+  await ack(request.id, { ok: false, landed: true, unproved: true });
+  const next = document.querySelector<HTMLButtonElement>("[data-testid=capture-start-new]")!;
+  expect(next).not.toBeNull();
+  next.click();
+  expect(scratch()).toContain("maybe discarded thought");
+  expect(document.body.textContent).toContain("already on the page");
+  expect(document.body.textContent).not.toContain("previous graph");
+  expect(document.querySelector("[data-testid=capture-start-new]")).toBeNull();
+  const fresh = await submit();
+  expect(fresh.id).not.toBe(request.id);
+  await ack(fresh.id, { ok: true });
+});
+
 it("FU2: cancelling before any acknowledgement keeps a plain retry", async () => {
   setRaw(roots()[0], "still waiting for acknowledgement");
   const request = await submit();
