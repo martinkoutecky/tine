@@ -1482,7 +1482,16 @@ try {
     timeoutMsg: "PDF Find did not locate and select the fixture's text",
   });
   if (fs.readFileSync(sidecar, "utf8") !== findSidecarBefore) throw new Error("PDF Find changed annotation bytes");
-  await browser.$(".pdf-find-input").clearValue();
+  // Emptied as a user empties it. The driver's own clear left the query, and
+  // so its painted match, in place in this runtime; while the match was the
+  // selection, focusing the box hid that.
+  await browser.$(".pdf-find-input").click();
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["Backspace"]);
+  await browser.waitUntil(async () => (await browser.$(".pdf-find-input").getValue()) === "", {
+    timeout: 5000,
+    timeoutMsg: "select all and Backspace did not empty the PDF Find box",
+  });
   await browser.waitUntil(() => browser.execute(() =>
     !globalThis.CSS?.highlights?.has("tine-pdf-find") && !window.getSelection()?.toString()), {
     timeout: 5000,
