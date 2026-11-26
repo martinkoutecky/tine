@@ -54,6 +54,10 @@ const undoStack: UndoEntry[] = [];
 let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
 let undoSuppressionDepth = 0;
+let replaying = false;
+/** True while undo or redo replays an entry and restores its context. An editor that this closes must not
+ *  write its block: the write would be a new edit and clear the stack the action has just filled. */
+export const historyReplaying = () => replaying;
 // Bumped on every stack change so `undoTopTag` is reactive (query crossing notice).
 const [historyRev, setHistoryRev] = createSignal(0);
 const bumpHistory = () => setHistoryRev((n) => n + 1);
@@ -501,14 +505,17 @@ export function undo(): boolean {
   if (stale.length) { discardStaleHistory(stale); return false; }
   const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
   const before = entry.kind === "snap" && entry.dirty.length > 1 ? capturePages(entry.dirty) : null;
-  const inverse = applyEntry(entry);
-  if (before) void persistTransfer(before, "replace-page", transferOrder(entry, inverse));
-  redoStack.push(inverse);
-  lastUndoTag = null;
-  bumpHistory();
-  endEdit("undo");
-  restoreEntryContext(entry.context);
-  restoreViewport?.();
+  replaying = true;
+  try {
+    const inverse = applyEntry(entry);
+    if (before) void persistTransfer(before, "replace-page", transferOrder(entry, inverse));
+    redoStack.push(inverse);
+    lastUndoTag = null;
+    bumpHistory();
+    endEdit("undo");
+    restoreEntryContext(entry.context);
+    restoreViewport?.();
+  } finally { replaying = false; }
   return true;
 }
 
@@ -532,14 +539,17 @@ export function redo() {
   }
   const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
   const before = entry.kind === "snap" && entry.dirty.length > 1 ? capturePages(entry.dirty) : null;
-  const inverse = applyEntry(entry);
-  if (before) void persistTransfer(before, "replace-page", transferOrder(entry, inverse));
-  undoStack.push(inverse);
-  lastUndoTag = null;
-  bumpHistory();
-  endEdit("redo");
-  restoreEntryContext(entry.context);
-  restoreViewport?.();
+  replaying = true;
+  try {
+    const inverse = applyEntry(entry);
+    if (before) void persistTransfer(before, "replace-page", transferOrder(entry, inverse));
+    undoStack.push(inverse);
+    lastUndoTag = null;
+    bumpHistory();
+    endEdit("redo");
+    restoreEntryContext(entry.context);
+    restoreViewport?.();
+  } finally { replaying = false; }
 }
 
 /** Data replay and opposite-stack insertion are complete before this function is
