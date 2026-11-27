@@ -358,6 +358,10 @@ export interface PageInventoryEntry {
    *  alias opening. Absent means the row has none; no view
    *  derives one from the name's prefix. */
   parent?: { name: string; kind: PageKind };
+  /** A top node of the namespace tree even with nothing below it (the store's
+   *  `InventoryEntry::namespace_root`: a day without a parent whose title has a
+   *  nonempty namespace prefix). Absent means false. */
+  namespace_root?: boolean;
   /** Frozen published v1 compatibility. Live inventories never set it. */
   empty_alias?: boolean;
   /** Set when the name contains `/` but is not a namespace name (Logseq's

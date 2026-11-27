@@ -37,7 +37,7 @@ vi.mock("../backend", () => ({ backend: () => backendMock }));
 import { NamespaceCrumb, NamespaceHierarchy, NamespaceMacro, buildNamespaceTree } from "./Namespace";
 import { createSignal } from "solid-js";
 import { resetReferenceSectionState } from "../referenceSectionState";
-import { allPageNames, namespaceTarget, patchPageIndex, refreshPageIndex, resetPageIndex } from "../pageIndex";
+import { allPageNames, namespaceTarget, refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { route } from "../router";
 import { setJournalFormats } from "../journal";
 import { setGraphMeta } from "../graphSession";
@@ -220,11 +220,19 @@ describe("slash days in the namespace tree", () => {
 
   it("keeps both swapped-slash days and a same-day-prefix day as childless top nodes", async () => {
     // yyyy-dd-MM/0: 2 Nov shows 2026-02-11/0 and 11 Feb 2026-11-02/0; the
-    // store accepts neither ISO prefix (equal depth), so neither row has one.
-    const names = await hold([journal("2026-02-11/0", 20261102), journal("2026-11-02/0", 20260211)]);
+    // store accepts neither ISO prefix (equal depth): both are its roots.
+    const root = { namespace_root: true };
+    const names = await hold([journal("2026-02-11/0", 20261102, root), journal("2026-11-02/0", 20260211, root)]);
     expect(namespaceTarget("2026-02-11/0", true)).toBeNull();
     expect(shape(names)).toEqual([["2026-02-11/0", "journal", []], ["2026-11-02/0", "journal", []]]);
-    expect(shape(await hold([journal("2026-11-02/0", 20261102)]))).toEqual([["2026-11-02/0", "journal", []]]);
+    expect(shape(await hold([journal("2026-11-02/0", 20261102, root)]))).toEqual([["2026-11-02/0", "journal", []]]);
+  });
+
+  it("shows a childless day only when the store makes it a root, whatever its spelling", async () => {
+    // `//yyyy-MM-dd`, `///yyyy-MM-dd`: every prefix folds to an empty key, so
+    // the store marks no root; the tree tests no spelling of its own.
+    expect(shape(await hold([journal("//2026-11-02", 20261102, { key: "/2026-11-02" }), journal("///2026-11-03", 20261103, { key: "//2026-11-03" })]))).toEqual([]);
+    expect(shape(await hold([journal("2026-11-02/0", 20261102)]))).toEqual([]);
   });
 
   it("nests a day under its accepted ordinary prefix and not the reverse (mixed cycle)", async () => {
@@ -237,7 +245,7 @@ describe("slash days in the namespace tree", () => {
 
   it("keeps a day whose month is only an alias as a top node, and lists no alias node", async () => {
     const names = await hold([
-      journal("2026/11/02", 20261102, { parent: { name: "2026/11", kind: "page" } }),
+      journal("2026/11/02", 20261102, { namespace_root: true }),
       { ...ordinary("2026/11", { namespace_excluded: true }), target: { kind: "alias", owners: ["pages/Owner.md"] } },
       { ...ordinary("Owner"), target: { kind: "existing", id: "pages/Owner.md", others: [] } },
     ]);
@@ -246,7 +254,7 @@ describe("slash days in the namespace tree", () => {
 
   it("drops an ordinary row without a parent and its crumb opens what the prefix links to", async () => {
     setJournalFormats("yyyy-dd-MM/0", "yyyy_MM_dd");
-    const names = await hold([journal("2026-02-11/0", 20261102), ordinary("2026-11-02/notes")]);
+    const names = await hold([journal("2026-02-11/0", 20261102, { namespace_root: true }), ordinary("2026-11-02/notes")]);
     expect(shape(names)).toEqual([["2026-02-11/0", "journal", []]]);
     const root = document.createElement("div");
     document.body.append(root);
@@ -257,14 +265,15 @@ describe("slash days in the namespace tree", () => {
     } finally { dispose(); }
   });
 
-  it("attaches a blank day once a delta lists its month, and detaches it when the month goes", async () => {
-    const day = journal("2026/12/01", 20261201, { parent: { name: "2026/12", kind: "page" } });
-    await hold([day], "20");
+  it("places a blank day by each fresh read as its month comes and goes", async () => {
+    // The store refetches when a month's row comes or goes under a blank day
+    // (no delta carries the day's new place).
     const tree = () => shape(allPageNames());
+    await hold([journal("2026/12/01", 20261201, { namespace_root: true })], "20");
     expect(tree()).toEqual([["2026/12/01", "journal", []]]);
-    expect(patchPageIndex(21n, { keys: ["2026/12"], entries: [ordinary("2026/12")] })).not.toBeNull();
+    await hold([journal("2026/12/01", 20261201, { parent: { name: "2026/12", kind: "page" } }), ordinary("2026/12")], "21");
     expect(tree()).toEqual([["2026/12", "page", ["01"]]]);
-    expect(patchPageIndex(22n, { keys: ["2026/12"], entries: [] })).not.toBeNull();
+    await hold([journal("2026/12/01", 20261201, { namespace_root: true })], "22");
     expect(tree()).toEqual([["2026/12/01", "journal", []]]);
   });
 });

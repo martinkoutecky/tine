@@ -371,14 +371,24 @@ export function linkTarget(name: string): LinkDestination {
  *  it gives none or does not list the name. Nothing is derived from the
  *  name's prefix here. */
 export function namespaceTarget(name: string, parent = false, kind?: PageKind): LinkDestination | null {
-  ensureInstalled();
-  const key = pageIdentityKey(name);
-  const answer = nameAnswer(key);
-  const entry = kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
-    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? journalRowIn(answer, name, nameAnswer);
+  const entry = namespaceEntry(name, kind);
   if (kind && (!entry || entry.namespace_excluded)) return null;
   if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
   return entry?.parent ?? null;
+}
+
+/** Whether the store makes `name`'s row a namespace tree top node even with
+ *  nothing below it (`InventoryEntry::namespace_root`). O(1). */
+export function isNamespaceRoot(name: string): boolean {
+  return namespaceEntry(name)?.namespace_root === true;
+}
+
+function namespaceEntry(name: string, kind?: PageKind): PageInventoryEntry | undefined {
+  ensureInstalled();
+  const key = pageIdentityKey(name);
+  const answer = nameAnswer(key);
+  return kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
+    : answer?.pages.get(key) ?? answer?.journals.get(key) ?? journalRowIn(answer, name, nameAnswer);
 }
 
 /** Typed entity navigation preserves an absent day's safe opening spelling. */

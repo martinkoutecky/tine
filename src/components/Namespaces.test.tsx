@@ -5,7 +5,7 @@ import { bumpGraphEpoch } from "../graphSession";
 import { resetPageIndex } from "../pageIndex";
 import { resetTabsToJournals } from "../router";
 import type { PaneRouter } from "../router";
-import { resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
+import { contextMenu, resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
 import type { PageInventoryEntry } from "../types";
 import { withOrdinaryParent } from "../namespaceInventory.test.support";
 import { Namespaces, NAMESPACES_ROW_HEIGHT } from "./Namespaces";
@@ -158,6 +158,22 @@ describe("the Namespaces view", () => {
       const notes = rows.find((el) => el.title === "Project/Notes")!;
       notes.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
       expect(router.openPageTargetInNewTab).toHaveBeenCalledWith({ name: "Project/Notes", pageKind: "page" });
+    } finally { dispose(); }
+  });
+
+  it("gives a journal row's menu (so its favorite) and opening the journal it is", async () => {
+    // A slash day whose month is only an alias: the store makes it a root.
+    const day: PageInventoryEntry = {
+      key: "2026/11/02", name: "2026/11/02", is_journal: true, day: 20261102, namespace_root: true,
+      target: { kind: "existing", id: "journals/2026_11_02.md", others: [] },
+    };
+    const { host, router, dispose } = await mountNamespaces([day, existing("Plain")]);
+    try {
+      const row = host.querySelector<HTMLElement>(".ns-view-row")!;
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 3, clientY: 4 }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "2026/11/02", pageKind: "journal" });
+      host.querySelector<HTMLElement>(".ns-view-open")!.click();
+      expect(router.openPageTarget).toHaveBeenCalledWith({ name: "2026/11/02", pageKind: "journal" });
     } finally { dispose(); }
   });
 

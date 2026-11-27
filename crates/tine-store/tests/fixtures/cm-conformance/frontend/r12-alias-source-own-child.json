@@ -95,10 +95,6 @@
       },
       "name": "ML/alias",
       "namespace_excluded": true,
-      "parent": {
-        "kind": "page",
-        "name": "ML"
-      },
       "target": {
         "kind": "alias",
         "owners": [
@@ -111,10 +107,6 @@
       "is_journal": false,
       "key": "ml/child",
       "name": "ML/child",
-      "parent": {
-        "kind": "page",
-        "name": "ML"
-      },
       "target": {
         "id": "pages/ML%2Fchild.md",
         "kind": "existing",
@@ -126,10 +118,6 @@
       "is_journal": false,
       "key": "ml/linked",
       "name": "ML/linked",
-      "parent": {
-        "kind": "page",
-        "name": "ML"
-      },
       "target": {
         "id": "pages/ML%2Flinked.md",
         "kind": "absent"

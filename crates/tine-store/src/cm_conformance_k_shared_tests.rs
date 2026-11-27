@@ -428,10 +428,10 @@ fn tree_rows(rows: &Value) -> BTreeMap<Page, BTreeSet<Page>> {
 }
 
 /// The namespace tree as the inventory gives it: a row's parent is its typed
-/// `parent`, the store's one answer (none when absent); the
-/// edge counts only when the parent is a listed page. Against the model's
-/// `tree` (every page with its children) and `namespaceTree` (the rows with a
-/// parent or a child).
+/// `parent`, the store's one answer (none when absent; a parent outside the
+/// listed pages is a difference, not dropped). Against the model's `tree`
+/// (every page with its children) and `namespaceTree` (the rows with a parent
+/// or a child, and the rows the store marks `namespace_root`).
 fn compare_trees(
     journal: &JournalFormat,
     real: &[&super::super::store_crate::InventoryEntry],
@@ -440,10 +440,13 @@ fn compare_trees(
 ) -> Vec<Diff> {
     let mut tine: BTreeMap<Page, BTreeSet<Page>> =
         pages.iter().map(|p| (p.clone(), BTreeSet::new())).collect();
+    let mut roots = BTreeSet::new();
     for e in real {
         let page = entry_page(journal, e);
-        let parent = e.parent.as_ref().map(|link| link_page(journal, link));
-        if let Some(parent) = parent.filter(|parent| pages.contains(parent)) {
+        if e.namespace_root {
+            roots.insert(page.clone());
+        }
+        if let Some(parent) = e.parent.as_ref().map(|link| link_page(journal, link)) {
             tine.entry(parent).or_default().insert(page);
         }
     }
@@ -452,7 +455,7 @@ fn compare_trees(
     };
     let namespace = |tree: &BTreeMap<Page, BTreeSet<Page>>| -> BTreeMap<Page, BTreeSet<Page>> {
         tree.iter()
-            .filter(|(page, _)| has_edge(tree, page))
+            .filter(|(page, _)| roots.contains(*page) || has_edge(tree, page))
             .map(|(page, children)| (page.clone(), children.clone()))
             .collect()
     };

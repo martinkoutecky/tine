@@ -10,7 +10,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
-import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, linkTarget, namespaceTarget } from "../pageIndex";
+import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, isNamespaceRoot, linkTarget, namespaceTarget } from "../pageIndex";
 import { isPublishedExport } from "../publishedBackend";
 import { EmojiText } from "../render/emoji";
 import { PageReferenceLabel } from "../render/PageReferenceLabel";
@@ -80,14 +80,21 @@ export interface NsNode {
   kind?: PageKind;
 }
 
+/** The typed page a tree row's actions target: the row's inventory kind, an
+ *  absent day by its safe opening spelling (`entityOpening`). Every
+ *  namespace view's row menu, favorite and opening read it. */
+export function nsNodeTarget(node: NsNode): { name: string; kind: PageKind } {
+  return entityOpening(node.full, node.kind ?? "page");
+}
+
 /** The namespace tree of the inventory's names (CM step 2 batch 10, model rule 1):
  *  every node is a listed page, nested under the store's tree parent
- *  (`InventoryEntry::parent`) when that page is listed. Rust excludes
+ *  (`InventoryEntry::parent`, always a listed page). Rust excludes
  *  alias-only names from this universe.
  *  The backend lists every namespace parent
  *  (`InventoryEntry.namespace_parent`), so no level is synthesized here; a name
- *  without a listed parent is a top node, shown when something lies below it or
- *  when it is a day whose title has a nonempty prefix. `seg` is
+ *  without a parent is a top node, shown when something lies below it or
+ *  when the store marks it a root (`InventoryEntry::namespace_root`). `seg` is
  *  the part of the name below its parent. Names that are not
  *  namespace names (no `/`, or the store's `not_namespace`: `./x`, a URL; model
  *  round 10, S15) and have no listed name below them have no node.
@@ -131,20 +138,19 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
       if (wanted.has(key) && !nodes.has(key) && isNamespacePage(name, rawKey)) nodes.set(key, { seg: name, full: name, children: [], ...(target.kind === "journal" ? { kind: target.kind } : {}) });
     }
   });
-  // The live tree attaches each node below the store's one parent answer
-  // (`namespaceTarget(_, true)`) when that page is a node; an absent answer
-  // is final, so no node gains a more distant ancestor (model round 11, C12;
-  // A day left without a parent stays a top node when its
-  // title has a nonempty prefix, even with nothing below it.
+  // The live tree attaches each node below exactly the store's parent
+  // (`namespaceTarget(_, true)`, always a listed page) and keeps a childless
+  // top node only when the store says it is a root (`isNamespaceRoot`); an
+  // absent parent is final, so no node gains a more distant ancestor.
   const roots: NsNode[] = [];
   const placed = new Set<NsNode>();
   const kept = new Set<NsNode>();
   for (const [node, segs] of slashed) {
     let parent: NsNode | undefined;
-    // The label is the part below the immediate nonempty prefix.
+    // The label is the part below the parent.
     let depth = segs.length - 1;
-    while (depth > 0 && !segs.slice(0, depth).join("/")) depth--;
     if (legacy) {
+      while (depth > 0 && !segs.slice(0, depth).join("/")) depth--;
       const candidate = nodes.get(typedKey(segs.slice(0, depth).join("/")));
       if (depth > 0 && candidate !== node) parent = candidate;
       if (!parent) {
@@ -166,7 +172,7 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
       }
     } else {
       roots.push(node);
-      if (node.kind === "journal" && depth > 0) kept.add(node);
+      if (!legacy && isNamespaceRoot(node.full)) kept.add(node);
     }
   }
   const pending = [roots];
@@ -212,7 +218,7 @@ function NsNodeView(props: {
           {...nsLink(props.node.full, props.onActiveNavigationComplete, false, props.node.kind)}
           onContextMenu={(e) => {
             if (!shouldOpenTextContextMenu(e.target)) return;
-            const target = entityOpening(props.node.full, props.node.kind ?? "page");
+            const target = nsNodeTarget(props.node);
             props.onPageContextMenu?.(e, target.name, target.kind);
           }}
         >

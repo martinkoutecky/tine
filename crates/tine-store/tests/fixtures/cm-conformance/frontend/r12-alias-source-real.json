@@ -110,10 +110,6 @@
       "is_journal": false,
       "key": "ml/x",
       "name": "ML/x",
-      "parent": {
-        "kind": "page",
-        "name": "ML"
-      },
       "target": {
         "id": "pages/ML%2Fx.md",
         "kind": "existing",

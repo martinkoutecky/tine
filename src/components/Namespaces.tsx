@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { t } from "../i18n";
 import type { PaneRouter } from "../router";
+import type { PageKind } from "../types";
 import { allPageNames, allPages } from "../pages";
 import { installPageIndex } from "../pageIndex";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
@@ -10,7 +11,7 @@ import { PageIcon } from "./PageIcon";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { newResizeObserver } from "../windowRealm";
-import { namespaceTreeFor } from "./Namespace";
+import { namespaceTreeFor, nsNodeTarget } from "./Namespace";
 import { visibleRange } from "../allPagesList";
 import {
   allExpanded,
@@ -74,12 +75,12 @@ export function Namespaces(props: { router: PaneRouter }): JSX.Element {
     setExpanded(next);
   };
 
-  const openPage = (name: string, event: MouseEvent) => {
+  const openPage = ({ name, kind }: { name: string; kind: PageKind }, event: MouseEvent) => {
     const dest = internalLinkDest(event);
-    if (dest === "sidebar") openPageInSidebar(name, "page");
-    else if (dest === "background") props.router.openPageTargetInNewTab({ name, pageKind: "page" });
-    else if (dest === "pane") void openRouteInOtherPane({ kind: "page", name, pageKind: "page" });
-    else props.router.openPageTarget({ name, pageKind: "page" });
+    if (dest === "sidebar") openPageInSidebar(name, kind);
+    else if (dest === "background") props.router.openPageTargetInNewTab({ name, pageKind: kind });
+    else if (dest === "pane") void openRouteInOtherPane({ kind: "page", name, pageKind: kind });
+    else props.router.openPageTarget({ name, pageKind: kind });
   };
 
   return (
@@ -121,6 +122,7 @@ export function Namespaces(props: { router: PaneRouter }): JSX.Element {
                   const entry = () => entries()[index];
                   const hasChildren = () => entry().node.children.length > 0;
                   const name = () => entry().node.full;
+                  const target = () => nsNodeTarget(entry().node);
                   return (
                     <div
                       class="all-pages-row ns-view-grid ns-view-row"
@@ -131,7 +133,7 @@ export function Namespaces(props: { router: PaneRouter }): JSX.Element {
                       onMouseDown={internalLinkMouseDown}
                       onContextMenu={(event) => {
                         event.preventDefault();
-                        openPageContextMenu(event.clientX, event.clientY, { name: name(), pageKind: "page" });
+                        openPageContextMenu(event.clientX, event.clientY, { name: target().name, pageKind: target().kind });
                       }}
                     >
                       <div
@@ -154,8 +156,8 @@ export function Namespaces(props: { router: PaneRouter }): JSX.Element {
                           type="button"
                           class="all-pages-open ns-view-open"
                           title={name()}
-                          onClick={(event) => openPage(name(), event)}
-                          onAuxClick={(event) => internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: name(), pageKind: "page" }))}
+                          onClick={(event) => openPage(target(), event)}
+                          onAuxClick={(event) => internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: target().name, pageKind: target().kind }))}
                         >
                           <Show when={pageIcon(name())}>{(icon) => <span class="all-pages-icon"><PageIcon value={icon()} name={name()} /> </span>}</Show>
                           <Show when={filtering() && pathPrefix(entry())}>
