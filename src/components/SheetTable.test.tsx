@@ -1351,6 +1351,57 @@ describe("SheetTable", () => {
     });
   });
 
+  // Delete over a read-view selection enters the editor as a
+  // click does, so a pending cell draft is resolved by the same entry guard.
+  it.each(["7.5", "invalid"])("a rendered-selection Delete resolves a pending cell draft %s as a click does", async (draft) => {
+    setToasts([]);
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: amount=number;other=text", null, ["r1"]),
+        r1: node("r1", "Task\namount:: 1\nother:: old", "table"),
+        plain: node("plain", "abc", null),
+      },
+      pages: [page(["table", "plain"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const mounted = mount(() => <SurfaceContext.Provider value="main"><Block id="table" /><Block id="plain" /></SurfaceContext.Provider>);
+    draftHandoffDisposers.push(mounted.dispose);
+    const keys = installKeybindings();
+    try {
+      doubleClick(cell(mounted.root, 0, 1));
+      const first = mounted.root.querySelector<HTMLInputElement>("input.sheet-prop-input")!;
+      first.value = draft;
+      input(first);
+      const wrapper = mounted.root.querySelector('[data-block-id="plain"] > .block-main .block-content-wrapper')!;
+      const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+      let text: Text | null = null;
+      for (let n = walker.nextNode(); n && !text; n = walker.nextNode()) if (n.textContent === "abc") text = n as Text;
+      const range = document.createRange();
+      range.setStart(text!, 1);
+      range.setEnd(text!, 2);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+      await tick();
+      expect(doc.byId.plain.raw).toBe("abc");
+      if (draft === "7.5") {
+        expect(blockProperty("r1", "amount")).toBe("7.5");
+        expect(editingId()).toBe("plain");
+        expect(maybeEditorIn(mounted.root.querySelector('[data-block-id="plain"]')!)?.selection()).toEqual([1, 2]);
+      } else {
+        expect(blockProperty("r1", "amount")).toBe("1");
+        expect(editingId()).not.toBe("plain");
+        expect(document.activeElement).toBe(first);
+        expect(first.classList.contains("sheet-input-invalid")).toBe(true);
+        // The guard's focus into the cell takes the document selection; a refusal that
+        // moves no focus keeps it (renderedSelectionDelete.handoff.test.tsx).
+      }
+    } finally {
+      keys();
+    }
+  });
+
   it("shows a refused cell edit (page turned read-only) instead of silently discarding the typed value", () => {
     setToasts([]);
     const layout = {
