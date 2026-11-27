@@ -14,7 +14,7 @@ import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wir
 import { doc, keySource, keysUsed, pageByName, pageReadOnly, setDoc, writeRaw } from "./model";
 import { msg } from "../i18n";
 import { pushToastUnique } from "../toasts";
-import { editorHidePolicy } from "../editor/properties";
+import { BUILTIN_HIDE, editorHidePolicy, type HidePolicy } from "../editor/properties";
 import { bodyStructureChangeAllowed, bodyStructureVerb } from "./bodyStructure";
 
 /** Why a verb did nothing (`outline::Reason`). */
@@ -150,8 +150,10 @@ class OutlineParserFault extends Error {
  *  (a store whose parent links disagree with its children lists, or a read
  *  set that missed a block) is asked again with whole pages. `edited` names a
  *  block whose text a same-gesture edit is about to write: the kernel reads
- *  that text instead of the store's, so a refusal has written nothing. */
-export function outlineChange(verb: OutlineVerb, pageNames: readonly string[], edited?: EditedBlock): OutlineChange | { refused: OutlineRefusal } {
+ *  that text instead of the store's, so a refusal has written nothing. `hide`
+ *  is the editing surface's hide policy (what counts as editable text for the
+ *  verb's join point and focus caret); the outline editor's by default. */
+export function outlineChange(verb: OutlineVerb, pageNames: readonly string[], edited?: EditedBlock, hide: HidePolicy = BUILTIN_HIDE): OutlineChange | { refused: OutlineRefusal } {
   const bodyVerb = bodyStructureVerb(verb);
   if (!bodyVerb) return { refused: "no_outline_step" };
   verb = bodyVerb;
@@ -165,7 +167,7 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[], e
   };
   const ask = (reads: readonly OutlineRead[] | null) => {
     const pages = names.map((name) => outlinePage(name, reads, edited)).filter((p) => p !== null);
-    return JSON.parse(parser(() => outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() }))));
+    return JSON.parse(parser(() => outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy(hide) }))));
   };
   let answer;
   try {

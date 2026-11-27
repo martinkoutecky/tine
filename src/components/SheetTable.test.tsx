@@ -537,6 +537,24 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("Undo while editing a title cell reopens the editor in that cell", async () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+    doubleClick(cell(root, 0, 0));
+    await tick();
+    expect(editingId()).toBe("r1");
+    const before = doc.byId.r1.raw;
+    setRaw("r1", before.replace("Ship", "Ship it"));
+    undo();
+    await tick();
+    expect(doc.byId.r1.raw).toBe(before);
+    expect(editingId()).toBe("r1");
+    expect(editingOwner()).toMatch(/^sheet:/);
+    const editor = maybeEditorIn(root) as EditorDriver | null;
+    expect(editor && cell(root, 0, 0).contains(editor.element)).toBe(true);
+    dispose();
+  });
+
   it("keeps table column tracks unchanged when entering title edit", async () => {
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     const rect = (width: number): DOMRect => ({

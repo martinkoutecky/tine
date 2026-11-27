@@ -33,7 +33,7 @@ export interface GridTarget {
   caret: GridCaret;
 }
 
-interface Pos {
+export interface Pos {
   blockId: string;
   cell: SheetCellCtx | null;
 }
@@ -130,8 +130,9 @@ function lastPos(id: string, cell: SheetCellCtx, column: "reading" | "first", bo
   return kids.length ? lastPos(kids[kids.length - 1], cell, column, body) : { blockId: id, cell };
 }
 
-/** The first position inside `id`'s content after its own text, if any. */
-function firstInside(id: string, cell: SheetCellCtx): Pos | null {
+/** The first position inside `id`'s content after its own text, if any: none when `id` is
+ * folded or an opaque sheet view, a sub-grid's first cell, else its first child. O(1). */
+export function firstInside(id: string, cell: SheetCellCtx): Pos | null {
   if (node(id)?.collapsed) return null;
   if (blockIsGridView(id)) {
     const inner = edgeCell(id, "first", "first", cell.surfaceId);
@@ -139,7 +140,8 @@ function firstInside(id: string, cell: SheetCellCtx): Pos | null {
     return inner && innerBlock ? { blockId: innerBlock, cell: inner } : null;
   }
   if (blockIsOpaqueSheetView(id)) return null;
-  const first = outlineChildren(id, threadRootOf(id) === null)[0];
+  // The first body child, found without reading the later ones (outlineChildren's first).
+  const first = threadRootOf(id) === null ? children(id).find(child => threadRootOf(child) === null) : children(id)[0];
   return first ? { blockId: first, cell } : null;
 }
 

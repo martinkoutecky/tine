@@ -5,7 +5,7 @@ import { createStore } from "solid-js/store";
 import { ChangeKeyRegistry } from "../changeKeyRegistry";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
-import { editingId, endEdit, prepareEditEntry, startEditing } from "../editorController";
+import { editingId, endEdit, isSheetCellOwner, prepareEditEntry, startEditing } from "../editorController";
 import { focusedEditorCommandBridge } from "../editorCommandBridge";
 import { graphOwner } from "../owned";
 import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
@@ -254,10 +254,6 @@ export function clearEmptyTagColumns(ownerId?: string): void {
     return;
   }
   writeEmptyTagColumns(ownerId, undefined);
-}
-
-export function isSheetCellOwner(owner: string | null): boolean {
-  return owner?.startsWith("sheet:") ?? false;
 }
 
 export function cellOwner(sel: SheetCellCtx): string {

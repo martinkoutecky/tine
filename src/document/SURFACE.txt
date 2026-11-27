@@ -17,6 +17,7 @@ PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 PublishedRevision  # why: actual host publication evidence returned by the existing wait; batch-fix-964-dev-r3
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 Unsettled  # why: a refused graph switch names what it refused for, stuck pages or develop's reasons (tine#1041); batch-fix-1041
+absorbInto  # why: a grid cell joins its first child through the outline's one merge, naming both blocks and the cell's hide policy; batch-fix-874-cell-backspace
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 admitRead  # why: all asynchronous working-set admissions compare captured local generations; each retry requires a newer relevant generation; batch-feed-admission-1114
 appendFeed

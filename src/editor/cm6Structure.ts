@@ -30,7 +30,7 @@ import { calcSource } from "./calc";
 import { caretInFence, caretInDisplayMath, caretOnOpeningFence } from "./fences";
 import { codeBodyExitTrim } from "./codeFence";
 import type { SheetCellCtx } from "../sheet/context";
-import { gridMergeScope, gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
+import { gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
@@ -63,7 +63,7 @@ interface StructureContext {
 export function cm6Structure(ctx: StructureContext) {
   const editSurface = () => ctx.surface.startsWith("embed:") ? ctx.surface : null;
   const navSurface = () => ctx.surface.startsWith("ref:") || ctx.surface.startsWith("embed:") ? ctx.surface : null;
-  const structuralScope = gridMergeScope(ctx.cell) ?? (ctx.scope?.navOnly ? null : ctx.scope);
+  const structuralScope = ctx.scope?.navOnly ? null : ctx.scope;
   // Where this row sits: a whole-block embed's root row stands for its host
   // (D-20261030-EMB), as the textarea's `position()` in Block.tsx.
   const position = (): { id: string; scope: OutlineScope | null; surface?: string } =>

@@ -126,7 +126,7 @@ export type { OutlineScope } from "./tree";
 export type { OutlineSelectionTarget } from "./edits/selection";
 export { historyReplaying, installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undoTopTag, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
-export { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, exitMultilineBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertSiblingAfterSubtree, insertOutlineChildren, insertEditorOutline, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, rawToWrite, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
+export { absorbInto, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, exitMultilineBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertSiblingAfterSubtree, insertOutlineChildren, insertEditorOutline, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, rawToWrite, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
 export type { PendingEdit } from "./edits/blocks";
 export { reportQueryFoldOption, storedFold } from "./edits/queryFoldOption";
 export { seenPageSnapshot } from "./seenSnapshot";
