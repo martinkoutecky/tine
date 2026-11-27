@@ -302,7 +302,7 @@ describe("multiline paste into editor-visible empty blocks", () => {
     }
   });
 
-  it("parses Markdown ATX headings as blocks", () => {
+  it("parses Markdown ATX headings as blocks, each with its body as the file read gives it", () => {
     const block: BlockDto = { id: "12121212-1212-4212-8212-121212121212", raw: "", collapsed: false, children: [] };
     loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
     startEditing(block.id, 0);
@@ -310,8 +310,10 @@ describe("multiline paste into editor-visible empty blocks", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(maybeEditorIn(root) as EditorDriver, "# heading\nbody");
-      expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["# heading", "body"]);
+      // Paste reads the text as Tine reads the same text in a file: a heading line
+      // opens a block, and the lines up to the next heading are its body.
+      paste(maybeEditorIn(root) as EditorDriver, "# heading\nbody\n## second\nmore");
+      expect(pageByName("Paste")!.roots.map((id) => doc.byId[id].raw)).toEqual(["# heading\nbody", "## second\nmore"]);
     } finally {
       dispose();
     }

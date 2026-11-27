@@ -2,7 +2,7 @@ import DOMPurify from "dompurify";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import type { Format } from "../types";
-import { parseOutline, type OutlineNode } from "./outline";
+import type { OutlineNode } from "./outline";
 
 export const HTML_PASTE_LIMITS = {
   inputBytes: 2 * 1024 * 1024,
@@ -102,17 +102,93 @@ export function structuredHtmlPaste(html: string, plain: string, format: Format 
   // (GH: Martin). Keep `[ ] * _ \` # ~` literal; real structure (headings,
   // lists, links, code) is emitted by dedicated rules, not this text escaper.
   service.escape = (value: string) => value;
-  let markdown: string;
+  if (structural.length <= 1) {
+    let markdown: string;
+    try {
+      markdown = service.turndown(doc.body).trim();
+    } catch {
+      return null;
+    }
+    if (!markdown || new TextEncoder().encode(markdown).byteLength > HTML_PASTE_LIMITS.outputBytes) return null;
+    // A lone wrapper that converts to the exact plain text adds no useful
+    // semantics; retain the browser/native plain path in that case.
+    if (markdown === plain.trim()) return null;
+    if (!structural.length) return { outline: [{ raw: markdown, children: [] }], inlineText: markdown };
+  }
+  // The clipboard's HTML elements are its blocks: each block element is one
+  // block, each list item one block with its nested items as children, and a
+  // run of inline content between them one block. The converted Markdown of a
+  // block is never re-read as an outline, so its text stays the element's text.
+  let outline: OutlineNode[];
   try {
-    markdown = service.turndown(doc.body).trim();
+    outline = htmlBlocks(doc.body, (nodes) => {
+      const holder = doc.createElement("div");
+      for (const node of nodes) holder.appendChild(node.cloneNode(true));
+      return service.turndown(holder).trim();
+    });
   } catch {
     return null;
   }
-  if (!markdown || new TextEncoder().encode(markdown).byteLength > HTML_PASTE_LIMITS.outputBytes) return null;
-  // A lone wrapper that converts to the exact plain text adds no useful
-  // semantics; retain the browser/native plain path in that case.
-  if (structural.length <= 1 && markdown === plain.trim()) return null;
-  if (!structural.length) return { outline: [{ raw: markdown, children: [] }], inlineText: markdown };
-  const outline = parseOutline(markdown);
+  let bytes = 0;
+  const encoder = new TextEncoder();
+  const count = (nodes: OutlineNode[]) => {
+    for (const node of nodes) { bytes += encoder.encode(node.raw).byteLength + 1; count(node.children); }
+  };
+  count(outline);
+  if (bytes > HTML_PASTE_LIMITS.outputBytes) return null;
   return outline.length ? { outline, inlineText: null } : null;
+}
+
+const BLOCK_ELEMENTS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE", "TABLE", "HR"]);
+const LIST_ELEMENTS = new Set(["UL", "OL"]);
+
+function htmlBlocks(parent: Node, markdown: (nodes: Node[]) => string): OutlineNode[] {
+  const out: OutlineNode[] = [];
+  let run: Node[] = [];
+  const push = (nodes: Node[]) => {
+    const raw = markdown(nodes);
+    if (raw) out.push({ raw, children: [] });
+  };
+  const flush = () => {
+    if (run.length) push(run);
+    run = [];
+  };
+  for (const child of parent.childNodes) {
+    if (LIST_ELEMENTS.has(child.nodeName)) {
+      flush();
+      for (const item of child.childNodes) {
+        if (item.nodeName === "LI") out.push(listItem(item, markdown));
+        else if (item.textContent?.trim()) push([item]);
+      }
+    } else if (child.nodeName === "LI") {
+      flush();
+      out.push(listItem(child, markdown));
+    } else if (BLOCK_ELEMENTS.has(child.nodeName)) {
+      flush();
+      push([child]);
+    } else if (child.nodeName === "DIV") {
+      flush();
+      out.push(...htmlBlocks(child, markdown));
+    } else {
+      run.push(child);
+    }
+  }
+  flush();
+  return out;
+}
+
+function listItem(item: Node, markdown: (nodes: Node[]) => string): OutlineNode {
+  const own: Node[] = [];
+  const children: OutlineNode[] = [];
+  for (const child of item.childNodes) {
+    if (LIST_ELEMENTS.has(child.nodeName)) {
+      for (const nested of child.childNodes) {
+        if (nested.nodeName === "LI") children.push(listItem(nested, markdown));
+        else if (nested.textContent?.trim()) children.push({ raw: markdown([nested]), children: [] });
+      }
+    } else {
+      own.push(child);
+    }
+  }
+  return { raw: markdown(own), children };
 }
