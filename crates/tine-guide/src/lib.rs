@@ -946,6 +946,18 @@ mod search_guide_tests {
             assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
         }
     }
+    #[test]
+    fn query_result_editor_keys_are_documented() {
+        let sheets = include_str!("templates/sheets.md");
+        for text in [
+            "Editing a result's title or card: Enter keeps your text and selects it",
+            "Tab in a table title moves to the row's next field",
+            "Backspace at the start of the text and Delete at its end do nothing",
+            "the grid and the results keep separate selections",
+        ] {
+            assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
+        }
+    }
 }
 
 #[cfg(test)]

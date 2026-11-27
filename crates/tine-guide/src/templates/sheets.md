@@ -101,6 +101,7 @@ icon:: ▦
 	- 3. For a board, use the **Group by** dropdown (see below) to pick the column axis.
 	- In a query table, a sort that cannot be saved with the query is labeled **Table-only sort**. Click that label to clear that local order; the saved query order stays as it was.
 	- 4. What you should see: query results render as a live sheet view without copying the source blocks.
+	- Editing a result's title or card: Enter keeps your text and selects it, and Tab in a table title moves to the row's next field. Backspace at the start of the text and Delete at its end do nothing, so they never pull in a block the view does not show. On a block that is also a grid, the grid and the results keep separate selections, and keys on a result never change grid cells.
 - ### Create one yourself — board
 	- 1. On a block, type `/Board` and pick **Board** (`/Kanban` finds it too).
 	- 2. Choose the column axis with the **Group by** dropdown in the board header, or right-click and use **Group by →** to pick State, Tags, Priority, or any field. On a query's board the same menu also offers **No grouping**: one column holding every result.

@@ -437,14 +437,27 @@ describe("each sheet's window and rebase follow only its own selection (tine#874
     expect(gridRowsDrawn()).toBe(before);
   });
 
-  it("a grid cell selection survives a records rebase, and a records selection survives the grid", async () => {
-    const root = await dualHost("board");
-    setCellSel({ kind: "cell", gridId: "host", row: 1, col: 0 });
-    await settle();
-    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "host", row: 1, col: 0 });
-    selectCard(root, 1);
-    await settle();
+  it("a records rebase moves only the records selection: a grid selection survives the table's reorder", async () => {
+    const root = await dualHost("table");
+    const sortByTitle = () => root.querySelector<HTMLElement>(".sheet-table .sheet-title-header")!.click();
+    const titleRow = (text: string) => [...root.querySelectorAll<HTMLElement>(`.sheet-table .sheet-cell[data-sheet-grid-id="${RECORDS}"][data-col="0"]`)]
+      .find((el) => el.textContent?.includes(text))?.getAttribute("data-row");
+    expect(titleRow("Write tests")).toBe("0");
+    // The records selection follows its result through the reorder (a real rebase).
+    selectTitle(root, 0);
+    sortByTitle();
+    await vi.waitFor(() => expect(titleRow("Write tests")).toBe("1"));
     expect(cellSel()).toMatchObject({ kind: "cell", gridId: RECORDS, row: 1, col: 0 });
+    // A grid selection names a grid row the table does not have. Under one shared sheet
+    // id the table's rebase would have cleared it; the table's next reorder leaves it be.
+    setCellSel({ kind: "cell", gridId: "host", row: 1, col: 0, rowId: "host-r1" });
+    const gridSel = cellSel();
+    expect(gridSel).toMatchObject({ kind: "cell", gridId: "host", row: 1, col: 0 });
+    expect((gridSel as { rowId?: string }).rowId).toBe("host-r1");
+    sortByTitle();
+    await vi.waitFor(() => expect(titleRow("Write tests")).toBe("0"));
+    await settle();
+    expect(cellSel()).toEqual(gridSel);
   });
 });
 
@@ -468,7 +481,8 @@ describe("a zero-row grid host with a table query (tine#874)", () => {
 });
 
 describe("vertical and left flow out of a records sheet (tine#874)", () => {
-  async function zoomed(dualHostBlocks: boolean, siblings: string[]): Promise<HTMLDivElement> {
+  /** Page Sheet routed in the main pane: the host, then `siblings`; zoomed into the host when `zoom`. */
+  async function routed(dualHostBlocks: boolean, siblings: string[], zoom = true): Promise<HTMLDivElement> {
     const hostRaw = dualHostBlocks
       ? "{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: board"
       : "{{query (task TODO)}}\ntine.view:: board";
@@ -480,14 +494,14 @@ describe("vertical and left flow out of a records sheet (tine#874)", () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
     mockQuery("board", [["todo-a", "TODO Write tests"]]);
     disposeKeys = installKeybindings();
-    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Sheet", pageKind: "page", block: "host" });
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Sheet", pageKind: "page", ...(zoom ? { block: "host" } : {}) });
     const root = mount(() => <PageView />);
-    await vi.waitFor(() => expect(root.querySelector(".zoomed-block .sheet-board-card")).not.toBeNull());
+    await vi.waitFor(() => expect(root.querySelector(`${zoom ? ".zoomed-block " : ""}.sheet-board-card`)).not.toBeNull());
     return root;
   }
 
   it("zoomed into a dual host before a sibling: last card ArrowDown keeps the card, and Backspace deletes nothing", async () => {
-    const root = await zoomed(true, ["sibling"]);
+    const root = await routed(true, ["sibling"]);
     expect(gridOf(root)).not.toBeNull();
     expect(root.querySelector('.zoomed-block [data-block-id="sibling"]')).toBeNull();
     selectCard(root);
@@ -500,10 +514,9 @@ describe("vertical and left flow out of a records sheet (tine#874)", () => {
   });
 
   it("a dual host that is a routed page's only root: ArrowDown keeps the card, and Backspace changes nothing", async () => {
-    load("{{query (task TODO)}}\ntine.view:: grid\ntine.block-view:: board", "board", { grid: [["Alpha"]], results: [["todo-a", "TODO Write tests"]] });
-    disposeKeys = installKeybindings();
-    const root = mount(() => <Block id="host" />);
-    await vi.waitFor(() => expect(root.querySelector(".sheet-board-card")).not.toBeNull());
+    const root = await routed(true, [], false);
+    expect(root.querySelector(".zoomed-block")).toBeNull();
+    expect(gridOf(root)).not.toBeNull();
     selectCard(root);
     press("ArrowDown");
     expect(cellSel()).toMatchObject({ kind: "cell", gridId: RECORDS, row: 0, col: 0 });
@@ -685,7 +698,7 @@ describe("a records selection in a grid at the depth fallback writes no grid cel
     expect(doc.byId[`g${depth}-c00`].raw).toBe("Keep me");
   });
 
-  it("depth 5: from a selected cell of the fallback grid, Right then ArrowDown resolve through its adapter, with no matrix built", async () => {
+  it("depth 5: from a cell editor, into the fallback grid, then Right and ArrowDown resolve through its adapter, with no matrix built", async () => {
     chain(5);
     setDoc({ ...doc, byId: { ...doc.byId,
       g5: { ...doc.byId.g5, raw: "Grid 5\ntine.view:: grid", children: ["g5-r0", "g5-r1"] },
@@ -699,10 +712,20 @@ describe("a records selection in a grid at the depth fallback writes no grid cel
     const root = mount(() => <Block id="host" />);
     await vi.waitFor(() => expect(root.textContent).toContain("Corner"));
     // The fallback draws no grid element; its adapter registered on the surface of the
-    // grids enclosing it.
+    // grids enclosing it. The editor is the enclosing g4 cell's (block g5, "Grid 5").
     const surface = gridOf(root, "g4")!.getAttribute("data-sheet-surface-id")!;
-    setCellSel({ kind: "cell", gridId: "g5", surfaceId: surface, row: 0, col: 0 });
+    setCellSel({ kind: "cell", gridId: "g4", surfaceId: surface, row: 0, col: 0 });
+    press("Enter");
+    const editor = await vi.waitFor(() => {
+      const ed = maybeEditorIn(root, "g5");
+      expect(ed).not.toBeNull();
+      return ed!;
+    });
+    editor.select(editor.value().length);
     const built = vi.mocked(buildMatrix).mock.calls.length;
+    // ArrowDown at the end of the editor enters the fallback grid at its first cell.
+    editor.keydown(new KeyboardEvent("keydown", keyInit("ArrowDown")));
+    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "g5", surfaceId: surface, row: 0, col: 0 });
     press("ArrowRight");
     expect(cellSel()).toMatchObject({ kind: "col-seam", gridId: "g5", at: 1 });
     press("ArrowRight");

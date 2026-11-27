@@ -1523,7 +1523,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       selectCellAfterEdit(sheetCell);
       return true;
     }
-    if (plain && e.key === "Backspace" && start === 0 && end === 0) {
+    // The cell's text keeps its edges: the outline's merge at either end would reach a
+    // block the sheet does not draw (a query result's neighbour on its source page).
+    if (plain && start === end && (e.key === "Backspace" && start === 0 || e.key === "Delete" && end === raw.length)) {
       e.preventDefault();
       return true;
     }

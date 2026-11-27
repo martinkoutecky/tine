@@ -49,7 +49,7 @@ export function cm6SheetKeys(id: string, cell: SheetCellCtx, commit: (text: stri
       selectCellAfterEdit(cell);
       return true;
     }
-    if (plain && s.empty && e.key === "Backspace" && s.head === 0) return true;
+    if (plain && s.empty && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return true;
     if (plain && !e.shiftKey && s.empty) {
       if (cm6ArrowLeave(e.key, v)) {
         commit(raw); moveCellAfterEdit(cell, e.key === "ArrowLeft" ? "left" : "right"); return true;
