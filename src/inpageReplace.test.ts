@@ -1,25 +1,17 @@
 // @vitest-environment jsdom
 // GH #208 / #338: in-page find & replace. The plan is pure (what one block becomes);
-// the entry points write through setRaw inside one withUndoUnit and the page
-// host's ordinary save. UI-INPAGE-FIND-REPLACE-208.
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+// the entry points (inpageReplace.host.dom.test.tsx) write through setRaw inside
+// one withUndoUnit and the page host's ordinary save. UI-INPAGE-FIND-REPLACE-208.
+import { beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { backend, type GraphChange } from "./backend";
-import { applyGraphChange, ensurePageLoaded, flushPage, isConflicted, pageByName, resetStore, undo } from "./document";
-import { doc } from "./document/model";
-import { closeInPageFind, inPageFindActiveIndex, inPageFindMatches, openInPageFind, setInPageFindQuery, clearInPageFindRenderedTextCacheForTests } from "./inpageFind";
-import { planBlockReplacement, replaceActiveInPageFindMatch, replaceAllInPageFindMatches } from "./inpageReplace";
-import { resetPaneLayoutToSingle } from "./panes";
-import { closeAllRightSidebarItems, openPageInSidebar } from "./ui";
-import { setToasts, toasts } from "./toasts";
-import type { PaneSnapshot } from "./router";
-import type { BlockDto, PageDto } from "./types";
-import { answerOpensFromDocument } from "./document/host/documentHost.test.support";
-import { bindTestHost, submittedPages, type TestHost } from "./document/host/wiring.test.support";
+import { planBlockReplacement } from "./inpageReplace";
 
 const ID = "6501f00a-0000-4000-8000-000000000000";
-const plan = (raw: string, query: string, replacement: string, ordinals: readonly number[] | "all" = "all") =>
-  planBlockReplacement(raw, "md", query, replacement, ordinals, true);
+// The planner's parse gate alone: every span counts as drawn as itself. The
+// screen's answer is pinned in inpageReplace.shown.dom.test.tsx.
+const DRAWN = () => true;
+const plan = (raw: string, query: string, replacement: string, ordinals: readonly number[] | "all" = "all", format: "md" | "org" = "md") =>
+  planBlockReplacement(raw, format, query, replacement, ordinals, true, DRAWN);
 
 beforeAll(async () => { await initParser(); });
 
@@ -67,117 +59,50 @@ describe("planBlockReplacement: only what find shows, only where the editor edit
   });
 });
 
-let serial = 0;
-const block = (raw: string, children: BlockDto[] = []): BlockDto => ({ id: `rp-${++serial}`, raw, collapsed: false, children });
-const pageDto = (name: string, blocks: BlockDto[], extra: Pick<PageDto, "read_only"> = {}): PageDto & { id: string; rev: string } => ({
-  id: `pages/${name}.md`, name, title: name, kind: "page", pre_block: null, rev: `rev-${++serial}`, blocks, ...extra,
-});
-const raws = (name: string) => {
-  const out: string[] = [];
-  const walk = (ids: readonly string[]) => { for (const id of ids) { out.push(doc.byId[id].raw); walk(doc.byId[id].children); } };
-  walk(pageByName(name)?.roots ?? []);
-  return out;
-};
-const pageSnapshot = (name: string): PaneSnapshot => ({ tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
-const journalsSnapshot = (): PaneSnapshot => ({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
-
-let host: TestHost;
-let disk: Record<string, PageDto>;
-beforeEach(async () => {
-  serial = 0; resetStore(); setToasts([]); disk = {};
-  host = await bindTestHost();
-  answerOpensFromDocument(host);
-  vi.spyOn(backend(), "getPage").mockImplementation(async (name) => (disk[name] ?? null) as never);
-});
-afterEach(() => {
-  setInPageFindQuery("");
-  closeInPageFind({ restoreFocus: false });
-  closeAllRightSidebarItems();
-  clearInPageFindRenderedTextCacheForTests();
-  resetStore();
-  resetPaneLayoutToSingle(journalsSnapshot());
-  vi.restoreAllMocks();
-});
-
-function findOn(name: string, query: string) {
-  resetPaneLayoutToSingle(pageSnapshot(name));
-  openInPageFind();
-  setInPageFindQuery(query);
-}
-
-describe("replace through the find panel's state", () => {
-  it("replace all edits only the find pane's page, as one undo step", () => {
-    ensurePageLoaded(pageDto("Notes", [block("foo one", [block("two foo foo")]), block("nothing")]));
-    ensurePageLoaded(pageDto("Side", [block("foo in the sidebar")]));
-    openPageInSidebar("Side", "page");
-    findOn("Notes", "foo");
-    expect(replaceAllInPageFindMatches("bar")).toEqual({ replaced: 3, skipped: 0 });
-    expect(raws("Notes")).toEqual(["bar one", "two bar bar", "nothing"]);
-    expect(raws("Side")).toEqual(["foo in the sidebar"]);
-    expect(inPageFindMatches()).toEqual([]);
-    expect(undo()).toBe(true);
-    expect(raws("Notes")).toEqual(["foo one", "two foo foo", "nothing"]);
+// Shown text step 2a (REG-FIND-REPLACE-WRITES-ONLY-SHOWN-TEXT): Find counts the
+// literal of a macro and a block reference id, but they are not text drawn as
+// itself, so Replace never writes them. Fails on develop, which rewrote them.
+describe.each(["md", "org"] as const)("%s: Replace writes only exact runs of the parse", (format) => {
+  const UUID = "6501f00a-0000-4000-8000-00000000000e";
+  it("an embed macro's name and target are never written; the plain word after it is", () => {
+    expect(plan("{{embed [[Foo]]}} Foo", "e", "Bar", "all", format))
+      .toEqual({ raw: "{{embed [[Foo]]}} Foo", replaced: 0, skipped: 2 });
+    expect(plan("{{embed [[Foo]]}} Foo", "Foo", "X", "all", format))
+      .toEqual({ raw: "{{embed [[Foo]]}} X", replaced: 1, skipped: 1 });
+    expect(plan("{{embed [[Foo]]}} Foo", "Foo", "X", [0], format))
+      .toEqual({ raw: "{{embed [[Foo]]}} Foo", replaced: 0, skipped: 1 });
   });
 
-  it("replace edits the active match and moves on, even when the replacement contains the query", () => {
-    ensurePageLoaded(pageDto("Notes", [block("foo foo"), block("foo")]));
-    findOn("Notes", "foo");
-    expect(inPageFindActiveIndex()).toBe(0);
-    replaceActiveInPageFindMatch("foo!");
-    expect(raws("Notes")).toEqual(["foo! foo", "foo"]);
-    expect(inPageFindActiveIndex()).toBe(1);
-    replaceActiveInPageFindMatch("foo!");
-    expect(raws("Notes")).toEqual(["foo! foo!", "foo"]);
-    expect(inPageFindActiveIndex()).toBe(2);
-    expect(undo()).toBe(true);
-    expect(raws("Notes")).toEqual(["foo! foo", "foo"]);
+  it("a block reference's id is never written; the plain letter after it is", () => {
+    const raw = `((${UUID})) e`;
+    const all = plan(raw, "e", "X", "all", format);
+    expect(all.raw).toBe(`((${UUID})) X`);
+    expect(all.replaced).toBe(1);
+    expect(all.skipped).toBeGreaterThan(0);
   });
 
-  it("a read-only page is never written and says so", () => {
-    ensurePageLoaded(pageDto("Locked", [block("foo")], { read_only: true }));
-    expect(pageByName("Locked")!.readOnly).toBe(true);
-    findOn("Locked", "foo");
-    expect(replaceAllInPageFindMatches("bar").replaced).toBe(0);
-    expect(raws("Locked")).toEqual(["foo"]);
-    expect(toasts().some((t) => t.kind === "error")).toBe(true);
-  });
-});
-
-describe("data safety: the ordinary save, an external change, a conflict", () => {
-  it("saves the replaced text through the page host's submit", async () => {
-    const submit = vi.spyOn(backend(), "pageSubmit").mockImplementation(async () => null);
-    ensurePageLoaded(pageDto("Notes", [block("foo one"), block("two foo")]));
-    findOn("Notes", "foo");
-    replaceAllInPageFindMatches("bar");
-    void flushPage("Notes");
-    await vi.waitFor(() => expect(submittedPages(submit, "Notes")).toHaveLength(1));
-    expect(submittedPages(submit, "Notes")[0].blocks.map((b) => b.raw)).toEqual(["bar one", "two bar"]);
+  it("plain prose, emphasis text and an inline literal body are written", () => {
+    expect(plan("a needle b", "needle", "X", "all", format).raw).toBe("a X b");
+    expect(plan("a needle b", "needle", "", "all", format).raw).toBe("a  b");
+    if (format === "md") {
+      expect(plan("a `needle` b", "needle", "X", "all", format).raw).toBe("a `X` b");
+      expect(plan("**needle** b", "needle", "X", "all", format).raw).toBe("**X** b");
+    } else {
+      expect(plan("a =needle= b", "needle", "X", "all", format).raw).toBe("a =X= b");
+      expect(plan("a ~needle~ b", "needle", "X", "all", format).raw).toBe("a ~X~ b");
+      expect(plan("*needle* b", "needle", "X", "all", format).raw).toBe("*X* b");
+    }
   });
 
-  it("an external change that lands between find and replace is the text replace edits", async () => {
-    ensurePageLoaded(pageDto("Notes", [block("foo one"), block("two foo")]));
-    findOn("Notes", "foo");
-    expect(inPageFindMatches()).toHaveLength(2);
-    disk.Notes = pageDto("Notes", [block("foo one, edited elsewhere"), block("two foo"), block("three foo, added elsewhere")]);
-    const change: GraphChange = { name: "Notes", kind: "page", created: false, removed: false };
-    await applyGraphChange(change);
-    await vi.waitFor(() => expect(raws("Notes")).toHaveLength(3));
-    expect(replaceAllInPageFindMatches("bar").replaced).toBe(3);
-    expect(raws("Notes")).toEqual(["bar one, edited elsewhere", "two bar", "three bar, added elsewhere"]);
+  it("an emoji the user searched for is its own source bytes", () => {
+    expect(plan("a 😄 b", "😄", "X", "all", format)).toEqual({ raw: "a X b", replaced: 1, skipped: 0 });
   });
 
-  it("a disk change under an unsaved replace becomes a conflict, never a silent loss", async () => {
-    const admitted: Array<{ id: number; key: string }> = [];
-    vi.spyOn(backend(), "pageSubmit").mockImplementation(async (_session, id, key) => { admitted.push({ id, key }); return null; });
-    ensurePageLoaded(pageDto("Notes", [block("foo one")]));
-    findOn("Notes", "foo");
-    replaceAllInPageFindMatches("bar");
-    void flushPage("Notes");
-    await vi.waitFor(() => expect(admitted).toHaveLength(1));
-    const { id, key } = admitted[0];
-    host.deliver({ key, answer: { id, version: 50, took: true, outcome: { kind: "applied" } }, notice: { conflictReported: true },
-      page: { version: 50, conflict: true, risk: false, disk: { kind: "file", rev: "theirs-rev" }, text: { kind: "unchanged" } } });
-    expect(isConflicted("Notes")).toBe(true);
-    expect(raws("Notes")).toEqual(["bar one"]);
+  it("the gate adds no parse: one parse of the block and one proof render, as before", () => {
+    const stats = () => (window as unknown as { __tineParseStats?: { misses: number } }).__tineParseStats?.misses ?? 0;
+    const raw = `cost probe ${format} needle x needle`;
+    const before = stats();
+    expect(plan(raw, "needle", "X", "all", format).replaced).toBe(2);
+    expect(stats() - before).toBe(2);
   });
 });

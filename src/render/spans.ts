@@ -1,6 +1,6 @@
 import { rawOffsetToVisibleOffset, visibleOffsetToRawByte, type HidePolicy, type PropFormat } from "../editor/properties";
 import { typographicSegments } from "./typography";
-import type { Span, SpanMap } from "./ast";
+import type { Block, Inline, Span, SpanMap } from "./ast";
 
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
@@ -117,10 +117,65 @@ export function coarseSpanAttrs(span: Span | undefined): SpanDomAttrs | undefine
  *  back to edge-only mapping for a parser shape that cannot prove symmetry. */
 export function literalSpanAttrs(text: string, span: Span | undefined): SpanDomAttrs | undefined {
   if (!span) return undefined;
+  const body = literalBodySpan(text, span);
+  return body ? plainSpanAttrs(body) : coarseSpanAttrs(span);
+}
+
+/** The source span of a code/verbatim body between symmetric delimiters, or
+ *  null when the parser's shape cannot prove the symmetry. */
+function literalBodySpan(text: string, span: Span): Span | null {
   const extra = span[1] - span[0] - utf8ByteLength(text);
-  if (extra < 2 || extra % 2 !== 0) return coarseSpanAttrs(span);
+  if (extra < 2 || extra % 2 !== 0) return null;
   const delimiter = extra / 2;
-  return plainSpanAttrs([span[0] + delimiter, span[1] - delimiter]);
+  return [span[0] + delimiter, span[1] - delimiter];
+}
+
+/** A plain leaf's text → source segments: its span map, or the whole span. */
+function plainSegments(span: Span, spanMap: SpanMap | undefined): SpanMap {
+  return spanMap && spanMap.length > 0 ? spanMap : [[0, span[0], span[1] - span[0]]];
+}
+
+/** The source runs of one inline that the renderer stamps as byte-exact text
+ *  ({@link plainSpanAttrs}, {@link literalSpanAttrs}) and whose drawn bytes ARE
+ *  the source bytes: each segment of a `plain` whose text equals `raw` there,
+ *  and a `code`/`verbatim` body. `rawBytes`/`lead` as {@link plainSpanOwnedBy}
+ *  reads them. O(the inline's text bytes). */
+export function exactRunsOf(inline: Inline, rawBytes: Uint8Array, lead: number): Span[] {
+  if (!inline.span || (inline.k !== "plain" && inline.k !== "code" && inline.k !== "verbatim")) return [];
+  const text = UTF8.encode(inline.text);
+  const segments: SpanMap = [];
+  if (inline.k === "plain") segments.push(...plainSegments(inline.span, inline.span_map));
+  else {
+    const body = literalBodySpan(inline.text, inline.span);
+    if (body) segments.push([0, body[0], body[1] - body[0]]);
+  }
+  return segments
+    .filter(([textOff, sourceOff, len]) => bytesEqual(text, textOff, rawBytes, sourceOff - 2 + lead, len))
+    .map(([, sourceOff, len]): Span => [sourceOff, sourceOff + len]);
+}
+
+/** Every exact run ({@link exactRunsOf}) in a block's parse, in source bytes.
+ *  Walks every inline child of the tree; what the renderer does not draw in
+ *  place is refused by {@link drawnAsItself}. O(parse tree). */
+export function exactSourceRuns(blocks: readonly Block[], raw: string): Span[] {
+  const rawBytes = UTF8.encode(raw);
+  const lead = rawBytes.length - utf8ByteLength(raw.trimStart());
+  const runs: Span[] = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) { for (const v of value) walk(v); return; }
+    if (!value || typeof value !== "object") return;
+    const k = (value as { k?: unknown }).k;
+    if (k === "plain" || k === "code" || k === "verbatim") { runs.push(...exactRunsOf(value as Inline, rawBytes, lead)); return; }
+    for (const v of Object.values(value)) walk(v);
+  };
+  walk(blocks);
+  return runs;
+}
+
+function bytesEqual(a: Uint8Array, aOff: number, b: Uint8Array, bOff: number, len: number): boolean {
+  if (aOff < 0 || bOff < 0 || aOff + len > a.length || bOff + len > b.length) return false;
+  for (let i = 0; i < len; i++) if (a[aOff + i] !== b[bOff + i]) return false;
+  return true;
 }
 
 /** Span attrs for a plain whose RENDERED text differs from the AST text by the
@@ -353,15 +408,50 @@ function plainSpanOwnedBy(root: Element, el: Element, data: Extract<SpanDomData,
     if (data.span[0] < start || (end != null && data.span[1] > end)) return false;
   }
   const text = UTF8.encode(renderedTextCaret(el, el, 0).text);
-  const segments: SpanMap = data.spanMap && data.spanMap.length > 0
-    ? data.spanMap
-    : [[0, data.span[0], data.span[1] - data.span[0]]];
-  for (const [textOff, sourceOff, len] of segments) {
-    const rawOff = sourceOff - 2 + lead;
-    if (rawOff < 0 || rawOff + len > rawBytes.length || textOff + len > text.length) return false;
-    for (let i = 0; i < len; i++) if (text[textOff + i] !== rawBytes[rawOff + i]) return false;
+  return plainSegments(data.span, data.spanMap)
+    .every(([textOff, sourceOff, len]) => bytesEqual(text, textOff, rawBytes, sourceOff - 2 + lead, len));
+}
+
+interface OwnedLeaf { el: Element; text: string; segments: SpanMap }
+
+/** The plain span leaves of `root` that draw `raw`'s own bytes as themselves
+ *  ({@link plainSpanOwnedBy}). O(span leaves × (leaf bytes + depth)). */
+function ownedPlainLeaves(root: Element, rawBytes: Uint8Array, lead: number): OwnedLeaf[] {
+  const leaves: OwnedLeaf[] = [];
+  for (const el of Array.from(root.querySelectorAll("[data-so]"))) {
+    if (el.querySelector("[data-so]")) continue; // only leaves hold text positions
+    const data = spanDataFromElement(el);
+    if (!data || data.kind !== "plain" || !plainSpanOwnedBy(root, el, data, rawBytes, lead)) continue;
+    leaves.push({ el, text: renderedTextCaret(el, el, 0).text, segments: plainSegments(data.span, data.spanMap) });
   }
-  return true;
+  return leaves;
+}
+
+/** Whether the block `root` draws editor range `visible` of `raw` (source
+ *  bytes `source`, as the parser counts them) as itself: one plain leaf of
+ *  this raw holds both ends inside one of its mapped runs, and the exact mapper
+ *  ({@link exactEditorOffsetFromRenderedRange}) maps those DOM points back to
+ *  exactly `visible`. Text drawn as something else (an image's alt, a query's
+ *  output, a link drawn as an icon, another block's body) has no such leaf.
+ *  Returns a predicate for one block: its first call collects the leaves,
+ *  O(span leaves × leaf bytes); each call is O(span leaves + leaf bytes). */
+export function drawnAsItself(
+  root: Element,
+  raw: string,
+  isHidden: HidePolicy,
+  format: PropFormat,
+): (visible: Span, source: Span) => boolean {
+  const rawBytes = UTF8.encode(raw);
+  const lead = rawBytes.length - utf8ByteLength(raw.trimStart());
+  let leaves: OwnedLeaf[] | undefined;
+  return ([start, end], [from, to]) => (leaves ??= ownedPlainLeaves(root, rawBytes, lead)).some(({ el, text, segments }) => segments.some(([textOff, sourceOff, len]) => {
+    if (from < sourceOff || to > sourceOff + len || from > to) return false;
+    const a = textPointAt(el, utf8ByteToUtf16Offset(text, textOff + (from - sourceOff)));
+    const b = textPointAt(el, utf8ByteToUtf16Offset(text, textOff + (to - sourceOff)));
+    return !!a && !!b
+      && exactEditorOffsetFromRenderedRange(root, { startContainer: a.node, startOffset: a.offset }, raw, isHidden, format, "start") === start
+      && exactEditorOffsetFromRenderedRange(root, { startContainer: b.node, startOffset: b.offset }, raw, isHidden, format, "end") === end;
+  }));
 }
 
 /** The source byte of rendered text byte `textByte` in a plain span, with no
@@ -450,15 +540,8 @@ export function renderedPointFromEditorOffset(
   const sourceByte = visibleOffsetToRawByte(raw, offset, isHidden, format) - lead + 2;
   const rawBytes = UTF8.encode(raw);
   const candidates: Array<{ el: Element; text: string; textByte: number; atEdge: boolean }> = [];
-  for (const el of Array.from(root.querySelectorAll("[data-so]"))) {
-    if (el.querySelector("[data-so]")) continue; // only leaves hold text positions
-    const data = spanDataFromElement(el);
-    if (!data || data.kind !== "plain" || !plainSpanOwnedBy(root, el, data, rawBytes, lead)) continue;
-    const text = renderedTextCaret(el, el, 0).text;
+  for (const { el, text, segments } of ownedPlainLeaves(root, rawBytes, lead)) {
     const textLength = utf8ByteLength(text);
-    const segments: SpanMap = data.spanMap && data.spanMap.length > 0
-      ? data.spanMap
-      : [[0, data.span[0], data.span[1] - data.span[0]]];
     for (const [textOff, sourceOff, len] of segments) {
       if (sourceByte < sourceOff || sourceByte > sourceOff + len) continue;
       const textByte = textOff + (sourceByte - sourceOff);

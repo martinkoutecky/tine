@@ -28,6 +28,8 @@ const pageSnapshot = (name: string): PaneSnapshot => ({ tabs: [{ history: [{ kin
 const journalsSnapshot = (): PaneSnapshot => ({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
 const raws = () => pageByName(NAME)!.roots.map((id) => doc.byId[id].raw);
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+/** The page drawn in the find pane: Replace writes only blocks the pane draws. */
+const Drawn = () => <div data-pane-id="main"><Show when={pageByName(NAME)} keyed>{(p) => <For each={p.roots}>{(id) => <Block id={id} />}</For>}</Show></div>;
 
 function typeInto(input: HTMLInputElement | EditorDriver, value: string) {
   if ("kind" in input) {
@@ -57,7 +59,7 @@ afterEach(() => {
 describe("GH #338: Find opens without a keyboard", () => {
   it("the mobile page header menu opens Find, and its replace row replaces every match", async () => {
     loadSingle(page(NAME, [blk("a", "foo one"), blk("b", "two foo")]));
-    const { root, dispose } = mount(() => <><ContextMenu /><InPageFind /></>);
+    const { root, dispose } = mount(() => <><Drawn /><ContextMenu /><InPageFind /></>);
     try {
       const trigger = document.createElement("button");
       document.body.appendChild(trigger);
@@ -92,7 +94,7 @@ describe("GH #338: Find opens without a keyboard", () => {
 
   it("Enter in the replace field replaces the active match only", async () => {
     loadSingle(page(NAME, [blk("a", "foo foo")]));
-    const { root, dispose } = mount(() => <InPageFind />);
+    const { root, dispose } = mount(() => <><Drawn /><InPageFind /></>);
     try {
       openInPageFind();
       setInPageFindQuery("foo");
@@ -114,7 +116,7 @@ describe("GH #208 data safety: a block open in an editor", () => {
     startEditing("b", 0);
     const { root, dispose } = mount(() => (
       <>
-        <Show when={pageByName(NAME)} keyed>{(p) => <For each={p.roots}>{(id) => <Block id={id} />}</For>}</Show>
+        <Drawn />
         <InPageFind />
       </>
     ));

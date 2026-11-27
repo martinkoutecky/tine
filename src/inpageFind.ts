@@ -543,6 +543,19 @@ export function inPageFindBlockElement(id: string, scopeId = currentFindPaneId()
   return queryAllWindows<HTMLElement>(paneSelector(scopeId))?.querySelector(blockSelector(id)) as HTMLElement | null;
 }
 
+/** What the find pane draws for outline block `id`: its own open editor, its
+ *  own rendered text root, or null when it is not mounted (lazy, under a fold).
+ *  A child block's editor or content inside the row is never the answer. */
+export function inPageFindDrawnBlock(id: string, scopeId: string): HTMLElement | "editor" | null {
+  const element = inPageFindBlockElement(id, scopeId);
+  if (!element) return null;
+  const own = (el: Element | null): el is HTMLElement => !!el && el.closest(FIND_BLOCK_SELECTOR) === element;
+  const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
+  if (own(element.querySelector(`textarea.block-editor,[data-cm6-editor="${esc}"]`))) return "editor";
+  const root = findBlockTextRoot(element);
+  return own(root) ? root : null;
+}
+
 function inPageFindSurfaceElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
   return queryAllWindows<HTMLElement>(paneSelector(paneId))?.querySelector(surfaceSelector(id)) as HTMLElement | null;
 }

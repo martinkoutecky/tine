@@ -3,6 +3,8 @@
 // is one undo step. The search word also sits inside a hidden `id::` property
 // value and inside a `[label](url)` link address; both must survive byte-exact,
 // because Find matches rendered text and Replace edits only what Find matched.
+// A second page pins shown text step 2a: an embed macro and a link drawn with
+// its page's text icon keep their source; only plain words change.
 import { spawn } from "node:child_process";
 import net from "node:net";
 import { remote } from "webdriverio";
@@ -39,10 +41,22 @@ const REPLACED = [
   "",
 ].join("\n");
 
+// Shown text step 2a (REG-FIND-REPLACE-WRITES-ONLY-SHOWN-TEXT): Replace never
+// writes a macro's name or target, nor a page link's name, even when the page's
+// text icon draws that very word before the link; the plain words are written.
+const SHOWN_NAME = "Shown Replace Test";
+const SHOWN = `${GRAPH}/pages/${SHOWN_NAME}.md`;
+const SHOWN_ORIGINAL = "- {{embed [[Embedded]]}} Embedded\n- see [[Target]] and Target\n";
+const SHOWN_AFTER_EMBED = "- {{embed [[Embedded]]}} X\n- see [[Target]] and Target\n";
+const SHOWN_REPLACED = "- {{embed [[Embedded]]}} X\n- see [[Target]] and Y\n";
+
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 fs.writeFileSync(PAGE, ORIGINAL);
+fs.writeFileSync(SHOWN, SHOWN_ORIGINAL);
+fs.writeFileSync(`${GRAPH}/pages/Embedded.md`, "- the embedded page's body\n");
+fs.writeFileSync(`${GRAPH}/pages/Target.md`, "icon:: Target\n\n- the target page's body\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, `- find and replace probe [[${PAGE_NAME}]]\n`);
@@ -92,6 +106,35 @@ const findState = () => browser.execute(() => ({
   replaceAllEnabled: [...document.querySelectorAll(".inpage-replace-btn")]
     .some((button) => button.textContent?.trim() === "Replace all" && !button.disabled),
 }));
+
+/** Open Find on the current page, search `query`, Replace all with `replacement`, close Find. */
+async function replaceAllOnPage(query, replacement) {
+  await browser.keys([MOD, "f"]);
+  const input = await browser.$(".inpage-find-input");
+  await input.waitForExist({ timeout: 5_000 });
+  await input.setValue(query);
+  await browser.waitUntil(async () => /^1 \/ \d+$/.test((await findState()).count), {
+    timeout: 5_000, interval: 100, timeoutMsg: async () => `find found no "${query}": ${JSON.stringify(await findState())}`,
+  });
+  if (!(await browser.$(".inpage-replace-input").isExisting())) await browser.$(".inpage-replace-toggle").click();
+  const replace = await browser.$(".inpage-replace-input");
+  await replace.waitForExist({ timeout: 5_000 });
+  await replace.setValue(replacement);
+  await browser.waitUntil(async () => (await findState()).replaceAllEnabled, {
+    timeout: 5_000, interval: 100, timeoutMsg: "Replace all never became enabled",
+  });
+  const clicked = await browser.execute(() => {
+    const button = [...document.querySelectorAll(".inpage-replace-btn")].find((node) => node.textContent?.trim() === "Replace all");
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  });
+  if (!clicked) throw new Error("Replace all button was not clickable");
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(async () => !(await findState()).open, {
+    timeout: 5_000, interval: 100, timeoutMsg: "Escape did not close Find",
+  });
+}
 
 try {
   await waitForPort(DRIVER_PORT);
@@ -151,6 +194,19 @@ try {
     timeout: 5_000, interval: 100, timeoutMsg: "the page did not show the undone text",
   });
   console.log("PASS: Replace all on a routed named page saved only the visible matches (id:: and link address intact), and one undo restored the original file");
+
+  await openPageByName(browser, SHOWN_NAME);
+  await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".page-ref-icon")
+    && [...document.querySelectorAll(".ls-block .block-content")].some((n) => n.textContent?.includes("and Target"))), {
+    timeout: 10_000, interval: 100, timeoutMsg: "the embed/icon page did not render with the Target icon",
+  });
+  await browser.execute(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+  await replaceAllOnPage("Embedded", "X");
+  await waitForFileText(SHOWN, (text) => text === SHOWN_AFTER_EMBED, { timeoutMs: 15_000 });
+  await replaceAllOnPage("Target", "Y");
+  const shown = await waitForFileText(SHOWN, (text) => text === SHOWN_REPLACED, { timeoutMs: 15_000 });
+  if (!shown.includes("{{embed [[Embedded]]}}") || !shown.includes("[[Target]]")) throw new Error("a macro target or a link name changed");
+  console.log("PASS: Replace all left the embed macro's target and the iconned link's name unchanged and replaced only the plain words");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
