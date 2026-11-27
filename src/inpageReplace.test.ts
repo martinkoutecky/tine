@@ -59,26 +59,30 @@ describe("planBlockReplacement: only what find shows, only where the editor edit
   });
 });
 
-// Shown text step 2a (REG-FIND-REPLACE-WRITES-ONLY-SHOWN-TEXT): Find counts the
-// literal of a macro and a block reference id, but they are not text drawn as
-// itself, so Replace never writes them. Fails on develop, which rewrote them.
-describe.each(["md", "org"] as const)("%s: Replace writes only exact runs of the parse", (format) => {
+// Shown text step 2a (REG-FIND-REPLACE-WRITES-ONLY-SHOWN-TEXT): the planner
+// writes a span only when `drawn` (the pane's stamped leaves, pinned in
+// inpageReplace.drawn.dom.test.tsx) holds its source bytes; every match it does
+// not write is counted. Here `drawn` holds the bytes after a macro or reference.
+describe.each(["md", "org"] as const)("%s: Replace writes only what `drawn` holds", (format) => {
   const UUID = "6501f00a-0000-4000-8000-00000000000e";
-  it("an embed macro's name and target are never written; the plain word after it is", () => {
-    expect(plan("{{embed [[Foo]]}} Foo", "e", "Bar", "all", format))
-      .toEqual({ raw: "{{embed [[Foo]]}} Foo", replaced: 0, skipped: 2 });
-    expect(plan("{{embed [[Foo]]}} Foo", "Foo", "X", "all", format))
-      .toEqual({ raw: "{{embed [[Foo]]}} X", replaced: 1, skipped: 1 });
-    expect(plan("{{embed [[Foo]]}} Foo", "Foo", "X", [0], format))
-      .toEqual({ raw: "{{embed [[Foo]]}} Foo", replaced: 0, skipped: 1 });
-  });
-
-  it("a block reference's id is never written; the plain letter after it is", () => {
-    const raw = `((${UUID})) e`;
-    const all = plan(raw, "e", "X", "all", format);
-    expect(all.raw).toBe(`((${UUID})) X`);
+  // Source bytes count from the parser's "- " bullet.
+  const after = (lead: string) => ([from]: [number, number]) => from >= lead.length + 2;
+  const gated = (raw: string, lead: string, query: string, ordinals: readonly number[] | "all" = "all") =>
+    planBlockReplacement(raw, format, query, "X", ordinals, true, after(lead));
+  it("a match drawn as something else is skipped and counted; the drawn word is written", () => {
+    expect(gated("{{embed [[Foo]]}} Foo", "{{embed [[Foo]]}}", "e")).toEqual({ raw: "{{embed [[Foo]]}} Foo", replaced: 0, skipped: 2 });
+    expect(gated("{{embed [[Foo]]}} Foo", "{{embed [[Foo]]}}", "Foo")).toEqual({ raw: "{{embed [[Foo]]}} X", replaced: 1, skipped: 1 });
+    expect(gated("{{embed [[Foo]]}} Foo", "{{embed [[Foo]]}}", "Foo", [0])).toEqual({ raw: "{{embed [[Foo]]}} Foo", replaced: 0, skipped: 1 });
+    const ref = `((${UUID}))`;
+    const all = gated(`${ref} e`, ref, "e");
+    expect(all.raw).toBe(`${ref} X`);
     expect(all.replaced).toBe(1);
     expect(all.skipped).toBeGreaterThan(0);
+  });
+
+  it("a requested match the block's text no longer holds is counted as skipped", () => {
+    expect(planBlockReplacement("a needle", format, "needle", "X", [0, 3], true, () => true)).toEqual({ raw: "a X", replaced: 1, skipped: 1 });
+    expect(planBlockReplacement("foo\nbar", format, "foobar", "X", [0], true, () => true)).toEqual({ raw: "foo\nbar", replaced: 0, skipped: 1 });
   });
 
   it("plain prose, emphasis text and an inline literal body are written", () => {

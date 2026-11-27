@@ -13,20 +13,19 @@ import { msg } from "./i18n";
 // render as the original with exactly that match swapped for the sentinel.
 // Hidden properties (`id::`, `collapsed::`) are never in the edited text, and an
 // occurrence find did not show (a link target) can never pass the proof.
-import { createRoot, createSignal } from "solid-js";
+import { createMemo, createRoot, createSignal } from "solid-js";
 import { blockWritable, formatForBlock, node as docNode, setRaw, withUndoUnit } from "./document";
 import { annotationInfo } from "./editor/annotation";
-import { BUILTIN_HIDE, HIDE_ALL, joinProps, splitProps, visibleOffsetToRawByte, type HidePolicy } from "./editor/properties";
-import { facetsOf, parseBody } from "./render/facets";
-import { drawnAsItself, exactSourceRuns, utf8ByteLength } from "./render/spans";
+import { BUILTIN_HIDE, HIDE_ALL, joinProps, splitProps, visibleOffsetsToRawBytes, type HidePolicy } from "./editor/properties";
+import { facetsOf } from "./render/facets";
+import { drawnSourceByBlock, utf8ByteLength, type DrawnSource } from "./render/spans";
 import type { Format } from "./types";
-import type { Span as Interval } from "./render/ast";
 import {
   activateInPageFindIndex,
+  findScopeElement,
   findTextOccurrences,
   inPageFindActiveIndex,
   inPageFindBlockText,
-  inPageFindDrawnBlock,
   inPageFindMatches,
   inPageFindPaneScopeId,
   inPageFindQuery,
@@ -83,24 +82,33 @@ function splice(text: string, spans: readonly Span[], insert: (index: number) =>
 
 const overlaps = (a: Span, b: Span) => a.start < b.end && b.start < a.end;
 
-/** How the find pane draws one block, for the second of Replace's two gates:
- *  whether editor range `visible` (source bytes `source`) is drawn as itself. */
-export type DrawnAsItself = (visible: Interval, source: Interval) => boolean;
+type Accepted = { target: number; span: Span };
+
+/** Whether `s` overlaps a span of `sorted` (disjoint, by start). O(log n). */
+function overlapsAny(sorted: readonly Accepted[], s: Span): boolean {
+  let lo = 0, hi = sorted.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid].span.end <= s.start) lo = mid + 1; else hi = mid; }
+  return lo < sorted.length && sorted[lo].span.start < s.end;
+}
+
+function insertSorted(sorted: readonly Accepted[], item: Accepted): Accepted[] {
+  let at = sorted.findIndex((a) => a.span.start > item.span.start);
+  if (at < 0) at = sorted.length;
+  return [...sorted.slice(0, at), item, ...sorted.slice(at)];
+}
 
 /** The property lines Replace's editor text leaves out (an annotation hides all). */
 const editHidePolicy = (raw: string, format: Format): HidePolicy =>
   annotationInfo(facetsOf(raw, format).properties) ? HIDE_ALL : BUILTIN_HIDE;
 
-/** The block's open editor draws its whole editor text as itself. */
-const EDITOR_DRAWS_ITSELF: DrawnAsItself = () => true;
-
 /** Plan replacing find's rendered occurrences `ordinals` (or all) of `query` in
- *  one block. Pure: reads nothing but its arguments and the parser. A candidate
- *  span is written only when it lies wholly inside one exact run of the block's
- *  parse ({@link exactSourceRuns}) and `drawn` says the screen draws it as
- *  itself; any other is skipped. Cost: one split, one walk of the cached parse
- *  and one proof render when the alignment holds; otherwise O(matches ×
- *  MAX_CANDIDATES_PER_MATCH) proof renders. */
+ *  one block. Pure: reads nothing but its arguments and the parser. A span is
+ *  written only when `drawn` says the pane draws its source bytes as themselves
+ *  ({@link drawnSourceByBlock}); every requested match not written is counted
+ *  as skipped, including one the block's text no longer holds. Cost: one split,
+ *  one batched offset mapping and one proof render; only a match whose aligned
+ *  span is missing, not drawn or not proven tries up to MAX_CANDIDATES_PER_MATCH
+ *  other drawn occurrences, one proof each, then one joint proof. */
 export function planBlockReplacement(
   raw: string,
   format: Format,
@@ -108,24 +116,24 @@ export function planBlockReplacement(
   replacement: string,
   ordinals: readonly number[] | "all",
   removeAccents: boolean,
-  drawn: DrawnAsItself,
+  drawn: DrawnSource,
   renderedText: string = inPageFindRenderedText(raw, format),
 ): BlockReplacementPlan {
   const q = query.trim();
-  const unchanged = (skipped: number): BlockReplacementPlan => ({ raw, replaced: 0, skipped });
   const shown = q ? findTextOccurrences(renderedText, q, removeAccents) : [];
+  const asked = ordinals === "all" ? shown.length : new Set(ordinals).size;
+  const unchanged = (): BlockReplacementPlan => ({ raw, replaced: 0, skipped: asked });
   const targets = (ordinals === "all" ? shown.map((_, i) => i) : [...new Set(ordinals)].filter((i) => i >= 0 && i < shown.length))
     .sort((a, b) => a - b);
-  if (!targets.length) return unchanged(0);
-  if (targets.length > SENTINEL_LIMIT) return unchanged(targets.length);
+  if (!targets.length || targets.length > SENTINEL_LIMIT) return unchanged();
   const hide = editHidePolicy(raw, format);
   const { visible, hidden } = splitProps(raw, hide, format);
   // Refusal (in-scope scenario: malformed or hand-edited imported Markdown/Org
   // whose property lines are not where the editor puts them): rejoining would
   // rewrite bytes the user never touched, so the block is left as it is.
-  if (joinProps(visible, hidden, format, raw, hide) !== raw) return unchanged(targets.length);
+  if (joinProps(visible, hidden, format, raw, hide) !== raw) return unchanged();
   const sentinel = (i: number) => String.fromCharCode(SENTINEL_BASE + i);
-  for (let i = 0; i < targets.length; i++) if (raw.includes(sentinel(i))) return unchanged(targets.length);
+  for (let i = 0; i < targets.length; i++) if (raw.includes(sentinel(i))) return unchanged();
 
   const proves = (spans: readonly Span[], matchIndexes: readonly number[]): boolean => {
     const candidate = joinProps(splice(visible, spans, sentinel), hidden, format, raw, hide);
@@ -133,48 +141,45 @@ export function planBlockReplacement(
     return inPageFindRenderedText(candidate, format) === expected;
   };
 
-  // Gate: Replace writes only source bytes the block draws as themselves. The
-  // parse (cached: the render above parsed `raw`) names the exact runs; `drawn`
-  // asks the screen. A span off both is a macro name, a uuid, an embed target,
-  // an image's alt or a link drawn as an icon, which the user did not see as text.
-  const lead = utf8ByteLength(raw) - utf8ByteLength(raw.trimStart());
-  const runs = exactSourceRuns(parseBody(raw, format), raw);
-  // Inverse of rebulletedSourceByteToRawByte (the parser sees a "- " bullet).
-  const sourceOf = (offset: number) => visibleOffsetToRawByte(raw, offset, hide, format) - lead + 2;
-  const gated = new Map<string, boolean>();
-  const writable = (span: Span): boolean => {
-    const key = `${span.start}:${span.end}`;
-    let ok = gated.get(key);
-    if (ok === undefined) {
-      const source: [number, number] = [sourceOf(span.start), sourceOf(span.end)];
-      ok = runs.some(([a, b]) => a <= source[0] && source[1] <= b) && drawn([span.start, span.end], source);
-      gated.set(key, ok);
-    }
-    return ok;
-  };
-
   const map = alignRenderedToVisible(renderedText, visible);
   const aligned = targets.map((t) => alignedSpan(map, shown[t]));
-  let accepted: { target: number; span: Span }[] = [];
-  if (aligned.every((s): s is Span => !!s && writable(s)) && proves(aligned, targets)) {
-    accepted = targets.map((target, i) => ({ target, span: aligned[i]! }));
-  } else {
-    const occurrences = findTextOccurrences(visible, q, removeAccents);
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i];
-      const free = (s: Span) => !accepted.some((a) => overlaps(a.span, s));
-      const candidates = [aligned[i], ...occurrences].filter((s): s is Span => !!s && free(s)).slice(0, MAX_CANDIDATES_PER_MATCH)
-        .filter(writable);
-      const proven = candidates.find((span) => proves([span], [target]));
-      if (proven) accepted.push({ target, span: proven });
-    }
-    accepted.sort((a, b) => a.span.start - b.span.start);
-    // The individually proven edits must also hold together.
-    if (accepted.length && !proves(accepted.map((a) => a.span), accepted.map((a) => a.target))) accepted = [];
+  const occurrences = findTextOccurrences(visible, q, removeAccents);
+  // Every span end either pass may write, mapped to source bytes in one call.
+  const ends = [...new Set([...aligned, ...occurrences].flatMap((s) => (s ? [s.start, s.end] : [])))].sort((a, b) => a - b);
+  const rawBytes = visibleOffsetsToRawBytes(raw, ends, hide, format);
+  const lead = utf8ByteLength(raw) - utf8ByteLength(raw.trimStart());
+  // Inverse of rebulletedSourceByteToRawByte (the parser sees a "- " bullet).
+  const sourceOf = new Map(ends.map((offset, i) => [offset, rawBytes[i] - lead + 2]));
+  const writable = (span: Span) => drawn([sourceOf.get(span.start)!, sourceOf.get(span.end)!]);
+
+  const first = targets.flatMap((target, i) => {
+    const span = aligned[i];
+    return span && writable(span) ? [{ target, span }] : [];
+  });
+  const proven = first.length && proves(first.map((a) => a.span), first.map((a) => a.target)) ? first : [];
+  // Only matches the joint proof did not settle look further: the drawn
+  // occurrences no accepted span overlaps, first come first (as develop).
+  let accepted = [...proven];
+  const settled = new Set(proven.map((a) => a.target));
+  const pool = occurrences.filter((s) => writable(s) && !overlapsAny(accepted, s));
+  let added = false;
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    if (settled.has(target)) continue;
+    const own = aligned[i] && writable(aligned[i]!) && !overlapsAny(accepted, aligned[i]!) ? [aligned[i]!] : [];
+    const candidates = own.concat(pool.slice(0, MAX_CANDIDATES_PER_MATCH + 1).filter((s) => s.start !== own[0]?.start))
+      .slice(0, MAX_CANDIDATES_PER_MATCH);
+    const span = candidates.find((c) => proves([c], [target]));
+    if (!span) continue;
+    accepted = insertSorted(accepted, { target, span });
+    for (let k = pool.length - 1; k >= 0; k--) if (overlaps(pool[k], span)) pool.splice(k, 1);
+    added = true;
   }
-  if (!accepted.length) return unchanged(targets.length);
+  // The individually proven edits must also hold together.
+  if (added && !proves(accepted.map((a) => a.span), accepted.map((a) => a.target))) accepted = proven;
+  if (!accepted.length) return unchanged();
   const next = joinProps(splice(visible, accepted.map((a) => a.span), () => replacement), hidden, format, raw, hide);
-  return { raw: next, replaced: accepted.length, skipped: targets.length - accepted.length };
+  return { raw: next, replaced: accepted.length, skipped: asked - accepted.length };
 }
 
 export interface InPageReplaceOutcome {
@@ -187,38 +192,67 @@ export interface InPageReplaceOutcome {
 const replaceState = createRoot(() => {
   const [open, setOpen] = createSignal(false);
   const [text, setText] = createSignal("");
-  return { open, setOpen, text, setText };
+  const [skippedAt, setSkippedAt] = createSignal<{ count: number; query: string; matches: string } | null>(null);
+  // Shown while the query and Find's outline matches are the ones the last
+  // Replace left; any other change (a new query, an edit) clears it.
+  const skippedHere = createMemo(() => {
+    const at = skippedAt();
+    return at && at.query === inPageFindQuery() && at.matches === matchListKey(inPageFindMatches()) ? at.count : 0;
+  });
+  return { open, setOpen, text, setText, setSkippedAt, skippedHere };
 });
 /** Whether the find panel shows its replace row (session-only UI state). */
 export const inPageReplaceOpen = replaceState.open;
 export const setInPageReplaceOpen = replaceState.setOpen;
 export const inPageReplaceText = replaceState.text;
 export const setInPageReplaceText = replaceState.setText;
+/** How many matches the last Replace or Replace all left unwritten, while the
+ *  query and the match list are still the ones it left (0 otherwise). */
+export const inPageReplaceSkippedHere = replaceState.skippedHere;
+
+function matchListKey(matches: readonly InPageFindMatch[]): string {
+  return matches.filter((m) => !m.surfaceId).map((m) => `${m.scopeId}\0${m.blockId}\0${m.ordinalInBlock}\0${m.start}`).join("\n");
+}
+
+function finish(outcome: InPageReplaceOutcome, query: string): InPageReplaceOutcome {
+  replaceState.setSkippedAt(outcome.skipped ? { count: outcome.skipped, query, matches: matchListKey(inPageFindMatches()) } : null);
+  return outcome;
+}
 
 function replaceableInScope(match: InPageFindMatch, scopeId: string): boolean {
   return !match.surfaceId && (match.scopeId ?? scopeId) === scopeId && !!docNode(match.blockId);
 }
 
-/** Plan every block, then write them as ONE undo step through setRaw. Returns
- *  null when the undo unit refused (a frozen graph rewrite or a read-only page). */
-function applyPlans(byBlock: Map<string, readonly number[] | "all">, query: string, replacement: string, scopeId: string): InPageReplaceOutcome | null {
+/** Plan every block, then write them as ONE undo step through setRaw. Every
+ *  requested match is either written or counted in `skipped`. Returns null when
+ *  the undo unit refused (a frozen graph rewrite or a read-only page). */
+function applyPlans(byBlock: Map<string, readonly number[]>, query: string, replacement: string, scopeId: string): InPageReplaceOutcome | null {
   const removeAccents = searchRemoveAccents();
   let skipped = 0;
   const writes: { id: string; raw: string; replaced: number }[] = [];
+  const raws = new Map<string, string>();
+  for (const id of byBlock.keys()) { const node = docNode(id); if (node) raws.set(id, node.raw); }
+  // A block the pane does not draw as itself (lazy, under a fold, open in the
+  // editor, a snapshot, a shell) has no entry: its matches are skipped.
+  const pane = findScopeElement(scopeId);
+  const drawnBy = pane ? drawnSourceByBlock(pane, raws) : new Map<string, DrawnSource>();
+  const nothing: DrawnSource = () => false;
   for (const [id, ordinals] of byBlock) {
-    const node = docNode(id);
-    if (!node) continue;
+    const raw = raws.get(id);
+    if (raw === undefined) { skipped += ordinals.length; continue; }
     const format = formatForBlock(id);
-    // A block the find pane does not draw (lazy, under a fold) is skipped and
-    // counted: Replace writes only text the user can see as itself.
-    const drawing = inPageFindDrawnBlock(id, scopeId);
-    const drawn: DrawnAsItself = drawing === "editor" ? EDITOR_DRAWS_ITSELF
-      : drawing ? drawnAsItself(drawing, node.raw, editHidePolicy(node.raw, format), format)
-      : () => false;
-    const plan = planBlockReplacement(node.raw, format, query, replacement, ordinals, removeAccents, drawn,
-      inPageFindBlockText(id, node.raw, format));
+    let plan: BlockReplacementPlan;
+    try {
+      plan = planBlockReplacement(raw, format, query, replacement, ordinals, removeAccents, drawnBy.get(id) ?? nothing,
+        inPageFindBlockText(id, raw, format));
+    } catch {
+      // The kernel refused to rejoin this block's hidden lines (its parse is
+      // quarantined): nothing of it is written, and its matches are counted.
+      skipped += ordinals.length;
+      continue;
+    }
     skipped += plan.skipped;
-    if (plan.replaced && plan.raw !== node.raw) writes.push({ id, raw: plan.raw, replaced: plan.replaced });
+    if (plan.replaced && plan.raw !== raw) writes.push({ id, raw: plan.raw, replaced: plan.replaced });
   }
   if (!writes.length) return { replaced: 0, skipped, ...(skipped ? { refused: "unprovable" as const } : { refused: "no-match" as const }) };
   const pages = [...new Set(writes.map((w) => docNode(w.id)!.page))];
@@ -230,9 +264,9 @@ function applyPlans(byBlock: Map<string, readonly number[] | "all">, query: stri
   return { replaced: writes.reduce((n, w) => n + w.replaced, 0), skipped };
 }
 
-function reportRefusedUnit(): InPageReplaceOutcome {
+function reportRefusedUnit(skipped: number): InPageReplaceOutcome {
   pushToast(msg("inpage-replace-nothing-was-replaced-this-page-cannot-be-edited"), "error");
-  return { replaced: 0, skipped: 0, refused: "read-only" };
+  return { replaced: 0, skipped, refused: "read-only" };
 }
 
 /** Replace find's active match, then move to the next match. */
@@ -246,48 +280,51 @@ export function replaceActiveInPageFindMatch(replacement = inPageReplaceText()):
   if (!replaceableInScope(match, scopeId)) {
     pushToast(msg("inpage-replace-replace-changes-only-the-page-you-opened-find"), "info");
     activateInPageFindIndex(index + 1);
-    return { replaced: 0, skipped: 1, refused: "other-scope" };
+    return finish({ replaced: 0, skipped: 1, refused: "other-scope" }, query);
   }
-  if (!blockWritable(match.blockId)) return reportRefusedUnit();
+  if (!blockWritable(match.blockId)) return finish(reportRefusedUnit(1), query);
   const outcome = applyPlans(new Map([[match.blockId, [match.ordinalInBlock]]]), query, replacement, scopeId);
-  if (!outcome) return reportRefusedUnit();
+  if (!outcome) return finish(reportRefusedUnit(1), query);
   if (!outcome.replaced) {
     pushToast(msg("inpage-replace-this-match-is-inside-a-link-or-markup"), "info");
     activateInPageFindIndex(index + 1);
-    return outcome;
+    return finish(outcome, query);
   }
   // The replacement's own occurrences stay behind the caret: skip past them.
   const reintroduced = findTextOccurrences(replacement, query.trim(), searchRemoveAccents()).length;
   activateInPageFindIndex(index + reintroduced);
-  return outcome;
+  return finish(outcome, query);
 }
 
-/** Replace every match find shows on the page it was opened in, as one undo step. */
+/** Replace every match find shows on the page it was opened in, as one undo
+ *  step. Every match Find holds is written or counted as skipped. */
 export function replaceAllInPageFindMatches(replacement = inPageReplaceText()): InPageReplaceOutcome {
   const query = inPageFindQuery();
   const scopeId = inPageFindPaneScopeId();
+  const matches = inPageFindMatches();
   const byBlock = new Map<string, number[]>();
   let readOnly = 0;
-  for (const match of inPageFindMatches()) {
-    if (!replaceableInScope(match, scopeId)) continue;
+  let elsewhere = 0;
+  for (const match of matches) {
+    if (!replaceableInScope(match, scopeId)) { elsewhere++; continue; }
     if (!blockWritable(match.blockId)) { readOnly++; continue; }
     const ordinals = byBlock.get(match.blockId);
     if (ordinals) ordinals.push(match.ordinalInBlock);
     else byBlock.set(match.blockId, [match.ordinalInBlock]);
   }
   if (!byBlock.size) {
-    if (readOnly) return reportRefusedUnit();
+    if (readOnly) return finish(reportRefusedUnit(matches.length), query);
     pushToast(msg("inpage-replace-no-matches-on-this-page-to-replace"), "info");
-    return { replaced: 0, skipped: 0, refused: "no-match" };
+    return finish({ replaced: 0, skipped: elsewhere, refused: "no-match" }, query);
   }
   const outcome = applyPlans(byBlock, query, replacement, scopeId);
-  if (!outcome) return reportRefusedUnit();
-  const skipped = outcome.skipped + readOnly;
+  if (!outcome) return finish(reportRefusedUnit(matches.length), query);
+  const skipped = outcome.skipped + readOnly + elsewhere;
   if (!outcome.replaced) {
     pushToast(msg("inpage-replace-skipped", { count: skipped }), "info");
   } else {
     pushToast(msg("inpage-replace-result", { count: outcome.replaced, skipped }), "success");
   }
   activateInPageFindIndex(0);
-  return { ...outcome, skipped };
+  return finish({ ...outcome, skipped }, query);
 }

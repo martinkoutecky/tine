@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, raw_bytes_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 import { ParseRetention } from "./parseRetention";
@@ -231,6 +231,10 @@ export function editorOffsetOfRaw(raw: string, format: "md" | "org", policy: str
 /** The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editorUtf16`. */
 export function rawByteOfEditor(raw: string, format: "md" | "org", policy: string, editorUtf16: number): number {
   return raw_byte_of_editor(raw, format === "org", blockRegions(raw, format), policy, Math.max(0, editorUtf16));
+}
+/** {@link rawByteOfEditor} for many editor offsets, in ascending order, in one kernel call. */
+export function rawBytesOfEditor(raw: string, format: "md" | "org", policy: string, editorUtf16: readonly number[]): Uint32Array {
+  return raw_bytes_of_editor(raw, format === "org", blockRegions(raw, format), policy, Uint32Array.from(editorUtf16, (u) => Math.max(0, u)));
 }
 /** Editor text plus its hidden lines back to raw (`editor_text::join_with`). */
 export function mayHaveLogbook(raw: string): boolean {

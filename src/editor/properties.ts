@@ -4,7 +4,7 @@ import { msg, render } from "../i18n";
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
-import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLogbook, hidePolicyHides, parserReady, rawByteOfEditor } from "../render/parse";
+import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, mayHaveLogbook, hidePolicyHides, parserReady, rawByteOfEditor, rawBytesOfEditor } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import { reportUiFailure } from "../uiFailure";
 import { graphMeta } from "../graphSession";
@@ -440,6 +440,11 @@ export function rawOffsetToVisibleOffset(
 /** The raw UTF-8 byte offset of a textarea offset (the kernel verbs' unit). */
 export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide: HidePolicy, format: PropFormat = "md"): number {
   return rawByteOfEditor(raw, format, policyText(hide), visibleOffset);
+}
+
+/** {@link visibleOffsetToRawByte} for many textarea offsets, in ascending order, in one kernel call. */
+export function visibleOffsetsToRawBytes(raw: string, visibleOffsets: readonly number[], hide: HidePolicy, format: PropFormat = "md"): Uint32Array {
+  return rawBytesOfEditor(raw, format, policyText(hide), visibleOffsets);
 }
 
 /** Reattach hidden property lines to visible text. With a source, text edits

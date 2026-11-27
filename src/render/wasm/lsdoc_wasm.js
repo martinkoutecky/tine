@@ -1272,6 +1272,33 @@ function __tine_raw_raw_byte_of_editor(raw, is_org, regions, policy, editor_utf1
 }
 
 /**
+ * [`raw_byte_of_editor`] for many editor offsets, given in ascending order, in
+ * one call: one split, one pass over the editor text and one over the lines.
+ * O(block + k).
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @param {Uint32Array} editor_utf16
+ * @returns {Uint32Array}
+ */
+function __tine_raw_raw_bytes_of_editor(raw, is_org, regions, policy, editor_utf16) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(editor_utf16, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.raw_bytes_of_editor(ptr0, len0, is_org, regions, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
+}
+
+/**
  * Shared native target classification on an accepted AST link. O(target).
  * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
  * `file_name_format`); only read with `filename_candidates`, where omitting it
@@ -1650,6 +1677,11 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -2018,6 +2050,7 @@ export const query_edn_json = __tineGuard("query_edn_json", __tine_raw_query_edn
 export const query_macro_extents_json = __tineGuard("query_macro_extents_json", __tine_raw_query_macro_extents_json);
 export const query_macro_is_tql = __tineGuard("query_macro_is_tql", __tine_raw_query_macro_is_tql);
 export const raw_byte_of_editor = __tineGuard("raw_byte_of_editor", __tine_raw_raw_byte_of_editor);
+export const raw_bytes_of_editor = __tineGuard("raw_bytes_of_editor", __tine_raw_raw_bytes_of_editor);
 export const reference_target_name = __tineGuard("reference_target_name", __tine_raw_reference_target_name);
 export const removal_refs_json = __tineGuard("removal_refs_json", __tine_raw_removal_refs_json);
 export const render_block_html = __tineGuard("render_block_html", __tine_raw_render_block_html);

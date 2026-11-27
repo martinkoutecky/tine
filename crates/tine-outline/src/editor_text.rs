@@ -267,24 +267,42 @@ pub fn visible_to_raw_with(
     hide: &HidePolicy,
     visible_offset: usize,
 ) -> usize {
+    visible_to_raw_many(raw, is_org, regions, hide, &[visible_offset])[0]
+}
+
+/// [`visible_to_raw_with`] for many editor offsets, given in ascending order:
+/// one classification and one merge pass over the lines. O(block + k).
+pub fn visible_to_raw_many(
+    raw: &str,
+    is_org: bool,
+    regions: &BlockRegions,
+    hide: &HidePolicy,
+    visible_offsets: &[usize],
+) -> Vec<usize> {
+    debug_assert!(visible_offsets.windows(2).all(|w| w[0] <= w[1]));
     let c = classify(raw, is_org, regions, hide);
+    let mut out = Vec::with_capacity(visible_offsets.len());
     let mut visible_len = 0;
     let mut any_visible = false;
-    let mut last_end = None;
+    let mut last_end = 0;
     for (&(s, e), class) in c.lines.iter().zip(&c.class) {
         if *class != Line::Visible {
             continue;
         }
         let line_start = visible_len + usize::from(any_visible);
         let line_end = line_start + (e - s);
-        if visible_offset <= line_end {
-            return floor_boundary(raw, s + visible_offset.saturating_sub(line_start));
+        while let Some(&v) = visible_offsets.get(out.len()) {
+            if v > line_end {
+                break;
+            }
+            out.push(floor_boundary(raw, s + v.saturating_sub(line_start)));
         }
         any_visible = true;
         visible_len = line_end;
-        last_end = Some(e);
+        last_end = e;
     }
-    last_end.unwrap_or(0)
+    out.resize(visible_offsets.len(), last_end);
+    out
 }
 
 /// Reattach hidden metadata to editor text. Properties retain their established
@@ -829,14 +847,29 @@ fn floor_boundary(s: &str, mut at: usize) -> usize {
 /// The byte offset of UTF-16 offset `units` in `s` (clamped; a unit inside a
 /// surrogate pair rounds down to the character's start).
 pub fn utf16_to_byte(s: &str, units: usize) -> usize {
+    utf16_to_bytes(s, &[units])[0]
+}
+
+/// [`utf16_to_byte`] for many offsets, given in ascending order: one pass
+/// over `s`. O(s + k).
+pub fn utf16_to_bytes(s: &str, units: &[usize]) -> Vec<usize> {
+    debug_assert!(units.windows(2).all(|w| w[0] <= w[1]));
+    let mut out = Vec::with_capacity(units.len());
     let mut seen = 0;
     for (at, c) in s.char_indices() {
-        if seen + c.len_utf16() > units {
-            return at;
+        while units
+            .get(out.len())
+            .is_some_and(|&u| seen + c.len_utf16() > u)
+        {
+            out.push(at);
+        }
+        if out.len() == units.len() {
+            break;
         }
         seen += c.len_utf16();
     }
-    s.len()
+    out.resize(units.len(), s.len());
+    out
 }
 
 /// The UTF-16 offset of byte `byte` in `s` (clamped, rounded down to a boundary).
@@ -1386,6 +1419,37 @@ mod tests {
         }
         // Inside the hidden line: where the line would have been.
         assert_eq!(raw_to_visible_with(raw, false, &regions, &p, 6), 2);
+    }
+
+    #[test]
+    fn many_offsets_map_as_each_one_does() {
+        let raw = "ab\nid:: 650e8400-e29b-41d4-a716-446655440000\ncd\n\u{e9}f";
+        let regions = block_regions::parse(raw, false);
+        let p = HidePolicy::Builtin;
+        let visible = split_with(raw, false, &regions, &p).visible;
+        let offsets: Vec<usize> = (0..=visible.len() + 2).collect();
+        let many = visible_to_raw_many(raw, false, &regions, &p, &offsets);
+        for (&v, &r) in offsets.iter().zip(&many) {
+            let mut seen = 0;
+            let mut one = raw.len();
+            // The one-offset walk, spelled out: the first visible line holding v.
+            for (s, e) in [
+                (0, 2),
+                (raw.len() - 6, raw.len() - 4),
+                (raw.len() - 3, raw.len()),
+            ] {
+                let start = seen + usize::from(seen > 0);
+                if v <= start + (e - s) {
+                    one = floor_boundary(raw, s + v.saturating_sub(start));
+                    break;
+                }
+                seen = start + (e - s);
+            }
+            assert_eq!(r, one, "visible offset {v}");
+        }
+        let s = "a\u{1F600}b\u{e9}";
+        let bytes = utf16_to_bytes(s, &[0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(bytes, vec![0, 1, 1, 5, 6, s.len(), s.len()]);
     }
 
     #[test]

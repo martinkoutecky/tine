@@ -348,6 +348,13 @@ export function query_macro_is_tql(name: string): boolean;
 export function raw_byte_of_editor(raw: string, is_org: boolean, regions: any, policy: string, editor_utf16: number): number;
 
 /**
+ * [`raw_byte_of_editor`] for many editor offsets, given in ascending order, in
+ * one call: one split, one pass over the editor text and one over the lines.
+ * O(block + k).
+ */
+export function raw_bytes_of_editor(raw: string, is_org: boolean, regions: any, policy: string, editor_utf16: Uint32Array): Uint32Array;
+
+/**
  * Shared native target classification on an accepted AST link. O(target).
  * `legacy_file_names`: the graph's `:file/name-format` is legacy (GraphMeta
  * `file_name_format`); only read with `filename_candidates`, where omitting it
@@ -492,6 +499,7 @@ export interface InitOutput {
     readonly query_macro_extents_json: (a: number, b: number) => [number, number];
     readonly query_macro_is_tql: (a: number, b: number) => number;
     readonly raw_byte_of_editor: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
+    readonly raw_bytes_of_editor: (a: number, b: number, c: number, d: any, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly removal_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];

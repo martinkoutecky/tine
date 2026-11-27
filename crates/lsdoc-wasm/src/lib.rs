@@ -652,16 +652,31 @@ pub fn raw_byte_of_editor(
     policy: &str,
     editor_utf16: usize,
 ) -> Result<usize, JsValue> {
+    Ok(raw_bytes_of_editor(raw, is_org, regions, policy, &[editor_utf16 as u32])?[0] as usize)
+}
+
+/// [`raw_byte_of_editor`] for many editor offsets, given in ascending order, in
+/// one call: one split, one pass over the editor text and one over the lines.
+/// O(block + k).
+#[wasm_bindgen]
+pub fn raw_bytes_of_editor(
+    raw: &str,
+    is_org: bool,
+    regions: &JsValue,
+    policy: &str,
+    editor_utf16: &[u32],
+) -> Result<Vec<u32>, JsValue> {
     let r = regions_from_js(raw, regions)?;
     let p = hide_policy(policy)?;
     let visible = editor_text::split_with(raw, is_org, &r, &p).visible;
-    Ok(editor_text::visible_to_raw_with(
-        raw,
-        is_org,
-        &r,
-        &p,
-        editor_text::utf16_to_byte(&visible, editor_utf16),
-    ))
+    let units: Vec<usize> = editor_utf16.iter().map(|&u| u as usize).collect();
+    let bytes = editor_text::utf16_to_bytes(&visible, &units);
+    Ok(
+        editor_text::visible_to_raw_many(raw, is_org, &r, &p, &bytes)
+            .into_iter()
+            .map(|b| b as u32)
+            .collect(),
+    )
 }
 
 /// Parser-boundary negative-only prefilter; true still needs drawer ownership.

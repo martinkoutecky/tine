@@ -108,7 +108,9 @@ const findState = () => browser.execute(() => ({
 }));
 
 /** Open Find on the current page, search `query`, Replace all with `replacement`, close Find. */
-async function replaceAllOnPage(query, replacement) {
+/** Replace all `query` with `replacement`; with `skippedLine`, the find bar must
+ *  show it (the count of matches it left) before Find is closed. */
+async function replaceAllOnPage(query, replacement, skippedLine) {
   await browser.keys([MOD, "f"]);
   const input = await browser.$(".inpage-find-input");
   await input.waitForExist({ timeout: 5_000 });
@@ -130,6 +132,12 @@ async function replaceAllOnPage(query, replacement) {
     return true;
   });
   if (!clicked) throw new Error("Replace all button was not clickable");
+  if (skippedLine) {
+    await browser.waitUntil(async () => browser.execute((line) => [...document.querySelectorAll("[role=status]")]
+      .some((node) => node.textContent === line), skippedLine), {
+      timeout: 5_000, interval: 100, timeoutMsg: `the find bar did not say "${skippedLine}"`,
+    });
+  }
   await browser.keys(["Escape"]);
   await browser.waitUntil(async () => !(await findState()).open, {
     timeout: 5_000, interval: 100, timeoutMsg: "Escape did not close Find",
@@ -203,10 +211,11 @@ try {
   await browser.execute(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
   await replaceAllOnPage("Embedded", "X");
   await waitForFileText(SHOWN, (text) => text === SHOWN_AFTER_EMBED, { timeoutMs: 15_000 });
-  await replaceAllOnPage("Target", "Y");
+  // The match drawn as the link's icon is skipped, and the find bar says so.
+  await replaceAllOnPage("Target", "Y", "1 match can't be replaced here");
   const shown = await waitForFileText(SHOWN, (text) => text === SHOWN_REPLACED, { timeoutMs: 15_000 });
   if (!shown.includes("{{embed [[Embedded]]}}") || !shown.includes("[[Target]]")) throw new Error("a macro target or a link name changed");
-  console.log("PASS: Replace all left the embed macro's target and the iconned link's name unchanged and replaced only the plain words");
+  console.log("PASS: Replace all left the embed macro's target and the iconned link's name unchanged, replaced only the plain words, and the find bar counted the skipped match");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

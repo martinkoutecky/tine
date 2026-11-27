@@ -17,6 +17,7 @@ import {
 } from "../inpageFind";
 import {
   inPageReplaceOpen,
+  inPageReplaceSkippedHere,
   inPageReplaceText,
   replaceActiveInPageFindMatch,
   replaceAllInPageFindMatches,
@@ -242,6 +243,8 @@ export function InPageFind(): JSX.Element {
             <button type="button" class="inpage-replace-btn" title={t("in-page-find-replace-every-match-on-this-page-ctrl-cmd")} disabled={!matchCount()} onClick={replaceAll}>{t("in-page-find-replace-all")}</button>
           </div>
         </Show>
+        <Show when={inPageReplaceSkippedHere()}>{count =>
+          <div class="inpage-find-retired" role="status">{t("inpage-replace-skipped-here", { count: count() })}</div>}</Show>
       </div>
     </Show>
   );

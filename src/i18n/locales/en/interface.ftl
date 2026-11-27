@@ -84,6 +84,10 @@ in-page-find-pending-hosts = { $count ->
     [one] { $count } embed or query not searched yet
    *[other] { $count } embeds or queries not searched yet
     }
+inpage-replace-skipped-here = { $count ->
+    [one] 1 match can't be replaced here
+   *[other] { $count } matches can't be replaced here
+    }
 in-page-find-search-references-linked = search linked references
 in-page-find-search-references-unlinked = search unlinked references
 

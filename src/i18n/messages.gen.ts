@@ -1304,6 +1304,7 @@ export interface MessageArgs {
   "inpage-replace-replace-changes-only-the-page-you-opened-find": {};
   "inpage-replace-result": { "count": number; "skipped": number };
   "inpage-replace-skipped": { "count": number };
+  "inpage-replace-skipped-here": { "count": number };
   "inpage-replace-this-match-is-inside-a-link-or-markup": {};
   "journal-agenda-title": {};
   "journal-config-diagnostic": { "message": string | number };

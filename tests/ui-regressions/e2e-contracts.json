@@ -1732,10 +1732,11 @@
     },
     "scripts/e2e-find-replace.mjs": {
       "contracts": [
-        { "class": "exact-safety-interoperability", "userOutcome": "On a routed named page, in-page Find's Replace all rewrites only the visible matches in the page file, leaves a hidden id:: property value and a [label](url) link address that contain the word byte-identical, and one undo restores the original file.", "blocking": true, "authority": "GH #208" }
+        { "class": "exact-safety-interoperability", "userOutcome": "On a routed named page, in-page Find's Replace all rewrites only the visible matches in the page file, leaves a hidden id:: property value and a [label](url) link address that contain the word byte-identical, and one undo restores the original file.", "blocking": true, "authority": "GH #208" },
+        { "class": "exact-safety-interoperability", "userOutcome": "On a page with an embed macro and a page link drawn with its page's text icon, Replace all writes only the plain words: the macro's target and the link's name stay byte-identical in the file, and the find bar says the match it left (\"1 match can't be replaced here\").", "blocking": true, "authority": "REG-FIND-REPLACE-WRITES-ONLY-SHOWN-TEXT" }
       ],
-      "acceptableVariations": ["Find bar layout, count wording, toast text and save latency may vary while the file reaches the exact expected text."],
-      "nonRequirements": ["Replace in the journals feed, sidebar or split panes (render and unit tests cover scope), the mobile page-menu entry (GH #338, render test), exact pixels or DOM nesting, or certification outside Linux WebKitGTK."],
+      "acceptableVariations": ["Find bar layout, count wording, toast text and save latency may vary while the file reaches the exact expected text; the skipped line's English text is the catalog's."],
+      "nonRequirements": ["Replace in the journals feed, sidebar or split panes (render and unit tests cover scope), the mobile page-menu entry (GH #338, render test), every surface and syntax that draws text as something else (render tests in inpageReplace.drawn.dom.test.tsx), exact pixels or DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-host-saves.mjs": {

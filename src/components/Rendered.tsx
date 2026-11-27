@@ -5,6 +5,7 @@ import { visibleBody } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
 import { blockDirAttr } from "../render/textDirection";
 import { AstBody } from "../render/body";
+import { recordDrawnRaw } from "../render/spans";
 import { codeSourceCaret } from "../editor/codeFence";
 import { startEditing } from "../editorController";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
@@ -184,7 +185,9 @@ function RenderedContent(props: {
       }
     >
     <div
-      ref={contentRef}
+      // The stamping root: its source stamps are offsets into node().raw, the
+      // raw AstBody below is drawing (a query snapshot's node is its own).
+      ref={(el) => { contentRef = el; recordDrawnRaw(el, () => node().raw); }}
       class="block-content"
       dir={blockDirAttr(node().raw, fmt())}
       // GH #375: the rendered-selection toolbar formats text selected here

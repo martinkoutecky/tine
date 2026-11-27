@@ -111,7 +111,10 @@ describe("GH #338: Find opens without a keyboard", () => {
 });
 
 describe("GH #208 data safety: a block open in an editor", () => {
-  it("replace-all keeps what was typed in the open editor, shows the result there, and undoes as one step", async () => {
+  // The open editor draws its own document, not the block's stamped text, so
+  // Replace skips that block and counts it (shown-text step 2a); what was typed
+  // there is kept, and the other block is written as one undo step.
+  it("replace-all keeps what was typed in the open editor, skips and counts that block, and undoes as one step", async () => {
     loadSingle(page(NAME, [blk("a", "foo alpha"), blk("b", "foo beta")]));
     startEditing("b", 0);
     const { root, dispose } = mount(() => (
@@ -132,15 +135,15 @@ describe("GH #208 data safety: a block open in an editor", () => {
 
       setInPageReplaceText("bar");
       const { replaceAllInPageFindMatches } = await import("./inpageReplace");
-      expect(replaceAllInPageFindMatches().replaced).toBe(2);
-      expect(raws()).toEqual(["bar alpha", "bar beta typed"]);
-      // The still-open editor shows the replaced text, and a later commit from
-      // it (blur, more typing) cannot put the old text back.
+      expect(replaceAllInPageFindMatches()).toEqual({ replaced: 1, skipped: 1 });
+      expect(raws()).toEqual(["bar alpha", "foo beta typed"]);
+      // The still-open editor keeps what was typed, and a later commit from it
+      // (blur) cannot undo the other block's write.
       const live = maybeEditorIn(root)!;
-      expect(live.value()).toBe("bar beta typed");
+      expect(live.value()).toBe("foo beta typed");
       closeInPageFind({ restoreFocus: false });
       live.reportBlur();
-      expect(raws()).toEqual(["bar alpha", "bar beta typed"]);
+      expect(raws()).toEqual(["bar alpha", "foo beta typed"]);
 
       expect(undo()).toBe(true);
       expect(raws()).toEqual(["foo alpha", "foo beta typed"]);

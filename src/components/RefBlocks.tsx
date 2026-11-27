@@ -11,6 +11,7 @@ import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../ren
 import { taskCheckboxState } from "../markers";
 import { OpeningText } from "./OpeningText";
 import { AstBody } from "../render/body";
+import { recordDrawnRaw } from "../render/spans";
 import { QueryLocationContext, queryBlockLocation, queryPageLocation } from "../render/queryLocation";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
@@ -290,6 +291,9 @@ function RefBlock(props: {
               else openRefRoute(openInNewTab);
             }}>
           <div
+            // The stamping root of this row: AstBody below draws props.block.raw,
+            // so a stale snapshot never matches the block's current raw.
+            ref={(el) => { if (!props.block.page_property && !props.block.page_preamble) recordDrawnRaw(el, () => props.block.raw); }}
             class="block-content"
             dir={props.sourceFormat ? blockDirAttr(props.block.raw, props.sourceFormat) : undefined}
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: !!props.sourceFormat && headingLevel() != null }}
