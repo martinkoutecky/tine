@@ -109,11 +109,7 @@ pub(super) fn visit_blocks(
                         let name = &property.0;
                         names.entry(name.to_ascii_lowercase()).or_insert(name);
                     }
-                    for (line, delimiter) in super::property_drawers::region_lines(raw, r) {
-                        // A drawer's own opener and closer are never entries.
-                        if delimiter {
-                            continue;
-                        }
+                    for line in line_ranges(raw, r) {
                         let t = trimmed_range(raw, line);
                         let s = t.slice(raw);
                         // A Properties node can fold Markdown lines, a drawer

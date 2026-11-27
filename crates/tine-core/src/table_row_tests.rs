@@ -19,14 +19,22 @@ fn ready_only(org: bool) -> &'static str {
 /// The row read back as the only child of an owner block on a saved page
 /// (LF or CRLF), by the page reader the store uses.
 fn page_child(raw: &str, org: bool, nl: &str) -> DocBlock {
-    let (head, child) = if org { ("* Owner", "**") } else { ("- Owner", "\t-") };
+    let (head, child) = if org {
+        ("* Owner", "**")
+    } else {
+        ("- Owner", "\t-")
+    };
     let mut lines = raw.split('\n');
     let mut page = format!("{head}\n{child}");
     if let Some(first) = lines.next().filter(|line| !line.is_empty()) {
         page += &format!(" {first}");
     }
     for line in lines {
-        page += &if org { format!("\n{line}") } else { format!("\n\t  {line}") };
+        page += &if org {
+            format!("\n{line}")
+        } else {
+            format!("\n\t  {line}")
+        };
     }
     let page = page.replace('\n', nl);
     let doc = if org {
@@ -40,7 +48,9 @@ fn page_child(raw: &str, org: bool, nl: &str) -> DocBlock {
 }
 
 fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
-    list.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    list.iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 /// Only `ready` is written, whichever side of it `other` stands, and the
@@ -52,7 +62,11 @@ fn assert_only_ready_beside(other: &str) {
             assert_eq!(raw, ready_only(org), "{other:?} org={org}");
             for nl in ["\n", "\r\n"] {
                 let child = page_child(&raw, org, nl);
-                assert_eq!(child.properties(), pairs(&[("ready", "false")]), "{other:?} org={org}");
+                assert_eq!(
+                    child.properties(),
+                    pairs(&[("ready", "false")]),
+                    "{other:?} org={org}"
+                );
             }
         }
         assert_eq!(seed(org, &[other]), "", "{other:?} alone, org={org}");
@@ -85,10 +99,28 @@ fn writes_false_for_each_plain_column_below_an_empty_title_line() {
 #[test]
 fn never_writes_a_reserved_key() {
     for key in [
-        "id", "Id", "ID", "template", "custom-id", "custom_id", "collapsed", "Collapsed",
-        "heading", "Tags", "TAGS", "query-sort-by", "created-at", "card-last-score", "done",
-        "Done", "tine.quote", "tine.author", "tine/exports", "tine/favorites",
-        "tine/journal-sections", "\u{85}tine.quote",
+        "id",
+        "Id",
+        "ID",
+        "template",
+        "custom-id",
+        "custom_id",
+        "collapsed",
+        "Collapsed",
+        "heading",
+        "Tags",
+        "TAGS",
+        "query-sort-by",
+        "created-at",
+        "card-last-score",
+        "done",
+        "Done",
+        "tine.quote",
+        "tine.author",
+        "tine/exports",
+        "tine/favorites",
+        "tine/journal-sections",
+        "\u{85}tine.quote",
     ] {
         assert_only_ready_beside(key);
     }
@@ -123,9 +155,31 @@ fn never_writes_the_asset_pointer_so_an_asset_named_false_stays_unreferenced() {
 fn never_writes_a_key_that_is_not_plain() {
     let quotes = ">".repeat(1025);
     for key in [
-        "\u{85}ship", "ship\u{85}", "some\tkey", "some\u{c}key", "some\u{1a}key", quotes.as_str(),
-        "some key", "État", "état", "Δ", "\u{212a}", "a:b", "a.b", "a/b", "logseq.x", "1abc",
-        "_x", "-x", "", "end", "EnD", "END",
+        "\u{85}ship",
+        "ship\u{85}",
+        "some\tkey",
+        "some\u{c}key",
+        "some\u{1a}key",
+        quotes.as_str(),
+        "some key",
+        "État",
+        "état",
+        "Δ",
+        "\u{212a}",
+        "a:b",
+        "a.b",
+        "a/b",
+        "logseq.x",
+        "1abc",
+        "_x",
+        "-x",
+        "",
+        "end",
+        "EnD",
+        "END",
+        "properties",
+        "Properties",
+        "PROPERTIES",
     ] {
         assert_only_ready_beside(key);
     }
@@ -134,7 +188,12 @@ fn never_writes_a_key_that_is_not_plain() {
 #[test]
 fn end_in_any_case_never_closes_or_opens_a_drawer() {
     for org in [false, true] {
-        for keys in [["EnD", "ready"], ["ready", "EnD"], ["end", "ready"], ["ready", "END"]] {
+        for keys in [
+            ["EnD", "ready"],
+            ["ready", "EnD"],
+            ["end", "ready"],
+            ["ready", "END"],
+        ] {
             let raw = seed(org, &keys);
             assert_eq!(raw, ready_only(org), "{keys:?}");
             assert_eq!(raw.matches(":END:").count(), usize::from(org));
@@ -161,7 +220,11 @@ fn one_line_per_engine_key_under_the_first_spelling() {
             assert_eq!(raw, expected);
             let child = page_child(&raw, org, "\n");
             for spelling in keys {
-                assert_eq!(child.property(spelling).as_deref(), Some("false"), "{spelling}");
+                assert_eq!(
+                    child.property(spelling).as_deref(),
+                    Some("false"),
+                    "{spelling}"
+                );
             }
         }
         // A rejected spelling does not hold a later valid one back.
@@ -226,7 +289,9 @@ fn a_generated_plain_key_round_trips_through_a_click() {
             let raw = seed(org, &[&key]);
             if raw.is_empty() {
                 assert!(
-                    is_og_built_in_property(&key) || key.eq_ignore_ascii_case("end"),
+                    is_og_built_in_property(&key)
+                        || key.eq_ignore_ascii_case("end")
+                        || key.eq_ignore_ascii_case("properties"),
                     "{key:?}"
                 );
                 continue;
@@ -253,7 +318,11 @@ fn a_generated_plain_key_round_trips_through_a_click() {
                 },
             )
             .unwrap();
-            assert_eq!(read(&clicked), pairs(&[(&key, "true")]), "{key:?} org={org}");
+            assert_eq!(
+                read(&clicked),
+                pairs(&[(&key, "true")]),
+                "{key:?} org={org}"
+            );
         }
     }
     assert!(seeded > 700, "{seeded}");
@@ -268,11 +337,21 @@ fn one_writer_call_whatever_the_number_of_columns() {
         for k in [1usize, 64, 512] {
             let valid: Vec<String> = (0..k).map(|i| format!("c{i}")).collect();
             let mixed: Vec<String> = (0..k)
-                .map(|i| if i % 2 == 0 { format!("c{i}") } else { format!("id{}", ":".repeat(i % 3 + 1)) })
+                .map(|i| {
+                    if i % 2 == 0 {
+                        format!("c{i}")
+                    } else {
+                        format!("id{}", ":".repeat(i % 3 + 1))
+                    }
+                })
                 .chain(["id".to_string(), "end".to_string()])
                 .collect();
             let rejected: Vec<String> = (0..k).map(|i| format!("x {i}")).collect();
-            for (name, keys, writes) in [("valid", valid, 1), ("mixed", mixed, 1), ("all-rejected", rejected, 0)] {
+            for (name, keys, writes) in [
+                ("valid", valid, 1),
+                ("mixed", mixed, 1),
+                ("all-rejected", rejected, 0),
+            ] {
                 WRITES.with(|n| n.set(0));
                 let start = std::time::Instant::now();
                 let raw = new_checkbox_row_raw(org, &keys);

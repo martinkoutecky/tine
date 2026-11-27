@@ -428,10 +428,10 @@ fn tree_rows(rows: &Value) -> BTreeMap<Page, BTreeSet<Page>> {
 }
 
 /// The namespace tree as the inventory gives it: a row's parent is its typed
-/// `parent` (set when it is not the textual prefix's own page), else the page
-/// of its immediate namespace prefix; the edge counts only when the parent is
-/// a listed page. Against the model's `tree` (every page with its children)
-/// and `namespaceTree` (the rows with a parent or a child).
+/// `parent` candidate when that page is listed, else none (no prefix of its
+/// own). Against the model's `tree` (every page with its children) and
+/// `namespaceTree` (the rows with a parent or a child, and the days the store
+/// marks `namespace_day`).
 fn compare_trees(
     journal: &JournalFormat,
     real: &[&super::super::store_crate::InventoryEntry],
@@ -440,18 +440,18 @@ fn compare_trees(
 ) -> Vec<Diff> {
     let mut tine: BTreeMap<Page, BTreeSet<Page>> =
         pages.iter().map(|p| (p.clone(), BTreeSet::new())).collect();
+    let mut roots = BTreeSet::new();
     for e in real {
         let page = entry_page(journal, e);
-        let parent = match &e.parent {
-            Some(link) => Some(link_page(journal, link)),
-            None => tine_core::refs::namespace_refs(&e.name)
-                .filter(|prefix| prefix.len() < e.name.len())
-                .map(page_key)
-                .filter(|key| !key.is_empty())
-                .last()
-                .map(|key| ("page".to_owned(), key)),
-        };
-        if let Some(parent) = parent.filter(|parent| pages.contains(parent)) {
+        if e.namespace_day {
+            roots.insert(page.clone());
+        }
+        if let Some(parent) = e
+            .parent
+            .as_ref()
+            .map(|link| link_page(journal, link))
+            .filter(|parent| pages.contains(parent))
+        {
             tine.entry(parent).or_default().insert(page);
         }
     }
@@ -460,7 +460,7 @@ fn compare_trees(
     };
     let namespace = |tree: &BTreeMap<Page, BTreeSet<Page>>| -> BTreeMap<Page, BTreeSet<Page>> {
         tree.iter()
-            .filter(|(page, _)| has_edge(tree, page))
+            .filter(|(page, _)| roots.contains(*page) || has_edge(tree, page))
             .map(|(page, children)| (page.clone(), children.clone()))
             .collect()
     };

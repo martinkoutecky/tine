@@ -23,17 +23,26 @@ function Prompt(props: { request: LinkSchemeRequest }) {
     onCleanup(registerTransientLayer({ id: "link-scheme", root: () => root, dismiss: () => { dismiss(); return true; } }));
     onCleanup(() => { dismiss(); if (previous?.isConnected) previous.focus(); });
   });
+  // tine#985: an outside-graph file names its path and offers "allow for this
+  // graph" (memory only, this window's binding) instead of a device setting.
+  const file = request.file;
+  const title = file ? t("links-open-outside-file-title") : t("links-open-custom-scheme-title", { scheme: request.scheme });
   return <div class="modal-overlay graph-name-overlay" onClick={dismiss}>
     <form ref={root} class="export-modal graph-name-prompt link-scheme-prompt" role="dialog" aria-modal="true"
-      aria-label={t("links-open-custom-scheme-title", { scheme: request.scheme })}
+      aria-label={title}
       onClick={event => event.stopPropagation()}
       onSubmit={event => { event.preventDefault(); request.finish(always() ? "always" : "open"); }}>
-      <div class="export-head">{t("links-open-custom-scheme-title", { scheme: request.scheme })}</div>
-      <p class="link-scheme-target">{t("links-open-custom-scheme-confirm", { scheme: request.scheme, url: request.url })}</p>
-      <label><input type="checkbox" checked={always()} onChange={event => setAlways(event.currentTarget.checked)} />
-        {t("links-always-open-scheme", { scheme: request.scheme })}
-      </label>
-      <p>{t("links-consent-device-hint")}</p>
+      <div class="export-head">{title}</div>
+      <p class="link-scheme-target">{file
+        ? t("links-open-outside-file-confirm", { path: request.url })
+        : t("links-open-custom-scheme-confirm", { scheme: request.scheme, url: request.url })}</p>
+      <Show when={file?.lossy}><p>{t("links-outside-file-unreadable-name")}</p></Show>
+      <Show when={!file || file.remember}>
+        <label><input type="checkbox" checked={always()} onChange={event => setAlways(event.currentTarget.checked)} />
+          {file ? t("links-always-open-outside-files") : t("links-always-open-scheme", { scheme: request.scheme })}
+        </label>
+        <p>{file ? t("links-outside-file-graph-hint") : t("links-consent-device-hint")}</p>
+      </Show>
       <DialogActions cancel={<button ref={cancel} type="button" class="export-btn-secondary" onClick={dismiss}>{t("confirm-cancel")}</button>}
         primary={<button type="submit" class="export-btn-primary">{t("confirm-open-link")}</button>} />
     </form>

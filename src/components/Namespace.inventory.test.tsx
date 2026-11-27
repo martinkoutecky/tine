@@ -9,6 +9,8 @@ const backendMock = vi.hoisted(() => {
     is_journal: false,
     day: null,
     target: { kind: "absent" as const, id: `pages/${name.replaceAll("/", "___")}.md` },
+    // The store's tree parent: the immediate prefix page.
+    parent: { name: name.slice(0, name.lastIndexOf("/")), kind: "page" as const },
   });
   return {
     graphBindingGeneration: () => 0,
@@ -32,10 +34,10 @@ const backendMock = vi.hoisted(() => {
 
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
-import { NamespaceHierarchy, NamespaceMacro, buildNamespaceTree } from "./Namespace";
+import { NamespaceCrumb, NamespaceHierarchy, NamespaceMacro, buildNamespaceTree, type NsNode } from "./Namespace";
 import { createSignal } from "solid-js";
 import { resetReferenceSectionState } from "../referenceSectionState";
-import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import { allPageNames, namespaceRow, patchPageIndex, refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { route } from "../router";
 import { setJournalFormats } from "../journal";
 import { setGraphMeta } from "../graphSession";
@@ -171,7 +173,7 @@ it("keeps same-title ordinary and virtual journal namespace parents distinct whe
     { key: "2026-10-23/child", name: "2026-10-23/child", is_journal: false, day: null,
       target: { kind: "absent", id: "pages/2026-10-23___child.md" }, parent: { name: canonical, kind: "journal" } },
     { key: `${canonical}/literal`, name: `${canonical}/literal`, is_journal: false, day: null,
-      target: { kind: "absent", id: `pages/${canonical}___literal.md` } },
+      target: { kind: "absent", id: `pages/${canonical}___literal.md` }, parent: { name: canonical, kind: "page" } },
   ];
   backendMock.pageInventory.mockResolvedValueOnce({ rev: "3", entries });
   resetPageIndex();
@@ -193,4 +195,127 @@ it("keeps same-title ordinary and virtual journal namespace parents distinct whe
     resetPageIndex();
     setJournalFormats("", "");
   }
+});
+
+// The store's `parent` is each row's candidate; the tree attaches the row
+// below it exactly when that typed row is listed. A row without one has no
+// parent (no prefix is derived here), and a `namespace_day` left without a
+// parent is a top node even with nothing below it.
+describe("slash days in the namespace tree", () => {
+  type Entry = PageInventory["entries"][number];
+  const journal = (name: string, day: number, extra: Partial<Entry> = {}): Entry => ({
+    key: name.toLowerCase(), name, is_journal: true, day,
+    target: { kind: "existing", id: `journals/${day}.md`, others: [] }, ...extra });
+  const ordinary = (name: string, extra: Partial<Entry> = {}): Entry => ({
+    key: name.toLowerCase(), name, is_journal: false, day: null,
+    target: { kind: "absent", id: `pages/${name.replaceAll("/", "___")}.md` }, ...extra });
+  async function hold(entries: Entry[], rev = "10") {
+    backendMock.pageInventory.mockResolvedValueOnce({ rev, entries });
+    resetPageIndex();
+    await refreshPageIndex();
+    return entries.map(entry => entry.name);
+  }
+  const shape = (names: string[]) => buildNamespaceTree(names)
+    .map(node => [node.full, node.kind ?? "page", node.children.map(child => child.seg)]);
+  afterEach(() => { resetPageIndex(); setJournalFormats("", ""); });
+
+  it("keeps both swapped-slash days and a same-day-prefix day as childless top nodes", async () => {
+    // yyyy-dd-MM/0: 2 Nov shows 2026-02-11/0 and 11 Feb 2026-11-02/0; the
+    // store accepts neither ISO prefix (equal depth): no candidate.
+    const root = { namespace_day: true };
+    const names = await hold([journal("2026-02-11/0", 20261102, root), journal("2026-11-02/0", 20260211, root)]);
+    expect(namespaceRow("2026-02-11/0", "journal")?.parent).toBeUndefined();
+    expect(shape(names)).toEqual([["2026-02-11/0", "journal", []], ["2026-11-02/0", "journal", []]]);
+    expect(shape(await hold([journal("2026-11-02/0", 20261102, root)]))).toEqual([["2026-11-02/0", "journal", []]]);
+  });
+
+  it("shows a childless day only when the store marks it a namespace day, whatever its spelling", async () => {
+    // `//yyyy-MM-dd`, `///yyyy-MM-dd`: every prefix folds to an empty key, so
+    // the store marks no namespace day; the tree tests no spelling of its own.
+    expect(shape(await hold([journal("//2026-11-02", 20261102, { key: "/2026-11-02" }), journal("///2026-11-03", 20261103, { key: "//2026-11-03" })]))).toEqual([]);
+    expect(shape(await hold([journal("2026-11-02/0", 20261102)]))).toEqual([]);
+  });
+
+  it("nests a day under its accepted ordinary prefix and not the reverse (mixed cycle)", async () => {
+    const names = await hold([
+      journal("2026-11-02/0/0", 20261102, { parent: { name: "2026-11-02/0", kind: "page" } }),
+      ordinary("2026-11-02/0", { namespace_parent: true }),
+    ]);
+    expect(shape(names)).toEqual([["2026-11-02/0", "page", ["0"]]]);
+  });
+
+  it("keeps a day whose month candidate is only an alias as a top node, and lists no alias node", async () => {
+    const names = await hold([
+      journal("2026/11/02", 20261102, { namespace_day: true, parent: { name: "2026/11", kind: "page" } }),
+      { ...ordinary("2026/11", { namespace_excluded: true }), target: { kind: "alias", owners: ["pages/Owner.md"] } },
+      { ...ordinary("Owner"), target: { kind: "existing", id: "pages/Owner.md", others: [] } },
+    ]);
+    expect(shape(names)).toEqual([["2026/11/02", "journal", []]]);
+  });
+
+  it("drops an ordinary row without a parent and its crumb opens what the prefix links to", async () => {
+    setJournalFormats("yyyy-dd-MM/0", "yyyy_MM_dd");
+    const names = await hold([journal("2026-02-11/0", 20261102, { namespace_day: true }), ordinary("2026-11-02/notes")]);
+    expect(shape(names)).toEqual([["2026-02-11/0", "journal", []]]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <NamespaceCrumb name="2026-11-02/notes" />, root);
+    try {
+      root.querySelector<HTMLElement>(".ns-crumb-item")!.click();
+      expect(route()).toMatchObject({ kind: "page", name: "2026-02-11/0", pageKind: "journal" });
+    } finally { dispose(); }
+  });
+
+  // The month a reference adds and removes travels as its own rows in a delta;
+  // the day's row, which no delta carries, keeps its candidate.
+  const month = (name: string): Entry[] => [
+    ordinary(name, { parent: { name: "2026", kind: "page" } }),
+    ordinary("2026", { namespace_parent: true }),
+  ];
+
+  it("moves a blank spaced-title day under its folded month by the patch, and back to the top", async () => {
+    // `yyyy/MM /dd`: the day's prefix `2026/11 ` folds to the month `2026/11`.
+    const tree = () => shape(allPageNames());
+    await hold([journal("2026/11 /02", 20261102, { namespace_day: true, parent: { name: "2026/11 ", kind: "page" } })], "20");
+    const reads = backendMock.pageInventory.mock.calls.length;
+    expect(tree()).toEqual([["2026/11 /02", "journal", []]]);
+    expect(patchPageIndex(21n, { keys: ["2026/11", "2026"], entries: month("2026/11") })).not.toBeNull();
+    expect(tree()).toEqual([["2026", "page", ["11"]]]);
+    expect(buildNamespaceTree(allPageNames())[0].children[0].children.map(child => [child.full, child.kind, child.seg]))
+      .toEqual([["2026/11 /02", "journal", "02"]]);
+    expect(patchPageIndex(22n, { keys: ["2026/11", "2026"], entries: [] })).not.toBeNull();
+    expect(tree()).toEqual([["2026/11 /02", "journal", []]]);
+    expect(backendMock.pageInventory.mock.calls.length).toBe(reads);
+  });
+
+  it("nests blank pages under a date-normalised day while the day is listed, and hides them otherwise", async () => {
+    // `2026/11/2/Notes` and `2026/1/02/Notes` name the days `2026/11/02` and `2026/01/02`.
+    const tree = () => buildNamespaceTree(allPageNames());
+    const labels = (nodes: NsNode[]): unknown[] => nodes.map(node => [node.seg, labels(node.children)]);
+    const notes = (name: string, day: string) => ({ ...ordinary(name, { parent: { name: day, kind: "journal" } }),
+      target: { kind: "existing" as const, id: `pages/${name.replaceAll("/", "___")}.md`, others: [] } });
+    await hold([notes("2026/11/2/Notes", "2026/11/02"), notes("2026/1/02/Notes", "2026/01/02")], "30");
+    const reads = backendMock.pageInventory.mock.calls.length;
+    expect(tree()).toEqual([]);
+    const days = (["2026/11", "2026/01"] as const).map(m => ({
+      ...journal(`${m}/02`, Number(`${m.replace("/", "")}02`), { namespace_day: true, parent: { name: m, kind: "page" } }),
+      target: { kind: "absent" as const, id: `journals/${m.replace("/", "_")}_02.md` } }));
+    const delta = { keys: ["2026/11/02", "2026/01/02", "2026/11", "2026/01", "2026"],
+      entries: [...days, ...month("2026/11"), ordinary("2026/01", { parent: { name: "2026", kind: "page" } })] };
+    expect(patchPageIndex(31n, delta)).not.toBeNull();
+    expect(labels(tree())).toEqual([["2026", [["01", [["02", [["Notes", []]]]]], ["11", [["02", [["Notes", []]]]]]]]]);
+    expect(patchPageIndex(32n, { keys: delta.keys, entries: [] })).not.toBeNull();
+    expect(tree()).toEqual([]);
+    expect(backendMock.pageInventory.mock.calls.length).toBe(reads);
+  });
+
+  it("nests a name with a trailing slash under the prefix before it", async () => {
+    // `a/b/` folds to `a/b`, so its candidate is `a`.
+    const names = await hold([
+      ordinary("a/b/", { key: "a/b", parent: { name: "a", kind: "page" } }),
+      ordinary("a/c", { parent: { name: "a", kind: "page" } }),
+      ordinary("a", { namespace_parent: true }),
+    ]);
+    expect(shape(names)).toEqual([["a", "page", ["b/", "c"]]]);
+  });
 });

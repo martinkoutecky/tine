@@ -19,8 +19,8 @@ thread_local! {
 /// schema order): an empty title line, then `key:: false` (Org: a drawer row
 /// `:key: false`) for each admitted key, written by the block's one property
 /// writer; `""` (an empty row) when none is admitted. A key is admitted when it
-/// is plain (ASCII letter first, then letters, digits, `_` or `-`; never `end`,
-/// which closes an Org drawer), names no Logseq built-in, Tine key or the asset
+/// is plain (ASCII letter first, then letters, digits, `_` or `-`; never `end`
+/// or `properties`, which spell an Org drawer's own lines), names no Logseq built-in, Tine key or the asset
 /// pointer, and is not the engine's same key as an earlier admitted one (first
 /// spelling wins). Every other column stays unset. O(key bytes) plus one writer
 /// call on a one-line block; no parse when nothing is admitted.
@@ -41,8 +41,9 @@ pub fn new_checkbox_row_raw(org: bool, keys: &[String]) -> String {
     block_regions::edit("\n", org, Edit::Properties { values }).unwrap_or_default()
 }
 
-/// `[A-Za-z][A-Za-z0-9_-]*` and not `end` in any case: a name every reader in
-/// both formats takes as itself. O(key bytes).
+/// `[A-Za-z][A-Za-z0-9_-]*` and not `end` or `properties` in any case (they
+/// spell a drawer's closer and opener): a name every reader in both formats
+/// takes as itself. O(key bytes).
 fn plain(key: &str) -> bool {
     let bytes = key.as_bytes();
     bytes.first().is_some_and(u8::is_ascii_alphabetic)
@@ -50,6 +51,7 @@ fn plain(key: &str) -> bool {
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
         && !key.eq_ignore_ascii_case("end")
+        && !key.eq_ignore_ascii_case("properties")
 }
 
 /// Not a key whose value means something beyond the column. O(key bytes).

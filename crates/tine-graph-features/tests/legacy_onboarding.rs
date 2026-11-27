@@ -148,6 +148,7 @@ fn guide_explains_grid_edit_first() {
         "first child",
         "Tab",
         "Shift+Tab",
+        "removes that empty child",
         "Esc",
         "keeps your text",
         "ruling",

@@ -2,7 +2,9 @@ import type { JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
-import { graphOwner, ownedWhen, readOwned } from "../owned";
+import { bindingOwner, graphOwner, ownedWhen, readOwned } from "../owned";
+import { captureShowSignal } from "../captureShow";
+import { withFileConsent } from "../fileConsent";
 import {
   DEFERRED_HREF, anchorDecision, anchorKeepsHref, linkScheme, refusedLinkScheme,
   rememberableLinkScheme, type AnchorDecision,
@@ -12,7 +14,8 @@ import { askLinkScheme } from "../linkSchemePrompt";
 export { linkScheme } from "../linkSchemePolicy";
 
 /** The one owner of "open this outbound link" for graph content (I-12). http(s),
- *  mailto, `file:` and `tine:` open directly, as before. Another app's scheme
+ *  mailto and `tine:` open directly, as before; a `file:` target outside the
+ *  graph asks first (tine#985, `withFileConsent`). Another app's scheme
  *  (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) opens only after the
  *  user confirms a prompt naming the scheme and the full target, or remembers
  *  that exact scheme on this device (D-20261103-S503): a link in a
@@ -24,8 +27,9 @@ export { linkScheme } from "../linkSchemePolicy";
  *  the default) or always (a caret-followed URL, which stays meaningful across
  *  a graph switch). Resolves when handled; never rejects. */
 export async function openOutboundLink(dest: string, graphScoped = true): Promise<void> {
-  const owner = ownedWhen(...(graphScoped ? [graphOwner()] : []));
   const scheme = linkScheme(dest);
+  if (scheme === "file") return openFileLink(dest);
+  const owner = ownedWhen(...(graphScoped ? [graphOwner()] : []));
   try {
     if (scheme && refusedLinkScheme(scheme)) throw new Error(`${scheme}: links are never opened`);
     if (scheme && rememberableLinkScheme(scheme)) {
@@ -39,6 +43,24 @@ export async function openOutboundLink(dest: string, graphScoped = true): Promis
       return;
     }
     await readOwned(owner, backend().openExternal(dest));
+  } catch (error) {
+    let current = true;
+    try { current = owner(); } catch { /* an unknowable owner still reports */ }
+    if (current) reportLinkOpenFailure(dest, error);
+  }
+}
+
+/** tine#985: a `file:` gesture is owned by this graph binding (and, in Quick
+ * Capture, this show) on every route, the caret route included, so a late
+ * reply after a switch shows no prompt and an agreed call cannot open in
+ * another graph. A failure is shown only while that owner is current. */
+async function openFileLink(dest: string): Promise<void> {
+  const signal = captureShowSignal();
+  const owner = bindingOwner(...(signal ? [() => !signal.aborted] : []));
+  try {
+    const api = backend(), bindingGeneration = api.graphBindingGeneration();
+    await withFileConsent(owner, (purpose, show) => api.openExternal(dest, undefined, { purpose, bindingGeneration, show }),
+      { signal, remember: !signal });
   } catch (error) {
     let current = true;
     try { current = owner(); } catch { /* an unknowable owner still reports */ }

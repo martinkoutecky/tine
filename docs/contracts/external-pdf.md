@@ -33,8 +33,17 @@ Clicking the original link again refreshes an existing outside-PDF tab in place,
 preserving its page and zoom and allowing a previously restored/error tab to retry.
 
 The async native command captures the graph binding and performs filesystem work
-on the blocking pool. It parses an absolute `file://` URL, canonicalizes exactly
-that path, opens one regular file read-only, checks its metadata against the
+on the blocking pool. It parses an absolute `file://` URL and asks the one
+`file:` consent owner (`outside_file.rs`, tine#985) whether that path is inside
+the graph folder, probing only entries already proven inside. A PDF inside the
+graph is read at once. Any other path is not opened: the first call answers with
+a consent request, and the pending document shows the prompt naming the file.
+Open repeats the call with the click's binding, and the native side reads the
+path it admitted; ticking "allow for this graph" also lets this window's binding
+read outside files without asking until the graph closes. Cancel leaves the pane
+showing "Not opened". Closing the document's last view while the prompt is up
+cancels it, and nothing is read. Once admitted, the reader canonicalizes the
+admitted path, opens one regular file read-only, checks its metadata against the
 existing 256 MiB viewer limit and checks the first five bytes for `%PDF-` before
 reading the remainder. A bounded read enforces the limit again if the file grows.
 It neither lists directories nor opens related files, writes files, copies into
@@ -45,6 +54,7 @@ on POSIX. Spaces, Unicode, literal percent/hash/question marks use URL encoding.
 
 | Refusal | In-scope reason | Visible recovery |
 | --- | --- | --- |
+| Outside the graph, before the user agrees | A link in a shared or imported graph must not read a file outside it unasked | The prompt naming the file; Open reads it, Cancel shows "Not opened" |
 | Missing file / permission denied | External move, rename, permission change or disk failure | Reader error with the path; fix the link/access and reopen |
 | Directory / FIFO / device / socket | Malformed or imported link must not hang or read a special file | Reader error with the path; select a PDF file |
 | Missing `%PDF-` header | Malformed content or wrong file | Reader error with the path; select a PDF |
@@ -68,5 +78,6 @@ capability; only a later user click on Tine's rendered link opens that file.
 
 Proof lives in `externalPdfPath.test.ts`, `externalPdfLink.test.tsx`,
 `externalPdfLink.mobile.test.tsx`, `relativeFileLink.test.tsx`,
-`PdfViewer.external.test.tsx`, `external_pdf_tests.rs`, `externalPdfBoundary.test.ts`, the unchanged
+`PdfViewer.external.test.tsx`, `outsideFileConsent.test.tsx`, `external_pdf_tests.rs`,
+`outside_file_tests.rs`, `externalPdfBoundary.test.ts`, the unchanged
 `plugins/capabilityBoundary.test.ts`, and `scripts/e2e-external-pdf.mjs`.

@@ -91,7 +91,11 @@ describe("custom URL schemes open in their app after a confirm (GH #503)", () =>
       clickLink(source);
       await flush();
       expect(document.querySelector('[role="dialog"]')).toBeNull();
-      expect(open).toHaveBeenCalledExactlyOnceWith(dest);
+      // tine#985: a file: call carries its purpose and the click's generation;
+      // native answers it (here: opened, so no prompt).
+      if (dest.startsWith("file:")) expect(open).toHaveBeenCalledExactlyOnceWith(dest, undefined,
+        { purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined });
+      else expect(open).toHaveBeenCalledExactlyOnceWith(dest);
     });
   }
 

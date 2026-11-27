@@ -7,38 +7,6 @@ fn is_properties_drawer(raw: &str, r: &Range) -> bool {
         .is_some_and(|line| is_property_drawer_marker(line, true))
 }
 
-/// Each line of a parser-accepted property region, with whether it is a
-/// property drawer's own delimiter: `:PROPERTIES:` opens a drawer only outside
-/// one, `:END:` closes only an open one, and an opener that never closes is an
-/// ordinary line. So an entry spelled `:properties:` or `:end:` inside a drawer
-/// stays an entry, and a region the parser folded from several drawers,
-/// directives or Markdown rows keeps each drawer's delimiters. The one walk
-/// both entry ownership and drawer bounds read. O(region bytes).
-pub(super) fn region_lines(raw: &str, region: Range) -> Vec<(Range, bool)> {
-    let mut lines: Vec<(Range, bool)> = Vec::new();
-    let mut open = None;
-    for line in line_ranges(raw, region) {
-        let text = line.slice(raw).trim_end_matches(['\r', '\n']);
-        let delimiter = if open.is_none() {
-            is_property_drawer_marker(text, true)
-        } else {
-            is_property_drawer_marker(text, false)
-        };
-        if delimiter {
-            open = if open.is_none() {
-                Some(lines.len())
-            } else {
-                None
-            };
-        }
-        lines.push((line, delimiter));
-    }
-    if let Some(opener) = open {
-        lines[opener].1 = false;
-    }
-    lines
-}
-
 impl BlockRegions {
     pub(super) fn own_org_region(&self, raw: &str) -> Option<usize> {
         let at = self.head_end(raw, true);
@@ -58,11 +26,15 @@ impl BlockRegions {
         let mut out = Vec::new();
         for region in &self.property_regions {
             let mut open = None;
-            for (line, delimiter) in region_lines(raw, *region) {
-                if delimiter {
-                    match open.take() {
-                        None => open = Some(line.0),
-                        Some(start) => out.push((start, line.0)),
+            for line in line_ranges(raw, *region) {
+                if is_properties_drawer(raw, &line) {
+                    open = Some(line.0);
+                } else if is_property_drawer_marker(
+                    line.slice(raw).trim_end_matches(['\r', '\n']),
+                    false,
+                ) {
+                    if let Some(start) = open.take() {
+                        out.push((start, line.0));
                     }
                 }
             }

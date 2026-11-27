@@ -221,6 +221,12 @@ mod journal_guide_tests {
         assert!(journals.contains("**Shift-click Journals** in the left sidebar or toolbar"));
         assert!(journals.contains("right sidebar without leaving the main page"));
         assert!(journals.contains("A plain click or **g j** still opens the multi-day feed"));
+        // GH #1050: Journals takes the page-link modifiers.
+        assert!(journals.contains(
+            "**Ctrl/Cmd-click** or middle-click Journals opens the feed in a background tab"
+        ));
+        assert!(journals.contains("**Alt-click** opens it in the other pane"));
+        assert!(journals.contains("when the feed is already open, these clicks bring it forward"));
     }
 
     /// CM-DAYFILE (D-20261111-CMR14): a date-named page file is its day.
@@ -366,6 +372,7 @@ mod journal_guide_tests {
             "each further press opens the next level",
             "ignoring leaves",
             "each press is one Undo step",
+            "when a press folds or opens the results themselves, it also reaches writable results not drawn yet",
         ] {
             assert!(
                 tips.contains(outcome),
@@ -1656,6 +1663,19 @@ mod rename_guide_tests {
         assert!(search.contains("sibling `files` folder outside the graph"));
         assert!(search.contains("Parent steps such as `../../` are preserved"));
         assert!(!search.contains("shown struck through and never opened"));
+    }
+
+    #[test]
+    fn outside_file_guide_says_it_asks_first_and_how_long_allow_lasts() {
+        // tine#985: a file outside the graph opens only after a prompt naming it;
+        // the per-graph allowance is not permanent, and Quick Capture never keeps it.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("is opened only after Tine asks, naming the file"));
+        assert!(search.contains("until the graph is closed in this window"));
+        assert!(search.contains("Quick Capture asks every time"));
+        assert!(search.contains("Files inside the graph open without asking"));
+        let pdf = include_str!("templates/pdf.md");
+        assert!(pdf.contains("A PDF outside the graph folder asks first"));
     }
 
     #[test]

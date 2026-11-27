@@ -896,7 +896,6 @@ describe("SheetGrid interaction", () => {
 
   it("GH874: empty nested Enter, Delete and cell structure commands preserve the cell boundary", async () => {
     loadSheetDocWithOutlineChild();
-    setDoc("byId", "c1child", "raw", "");
     disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <Block id="grid" />);
     setCellSel({ gridId: "grid", row: 0, col: 0 });
@@ -907,8 +906,11 @@ describe("SheetGrid interaction", () => {
     expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
     activeEditor(root).select(5, 5);
     keydown(activeEditor(root), "Delete");
+    // A first child with text is never merged into the cell (an empty one is removed:
+    // SheetGrid.cellJoin.test.tsx).
     expect(doc.byId.c1.raw).toBe("Alpha");
-    expect(doc.byId.c1child).toBeDefined();
+    expect(doc.byId.c1child.raw).toBe("Child");
+    setDoc("byId", "c1child", "raw", "");
     keydown(activeEditor(root), "ArrowDown");
     await tick();
     keydown(activeEditor(root), "Enter");
