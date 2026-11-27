@@ -363,3 +363,24 @@ it("reports a settled position only once the visit owns it and no pursuit or rea
   expect(routeScrollSettled(scroller)).toBe(true);
   expect(routeScrollSettled(document.createElement("div"))).toBe(false); // a scroller no route shows
 });
+
+it("arms a hold on a visit exactly when leaving it saves its position (GH #987)", async () => {
+  const router = createPaneRouter(`ownership-test-${Math.random()}`);
+  router.setScrollerElement(scroller);
+  height = 20_000;
+  router.openPage("Read", "page");
+  scroller.scrollTop = 5_000; // the visit never positioned: neither answer gives it the offset
+  expect(routeScrollSettled(scroller)).toBe(false);
+  router.openPage("Away", "page");
+  router.goBack();
+  router.restoreScrollFor(router.route());
+  await runFrames(1);
+  expect(scroller.scrollTop).toBe(0);
+  expect(routeScrollSettled(scroller)).toBe(true); // positioned at the top: both answers now give it the offset
+  scroller.scrollTop = 5_000;
+  router.openPage("Away", "page");
+  router.goBack();
+  router.restoreScrollFor(router.route());
+  await runFrames(1);
+  expect(scroller.scrollTop).toBe(5_000);
+});

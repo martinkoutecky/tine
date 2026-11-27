@@ -413,7 +413,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function setScrollerElement(el: HTMLElement | null) {
     if (scrollerElement !== el) scrollOwner = null;
     scrollerElement = el;
-    if (el) registerScrollOwnership(el, () => scrollerElement === el && scrollOwner === routeVisit());
+    if (el) registerScrollOwnership(el, () => scrollerElement === el && visitOwnsScroll());
+  }
+
+  /** Whether the current visit owns the pane's scroll position: the one answer for saving it on departure and for
+   *  arming a viewport hold. */
+  function visitOwnsScroll(): boolean {
+    return scrollOwner === routeVisit();
   }
 
   function activeTab(): Tab {
@@ -454,9 +460,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function rememberScroll() {
     const el = mainScroller();
     if (!el) return;
-    const visit = routeVisit();
-    if ((visit.route.kind === "page" || visit.route.kind === "journals") && visit !== scrollOwner) return;
-    const route = visit.route;
+    const route = routeVisit().route;
+    if ((route.kind === "page" || route.kind === "journals") && !visitOwnsScroll()) return;
     scrollByRoute.set(route, el.scrollTop);
     const anchor = captureScrollAnchor(el);
     if (anchor) anchorByRoute.set(route, anchor);
