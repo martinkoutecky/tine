@@ -16,7 +16,7 @@ import { node as docNode, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
 import { splitProps, BUILTIN_HIDE } from "../editor/properties";
 import { editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput } from "../render/spans";
-import { codeCardBodyPoint } from "../components/blockGestures";
+import { codeCardBodyAt } from "../components/blockGestures";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { queryAllWindows, selectionOf } from "../windowRealm";
@@ -61,9 +61,10 @@ function blockRowOf(node: Node | null): Element | null {
 /** Hand the current rendered text selection inside one block to its editor.
  *  Returns true when the key press was consumed: `startEditing` was asked to
  *  open the block in the selecting instance with the mapped range selected (a
- *  code card's body range in body mode), as a click entry would; nothing is
+ *  body range of one of the block's own code cards in body mode), as a click entry would; nothing is
  *  written by this function. The rendered selection is cleared once the block
- *  is editing; when an entry guard refuses, it stays. Returns false (the key
+ *  is editing; when an entry guard refuses, this function leaves it (the guard
+ *  may move focus and the selection to what it refuses for). Returns false (the key
  *  goes on) for a collapsed or cross-block selection, a reference/embed/query
  *  rendering, a selection end that depends on generated output (a query's, a
  *  failed-region or embed-depth notice), the block being edited, a read-only
@@ -117,17 +118,17 @@ export function openRenderedSelectionInEditor(key: string): boolean {
   const split = splitProps(node.raw, BUILTIN_HIDE, fmt);
   const backward = !!sel.anchorNode && sel.anchorNode === range.endContainer && sel.anchorOffset === range.endOffset;
   const direction = backward ? "backward" as const : "forward" as const;
-  // Inside one code card each end is mapped as a body click maps it, and the
-  // editor opens in body mode at that body, in body coordinates.
+  // Inside one of the block's own code cards each end is mapped as a body click
+  // maps it, and the editor opens in body mode at that body, in body coordinates.
   const content = wrapper.querySelector(".block-content") ?? wrapper;
   const startPoint = { startContainer: range.startContainer, startOffset: range.startOffset };
   const endPoint = { startContainer: range.endContainer, startOffset: range.endOffset };
-  const cardStart = codeCardBodyPoint(content, split.visible, fmt, range.startContainer, startPoint);
-  const cardEnd = cardStart && codeCardBodyPoint(content, split.visible, fmt, range.endContainer, endPoint);
+  const card = codeCardBodyAt(content, split.visible, fmt, range.startContainer);
   let selection: { start: number; end: number; direction: "forward" | "backward"; codeBodyStart?: number };
-  if (cardStart && cardEnd && cardStart.card === cardEnd.card) {
-    if (cardStart.offset >= cardEnd.offset) return false;
-    selection = { start: cardStart.offset, end: cardEnd.offset, direction, codeBodyStart: cardStart.bodyStart };
+  if (card && card.card.contains(range.endContainer)) {
+    const start = card.offset(startPoint), end = card.offset(endPoint);
+    if (start >= end) return false;
+    selection = { start, end, direction, codeBodyStart: card.bodyStart };
   } else {
     const start = editorOffsetFromRenderedRange(wrapper, startPoint, node.raw, BUILTIN_HIDE, fmt);
     const end = editorOffsetFromRenderedRange(wrapper, endPoint, node.raw, BUILTIN_HIDE, fmt);
@@ -140,7 +141,7 @@ export function openRenderedSelectionInEditor(key: string): boolean {
 
   heldHandoffKey = key;
   startEditing(id, selection, instanceOwners.get(wrapper) ?? null);
-  // The editor now shows the range; a refused entry keeps the user's selection.
+  // The editor now shows the range; on a refused entry the selection is the guard's to keep or move.
   // Clear only a document selection that is still the rendered range: in WebKit
   // a focused textarea's own selection IS the document selection, and clearing
   // that would drop the range the editor was just given.
