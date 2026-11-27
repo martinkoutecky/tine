@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createPaneRouter } from "./router";
-import { pursueScroll } from "./routeScrollAnchor";
+import { pursueScroll, routeScrollSettled } from "./routeScrollAnchor";
 import { registerOutlineWindow } from "./outlineViewport";
 import { createRoot } from "solid-js";
 
@@ -339,4 +339,27 @@ it("brings back the reading block when the windowing holds it unmounted and the 
     expect(row).not.toBeNull();
     expect(row!.getBoundingClientRect().top - scroller.getBoundingClientRect().top).toBe(40);
   } finally { unregister(); host.remove(); }
+});
+
+it("reports a settled position only once the visit owns it and no pursuit or reader-scroll wait is pending (GH #987)", async () => {
+  const router = createPaneRouter(`settled-test-${Math.random()}`);
+  router.setScrollerElement(scroller);
+  router.openPage("Top", "page");
+  router.restoreScrollFor(router.route());
+  expect(routeScrollSettled(scroller)).toBe(false); // before the pursuit's first frame
+  await runFrames(1);
+  expect(routeScrollSettled(scroller)).toBe(true); // a new page at the top: owned at once
+  scroller.scrollTop = 9_000;
+  height = 20_000;
+  router.openPage("Other", "page");
+  router.goBack();
+  router.restoreScrollFor(router.route());
+  await runFrames(1);
+  expect(routeScrollSettled(scroller)).toBe(false); // still pursuing the deep offset
+  document.dispatchEvent(new Event("pointerdown")); // a click releases it to wait for the reader's scroll
+  await runFrames(1);
+  expect(routeScrollSettled(scroller)).toBe(false);
+  scroller.dispatchEvent(new Event("scroll"));
+  expect(routeScrollSettled(scroller)).toBe(true);
+  expect(routeScrollSettled(document.createElement("div"))).toBe(false); // a scroller no route shows
 });

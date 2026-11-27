@@ -1,4 +1,5 @@
 import { revealOutlineBlock } from "./outlineViewport";
+import { endFeedHold, installFeedHoldVeto } from "./components/readingViewportAnchor";
 import { revealFindSheetBlock } from "./sheet/find";
 import { batch, createMemo, createRoot, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, onBlockRawChanged, node as docNode } from "./document";
@@ -259,6 +260,7 @@ let surfaceObserver: MutationObserver | null = null;
 let surfaceObserverFrame: (() => void) | undefined;
 
 export const inPageFindOpen = state.open;
+installFeedHoldVeto(inPageFindOpen);
 /** Whether typographic glyphs are drawn now, in the reading view and the editor. While Find is open they are not:
  * its index and its highlighter both count source text, and with a glyph drawn they would name different
  * occurrences, so Replace could write one that is not highlighted. Read it inside tracked drawing. */
@@ -435,6 +437,7 @@ export function openInPageFind() {
     : selectionOf()?.toString() ?? "";
   const seed = /[\r\n\u2028\u2029]/.test(selection) ? "" : selection.trim();
   if (typeof document !== "undefined") restoreFocusEl = activeElement() as HTMLElement | null;
+  endFeedHold();
   batch(() => {
     state.setPaneId(notesPaneId(focusedPaneId()));
     state.setPreserveEditorBlur(true);

@@ -39,6 +39,16 @@ function retireWaiting(el: HTMLElement | null | undefined): void {
   waitingForScroll.delete(el);
 }
 
+/** Per scroller: whether its route's visit owns the position (the router's answer), and whether a pursuit still ticks. */
+const ownedBy = new WeakMap<HTMLElement, () => boolean>();
+const pursuing = new WeakMap<HTMLElement, () => boolean>();
+export function registerScrollOwnership(scroller: HTMLElement, owned: () => boolean): void { ownedBy.set(scroller, owned); }
+/** True when the route shown in `scroller` owns its position and no saved position is still pursued or waits for the
+ *  reader's scroll. O(1). */
+export function routeScrollSettled(scroller: HTMLElement): boolean {
+  return !!ownedBy.get(scroller)?.() && !waitingForScroll.has(scroller) && !pursuing.get(scroller)?.();
+}
+
 /** Go to a saved position once the content has rendered. A deep position keeps being pursued while the page grows:
  *  blocks and linked references render and measure asynchronously, and a slow reference read can answer well after
  *  the page shows (GH #848). The row that was first in view wins over the pixel offset once it exists, since rows
@@ -66,6 +76,9 @@ export function pursueScroll(options: {
   let listening = false;
   const doc = scroller()?.ownerDocument;
   retireWaiting(scroller());
+  let ticking = true;
+  const pursued = scroller();
+  if (pursued) pursuing.set(pursued, () => ticking);
   let positioned = false;
   const claimPosition = () => { if (!positioned) { positioned = true; onPositioned(); } };
   // A gesture hands control to the reader, but only a scroll the gesture causes makes this the reader's position:
@@ -81,7 +94,7 @@ export function pursueScroll(options: {
     waitingForScroll.set(el, waiting);
     el.addEventListener("scroll", waiting, { once: true, passive: true });
   };
-  const finish = () => { if (listening) for (const gesture of GESTURES) doc?.removeEventListener(gesture, release, true); };
+  const finish = () => { ticking = false; if (listening) for (const gesture of GESTURES) doc?.removeEventListener(gesture, release, true); };
   // Deferred to a frame so the page's content is laid out first; otherwise a synchronous reset races the content swap.
   const tick = () => {
     if (released) return;
@@ -103,7 +116,7 @@ export function pursueScroll(options: {
     if (moved) el.scrollTop = want;
     const reached = anchored !== null || el.scrollTop >= target - 1;
     if (reached) claimPosition();
-    if (target <= 0) return;
+    if (target <= 0) { finish(); return; }
     quiet = !moved && el.scrollHeight === lastHeight ? quiet + 1 : 0;
     lastHeight = el.scrollHeight;
     if ((reached && quiet >= RESTORE_SCROLL_QUIET_FRAMES) || performance.now() > deadline) { claimPosition(); finish(); return; }

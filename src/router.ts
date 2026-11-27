@@ -24,7 +24,7 @@ import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { applyQueryRoutePatch, type QueryRoutePatch } from "./queryRoutePatch";
 import type { PageFollower, PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 import { mainWindow } from "./windowRealm";
-import { captureScrollAnchor, pursueScroll, type ScrollAnchor } from "./routeScrollAnchor";
+import { captureScrollAnchor, pursueScroll, registerScrollOwnership, type ScrollAnchor } from "./routeScrollAnchor";
 import {
   moveTabOutOfGroup as treeMoveOutOfGroup, moveTabSubtree, removeTabPromoting,
   rootSlot, setTabCollapsed as treeSetCollapsed, settleTabTree,
@@ -413,6 +413,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function setScrollerElement(el: HTMLElement | null) {
     if (scrollerElement !== el) scrollOwner = null;
     scrollerElement = el;
+    if (el) registerScrollOwnership(el, () => scrollerElement === el && scrollOwner === routeVisit());
   }
 
   function activeTab(): Tab {

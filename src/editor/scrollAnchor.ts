@@ -1,11 +1,13 @@
 import { documentOf } from "../windowRealm";
+import { feedHoldHandles } from "../components/readingViewportAnchor";
 /** One editor commit/frame owns only displacement caused above that editor.
  * User scrolling and another focus/scroll owner always take precedence.
  * Returns null unless `editor` is connected and focused inside a scroller;
  * otherwise a handle whose `restore(currentEditor?)` scrolls by the editor's
  * vertical displacement (> 0.5px) since capture, only if no wheel/touch/pointer
  * gesture, focus change, scroll-owner change or disconnect intervened, and
- * `cancel()` drops it. Both detach the gesture listeners. O(1). */
+ * `cancel()` drops it. Both detach the gesture listeners. A held Journals
+ * editor's scroller answers through its hold instead. O(1). */
 export function captureEditorScrollAnchor(editor: HTMLElement, scroller: HTMLElement | null) {
   if (!scroller || !editor.isConnected || documentOf(editor).activeElement !== editor) return null;
   const top = editor.getBoundingClientRect().top;
@@ -21,6 +23,7 @@ export function captureEditorScrollAnchor(editor: HTMLElement, scroller: HTMLEle
     cancel() { cancel(); cleanup(); },
     restore(currentEditor: HTMLElement | null = editor) {
       cleanup();
+      if (feedHoldHandles(scroller)) return;
       if (canceled || !currentEditor?.isConnected || !scroller.isConnected || !scroller.contains(currentEditor) ||
           documentOf(currentEditor).activeElement !== currentEditor || scroller.scrollTop !== scrollTop) return;
       const displacement = currentEditor.getBoundingClientRect().top - top;

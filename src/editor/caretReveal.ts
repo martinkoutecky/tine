@@ -2,6 +2,7 @@ import { documentOf, isElementTag, requestFrame, windowOf } from "../windowRealm
 import { textareaCaretLeft, textareaCaretRow } from "./caretRows";
 import { cssInterfaceZoom } from "../zoom";
 import { stickyRow } from "../stickyGeometry";
+import { armFeedHold, endFeedHold, noteEditorOpening } from "../components/readingViewportAnchor";
 
 /** GH #745. The one rule for where the view goes when the caret lands in a
  * block editor (Enter split, Backspace/Delete merge, paste, indent/outdent,
@@ -111,14 +112,20 @@ function caretViewBounds(editor: HTMLElement, scroller: HTMLElement | null, row:
   return { top: row.top, bottom: row.bottom, visibleTop, visibleBottom };
 }
 
-function scrollToShow(scroller: HTMLElement | null, g: CaretViewRow | null, viewport?: { top: number; bottom: number }): boolean {
-  if (!g || !scroller) return false;
+/** The viewport-pixel scroll that shows the caret row; 0 while it is shown (within half a pixel). */
+function revealDelta(g: CaretViewRow, viewport?: { top: number; bottom: number }): number {
   const top = Math.max(g.visibleTop, viewport ? viewport.top + MARGIN * zoom() : -Infinity);
   const bottom = Math.min(g.visibleBottom, viewport ? viewport.bottom - MARGIN * zoom() : Infinity);
   let delta = 0;
   if (g.top < top) delta = g.top - top;
   else if (g.bottom > bottom) delta = g.bottom - bottom;
-  if (Math.abs(delta) <= 0.5) return false;
+  return Math.abs(delta) <= 0.5 ? 0 : delta;
+}
+
+function scrollToShow(scroller: HTMLElement | null, g: CaretViewRow | null, viewport?: { top: number; bottom: number }): boolean {
+  if (!g || !scroller) return false;
+  const delta = revealDelta(g, viewport);
+  if (!delta) return false;
   scroller.scrollTop += delta / zoom();
   return true;
 }
@@ -206,6 +213,7 @@ export function revealCaretSettled(editor: HTMLTextAreaElement, scroller: HTMLEl
 
 export function watchCaretReveal(editor: HTMLElement, scroller: HTMLElement | null, reveal: () => void, stableFrames = 2, maxFrames = 40, lateMs = 10_000, followScroll = false): () => void {
   if (!scroller) return () => {};
+  noteEditorOpening(editor);
   let stopped = false;
   let cancelFrame: (() => void) | undefined;
   let lateTimer: number | undefined;
@@ -258,10 +266,17 @@ export function watchCaretReveal(editor: HTMLElement, scroller: HTMLElement | nu
     last = now;
     if (same >= stableFrames || ++frames >= maxFrames) {
       reveal();
+      // GH #987: a click-opened Journals editor now holds still. Its compensation
+      // keeps the caret only where this reveal would leave it alone.
+      if (zoom() === 1) armFeedHold(editor, scroller, shift => {
+        const g = editorCaretRow(editor, scroller);
+        return !!g && !revealDelta({ ...g, top: g.top - shift, bottom: g.bottom - shift });
+      });
       return follow();
     }
     cancelFrame = requestFrame(editor, tick);
   };
   cancelFrame = requestFrame(editor, tick);
-  return stop;
+  // The editor's teardown also retires its hold, which outlives the watch.
+  return () => { stop(); endFeedHold(editor); };
 }

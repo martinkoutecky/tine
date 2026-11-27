@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // what is tested (GH #745): no move while the caret row is visible, the least move otherwise, below pins.
 let row: { top: number; bottom: number } | null = { top: 0, bottom: 20 };
 vi.mock("./caretRows", () => ({ textareaCaretRow: () => row }));
+const hold = vi.hoisted(() => ({ note: vi.fn(), arm: vi.fn(), end: vi.fn() }));
+vi.mock("../components/readingViewportAnchor", () => ({ noteEditorOpening: hold.note, armFeedHold: hold.arm, endFeedHold: hold.end }));
 import { caretViewRow, editorCaretRow, keyboardCaretOffset, registerCaretRowSource, revealCaret, revealCaretAboveKeyboard, revealCaretSettled } from "./caretReveal";
 import { applyAndroidInterfaceZoom } from "../zoom";
 
@@ -126,6 +128,25 @@ it("reveals once, after the layout has stopped moving, and not at mount", () => 
   step(2); // signature unchanged for 2 frames
   expect(f.scroller.scrollTop).toBe(1000 - 477 - 8);
   expect(frames.length).toBe(0);
+});
+it("offers the Journals hold at the settle, with the reveal's own caret band and tolerance, and retires it at teardown (GH #987)", () => {
+  hold.note.mockClear(); hold.arm.mockClear(); hold.end.mockClear();
+  const f = fixture(200); // caret row 300..320 in the viewport; the band ends at 100 + 500 - 8 = 592
+  const cancel = revealCaretSettled(f.editor, f.scroller);
+  expect(hold.note).toHaveBeenCalledWith(f.editor);
+  expect(hold.arm).not.toHaveBeenCalled();
+  step(2);
+  expect(hold.arm).toHaveBeenCalledTimes(1);
+  const [editor, scroller, fits] = hold.arm.mock.calls[0] as [HTMLElement, HTMLElement, (shift: number) => boolean];
+  expect([editor, scroller]).toEqual([f.editor, f.scroller]);
+  expect(fits(0)).toBe(true);
+  expect(fits(-272.25)).toBe(true); // bottom 592.25: the reveal would not move for a quarter pixel either
+  expect(fits(-272.75)).toBe(false);
+  expect(fits(300 - 108 + 0.75)).toBe(false); // top above the band's 108
+  f.scroller.dispatchEvent(new Event("keydown")); // the watch ends on input; the hold is the editor's until teardown
+  expect(hold.end).not.toHaveBeenCalled();
+  cancel();
+  expect(hold.end).toHaveBeenCalledWith(f.editor);
 });
 it("waits while the layout is still moving and reveals the settled position, not the interim one", () => {
   const f = fixture(-6000); // interim layout: editor far above the view

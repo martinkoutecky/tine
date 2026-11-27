@@ -1,10 +1,17 @@
 // GF4: native cold first-body timing and late-day merge with an open editor.
 // Run under xvfb-run; E2E_BASELINE=1 records the unchanged app's timing only.
 // The merge gate requires E2E_HOLD_LOAD=1 and tine-store/test-faults.
+// GH #987: the click-opened editor holds still within 1 px in every rendered frame
+// (tightened from a 2 px final read). E2E_EDITOR=textarea runs the classic editor;
+// E2E_TYPE=1 also types while the late days land (the text must be saved); E2E_DIST
+// names the build's frontend (with source maps) to label each scroll writer.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
+import { armingProbe, heldEditorEvidence, labelReads, labelWrites, readCounts, waitQuiet, watchHeldEditor } from "./lib/e2e-held-editor.mjs";
+import { seedClassicEditorProfile } from "./lib/e2e-classic-profile.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -30,6 +37,10 @@ fs.writeFileSync(path.join(graph, "pages/GF4 mentions.md"), `- [[${iso(date(1))}
 const pause = path.join(graph, ".tine-test-pause-load");
 if (hold) fs.writeFileSync(pause, "");
 for (const name of ["data", "config", "cache"]) fs.mkdirSync(path.join(trial, name));
+const classic = process.env.E2E_EDITOR === "textarea";
+const typing = process.env.E2E_TYPE === "1";
+if (classic) seedClassicEditorProfile({ E2E_CLASSIC_PROFILE: "1", XDG_DATA_HOME: path.join(trial, "data") });
+const HELD_PX = 1;
 const env = { ...process.env, TINE_GRAPH: graph,
   XDG_DATA_HOME: path.join(trial, "data"), XDG_CONFIG_HOME: path.join(trial, "config"), XDG_CACHE_HOME: path.join(trial, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -37,7 +48,7 @@ const port = Number(process.env.E2E_DRIVER_PORT || 4877);
 const log = fs.openSync(path.join(trial, "driver.log"), "w");
 const driver = spawn("dbus-run-session", ["--", process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOME, "bin/tauri-driver"), "--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 await sleep(500);
-const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), binarySha256: createHash("sha256").update(fs.readFileSync(app)).digest("hex"), manifest, hold, loadavg: os.loadavg(), journey: "cold Journals first body and referenced-day merge", expected: "file-backed body paints before Ready; late days retain editor and viewport", steps: [] };
+const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), binarySha256: createHash("sha256").update(fs.readFileSync(app)).digest("hex"), manifest, hold, loadavg: os.loadavg(), journey: "cold Journals first body and referenced-day merge", editor: classic ? "textarea" : "cm6", typing, expected: "file-backed body paints before Ready; late days retain editor and viewport", steps: [] };
 let browser;
 const started = performance.now();
 try {
@@ -90,25 +101,45 @@ try {
     });
     proof.before = before;
     if (before.days !== 3 || before.value !== "GF4 body 4 row 0") throw new Error(`merge setup was not held: ${JSON.stringify(before)}`);
+    if (await withEditor(browser, ".main-content", editor => editor?.kind) !== (classic ? "textarea" : "cm6")) throw new Error("the requested editor engine is not the one mounted");
+    await watchHeldEditor(browser);
+    proof.armingProbe = await armingProbe(browser);
+    // Collected, not thrown at once, so one run also records the late-day merge.
+    const failures = [];
+    if (Math.abs(proof.armingProbe.grown) > HELD_PX || Math.abs(proof.armingProbe.shrunk) > HELD_PX) failures.push(`arming probe: the click-opened editor moved: ${JSON.stringify({ ...proof.armingProbe, writes: undefined })}`);
+    else proof.steps.push("arming probe: a 16 px spacer above, grown and removed, left the editor within 1 px");
+    const probed = await readCounts(browser);
+    proof.probeReads = labelReads(probed, process.env.E2E_DIST || "dist");
     if (hold) fs.unlinkSync(pause);
+    if (typing) {
+      await withEditor(browser, ".main-content", editor => editor.select(editor.length));
+      // One key per action: in one action batch WebKitWebDriver sent only the first space (no keydown for the rest).
+      for (const key of " typed while days land") await browser.keys([key]);
+    }
     await browser.waitUntil(() => browser.execute(name => [...document.querySelectorAll("h1.journal-title")].some(el => el.textContent.includes(name)), title(date(1))), { timeout: 120000, interval: 100 });
     await browser.waitUntil(() => browser.execute(names => names.every(name => {
       const section = [...document.querySelectorAll(".page-section")].find(el => el.querySelector("h1.journal-title")?.textContent.trim() === name);
       return section?.querySelector(".references-count")?.textContent.trim() === "1";
     }), [title(date(1)), title(date(3))]), { timeout: 30000, interval: 100, timeoutMsg: "inserted days' linked references did not finish" });
-    // The anchor restore for the late days lands a frame or two after their reference counts paint, so a
-    // single read can catch the editor mid-restore (a transient jump, under load). The contract is that the
-    // viewport position survives: wait until the same editor is back within the same 2px tolerance, then
-    // run the unchanged assertion below on that settled read. A position that never returns still fails.
-    await browser.waitUntil(() => withEditor(browser, ".main-content", (editor, top) => {
-      return !!editor && Math.abs(editor.element.getBoundingClientRect().top - top) <= 2;
-    }, before.top), { timeout: 5000, interval: 50, timeoutMsg: "viewport did not settle back to the editor's position" });
+    // Wait until the editor and the pane have been still for 30 rendered frames, then read once; every
+    // rendered frame since the watch began (after its corrections) is also checked against 1 px below.
+    await waitQuiet(browser);
     const after = await withEditor(browser, ".main-content", editor => {
       return { sameEditor: editor?.element === window.__gf4Editor, focused: editor?.focused, value: editor?.value, top: editor?.element.getBoundingClientRect().top,
         titles: [...document.querySelectorAll("h1.journal-title")].map(el => el.textContent.trim()) };
     });
     proof.viewportFrames = await browser.execute(() => window.__gf4Frames);
-    if (!after.sameEditor || !after.focused || after.value !== before.value || Math.abs(after.top - before.top) > 2) throw new Error(`editor/viewport lost: ${JSON.stringify({ before, after })}`);
+    const evidence = await heldEditorEvidence(browser);
+    proof.writes = labelWrites(evidence.writes, process.env.E2E_DIST || "dist");
+    proof.natives = evidence.natives;
+    proof.heldFrames = evidence.frames;
+    proof.reads = labelReads(evidence.reads, process.env.E2E_DIST || "dist", probed);
+    const moved = evidence.frames.filter(frame => Math.abs(frame.post) > HELD_PX);
+    if (moved.length) failures.push(`the editor left its place in ${moved.length} rendered frames: ${JSON.stringify(moved.slice(0, 5))}`);
+    const value = typing ? "GF4 body 4 row 0 typed while days land" : before.value;
+    if (!after.sameEditor || !after.focused || after.value !== value || Math.abs(after.top - before.top) > HELD_PX) failures.push(`editor/viewport lost: ${JSON.stringify({ before, after })}`);
+    if (failures.length) throw new Error(failures.join("\n"));
+    if (typing) await waitForFileText(path.join(graph, "journals", `${stem(date(4))}.md`), text => text.includes(value), { timeoutMs: 20000 });
     const expected = [0, 1, 3, 4, 6].map(ago => title(date(ago)));
     if (JSON.stringify(after.titles) !== JSON.stringify(expected)) throw new Error(`day order: ${JSON.stringify(after.titles)}`);
     if (fs.readdirSync(path.join(graph, "journals")).length !== 3) throw new Error("merge created a journal file");
@@ -129,6 +160,10 @@ try {
 } catch (error) {
   proof.observed = String(error); proof.classification = "ambiguous; inspect screenshot and driver log";
   if (browser) {
+    if (!proof.writes) await heldEditorEvidence(browser).then(evidence => {
+      proof.writes = labelWrites(evidence.writes, process.env.E2E_DIST || "dist");
+      proof.natives = evidence.natives; proof.heldFrames = evidence.frames; proof.heldEditor = { connected: evidence.connected, sameEditor: evidence.sameEditor, top: evidence.top };
+    }).catch(() => {});
     proof.viewportFrames = await browser.execute(() => window.__gf4Frames).catch(() => []);
     proof.editorAtFailure = await withEditor(browser, ".main-content", editor => {
       return { sameEditor: editor?.element === window.__gf4Editor, focused: editor?.focused,

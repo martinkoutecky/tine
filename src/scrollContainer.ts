@@ -1,5 +1,6 @@
 import { elementFromPointIn, newResizeObserver, windowOf } from "./windowRealm";
 import { batch } from "solid-js";
+import { feedHoldHandles } from "./components/readingViewportAnchor";
 
 /** Resolve on mount, after insertion, in the element's own realm. Using the
  * nearest vertical scroller covers panes, sidebars, drawers and previews without
@@ -63,7 +64,7 @@ export function trackViewportAnchor(host: HTMLElement): () => void {
       key: element.matches(".page-property-reference-row") ? element.querySelector(".prop-key")?.textContent ?? undefined : undefined };
   };
   const restore = () => {
-    if (anchor && anchor.scroll === root.scrollTop && anchor.group.isConnected) {
+    if (!feedHoldHandles(root) && anchor && anchor.scroll === root.scrollTop && anchor.group.isConnected) {
       let element: Element | null = anchor.element.isConnected ? anchor.element : null;
       if (!element && anchor.block) element = anchor.group.querySelector(`[data-block-id="${realm.CSS.escape(anchor.block)}"]`);
       if (!element && anchor.key) element = [...anchor.group.querySelectorAll(".page-property-reference-row")]
@@ -165,7 +166,7 @@ export function preserveAboveViewport(el: Element, change: () => void, root?: El
   adjusting.add(root);
   try {
     const restore = () => {
-      if (!el.isConnected || !root.isConnected) return;
+      if (feedHoldHandles(root) || !el.isConnected || !root.isConnected) return;
       if (anchor && !anchor.isConnected) return;
       if (!anchor && !above) return;
       const displacement = anchor ? anchor.getBoundingClientRect().top - anchorTop!
