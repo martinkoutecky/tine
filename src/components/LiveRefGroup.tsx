@@ -5,12 +5,12 @@ import { bindLiveOutlineSelection, bindOutlineSelection, createOutlineOwner, Out
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
-import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
+import { admitRead, beginPageHeaderEdit, blockPageReadOnly, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, liveDtoBlock, pageByName, pinPageNearViewport, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
-import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
+import { embedRootFold, setEmbedRootFold } from "./macroFold";
 import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
@@ -30,7 +30,7 @@ import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { useOwnerWindow } from "../windowRealm";
-import { registerQueryResultFold } from "../collapseCommandSurface";
+import { registerQueryResultFold, type QueryResultList } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
@@ -49,7 +49,10 @@ import { retainResultDraft } from "../queryResultDrafts";
 // walk below actually runs. A regression test uses it to prove the walk fires on
 // result-membership change but NOT on unrelated descendant edits. Cost is one
 // integer increment per real prune.
-export const __livRefGroupInternals = { pruneRuns: 0 };
+// GH #1004: `foldSnapshots` counts entries written to the per-id fold snapshot;
+// `resultFoldSnapshots` the result-root snapshots taken while the list held a
+// press (each reads one child count).
+export const __livRefGroupInternals = { pruneRuns: 0, foldSnapshots: 0, resultFoldSnapshots: 0 };
 
 // GH #746: a refresh answers with new objects even for unchanged blocks, and
 // rows keyed by object would remount and render their text again after every
@@ -111,6 +114,8 @@ interface LiveRefGroupProps {
   eager?: boolean;
   /** Query-owned bulk action; never supplied by reference or embed callers. */
   bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> };
+  /** Query only: the result list this group belongs to (GH #1004). */
+  resultList?: QueryResultList;
 }
 
 // GH #810: the height an embed's rows had when it last unmounted, so its placeholder
@@ -344,11 +349,10 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       // outline navigation would expose a different page's node (GH #748).
       // A runtime locator stays valid on that page when Copy block ref stamps
       // its first authored id; the row keeps its live key until the next load.
-      const source = resolveBlockRef({ uuid: blockDtoExternalId(dto), page: props.page, pageKind: props.kind, ...(props.path ? { path: props.path } : {}) }, { navigation: true });
       // Hydration needs source identity, not write permission. Published pages
       // are read-only too: Block guards edits and uses presentation-only folds,
       // while the shallow membership DTO has no descendants to render.
-      return source === id ? docNode(id) : undefined;
+      return liveDtoBlock(dto, { page: props.page, kind: props.kind, path: props.path }) ? docNode(id) : undefined;
     }
     const source = resolveResultRow({ id, dto, page: props.page, kind: props.kind, path: props.path }, "mount");
     return source?.id === id ? source : undefined;
@@ -582,11 +586,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // belong to the source; a block embed's root keeps its host override (GH #360).
   const [localCollapsed, setLocalCollapsed] = props.occurrence.localCollapsed;
   const isEmbed = () => props.surface === "embed";
-  const embedRootOverride = (id: string): boolean | null => {
-    if (!isEmbed() || id !== props.embedId || !props.hostBlockId) return null;
-    const value = blockProperty(props.hostBlockId, "collapsed")?.toLowerCase();
-    return value === "true" ? true : value === "false" ? false : null;
-  };
+  const embedRoot = (id: string) => isEmbed() && id === props.embedId ? props.hostBlockId : undefined;
   const relativeDepth = (id: string): number | null => {
     const roots = resultRootIds();
     if (roots.has(id)) return 0;
@@ -601,23 +601,40 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     }
     return null;
   };
+  // Pulled-in context respects descendant source folds. The selected root
+  // itself is forced open by Block, just like a parked sidebar block.
+  const inPulledContext = (id: string): boolean => {
+    if (contextRootIds().size === 0) return false;
+    let current = liveNode(id);
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id)) {
+      if (contextRootIds().has(current.id)) return true;
+      if (resultRootIds().has(current.id)) break;
+      seen.add(current.id);
+      current = current.parent ? docNode(current.parent) : undefined;
+    }
+    return false;
+  };
+  /** GH #1004: while the list holds a one-level press, a result root takes
+   *  its snapshot at the first read once it has a live row: the press when
+   *  the root is writable and has children, else the default. Before that a
+   *  reader (a stand-in's layout) gets the default and leaves no snapshot.
+   *  Every occurrence of the id, as a hit or as another hit's descendant,
+   *  and every reader (row, border, layout, traversal, commands) reads this
+   *  one snapshot. The press is a plain field, so no reader subscribes to it. */
   const defaultCollapsed = (id: string, stored: boolean): boolean => {
     // Embeds are live and source-authoritative (GH #360): never snapshot.
-    if (isEmbed()) return stored;
-    // Pulled-in context respects descendant source folds. The selected root
-    // itself is forced open by Block, just like a parked sidebar block.
-    if (contextRootIds().size > 0) {
-      let current = liveNode(id);
-      const seen = new Set<string>();
-      while (current && !seen.has(current.id)) {
-        if (contextRootIds().has(current.id)) return stored;
-        if (resultRootIds().has(current.id)) break;
-        seen.add(current.id);
-        current = current.parent ? docNode(current.parent) : undefined;
-      }
-    }
+    if (isEmbed() || inPulledContext(id)) return stored;
     const previous = initialCollapsed.get(id);
     if (previous !== undefined) return previous;
+    const press = resultRootIds().has(id) ? props.resultList?.resultFold : undefined;
+    if (press === undefined) return snapshot(id, initialFold(id, stored));
+    if (!ready() || !liveNode(id)) return initialFold(id, stored);
+    __livRefGroupInternals.resultFoldSnapshots += 1;
+    const pressed = !blockPageReadOnly(id) && (liveNode(id)?.children.length ?? 0) > 0;
+    return snapshot(id, pressed ? press : initialFold(id, stored));
+  };
+  const initialFold = (id: string, stored: boolean): boolean => {
     const depth = relativeDepth(id);
     const hasChildren = (liveNode(id)?.children.length ?? 0) > 0;
     // Released OG initializes reference/query disclosure from the source state
@@ -625,16 +642,18 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     // local to the result view (GH #793). Tine's displayed hit is relative depth
     // 0 (OG level 1), so with level 2 the branches immediately below it default
     // folded; a larger level opens deeper, a level of 1 or less folds the hit.
-    const initial = stored || (props.surface !== "embed" && depth !== null && foldsByDefaultInResults(depth, hasChildren));
-    initialCollapsed.set(id, initial);
-    return initial;
+    return stored || (props.surface !== "embed" && depth !== null && foldsByDefaultInResults(depth, hasChildren));
+  };
+  const snapshot = (id: string, value: boolean): boolean => {
+    __livRefGroupInternals.foldSnapshots += 1;
+    initialCollapsed.set(id, value);
+    return value;
   };
   const collapseSurface: CollapseSurfaceApi = {
     collapsed: (id, stored) => {
       if (isEmbed()) {
-        const override = embedRootOverride(id);
-        if (override !== null) return override;
-        return stored;
+        const host = embedRoot(id);
+        return host ? embedRootFold(host, stored) : stored;
       }
       const local = localCollapsed();
       // Bulk actions saved the source. Follow it live, including Undo, while
@@ -643,10 +662,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       return Object.prototype.hasOwnProperty.call(local, id) ? local[id].v : defaultCollapsed(id, stored);
     },
     toggle: (id, current) => {
-      if (isEmbed() && id === props.embedId && props.hostBlockId) {
-        setBlockProperty(props.hostBlockId, "collapsed", String(!current));
-        return;
-      }
+      const host = embedRoot(id);
+      if (host) { setEmbedRootFold(host, !current); return; }
       if (isEmbed()) { setCollapsed(id, !current); return; }
       setLocalCollapsed((state) => ({ ...state, [id]: { v: !current } }));
     },

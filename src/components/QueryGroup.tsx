@@ -12,8 +12,9 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { requestFrame } from "../windowRealm";
 import { bindOutlineSelection, createOutlineOwner } from "../outlineSelectionTarget";
+import { registerQueryResultList, type QueryResultList } from "../collapseCommandSurface";
 
-interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
+interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; showBreadcrumb?: boolean; showPage?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }; resultList?: QueryResultList }
 
 /** Present the complete keyed List without one graph-sized DOM commit. Existing
  * groups survive membership refreshes; at most 32 new shells mount per frame.
@@ -31,6 +32,13 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     frame = undefined;
   };
   onCleanup(cancel);
+  // GH #1004: this list's last one-level press on its host's results.
+  const resultList: QueryResultList = { resultFold: undefined };
+  createEffect(() => {
+    const host = props.hostBlockId;
+    resultList.resultFold = undefined;
+    if (host) onCleanup(registerQueryResultList(host, resultList));
+  });
   createEffect(() => {
     const all = [...props.groups().keys()];
     const paused = !!props.paused;
@@ -69,7 +77,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     return rows * 1.9;
   });
   return <>
-    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} showBreadcrumb={props.showBreadcrumb} showPage={props.showPage} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
+    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} showBreadcrumb={props.showBreadcrumb} showPage={props.showPage} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} resultList={resultList} />}</For>
     <Show when={pendingHeight() > 0}>
       <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
     </Show>
@@ -145,7 +153,7 @@ function MountedQueryGroup(props: QueryGroupProps & { selectionOwner: ReturnType
           >
             {page()}
           </div></Show>
-          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} format={g().format} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
+          <LiveRefGroup selectionOwner={props.selectionOwner} page={page()} kind={kind()} path={g().path} format={g().format} blocks={g().blocks} surface="query" showBreadcrumb={props.showBreadcrumb !== false} eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} resultList={props.resultList} />
         </>
       )}
     </Show>

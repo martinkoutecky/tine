@@ -5,6 +5,7 @@ import { closeSettings, openSettings } from "../ui";
 import { conflictPolicyAlwaysAsk, setConflictPolicyAlwaysAsk } from "../conflictPolicy";
 
 const fake = vi.hoisted(() => ({
+  warmDone: vi.fn(async () => true),
   getBackupKeep: vi.fn(async () => 12),
   listBackups: vi.fn(async () => []),
   setBackupKeep: vi.fn(),

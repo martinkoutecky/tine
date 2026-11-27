@@ -48,6 +48,10 @@ regions stay shared. A nonempty headline owns the rest of its line when only
 blanks follow (lsdoc ends a bare `TODO ` before them; a CRLF page keeps each
 line's CR), so a row never splits the title line. A whole document has no
 headline; its page rows keep the first physical line as the title line.
+Planning written or hoisted where that position is the block's first byte (a
+block without title text) goes after an empty first line: Logseq reads a
+block's first line as its title and takes no date from it. Enter at the start of such a date line keeps the empty
+first line.
 OG reference for title placement: `og-1.0.0` at
 `680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content/has-title?`,
 `property/insert-property` and `text/add-timestamp`.

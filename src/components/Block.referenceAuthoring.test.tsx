@@ -18,6 +18,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 import { openAsLoaded } from "./hostConflict.test.support";
 import { setPinyinMatchingEnabled } from "../launcherRanking";
 import { setActiveLocale } from "../i18n";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 beforeAll(async () => { await initParser(); await preloadCm6Editor(); });
 
@@ -86,7 +87,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("reference authoring (%s editor)"
       inputAt(textarea, "[[beijing", 9);
       const labels = () => [...document.querySelectorAll(".autocomplete .ac-label")].map(row => row.textContent);
       await vi.waitFor(() => expect(labels()).toContain("北京"));
-      expect(labels().indexOf("x beijing")).toBeLessThan(labels().indexOf("北京"));
+      expectOrderedIn(labels(), "x beijing", "北京");
       const editor = lookup.mock.calls.find(call => call[0] === "beijing")![2]!;
       expect(editor.session).toBeTypeOf("string");
       setPinyinMatchingEnabled(false);

@@ -1,7 +1,7 @@
 // Block and page embeds ({{embed ((uuid))}} / {{embed [[page]]}}), split out of Macro.tsx (size ratchet).
 import { For, Show, createSignal, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { pageIdentityKey } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
 import { blockHasPageEmbed, blockRef, formatForBlock, pageByName, resolveBlockRef, resolveGuidePageDto, node as docNode } from "../document";
@@ -12,7 +12,7 @@ import { CollapseSurfaceContext } from "./Block";
 import { bindOutlineSelection, createOutlineOwner } from "../outlineSelectionTarget";
 import { hostFolded } from "./macroFold";
 import { resolveBlockBatched } from "../resolveBatch";
-import { embedBlockTarget, embedPageTarget } from "../embedTarget";
+import { embedBlockTarget, embedMacroArg, embedPageTarget } from "../embedTarget";
 import { changed, pageChangeKey } from "../changeKeys";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
@@ -41,7 +41,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
   const owner = useOccurrenceOwner(() => props.blockId);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
-  const target = () => props.body.replace(/^embed\s*/i, "").trim();
+  const target = () => embedMacroArg(props.body);
   const pageTarget = () => embedPageTarget(target()) ?? undefined;
   const blockTarget = () => embedBlockTarget(target()) ?? undefined;
   const selfPageEmbed = () => {

@@ -23,44 +23,16 @@ pub(crate) mod atomic_file;
 mod platform_step;
 use tine_store::directory_durability;
 
-/// Open a caller-selected device file only if it is a regular file (I-22).
-/// Threat scenario (imported content): a dropped, pasted or picked path may
-/// name a FIFO, socket or device node, and a blocking `open` of a FIFO with no
-/// writer hangs the synchronous command before any later validation runs.
-/// Path metadata refuses a non-regular file before open; the open is
-/// nonblocking on Unix so a path swapped for a FIFO after that check cannot
-/// hang either; opened-handle metadata rechecks the race. `O_NONBLOCK` has no
-/// effect on reads of a regular file.
-pub(crate) fn open_regular_file(path: &Path) -> io::Result<fs::File> {
-    let not_a_file = || io::Error::new(io::ErrorKind::InvalidInput, "not a file");
-    if !fs::metadata(path)?.is_file() {
-        return Err(not_a_file());
-    }
-    #[cfg(unix)]
-    let file = {
-        use std::os::unix::fs::OpenOptionsExt;
-        fs::File::options()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(path)?
-    };
-    #[cfg(not(unix))]
-    let file = fs::File::open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(not_a_file());
-    }
-    Ok(file)
-}
-
-/// Reads a regular file ([`open_regular_file`]) and never more than `max`
+/// Reads a regular file ([`tine_store::open_regular_file`], following a final
+/// symlink: the caller chose the path) and never more than `max`
 /// bytes: the read stops at `max + 1` so a file that grows (or lies about its
 /// length) after the check cannot allocate past the limit (I-22). A larger file
 /// is `Ok(None)`. The one bounded-read door: plugin files, app-data JSON and
 /// caller-selected images all read through it.
 pub(crate) fn read_bounded(path: &Path, max: u64) -> io::Result<Option<Vec<u8>>> {
     use std::io::Read;
-    let file = open_regular_file(path)?;
-    if file.metadata()?.len() > max {
+    let (file, meta) = tine_store::open_regular_file(path, tine_store::FinalSymlink::Follow)?;
+    if meta.len() > max {
         return Ok(None);
     }
     let mut bytes = Vec::new();
@@ -105,7 +77,9 @@ pub(crate) fn import_asset_from_path(
     let source_filename = Path::new(path).file_name().and_then(|value| value.to_str());
     let chosen = tine_graph_features::assets::choose_import_name(source_filename, name)
         .map_err(DeviceAssetImportError::Name)?;
-    let source = open_regular_file(Path::new(path)).map_err(DeviceAssetImportError::Io)?;
+    let (source, _) =
+        tine_store::open_regular_file(Path::new(path), tine_store::FinalSymlink::Follow)
+            .map_err(|error| DeviceAssetImportError::Io(error.into()))?;
     tine_graph_features::assets::import_asset(
         store,
         &chosen,

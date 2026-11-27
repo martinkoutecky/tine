@@ -16,6 +16,7 @@ import * as ui from "../ui";
 import { backend } from "../backend";
 import { pageByName, resetStore } from "../document";
 import type { PageRead } from "../types";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -90,7 +91,7 @@ describe("QueryPageRows", () => {
         .toEqual(["status: open", "owner: Ada"]);
       // under the title: the strip follows the link in the same row
       const kids = [...rows[0].children];
-      expect(kids.indexOf(strip)).toBeGreaterThan(kids.indexOf(rows[0].querySelector(".query-page-link")!));
+      expectOrderedIn(kids, rows[0].querySelector(".query-page-link")!, strip);
       expect(rows[0].querySelector('[aria-label="Edit properties of Alpha"]')).not.toBeNull();
       // a page with no properties has no empty strip
       expect(rows[1].querySelector(".query-page-props")).toBeNull();

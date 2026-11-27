@@ -2,11 +2,12 @@ import { afterEach, beforeAll, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "./parse";
 import { InlineText } from "./inline";
-import { setTypographyModeSig } from "../ui";
+import { setTypographyModeSig, typographyMode } from "../ui";
 
-// GH #583: a user who never touched Settings sees the arrows they typed.
+// a user who never touched Settings sees glyphs; "off" shows the arrows as typed (GH #583).
 beforeAll(async () => { await initParser(); });
-afterEach(() => { setTypographyModeSig("off"); document.body.innerHTML = ""; });
+const initial = typographyMode();
+afterEach(() => { setTypographyModeSig(initial); document.body.innerHTML = ""; });
 
 function visibleText(text: string): string {
   const host = document.createElement("div");
@@ -17,13 +18,12 @@ function visibleText(text: string): string {
   return out;
 }
 
-it("renders -> <- => and dashes as typed by default", () => {
-  expect(visibleText("a -> b <- c => d -- e --- f")).toBe("a -> b <- c => d -- e --- f");
+it("renders -> <- => and dashes as glyphs by default", () => {
+  expect(initial).toBe("render");
+  expect(visibleText("a -> b <- c => d -- e --- f")).toBe("a → b ← c ⇒ d – e — f");
 });
 
-it("an explicit opt-in still shows glyphs", () => {
-  setTypographyModeSig("render");
-  const out = visibleText("a -> b");
-  expect(out).toContain("→");
-  expect(out).not.toContain("->");
+it("an explicit opt-out shows them as typed", () => {
+  setTypographyModeSig("off");
+  expect(visibleText("a -> b <- c => d -- e --- f")).toBe("a -> b <- c => d -- e --- f");
 });

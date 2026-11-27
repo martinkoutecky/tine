@@ -4,6 +4,7 @@ import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from
 import type { GraphMeta, PageDto, PageRead } from "./types";
 import type { Unsettled } from "./document";
 import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
 
@@ -899,9 +900,7 @@ describe("PDF graph ownership", () => {
     expect(harness.events).toEqual(expect.arrayContaining([
       "drain-pdf", "retire-pdf", "load-next", "reset-tabs",
     ]));
-    expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("retire-pdf"));
-    expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
-    expect(harness.events.indexOf("load-next")).toBeLessThan(harness.events.indexOf("reset-tabs"));
+    expectOrderedIn(harness.events, "drain-pdf", "retire-pdf", "load-next", "reset-tabs");
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(nextMeta.root);
   });
 
@@ -937,8 +936,7 @@ describe("PDF graph ownership", () => {
     });
     await harness.loadGraphPath("/tmp/other-graph");
     expect(harness.closeAllWorkspaceWindows).toHaveBeenCalledWith("graph-switch");
-    expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("close-windows"));
-    expect(harness.events.indexOf("close-windows")).toBeLessThan(harness.events.indexOf("load-next"));
+    expectOrderedIn(harness.events, "drain-pdf", "close-windows", "load-next");
   });
 
   it("publishes a fresh PDF generation for a same-root force refresh", async () => {

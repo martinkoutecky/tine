@@ -366,6 +366,7 @@ mod journal_guide_tests {
             "each further press opens the next level",
             "ignoring leaves",
             "each press is one Undo step",
+            "when a press folds or opens the results themselves, it also reaches writable results not drawn yet",
         ] {
             assert!(
                 tips.contains(outcome),
@@ -585,6 +586,16 @@ mod journal_guide_tests {
         assert!(model.contains("missing one last"));
         assert!(include_str!("templates/queries.md")
             .contains("other than Logseq's default priority sort"));
+    }
+
+    /// GH #1000: a click inside a query's results does not open the query.
+    #[test]
+    fn a_click_inside_query_results_is_documented() {
+        let queries = include_str!("templates/queries.md");
+        assert!(
+            queries.contains("A click inside a query's results belongs to the blocks shown there")
+        );
+        assert!(queries.contains("click the query's header beside its title, or the block's edge"));
     }
 
     /// Card hB3Lv8 (Martin 2026-10-19): day-relative queries follow the date.
@@ -2146,10 +2157,12 @@ mod customize_look_guide_tests {
             // Discussion #714: the transient toggle class for theme animations.
             "`just-toggled`",
             "never there when a page loads",
-            // GH #583: arrows render as typed unless the user opts in.
+            // glyphs by default, the same in the editor; Off shows them as typed.
             "**Typographic replacements**",
-            "It is **Off** by default",
-            "**On (while reading)**",
+            "**On (display only)**, the default",
+            "clicking into a block does not change how it looks",
+            "**Off** shows them as typed",
+            "While Find in page is open, they show as typed",
             // GH #773: individual tags and page links can be themed by name.
             "a.tag[data-ref=\"ai-note\"]",
             "lowercased page name",

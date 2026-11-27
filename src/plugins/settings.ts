@@ -49,8 +49,9 @@ export type PluginSettingDefinition =
   | PluginStringSetting;
 
 
+/** A refused setting definition; `field` and `unknownField` as on `PluginManifestError`. */
 export class PluginSettingsError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly field: string, readonly unknownField = false) {
     super(message);
     this.name = "PluginSettingsError";
   }
@@ -67,7 +68,7 @@ const { record, knownKeys, text } = schemaGuards(PluginSettingsError, {
 
 function finite(value: unknown, where: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new PluginSettingsError(`${where} must be a finite number`);
+    throw new PluginSettingsError(`${where} must be a finite number`, where);
   }
   return value;
 }
@@ -75,15 +76,15 @@ function finite(value: unknown, where: string): number {
 /** `apiVersion` gates types newer than API 0.2: an older host refuses them. */
 export function parsePluginSettingDefinitions(value: unknown, apiVersion: string): PluginSettingDefinition[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new PluginSettingsError("settings must be an array");
-  if (value.length > 64) throw new PluginSettingsError("settings must contain at most 64 entries");
+  if (!Array.isArray(value)) throw new PluginSettingsError("settings must be an array", "settings");
+  if (value.length > 64) throw new PluginSettingsError("settings must contain at most 64 entries", "settings");
   const seen = new Set<string>();
   return value.map((candidate, index): PluginSettingDefinition => {
     const where = `settings[${index}]`;
     const obj = record(candidate, where);
     const key = text(obj.key, `${where}.key`, 80);
-    if (!KEY_RE.test(key)) throw new PluginSettingsError(`${where}.key is invalid`);
-    if (seen.has(key)) throw new PluginSettingsError(`settings contains duplicate key ${key}`);
+    if (!KEY_RE.test(key)) throw new PluginSettingsError(`${where}.key is invalid`, `${where}.key`);
+    if (seen.has(key)) throw new PluginSettingsError(`settings contains duplicate key ${key}`, `${where}.key`);
     seen.add(key);
     const base = {
       key,
@@ -92,32 +93,32 @@ export function parsePluginSettingDefinitions(value: unknown, apiVersion: string
     };
     switch (obj.type) {
       case "color":
-        if (apiVersion === "0.2") throw new PluginSettingsError(`${where}.type color needs apiVersion 0.3`);
+        if (apiVersion === "0.2") throw new PluginSettingsError(`${where}.type color needs apiVersion 0.3`, `${where}.type`);
         knownKeys(obj, where, ["key", "type", "label", "description", "default"]);
-        if (!acceptsPluginColor(obj.default)) throw new PluginSettingsError(`${where}.default must be a literal color or empty`);
+        if (!acceptsPluginColor(obj.default)) throw new PluginSettingsError(`${where}.default must be a literal color or empty`, `${where}.default`);
         return { ...base, type: "color", default: obj.default };
       case "boolean":
         knownKeys(obj, where, ["key", "type", "label", "description", "default"]);
-        if (typeof obj.default !== "boolean") throw new PluginSettingsError(`${where}.default must be boolean`);
+        if (typeof obj.default !== "boolean") throw new PluginSettingsError(`${where}.default must be boolean`, `${where}.default`);
         return { ...base, type: "boolean", default: obj.default };
       case "enum": {
         knownKeys(obj, where, ["key", "type", "label", "description", "default", "choices"]);
         if (!Array.isArray(obj.choices) || obj.choices.length < 2 || obj.choices.length > 32) {
-          throw new PluginSettingsError(`${where}.choices must contain 2 to 32 entries`);
+          throw new PluginSettingsError(`${where}.choices must contain 2 to 32 entries`, `${where}.choices`);
         }
         const choices = obj.choices.map((choice, choiceIndex) => {
           const parsed = record(choice, `${where}.choices[${choiceIndex}]`);
           knownKeys(parsed, `${where}.choices[${choiceIndex}]`, ["value", "label"]);
           const choiceValue = text(parsed.value, `${where}.choices[${choiceIndex}].value`, 80);
-          if (!CHOICE_RE.test(choiceValue)) throw new PluginSettingsError(`${where}.choices[${choiceIndex}].value is invalid`);
+          if (!CHOICE_RE.test(choiceValue)) throw new PluginSettingsError(`${where}.choices[${choiceIndex}].value is invalid`, `${where}.choices[${choiceIndex}].value`);
           return { value: choiceValue, label: text(parsed.label, `${where}.choices[${choiceIndex}].label`, 80) };
         });
         if (new Set(choices.map((choice) => choice.value)).size !== choices.length) {
-          throw new PluginSettingsError(`${where}.choices contains duplicate values`);
+          throw new PluginSettingsError(`${where}.choices contains duplicate values`, `${where}.choices`);
         }
         const defaultValue = text(obj.default, `${where}.default`, 80);
         if (!choices.some((choice) => choice.value === defaultValue)) {
-          throw new PluginSettingsError(`${where}.default must match a choice`);
+          throw new PluginSettingsError(`${where}.default must match a choice`, `${where}.default`);
         }
         return { ...base, type: "enum", default: defaultValue, choices };
       }
@@ -127,25 +128,25 @@ export function parsePluginSettingDefinitions(value: unknown, apiVersion: string
         const max = finite(obj.max, `${where}.max`);
         const defaultValue = finite(obj.default, `${where}.default`);
         if (min > max || defaultValue < min || defaultValue > max) {
-          throw new PluginSettingsError(`${where} has inconsistent numeric bounds`);
+          throw new PluginSettingsError(`${where} has inconsistent numeric bounds`, `${where}.min`);
         }
         const step = obj.step === undefined ? undefined : finite(obj.step, `${where}.step`);
-        if (step !== undefined && step <= 0) throw new PluginSettingsError(`${where}.step must be positive`);
+        if (step !== undefined && step <= 0) throw new PluginSettingsError(`${where}.step must be positive`, `${where}.step`);
         return { ...base, type: "number", default: defaultValue, min, max, ...(step === undefined ? {} : { step }) };
       }
       case "string": {
         knownKeys(obj, where, ["key", "type", "label", "description", "default", "maxLength"]);
         const maxLength = finite(obj.maxLength, `${where}.maxLength`);
         if (!Number.isInteger(maxLength) || maxLength < 1 || maxLength > 4096) {
-          throw new PluginSettingsError(`${where}.maxLength must be an integer from 1 to 4096`);
+          throw new PluginSettingsError(`${where}.maxLength must be an integer from 1 to 4096`, `${where}.maxLength`);
         }
         if (typeof obj.default !== "string" || obj.default.length > maxLength) {
-          throw new PluginSettingsError(`${where}.default exceeds maxLength`);
+          throw new PluginSettingsError(`${where}.default exceeds maxLength`, `${where}.default`);
         }
         return { ...base, type: "string", default: obj.default, maxLength };
       }
       default:
-        throw new PluginSettingsError(`${where}.type is unsupported`);
+        throw new PluginSettingsError(`${where}.type is unsupported`, `${where}.type`);
     }
   });
 }

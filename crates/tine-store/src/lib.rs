@@ -132,6 +132,8 @@ mod production_index_guard_tests;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+mod regular_file;
+pub use regular_file::{open_regular_file, FinalSymlink, OpenRegularError};
 #[cfg(not(target_arch = "wasm32"))]
 pub mod restore;
 #[cfg(test)]

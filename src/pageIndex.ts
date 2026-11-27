@@ -6,7 +6,7 @@ import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { isQuickCaptureWindow } from "./windowRole";
-import { pageIdentityKey } from "./ui";
+import { pageIdentityKey } from "./pageIdentity";
 import { journalRowIn, linkTargetIn, ownerPath, type LinkDestination } from "./inventoryRows";
 import { hidden_from_all_pages } from "./render/wasm/lsdoc_wasm";
 import type { PageEntry, PageInventory, PageInventoryDelta, PageInventoryEntry, PageKind, ResolvedPage } from "./types";

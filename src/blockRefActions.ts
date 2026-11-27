@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { collapseCommandRow, queryResultFolds, type CommandCollapseSurface } from "./collapseCommandSurface";
+import { collapseCommandRow, queryResultFolds, queryResultLists, type CommandCollapseSurface } from "./collapseCommandSurface";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -44,6 +44,7 @@ import { isPasteableUrl, wrapLink, type Edit } from "./editor/format";
 import { activeElement, isElementTag, selectionOf } from "./windowRealm";
 import { soleBlockMacro } from "./render/parse";
 import { isAnnotationBlock } from "./editor/annotation";
+import { embedHostSource, embedRootFold, setEmbedRootFold } from "./components/macroFold";
 
 /** Open a block in the sidebar, a new tab, or the other pane. Synchronous: no save. */
 export function openDurableBlock(id: string, destination: "sidebar" | "tab" | "pane"): void {
@@ -219,8 +220,16 @@ interface FoldWalk {
   parents: string[];
   pageRoots: string[] | null;
   isCollapsed: (id: string) => boolean;
+  /** Whether the row has a body a fold hides. */
+  foldable: (id: string) => boolean;
+  /** Write the row's fold (a row without a surface). */
+  setFold: (id: string, collapsed: boolean) => void;
   surfaceOf: (id: string) => CommandCollapseSurface | undefined;
   children: (ids: string[]) => string[];
+  /** GH #1004: the query hosts whose result lists the last `children()` call
+   *  entered, and every one the walk entered. Transient, per command. */
+  lastHosts: Set<string>;
+  walkedHosts: Set<string>;
 }
 
 function foldWalk(pageFallback: boolean): FoldWalk | null {
@@ -240,16 +249,37 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
   // Result rows answer to the group that shows them, and so do their descendants.
   const rowSurface = new Map<string, CommandCollapseSurface>();
   const surfaceOf = (id: string): CommandCollapseSurface | undefined => rowSurface.get(id) ?? surface;
+  // GH #1032: a whole-block embed host listed from an ordinary outline stands
+  // as its source's root row, and answers as that row's arrow does: it folds
+  // when the source has a body, reads `collapsed::` else the source's fold, and
+  // writes its own `collapsed::`. It has no children, so nothing below is walked.
+  // A row some surface answers for (a query result) keeps that surface's answer.
+  const embedSource = new Map<string, string>();
+  const sourceOf = (id: string) => surfaceOf(id) ? undefined : embedSource.get(id);
+  const standAsRoot = (id: string) => {
+    const source = embedHostSource(id);
+    if (source) embedSource.set(id, source);
+  };
   const isCollapsed = (id: string) => {
+    const source = sourceOf(id);
+    if (source) return embedRootFold(id, storedFold(source));
     const stored = storedFold(id); // `collapsed::`, else a query's authored `:collapsed? true`
     return surfaceOf(id)?.collapsed(id, stored) ?? stored;
   };
+  const foldable = (id: string) => blockHasFoldableBody(sourceOf(id) ?? id);
+  const setFold = (id: string, collapsed: boolean) => sourceOf(id) ? setEmbedRootFold(id, collapsed) : setCollapsed(id, collapsed);
+  pageRoots?.forEach(standAsRoot);
+  let lastHosts = new Set<string>();
+  const walkedHosts = new Set<string>();
   const children = (ids: string[]) => {
     const out = new Set<string>();
+    lastHosts = new Set();
     for (const id of ids) {
+      if (queryResultLists(id)) { lastHosts.add(id); walkedHosts.add(id); }
       const own = rowSurface.get(id);
       for (const child of docNode(id)?.children ?? []) {
         if (own && !rowSurface.has(child)) rowSurface.set(child, own);
+        if (!surfaceOf(child)) standAsRoot(child);
         out.add(child);
       }
       for (const group of queryResultFolds(id)) for (const row of group.roots()) {
@@ -260,21 +290,29 @@ function foldWalk(pageFallback: boolean): FoldWalk | null {
     }
     return [...out];
   };
-  return { parents, pageRoots, isCollapsed, surfaceOf, children };
+  return { parents, pageRoots, isCollapsed, foldable, setFold, surfaceOf, children, get lastHosts() { return lastHosts; }, walkedHosts };
 }
 
 /** Apply fold changes as ONE undo step through the existing per-block door.
  *  Occurrence toggles own their persistence: an embed root saves its HOST
  *  property (with its own undo); below it a block embed saves the source's
  *  folds (D-20261030-EMB) and other surfaces change local presentation only.
- *  A source-page undo snapshot would suppress and then lose that host undo. */
-function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][], tag: string): void {
+ *  A source-page undo snapshot would suppress and then lose that host undo.
+ *  GH #1004: `level` is the value a one-level press gave the level its last
+ *  `children()` call returned. Once the changes apply (a refused unit changes
+ *  nothing), the result lists of the hosts that call entered take it, and
+ *  every other host the walk entered forgets its last press. */
+function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][], tag: string, level?: boolean): void {
   const apply = () => {
     for (const [id, value] of changes) {
-      if (!blockHasFoldableBody(id) || walk.isCollapsed(id) === value) continue;
+      if (!walk.foldable(id) || walk.isCollapsed(id) === value) continue;
       const own = walk.surfaceOf(id);
       if (own) own.toggle(id, walk.isCollapsed(id));
-      else setCollapsed(id, value);
+      else walk.setFold(id, value);
+    }
+    for (const host of walk.walkedHosts) {
+      const value = level !== undefined && walk.lastHosts.has(host) ? level : undefined;
+      for (const list of queryResultLists(host) ?? []) list.resultFold = value;
     }
   };
   const written = [...new Set(changes.filter(([id]) => !walk.surfaceOf(id)).map(([id]) => docNode(id)?.page).filter((p): p is string => !!p))];
@@ -288,21 +326,24 @@ function commitFolds(walk: FoldWalk, changes: [id: string, collapsed: boolean][]
 export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   const walk = foldWalk(true);
   if (!walk) return false;
-  const { parents, pageRoots, isCollapsed, children } = walk;
+  const { parents, pageRoots, isCollapsed, foldable, children } = walk;
   const folded = (id: string) => {
     const n = docNode(id);
-    return !!n && blockHasFoldableBody(id) && isCollapsed(id);
+    return !!n && foldable(id) && isCollapsed(id);
   };
   // GH #696: one level includes the targets themselves. Collapse folds the
   // children first and the targets once no child is left open; it never opens
   // a target. Expand opens a folded target alone before reaching its children.
   let opened: string[] = [];
   let level: string[];
+  // GH #1004: whether `level` is what the last `children()` call returned.
+  let levelIsChildren = !collapsed;
   if (pageRoots) level = pageRoots;
   else if (collapsed) {
-    const open = parents.filter((id) => blockHasFoldableBody(id) && !isCollapsed(id));
+    const open = parents.filter((id) => foldable(id) && !isCollapsed(id));
     const kids = children(open);
-    level = kids.some((id) => blockHasFoldableBody(id) && !isCollapsed(id)) ? kids : open;
+    levelIsChildren = kids.some((id) => foldable(id) && !isCollapsed(id));
+    level = levelIsChildren ? kids : open;
   } else {
     opened = parents.filter(folded);
     level = opened.length ? [] : children(parents);
@@ -315,7 +356,7 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   const touched = [...opened, ...level];
   if (!touched.some((id) => docNode(id)?.page)) return false;
   commitFolds(walk, [...opened.map((id): [string, boolean] => [id, false]), ...level.map((id): [string, boolean] => [id, collapsed])],
-    collapsed ? "collapse-children" : "expand-children");
+    collapsed ? "collapse-children" : "expand-children", levelIsChildren ? collapsed : undefined);
   return true;
 }
 
@@ -331,7 +372,7 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
 export function setTargetDepth(depth: number): boolean {
   const walk = foldWalk(false);
   if (!walk) return false;
-  const { parents, isCollapsed, children } = walk;
+  const { parents, isCollapsed, foldable, children } = walk;
   // A selection holds a block and its visible descendants: depth is relative to
   // the topmost selected blocks, so a nested selected block is not a second root.
   const set = new Set(parents);
@@ -339,7 +380,7 @@ export function setTargetDepth(depth: number): boolean {
   const changes: [id: string, collapsed: boolean][] = [];
   const visit = (ids: string[], collapsed: boolean) => {
     for (const id of ids) {
-      if (docNode(id) && blockHasFoldableBody(id) && isCollapsed(id) !== collapsed) changes.push([id, collapsed]);
+      if (docNode(id) && foldable(id) && isCollapsed(id) !== collapsed) changes.push([id, collapsed]);
     }
   };
   for (let n = 0; n < depth && level.length; n++) {

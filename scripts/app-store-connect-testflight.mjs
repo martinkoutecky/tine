@@ -85,19 +85,21 @@ async function app() {
     `/apps?${query({
       "filter[bundleId]": bundleId,
       "fields[apps]": "name,bundleId,primaryLocale",
-      limit: "2",
+      limit: "200",
     })}`,
   );
-  if (response.data.length !== 1) {
+  // The filter also matches longer bundle ids (page.tine.Tine finds page.tine.TineBeta), so keep the exact one.
+  const matches = response.data.filter((candidate) => candidate.attributes?.bundleId === bundleId);
+  if (matches.length !== 1) {
     throw new Error(
-      `expected one App Store Connect app for ${bundleId}, found ${response.data.length}`,
+      `expected one App Store Connect app for ${bundleId}, found ${matches.length}`,
     );
   }
   const identity = Object.values(IDENTITIES).find((value) => value.identifier === bundleId);
-  if (identity && response.data[0].id !== iosIdentity(identity).appStoreAppleId) {
+  if (identity && matches[0].id !== iosIdentity(identity).appStoreAppleId) {
     throw new Error("App Store Connect app ID disagrees with app-identity.json");
   }
-  return response.data[0];
+  return matches[0];
 }
 
 async function latestBuild(appId, { wait = false } = {}) {

@@ -88,3 +88,18 @@ export class PreviewWidget extends WidgetType {
   destroy(dom: HTMLElement) { roots.get(dom)?.(); roots.delete(dom); }
   ignoreEvent() { return true; }
 }
+
+/** A replaced ASCII sequence (`--`, `->`) drawn as the view's glyph (`render/typography.ts`). Display only: the document
+ * keeps the ASCII, and the editor handles pointer events itself, so a click places the caret beside the glyph, which
+ * touches the sequence and reveals it. */
+export class GlyphWidget extends WidgetType {
+  constructor(readonly glyph: string) { super(); }
+  eq(other: GlyphWidget) { return this.glyph === other.glyph; }
+  toDOM(view: EditorView) {
+    const el = view.dom.ownerDocument.createElement("span");
+    el.className = "cm6-glyph";
+    el.textContent = this.glyph;
+    return el;
+  }
+  ignoreEvent() { return false; }
+}

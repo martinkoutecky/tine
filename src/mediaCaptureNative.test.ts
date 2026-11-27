@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 describe("Android voice-recording bounds", () => {
   it("caps duration and bytes, then hands the native temp to Rust without base64", () => {
@@ -17,7 +18,7 @@ describe("Android voice-recording bounds", () => {
     expect(stop).not.toContain("Base64.encodeToString");
     expect(source).toMatch(/MEDIA_RECORDER_INFO_MAX_DURATION_REACHED/);
     expect(source).toMatch(/MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED/);
-    expect(source.indexOf("recorder = rec")).toBeLessThan(source.indexOf("rec.prepare()"));
+    expectOrderedIn(source, "recorder = rec", "rec.prepare()");
     expect(source).toMatch(/listFiles\(\)[\s\S]*startsWith\("tine_memo_"\)[\s\S]*forEach \{ it\.delete\(\) \}/);
 
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");

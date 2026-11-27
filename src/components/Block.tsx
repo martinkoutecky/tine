@@ -125,6 +125,7 @@ import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenu
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, bindRowPosition, type RowHost } from "./block/embedRowHost";
 import { beginEditGesture, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { noteInstanceOwner } from "../editor/renderedSelectionDelete";
 import { bodyNeighbor, rawToWrite, type PendingEdit } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
@@ -383,6 +384,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         </Show>
 
         <div
+          ref={el => noteInstanceOwner(el, instanceId)}
           class="block-content-wrapper"
           classList={{ "read-only": readOnly() }}
           title={authorTinted() && !editing() ? translate("comment-written-by", { author: author()! }) : undefined}

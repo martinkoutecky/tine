@@ -101,6 +101,7 @@
     "@tauri-apps/cli": "^2.12.2",
     "@types/katex": "^0.16.8",
     "@types/turndown": "^5.0.6",
+    "esbuild": "^0.25.12",
     "jsdom": "^29.1.1",
     "nbb": "1.2.187",
     "playwright": "^1.49.1",

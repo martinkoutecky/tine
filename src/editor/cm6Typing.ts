@@ -145,7 +145,14 @@ export function cm6Typing(ctx: {
   };
   // A plain key in the same event turn as compositionend still owns its normal
   // editor command (desktop WebKit). Native confirming/229 keys never call this.
-  const beforeKey = () => { if (ending && !ctx.view()?.compositionStarted) finish(); };
+  // The key acts on the text on screen: CM holds DOM changes back (Android: the final composition text arrives
+  // after compositionend and waits a frame), and its own keydown flushes them before acting. Tine's listeners
+  // act first, so they flush here; otherwise Enter splits the text without it and the closing editor drops it (GH #767).
+  const beforeKey = () => {
+    const view = ctx.view();
+    if (view) (view as unknown as { observer: { forceFlush(): void } }).observer.forceFlush();
+    if (ending && !view?.compositionStarted) finish();
+  };
   /** The editor is going away. A composition nobody ended holds text that exists only in the view: a tap on
    *  another block moves editing without a blur, and a voice keyboard may never end its composition. Save it
    *  as a blur does (GH #767). A block written since the composition began is left alone: its view only lags

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const read = (file: string) => readFileSync(new URL(`../src-tauri/src/${file}`, import.meta.url), "utf8");
 
@@ -18,10 +19,8 @@ describe("native YouTube identity setup (I-21)", () => {
     expect(main).toContain("youtube_identity::prepare(&mut context)");
     expect(main).toContain("youtube_identity::create_windows(app, &youtube_windows);");
     expect(graph).toContain("youtube_identity::configure(builder, app)");
-    expect(main.indexOf("youtube_identity::create_windows(app, &youtube_windows);"))
-      .toBeLessThan(main.indexOf("graph::prepare_startup_graph(app.handle())"));
-    expect(graph.indexOf("youtube_identity::configure(builder, app)"))
-      .toBeLessThan(graph.indexOf("let built = builder.build()"));
+    expectOrderedIn(main, "youtube_identity::create_windows(app, &youtube_windows);", "graph::prepare_startup_graph(app.handle())");
+    expectOrderedIn(graph, "youtube_identity::configure(builder, app)", "let built = builder.build()");
     expect(main).toContain("youtube_identity::cleanup(app)");
   });
 });

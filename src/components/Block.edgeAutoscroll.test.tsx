@@ -146,6 +146,7 @@ describe("edge autoscroll while selecting or moving blocks (GH #731)", () => {
     move(200, 2); // top zone
     frames(60);
     expect(scrollTop).toBeLessThan(300);
+    expect(ids).toContain(selectedIds()[0]);
     expect(ids.indexOf(selectedIds()[0])).toBeLessThan(ids.indexOf("b20") - 8);
     expect(selectedIds().at(-1)).toBe("b20");
     up();

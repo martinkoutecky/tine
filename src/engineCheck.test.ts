@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 // GH #572: on a web engine older than Safari 15.4 (macOS before 12.3, even with the
 // Safari app updated; iOS < 15.4) the lsdoc wasm fails to compile and ES2022 built-ins are
 // missing, so Tine loaded half-broken. index.html's classic script must detect
@@ -67,7 +68,7 @@ describe("unsupported web engine check (GH #572)", () => {
       .replace(/^\s*\/\/.*$/gm, "")
       .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
     expect(code).not.toMatch(/\b(const|let|class)\b|=>|`|\?\.|\?\?/);
-    expect(index.indexOf('id="tine-engine-check"')).toBeLessThan(index.indexOf('type="module"'));
+    expectOrderedIn(index, 'id="tine-engine-check"', 'type="module"');
     const main = fs.readFileSync(path.join(root, "src/main.tsx"), "utf8");
     const stop = main.indexOf("__tineUnsupportedEngine");
     expect(stop).toBeGreaterThan(0);

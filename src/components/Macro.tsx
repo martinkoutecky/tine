@@ -1053,6 +1053,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const view = (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        data-foreign-source="query"
         data-find-host={props.findHost ?? props.blockId} data-find-answered={!!displayed()
           && (!collapsed() || (groups().length === 0 && !pageRows()?.length && !displayed()?.both?.pages.length))}
         style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}

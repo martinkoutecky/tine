@@ -10,6 +10,7 @@ import type { BlockDto, PageDto, RefGroup } from "../types";
 import { QueryGroups } from "./QueryGroup";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { mainPaneRouter, route } from "../router";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 // GH #619 item 1 (OG parity): block.cljs `custom-query-results` groups a page's
 // matches by :block/parent, so `A -> TODO One, TODO Two` shows A once.
@@ -90,8 +91,7 @@ describe("query results group matches by parent (GH #619 item 1)", () => {
       await expect.poll(() => crumbs(root).length).toBe(2);
       expect(crumbs(root)).toEqual(["A", "B"]);
       const text = root.textContent ?? "";
-      expect(text.indexOf("One")).toBeLessThan(text.indexOf("Two"));
-      expect(text.indexOf("Two")).toBeLessThan(text.indexOf("Elsewhere"));
+      expectOrderedIn(text, "One", "Two", "Elsewhere");
     } finally {
       dispose();
     }

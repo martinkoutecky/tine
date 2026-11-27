@@ -54,7 +54,11 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
+      # `npm test` reads older commits (the og-enforcement ratchet baseline and
+      # the 0.6.5 / bench-policy anchors in ogR6bPreflight), so it needs history.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:

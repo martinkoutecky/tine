@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { exportOpml } from "./exportOpml";
 import type { ExportNode } from "./exportText";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 const forest: ExportNode[] = [
   {
@@ -27,8 +28,7 @@ describe("exportOpml", () => {
     expect(result).toContain('text="Root &amp; &quot;quoted&quot; [[Page]] **bold** #tag"');
     expect(result).toContain('text="Child &lt;node&gt; &amp; &apos;quote&apos;"');
     expect(result).not.toContain("property");
-    expect(result.indexOf("Child")).toBeGreaterThan(result.indexOf("Root"));
-    expect(result.indexOf("Grandchild")).toBeGreaterThan(result.indexOf("Child"));
+    expectOrderedIn(result, "Root", "Child", "Grandchild");
   });
 
   it("applies shared cleanup options and maximum depth", () => {

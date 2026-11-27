@@ -32,11 +32,18 @@ storage format.
 The checker is designed for agents as well as humans. Its JSON has a stable
 `tine-plugin-check/v1` format, precise error codes, the entry SHA-256 digest, exact
 imports/exports, declared capabilities, and a coarse risk disposition.
+It validates the manifest with the same parser Tine runs when you install a package
+(`src/plugins/manifest.ts`), so a manifest the checker passes is one that parser accepts (the
+installer still checks the platform and the stored size on its own). A manifest Tine would refuse fails with the code of the field Tine refused (`manifest.id`,
+`manifest.name`, `manifest.capabilities`, ...; `manifest.invalid` for a field with no code
+of its own; an invalid setting default is `manifest.settings-default`) and Tine's reason; only the
+first refusal is reported. On top of
+that it applies the registry's own policy (a recognized SPDX licence, https sources,
+plain-text key bindings), which is only ever stricter.
 If `port-gap.json` is present, the same command validates its structured explanation
 of omitted behavior and includes `portGap.status` in the report.
 
-The host and checker share the pure ID/path parser in
-`src/plugins/grammar.mjs`; the manifest schema is checked against its definitions
+The ID/path grammar lives in `src/plugins/grammar.mjs`; the manifest schema is checked against its definitions
 by `src/plugins/grammar.test.ts`. Package IDs keep their lowercase dotted syntax
 (at most 64 characters, alphanumeric ends). All command, slash-command and
 decoration IDs match `[a-z0-9][a-z0-9._-]{0,63}`. An entry is a relative `.wasm`

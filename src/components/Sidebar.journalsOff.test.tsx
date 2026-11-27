@@ -8,7 +8,7 @@ import { openJournals, route } from "../router";
 import { backend } from "../backend";
 import type { GraphMeta, PageInventory } from "../types";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
-import { pageIdentityKey } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 
 const inventory = (...names: string[]): PageInventory => ({ rev: "1", entries: names.map((name) => ({
   key: pageIdentityKey(name), name, is_journal: false, day: null, target: { kind: "existing", id: `pages/${name}.md`, others: [] },
