@@ -55,6 +55,7 @@ import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
 import { openJournalsFromClick } from "./journalsNavigation";
+import { internalLinkAuxClick, middleClickMouseDown } from "./linkGesture";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
@@ -1193,7 +1194,8 @@ export function App(): JSX.Element {
       <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" triggerStyle={toolbar.style("calendar")} onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
     ),
     "journals": () => (
-      <button class="icon-btn topbar-optional-action" data-toolbar-action="journals" style={toolbar.style("journals")} title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
+      <button class="icon-btn topbar-optional-action" data-toolbar-action="journals" style={toolbar.style("journals")} title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}
+        onMouseDown={middleClickMouseDown} onAuxClick={(e) => internalLinkAuxClick(e, () => topbarActions.journals(e))}>
         <JournalsIcon />
       </button>
     ),

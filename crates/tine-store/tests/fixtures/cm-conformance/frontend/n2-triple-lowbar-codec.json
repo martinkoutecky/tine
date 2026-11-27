@@ -186,6 +186,10 @@
       "is_journal": false,
       "key": "a/b",
       "name": "a/b",
+      "parent": {
+        "kind": "page",
+        "name": "a"
+      },
       "target": {
         "id": "pages/a___b.md",
         "kind": "existing",
@@ -263,6 +267,10 @@
       "is_journal": false,
       "key": "x/y",
       "name": "x/y",
+      "parent": {
+        "kind": "page",
+        "name": "x"
+      },
       "target": {
         "id": "pages/x______y.md",
         "kind": "existing",

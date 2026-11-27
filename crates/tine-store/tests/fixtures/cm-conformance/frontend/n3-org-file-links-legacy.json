@@ -83,6 +83,10 @@
       "is_journal": false,
       "key": "a/b",
       "name": "a/b",
+      "parent": {
+        "kind": "page",
+        "name": "a"
+      },
       "target": {
         "id": "pages/a.b.org",
         "kind": "existing",

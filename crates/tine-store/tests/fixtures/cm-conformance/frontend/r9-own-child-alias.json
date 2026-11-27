@@ -85,6 +85,10 @@
       },
       "name": "a/x",
       "namespace_excluded": true,
+      "parent": {
+        "kind": "page",
+        "name": "a"
+      },
       "target": {
         "kind": "alias",
         "owners": [

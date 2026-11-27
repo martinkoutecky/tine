@@ -109,6 +109,10 @@
       "is_journal": false,
       "key": "ten/child",
       "name": "Ten/Child",
+      "parent": {
+        "kind": "page",
+        "name": "Ten"
+      },
       "target": {
         "id": "pages/Ten___Child.org",
         "kind": "existing",

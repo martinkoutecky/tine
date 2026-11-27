@@ -1133,11 +1133,22 @@ claim unless an explicit alias edge joins it (D-20261107-KD). Opening uses
 the same date-endpoint buckets for direct declarers. Literal name/page query
 leaves use the literal real claim first; reference leaves use the component.
 FORMAT 28 invalidates retained reference/query answers once; the body schema
-and graph files are unchanged. Live namespace rows optionally carry
-`parent: {name, kind}` when the immediate prefix has a canonical spelling or
-journal kind. Tree, macro and hierarchy attach only a listed typed parent;
-alias-only names remain excluded, without jumping to an ancestor. Frozen
-published v1 rows omit this new field and retain their previous readers.
+and graph files are unchanged. Live namespace rows carry their tree parent
+candidate as `parent: {name, kind}` (`store/inventory.rs::tree_place`; SPEC
+§Namespace tree): the typed page the last prefix with a nonempty page key other
+than the row's own names, kept only when its folded page key has fewer
+`/`-separated parts than the row's (empty parts count). It is a pure function
+of the row's name, the real page owners and the journal format, so an
+inventory delta carries only its own keys' rows and no other row's candidate
+goes stale. A day whose title has a prefix with a nonempty page key carries
+`namespace_day: true` (sent only when true). Tree, macro and hierarchy attach a
+row below its candidate only when that typed row is listed (no alias); a row
+without one is a top node, shown when it has a child or is a namespace day.
+They never jump to an ancestor. Frozen published v1 rows omit both fields and
+retain their previous readers. Proof: `crates/tine-store/tests/inventory_delta.rs`
+`a_spaced_slash_day_keeps_its_folded_month_through_deltas`,
+`a_date_normalised_prefix_names_its_day_through_deltas`,
+`src/components/Namespace.inventory.test.tsx`.
 
 An ordinary file claiming the configured canonical day title remains distinct
 from the virtual journal named by another accepted spelling (SPEC §2.3).

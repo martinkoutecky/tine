@@ -5,6 +5,7 @@ import { installMobileDrawerMode } from "../mobileDrawers";
 import { openPage, resetTabsToJournals, route } from "../router";
 import type { LoadGraphPathOutcome } from "../graph";
 import type { PageEntry, PageInventoryEntry } from "../types";
+import { withOrdinaryParent } from "../namespaceInventory.test.support";
 import { resetPageIndex } from "../pageIndex";
 import { activeDrawer, closeContextMenu, closeSwitcher, completeActiveLeftNavigation, resetLeftSidebarSections, setFavorites, setLeftSidebarOpen, setRecentPages, setRightSidebar, setRightSidebarOpen, sidebarOpen } from "../ui";
 import { bumpGraphEpoch } from "../graphSession";
@@ -78,7 +79,8 @@ describe("GH #161 successful left-navigation boundary", () => {
       page("Namespace/Child"),
       ...Array.from({ length: 303 }, (_, index) => page(`Filler ${String(index).padStart(3, "0")}`)),
     ];
-    const entries: PageInventoryEntry[] = pages.map((row) => ({
+    // Each row carries the tree parent the store answers.
+    const entries: PageInventoryEntry[] = pages.map((row) => withOrdinaryParent({
       key: row.name.toLowerCase(),
       name: row.name,
       is_journal: false,
