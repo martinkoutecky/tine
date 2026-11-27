@@ -9,6 +9,7 @@ import { mainPaneRouter, openJournals, openPageInNewTab, resetTabsToJournals, ro
 import { appNow, journalTitle } from "../journal";
 import { runGlobalCommand } from "../keybindings";
 import { readFileSync } from "node:fs";
+import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
 
 it("GH #926: the named close icon shares the graph picker row and first-level rows share a casing class", () => {
   setFavorites([{ name: "Tine", kind: "page" }]);
@@ -56,6 +57,36 @@ it("GH #740: Shift-click the top-left Journals entry keeps the main page and ope
     expect(runGlobalCommand("go/journals")).toBe(true);
     expect(route()).toMatchObject({ kind: "journals" });
   } finally { dispose(); }
+});
+
+// GH #1050: Ctrl/Cmd+click and Alt+click on Journals do what they do on a page link (linkGesture.ts): the feed
+// opens in a background tab or the other pane, and the main page stays. Logseq ignores both modifiers here.
+it.each([
+  ["Ctrl", { ctrlKey: true }, "background"],
+  ["Cmd", { metaKey: true }, "background"],
+  ["Alt", { altKey: true }, "pane"],
+] as const)("GH #1050: %s-click the left sidebar Journals entry opens the feed like a page link", (_name, modifier, destination) => {
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Project", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+  const before = paneRouter("main").route();
+  const completed = vi.fn();
+  const root = document.body.appendChild(document.createElement("div"));
+  const dispose = render(() => <Sidebar onActiveNavigationComplete={completed} />, root);
+  try {
+    const journals = [...root.querySelectorAll<HTMLElement>(".nav-item")].find(el => el.textContent === "Journals")!;
+    journals.dispatchEvent(new MouseEvent("click", { bubbles: true, ...modifier }));
+    expect(paneRouter("main").route()).toEqual(before);
+    if (destination === "background") {
+      expect(paneRouter("main").tabs()).toHaveLength(2);
+      expect(paneRouter("main").tabs()[1].history[0]).toEqual({ kind: "journals" });
+    } else {
+      expect(layoutPaneIds()).toHaveLength(2);
+      expect(paneRouter(layoutPaneIds()[1]).route()).toEqual({ kind: "journals" });
+    }
+    expect(completed).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+  }
 });
 
 it("GH #761: sidebar sections and graph switcher share SVG disclosures that follow folding", () => {

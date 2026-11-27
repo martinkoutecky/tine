@@ -221,6 +221,9 @@ mod journal_guide_tests {
         assert!(journals.contains("**Shift-click Journals** in the left sidebar or toolbar"));
         assert!(journals.contains("right sidebar without leaving the main page"));
         assert!(journals.contains("A plain click or **g j** still opens the multi-day feed"));
+        // GH #1050: Journals takes the page-link modifiers.
+        assert!(journals.contains("**Ctrl/Cmd-click** (or middle-click) Journals opens the feed in a background tab"));
+        assert!(journals.contains("**Alt-click** opens it in the other pane"));
     }
 
     /// CM-DAYFILE (D-20261111-CMR14): a date-named page file is its day.

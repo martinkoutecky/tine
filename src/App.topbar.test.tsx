@@ -7,6 +7,7 @@ import { mainPaneRouter, resetTabsToJournals } from "./router";
 import { applySidebarSession, rightSidebar } from "./ui";
 import { appNow, journalTitle } from "./journal";
 import { saveToolbarChoice } from "./toolbarChoice";
+import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "./panes";
 
 let dispose = () => {};
 
@@ -16,6 +17,7 @@ afterEach(() => {
   saveToolbarChoice(null);
   setLeftSidebarOpen(true);
   applySidebarSession({ right: false, items: [] });
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
   resetTabsToJournals();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -42,6 +44,36 @@ describe("topbar workspace placement", () => {
       ? 'header.topbar button[title="Journals"]'
       : '[data-topbar-overflow-action="journals"]')!.click();
     expect(mainPaneRouter.route()).toMatchObject({ kind: "journals" });
+  });
+
+  // GH #1050: the toolbar Journals controls follow the page-link contract (linkGesture.ts) for Ctrl/Cmd and Alt;
+  // the button also takes the link's middle-click.
+  it.each([
+    ["button", "Ctrl", { ctrlKey: true }, "background"],
+    ["button", "middle", { button: 1 }, "background"],
+    ["button", "Alt", { altKey: true }, "pane"],
+    ["overflow", "Ctrl", { ctrlKey: true }, "background"],
+    ["overflow", "Alt", { altKey: true }, "pane"],
+  ] as const)("GH #1050: %s %s-click Journals opens the feed like a page link", async (surface, gesture, modifier, destination) => {
+    const host = document.body.appendChild(document.createElement("div"));
+    if (surface === "overflow") saveToolbarChoice({ bar: ["settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar", "workspaces"] });
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Project", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+    const before = paneRouter("main").route();
+    dispose = render(() => <App />, host);
+    if (surface === "overflow") host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    const journals = host.querySelector<HTMLElement>(surface === "button"
+      ? 'header.topbar button[title="Journals"]'
+      : '[data-topbar-overflow-action="journals"]')!;
+    journals.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...modifier }));
+    journals.dispatchEvent(new MouseEvent(gesture === "middle" ? "auxclick" : "click", { bubbles: true, cancelable: true, ...modifier }));
+    expect(paneRouter("main").route()).toEqual(before);
+    if (destination === "background") {
+      expect(paneRouter("main").tabs()).toHaveLength(2);
+      expect(paneRouter("main").tabs()[1].history[0]).toEqual({ kind: "journals" });
+    } else {
+      expect(layoutPaneIds()).toHaveLength(2);
+      expect(paneRouter(layoutPaneIds()[1]).route()).toEqual({ kind: "journals" });
+    }
   });
 
   it("puts the full workspace switcher in the sidebar and only mounts a compact fallback while it is closed", async () => {

@@ -4,8 +4,8 @@ import { msg, t } from "../i18n";
 import { HomeIcon, JournalsIcon } from "./JournalsIcon";
 import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
-import { openAllGraphs, openAllPages, openNamespaces, openConflicts, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openJournalsFromClick } from "../journalsNavigation";
+import { openAllGraphs, openAllPages, openNamespaces, openConflicts, openPage, openPageInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openJournalsFromClick, openJournalsInNewTab } from "../journalsNavigation";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -132,11 +132,10 @@ export function Sidebar(props: {
               class="nav-item nav-first-level"
               classList={{ active: route().kind === "journals" }}
               onClick={(event) => {
-                openJournalsFromClick(event);
-                if (!event.shiftKey) props.onActiveNavigationComplete?.();
+                if (openJournalsFromClick(event) === "default") props.onActiveNavigationComplete?.();
               }}
               onMouseDown={internalLinkMouseDown}
-              onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
+              onAuxClick={(e) => internalLinkAuxClick(e, openJournalsInNewTab)}
             >
               <JournalsIcon />
               <span>{t("sidebar-journals")}</span>
