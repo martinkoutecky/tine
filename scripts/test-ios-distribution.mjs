@@ -352,7 +352,11 @@ for (const [ship, identity] of Object.entries(IDENTITIES)) {
         if (++calls === 1) {
           assert.equal(parsed.pathname, "/v1/apps");
           assert.equal(parsed.searchParams.get("filter[bundleId]"), ${JSON.stringify(identity.identifier)});
-          return new Response(JSON.stringify({ data: [{ id: ${JSON.stringify(wrongId ? "wrong-app" : identity.ios.appStoreAppleId)}, attributes: {} }] }));
+          // App Store Connect's filter also returns apps whose bundle id merely starts with this one.
+          return new Response(JSON.stringify({ data: [
+            { id: "longer-bundle-app", attributes: { bundleId: ${JSON.stringify(identity.identifier + "Longer")} } },
+            { id: ${JSON.stringify(wrongId ? "wrong-app" : identity.ios.appStoreAppleId)}, attributes: { bundleId: ${JSON.stringify(identity.identifier)} } },
+          ] }));
         }
         assert.equal(parsed.pathname, "/v1/builds");
         assert.equal(parsed.searchParams.get("filter[app]"), ${JSON.stringify(identity.ios.appStoreAppleId)});
