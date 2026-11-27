@@ -223,11 +223,12 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
     case "link":
       return renderLink(s, blockId, spanMode, macroExpansion, format);
     case "nested_link": {
-      // Logseq `nested-link` (block.cljs): the outer pair follows the bracket
-      // setting; each nested reference is its own link and keeps its pair.
+      // Logseq `nested-link` (block.cljs): one link whose click opens the part
+      // under the pointer. The label is built once, as develop shows it.
       const outer = nestedReference(s.content);
+      const label = <PageReferenceLabel>{nestedLabel(s.content, outer)}</PageReferenceLabel>;
       return <PageRef name={outer.name} blockId={blockId} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined}
-        alias={<PageReferenceLabel>{nestedLabel(s.content, outer, blockId)}</PageReferenceLabel>} />;
+        alias={label} partAt={(e) => nestedPartAt(s.content, e)} />;
     }
     case "target":
       return <span class="org-target" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</span>;
@@ -260,21 +261,33 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
   }
 }
 
-/** A nested reference's label: its text, with each part it holds rendered as
- *  that part's own link (a click there opens the part, not the outer page). */
-function nestedLabel(content: string, part: NestedReferencePart, blockId?: string): JSX.Element {
+/** A nested reference's label: `content` as text runs, each run inside a
+ *  nested part a span carrying only the innermost such part's UTF-16 range
+ *  (`data-nested-range`), so the link stays one element. O(token). */
+function nestedLabel(content: string, outer: NestedReferencePart): JSX.Element[] {
   const out: JSX.Element[] = [];
-  let at = part.start;
-  for (const inner of part.parts) {
-    out.push(content.slice(at, inner.start - 2));
-    out.push(inner.name.trim()
-      ? <PageRef name={inner.name} blockId={blockId}
-          alias={<><span class="bracket">[[</span>{nestedLabel(content, inner, blockId)}<span class="bracket">]]</span></>} />
-      : content.slice(inner.start - 2, inner.end + 2));
-    at = inner.end + 2;
-  }
-  out.push(content.slice(at, part.end));
-  return <>{out}</>;
+  const emit = (from: number, to: number, range?: string) => {
+    if (to > from) out.push(range ? <span data-nested-range={range}>{content.slice(from, to)}</span> : content.slice(from, to));
+  };
+  const walk = (part: NestedReferencePart, from: number, to: number, range?: string) => {
+    let at = from;
+    for (const inner of part.parts) {
+      emit(at, inner.start - 2, range);
+      walk(inner, inner.start - 2, inner.end + 2, inner.name.trim() ? `${inner.start} ${inner.end}` : range);
+      at = inner.end + 2;
+    }
+    emit(at, to, range);
+  };
+  walk(outer, 0, content.length);
+  return out;
+}
+
+/** The name of the nested part an event landed in, or undefined for the outer one. */
+function nestedPartAt(content: string, e: Event): string | undefined {
+  const range = (e.target as Element | null)?.closest?.("[data-nested-range]")?.getAttribute("data-nested-range");
+  if (!range) return undefined;
+  const [start, end] = range.split(" ").map(Number);
+  return content.slice(start, end);
 }
 
 // Flatten an inline run to plain text (tag names, link/block-ref labels, and the
@@ -322,7 +335,8 @@ const PEEK_BLOCK_CAP = 50;
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 // `file`: carry the physical claimant path for the alias group's Related pages row (R13-C4).
-export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs; file?: boolean }): JSX.Element {
+// `partAt`: a name inside this link that a click at the event opens instead (a nested reference's part).
+export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs; file?: boolean; partAt?: (e: MouseEvent) => string | undefined }): JSX.Element {
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLAnchorElement | undefined;
@@ -334,7 +348,13 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
   // What the link opens: the store's answer (`linkTarget`), never re-derived.
-  const link = (): LinkDestination => (isGuidePageName(targetName()) || props.file ? { name: targetName(), kind: "page" } : linkTarget(targetName()));
+  const linkFor = (name: string): LinkDestination => (isGuidePageName(name) || props.file ? { name, kind: "page" } : linkTarget(name));
+  const link = () => linkFor(targetName());
+  /** What a click at `e` opens: the nested part under it, else this link. */
+  const linkAt = (e: MouseEvent): LinkDestination => {
+    const part = props.partAt?.(e);
+    return part === undefined ? link() : linkFor(guideTargetForLink(part, sourcePage()));
+  };
   const kind = (): PageKind => link().kind;
   const path = () => (props.file ? ownerPath(resolvedTarget(targetName(), "page")) : undefined); // exact path: no redirect
   const target = () => ({ name: link().name, pageKind: kind(), ...(path() ? { path: path() } : {}) });
@@ -350,19 +370,20 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       return;
     }
     e.stopPropagation();
+    const to = linkAt(e);
     // Shared modified-click contract (linkGesture.ts, GH #283/#438).
     const dest = internalLinkDest(e);
-    if (dest === "sidebar" && !isGuidePageName(targetName())) props.file ? openPageInSidebar(target()) : openPageInSidebar(link().name, kind());
-    else if (dest === "background") openBackgroundTab();
+    if (dest === "sidebar" && !isGuidePageName(to.name)) props.file ? openPageInSidebar(target()) : openPageInSidebar(to.name, to.kind);
+    else if (dest === "background") openBackgroundTab(to);
     else if (dest === "pane")
-      openRouteInOtherPane({ kind: "page", ...target() }, pane?.paneId ?? focusedPaneId());
+      openRouteInOtherPane({ kind: "page", ...(props.file ? target() : { name: to.name, pageKind: to.kind }) }, pane?.paneId ?? focusedPaneId());
     else if (props.file) openPageTarget(target());
-    else openPage(link().name, kind());
+    else openPage(to.name, to.kind);
   };
   // A background tab belongs to the pane that was already active, not
   // necessarily the pane containing this link (GH #87): the pane tracker keeps
   // the active pane across a middle-button press (ui.ts installPaneTracker).
-  const openBackgroundTab = () => (props.file ? openPageTargetInNewTab(target()) : openPageInNewTab(link().name, kind()));
+  const openBackgroundTab = (to: LinkDestination) => (props.file ? openPageTargetInNewTab(target()) : openPageInNewTab(to.name, to.kind));
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
@@ -409,14 +430,13 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onClick={open}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
-        // A hold on a reference nested inside this one is that reference's.
-        onPointerDown={(e) => { if ((e.target as Element).closest("a.page-ref, a.tag") === anchorEl) longPress.onPointerDown(e); }}
+        onPointerDown={longPress.onPointerDown}
         onPointerMove={longPress.onPointerMove}
         onPointerUp={longPress.onPointerUp}
         onPointerCancel={longPress.onPointerCancel}
         onAuxClick={(e) => {
           if (e.button === 1) e.stopPropagation();
-          internalLinkAuxClick(e, openBackgroundTab);
+          internalLinkAuxClick(e, () => openBackgroundTab(linkAt(e)));
         }}
         onContextMenu={(e) => {
           if (!shouldOpenTextContextMenu(e)) return;

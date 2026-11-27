@@ -963,7 +963,7 @@
     },
     "scripts/e2e-nested-ref-target.mjs": {
       "setup": "Synthetic graph with pages/Lorem [[Impsum]].md, pages/Impsum.md and today's journal; scratch HOME/XDG and account-home shim; Linux native, custom-protocol build.",
-      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"After completion inserts `[[Lorem [[Impsum]]]]` and the journal is saved, a click on the outer label opens the seeded page `Lorem [[Impsum]]`, an edit there saves into pages/Lorem [[Impsum]].md and no other page file appears; the inner link opens `Impsum`.","blocking":true,"authority":"GH #1052; Logseq components/block.cljs nested-link"}],
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"After completion inserts `[[Lorem [[Impsum]]]]` and the journal is saved, a click on the outer label opens the seeded page `Lorem [[Impsum]]`, an edit there saves into pages/Lorem [[Impsum]].md and no other page file appears; a click on the inner part opens `Impsum`.","blocking":true,"authority":"GH #1052; Logseq components/block.cljs nested-link"}],
       "acceptableVariations":["Popup geometry, link styling and save latency may vary while the opened page, the saved file and the page-file set hold."],
       "nonRequirements":["Exact pixels, incidental DOM nesting or platform certification outside Linux WebKitGTK."],
       "stability":"burn-in"

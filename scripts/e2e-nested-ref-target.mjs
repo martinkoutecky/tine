@@ -2,7 +2,7 @@
 // Completion for the page `Lorem [[Impsum]]` inserts `[[Lorem [[Impsum]]]]`
 // (as Logseq does); a click on the outer label opens the seeded page
 // `pages/Lorem [[Impsum]].md`, an edit there saves into that file and no file
-// named with the outer brackets appears; the inner link opens `Impsum`.
+// named with the outer brackets appears; a click on the inner part opens `Impsum`.
 // Synthetic scratch graph and app data only. Needs a custom-protocol build at
 // TINE_APP or target/debug/tine.
 import { spawn, execFileSync } from "node:child_process";
@@ -49,8 +49,8 @@ const driver = spawn(process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOM
   { env, stdio: ["ignore", log, log], detached: true });
 let browser;
 const observations = [];
-const outerLink = ".ls-block a.page-ref"; // the first page link in the block is the outer one
-const innerLink = ".ls-block a.page-ref a.page-ref";
+const outerLink = ".ls-block a.page-ref"; // the one link the nested reference renders
+const innerLink = ".ls-block a.page-ref [data-nested-range]"; // its inner part
 /** A native click on the outer label's own text: its left edge, away from the inner link. */
 const clickOuterLabel = async () => {
   const outer = await browser.$(outerLink);

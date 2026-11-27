@@ -8,7 +8,7 @@ import { rightSidebar, setRightSidebar } from "../ui";
 import { installPageIndex, linkTarget, refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { PageView } from "./Page";
 import { setGraphMeta } from "../graphSession";
-import type { GraphMeta, PageInventoryEntry, PageRead } from "../types";
+import type { PageInventoryEntry, PageRead } from "../types";
 
 // GH #1052: a nested page reference `[[Lorem [[Impsum]]]]` (what completion
 // inserts for the page `Lorem [[Impsum]]`) opens the page each part names, as
@@ -65,13 +65,12 @@ it("a click on the outer label opens the page the outer part names", async () =>
   } finally { dispose(); }
 });
 
-it("the inner reference is its own link inside the outer one and opens its own page", async () => {
+it("the inner reference is a part of the one link and a click there opens its own page", async () => {
   serve();
   const { root, dispose } = mountSource();
   try {
-    await vi.waitFor(() => expect(links(root)).toHaveLength(2));
-    const [outer, inner] = links(root);
-    expect(outer.contains(inner)).toBe(true);
+    await vi.waitFor(() => expect(links(root)).toHaveLength(1));
+    const inner = links(root)[0].querySelector("[data-nested-range]")!;
     expect(inner.textContent).toBe("[[Impsum]]");
     click(inner);
     await vi.waitFor(() => expect(root.textContent).toContain("Seeded inner body"));
@@ -79,11 +78,22 @@ it("the inner reference is its own link inside the outer one and opens its own p
   } finally { dispose(); }
 });
 
+it("a Shift-click on the inner part opens the inner page in the sidebar", async () => {
+  serve();
+  const { root, dispose } = mountSource();
+  try {
+    await vi.waitFor(() => expect(links(root)).toHaveLength(1));
+    click(links(root)[0].querySelector("[data-nested-range]")!, { shiftKey: true });
+    expect(rightSidebar().map((item) => (item.kind === "page" ? item.name : item.kind))).toEqual(["Impsum"]);
+    expect(mainPaneRouter.route()).toMatchObject({ name: "Source" });
+  } finally { dispose(); }
+});
+
 it("a Shift-click on the outer label opens the outer page in the sidebar", async () => {
   serve();
   const { root, dispose } = mountSource();
   try {
-    await vi.waitFor(() => expect(links(root)).toHaveLength(2));
+    await vi.waitFor(() => expect(links(root)).toHaveLength(1));
     click(links(root)[0], { shiftKey: true });
     expect(rightSidebar().map((item) => (item.kind === "page" ? item.name : item.kind))).toEqual(["Lorem [[Impsum]]"]);
     expect(mainPaneRouter.route()).toMatchObject({ name: "Source" });
@@ -106,7 +116,7 @@ it("an outer name that is an alias opens its owner", async () => {
   const read = serve([page("Canonical", "pages/Canonical.md", "Canonical body")]);
   const { root, dispose } = mountSource();
   try {
-    await vi.waitFor(() => expect(links(root)).toHaveLength(2));
+    await vi.waitFor(() => expect(links(root)).toHaveLength(1));
     await vi.waitFor(() => expect(links(root)[0].hasAttribute("data-missing-page")).toBe(false));
     click(links(root)[0]);
     await vi.waitFor(() => expect(root.textContent).toContain("Canonical body"));
@@ -114,14 +124,3 @@ it("an outer name that is an alias opens its owner", async () => {
     expect(read.mock.calls.map(([name]) => name)).not.toContain("[[Lorem [[Impsum]]]]");
   } finally { dispose(); }
 });
-
-it.each([[true, "[[Lorem [[Impsum]]]]"], [false, "Lorem [[Impsum]]"]])(
-  "with show brackets %s the outer pair follows the setting and the inner keeps its pair", async (brackets, shown) => {
-    setGraphMeta({ show_brackets: brackets } as GraphMeta);
-    serve();
-    const { root, dispose } = mountSource();
-    try {
-      await vi.waitFor(() => expect(links(root).length).toBeGreaterThan(0));
-      expect(links(root)[0].textContent).toBe(shown);
-    } finally { dispose(); }
-  });

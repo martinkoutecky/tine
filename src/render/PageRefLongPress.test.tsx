@@ -1,8 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
-import { initParser, parseBlock } from "./parse";
-import type { Inline } from "./ast";
+import { initParser } from "./parse";
 import { renderInlines } from "./inline";
 import { contextMenu, closeContextMenu } from "../ui";
 import { route, openPage } from "../router";
@@ -164,21 +163,6 @@ describe("page-ref long-press gesture (GH #231)", () => {
       anchor().dispatchEvent(touch("pointercancel", 41, 62));
       vi.advanceTimersByTime(2 * LONG_PRESS_DELAY);
       expect(contextMenu()).toBeNull();
-    } finally {
-      dispose();
-    }
-  });
-  it("a hold on the inner link of a nested reference opens that link's menu, not the outer one's (GH #1052)", () => {
-    vi.useFakeTimers();
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const [block] = parseBlock("[[Lorem [[Impsum]]]]", false) as unknown as { inline: Inline[] }[];
-    const dispose = render(() => renderInlines(block.inline) as JSX.Element, root);
-    try {
-      root.querySelector("a.page-ref a.page-ref")!.dispatchEvent(touch("pointerdown", 41, 62));
-      vi.advanceTimersByTime(LONG_PRESS_DELAY);
-      const menu = contextMenu();
-      expect(menu && "name" in menu ? menu.name : null).toBe("Impsum");
     } finally {
       dispose();
     }

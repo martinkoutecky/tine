@@ -96,7 +96,11 @@ describe("renderInlines", () => {
     setGraphMeta({ show_brackets: false } as never);
     const h = html(() => InlineText({ text: "[[Outer [[Inner]] tail]]" }) as JSX.Element);
     expect(h).not.toContain('class="bracket"');
-    expect(h).toContain("Outer [[Inner]] tail");
+    // One link (GH #1052: its inner part is a span inside it, not a second link).
+    const el = document.createElement("div");
+    el.innerHTML = h;
+    expect(el.querySelectorAll("a")).toHaveLength(1);
+    expect(el.textContent).toContain("Outer [[Inner]] tail");
   });
 
   it("page ref with alias label", () => {
