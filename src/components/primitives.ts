@@ -2,7 +2,9 @@ import type { Accessor } from "solid-js";
 import { backend } from "../backend";
 import { reportUiFailure } from "../uiFailure";
 
-/** Open one link, reporting the existing fixed UI failure on rejection. */
+/** Open one link, reporting the existing fixed UI failure on rejection. Settings
+ * buttons use it: a `file:` source outside the graph is refused, never asked
+ * (tine#985), and shows that failure. */
 export function openExternal(url: string): void {
   void backend().openExternal(url).catch((error) => reportUiFailure("external-link", error));
 }

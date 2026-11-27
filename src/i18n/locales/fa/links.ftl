@@ -1,5 +1,10 @@
 links-open-custom-scheme-confirm = این پیوند { $scheme }: در برنامه‌ای که سیستم برای آن به کار می‌برد باز شود؟{ "\u000A\u000A" }{ $url }
 links-open-custom-scheme-title = باز کردن پیوند { $scheme }:
+links-open-outside-file-title = باز کردن پرونده‌ای بیرون از این گراف
+links-open-outside-file-confirm = این پیوند پرونده‌ای بیرون از پوشهٔ این گراف را باز می‌کند:{ "\u000A\u000A" }{ $path }
+links-outside-file-unreadable-name = برخی نویسه‌های این نام به همان شکل نمایش داده نمی‌شوند و به شکل � یا کدی مانند <U+202E> می‌آیند.
+links-always-open-outside-files = پرونده‌های بیرون از این گراف بدون پرسش باز شوند
+links-outside-file-graph-hint = تا وقتی این گراف را در این پنجره ببندید.
 links-copy-title = کپی پیوند
 references-filter-unlinked = پالایش ارجاع‌های بدون پیوند
 references-search-unlinked = جستجوی متن ارجاع‌های بدون پیوند

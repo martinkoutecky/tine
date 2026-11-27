@@ -52,6 +52,7 @@ pdf-external-not-regular = This path is not a regular file.
 pdf-external-too-large = This PDF is larger than 256 MiB and can't be opened safely.
 pdf-external-invalid-link = An absolute file:// PDF link is required.
 pdf-external-unsupported-url = This file URL is not supported on this platform.
+pdf-external-not-opened = Not opened.
 pdf-external-load-failed = Couldn't load this PDF. ({ $detail })
 pdf-theme = Theme
 pdf-theme-options = PDF theme

@@ -27,6 +27,7 @@ function outsideReadError(error: unknown, filename: string): string {
     case "external-pdf-invalid-link": return t("pdf-external-invalid-link");
     case "external-pdf-unsupported-url": return t("pdf-external-unsupported-url");
     case "external-pdf-desktop-only": return t("pdf-external-desktop-only");
+    case "external-pdf-not-opened": return t("pdf-external-not-opened");
     default: return detail;
   }
 }
@@ -43,7 +44,7 @@ export function openPdfDocument(api: Backend, filename: string, generation: numb
     try {
       if (isExternalPdf(filename)) {
         if (!externalRead) throw new Error(t("pdf-external-reopen-link"));
-        const result = await readOwned(loadOwner, externalRead());
+        const result = await readOwned(loadOwner, externalRead(adopt.signal));
         if (result.kind === "stale") return { kind: "error", message: t("pdf-external-reopen-link") };
         if (result.value.byteLength > MAX_PDF_BYTES) throw new Error("external-pdf-too-large");
         input = { data: result.value };

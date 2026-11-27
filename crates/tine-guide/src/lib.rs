@@ -1666,6 +1666,19 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn outside_file_guide_says_it_asks_first_and_how_long_allow_lasts() {
+        // tine#985: a file outside the graph opens only after a prompt naming it;
+        // the per-graph allowance is not permanent, and Quick Capture never keeps it.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("is opened only after Tine asks, naming the file"));
+        assert!(search.contains("until the graph is closed in this window"));
+        assert!(search.contains("Quick Capture asks every time"));
+        assert!(search.contains("Files inside the graph open without asking"));
+        let pdf = include_str!("templates/pdf.md");
+        assert!(pdf.contains("A PDF outside the graph folder asks first"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");

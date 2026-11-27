@@ -110,7 +110,9 @@ const EXEMPT_CALLS: Record<string, string[]> = {
 // below pins that it really does start from graphOwner. `bindingOwner` is the
 // write-side owner (graph binding without the display epoch, R4) from src/owned.ts.
 const OWNERS = new Set(["graphOwner", "bindingOwner", "ownedWhen", "latestOwner", "revisionOwner", "focusedSurfaceOwner"]);
-const BOUNDARIES = new Set(["readOwned", "admitRead", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable"]);
+// `withFileConsent` (src/fileConsent.ts, tine#985) takes its owner first and
+// lands each of its two calls and its prompt through readOwned.
+const BOUNDARIES = new Set(["readOwned", "admitRead", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable", "withFileConsent"]);
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([

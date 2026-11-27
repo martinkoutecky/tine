@@ -156,6 +156,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Security
 
 - Published and rendered links check URL schemes before opening. Refused schemes are inert, and links to registered apps require consent for the exact scheme (#984).
+- On desktop, a link to a file outside the graph folder (a `file:` link, a path such as `../x.pdf`, or an outside PDF) now asks first, naming the file, before Tine opens or reads it; Cancel opens and reads nothing. Invisible direction-control characters, which could reorder the name on screen, are shown as codes such as `<U+202E>`. A file inside the graph opens as before, including through a symlink that stays inside. **Allow for this graph** lasts until the graph is closed in that window; Quick Capture asks each time. Closing a PDF tab while it asks cancels the question (#985).
 - DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).

@@ -120,7 +120,7 @@
     },
     "scripts/e2e-external-pdf.mjs": {
       "contracts": [
-        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent, written absolute or relative to the graph folder (`../x.pdf`, `file:../x.pdf`), opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
+        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent, written absolute or relative to the graph folder (`../x.pdf`, `file:../x.pdf`), opens a synthetic PDF outside the scratch graph in the ordinary desktop reader after the user agrees in a prompt naming the file. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; tine#985; docs/contracts/external-pdf.md"},
         {"class":"exact-safety-interoperability","userOutcome":"Every file and directory in the scratch graph is identical before and after opening and reading outside PDFs; no import, sidecar, highlight page or capture image is created.","blocking":false,"authority":"GH #732 read-only decision"}
       ],
       "acceptableVariations": ["Pane geometry, toolbar wrapping, selection appearance and reader timing can vary while the tools and preserved file outcomes hold."],
@@ -839,8 +839,8 @@
       "stability":"burn-in"
     },
     "scripts/e2e-outside-file-links.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A file link that leaves the graph folder (../ or absolute) renders as an ordinary link and clicking it hands the resolved path to the system opener.","blocking":true}],
-      "acceptableVariations":["Link styling, hover text wording and the opener used may vary while the resolved path handed to the OS is correct."],
+      "contracts": [{"class":"core-operation","userOutcome":"A file link that leaves the graph folder (../, absolute or file: URL) renders as an ordinary link; clicking it asks first, naming the file: Cancel hands nothing to the system opener and Open hands it the resolved path once. A file link inside the graph opens with no prompt (tine#985).","blocking":true}],
+      "acceptableVariations":["Link styling, hover and prompt wording and the opener used may vary while the prompt names the file and the handoffs to the OS are correct."],
       "nonRequirements":["A particular viewer launching, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
