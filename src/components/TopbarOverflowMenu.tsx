@@ -1,6 +1,6 @@
 import { render, t } from "../i18n";
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import { internalLinkAuxClick, internalLinkMouseDown } from "../linkGesture";
+import { internalLinkAuxClick, middleClickMouseDown } from "../linkGesture";
 import { toolbarActionLabel, type ToolbarActionId } from "../toolbarChoice";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 
@@ -87,7 +87,7 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
             disabled={id === "share" && props.canShare ? !props.canShare() : false}
             onClick={event => run(() => handlers()[id]!(event))}
             // Journals also takes a page link's middle-click (GH #1050).
-            onMouseDown={id === "journals" ? internalLinkMouseDown : undefined}
+            onMouseDown={id === "journals" ? middleClickMouseDown : undefined}
             onAuxClick={id === "journals" ? event => internalLinkAuxClick(event, () => run(() => props.onJournals(event))) : undefined}
           >{render(toolbarActionLabel(id))}</button>}</For>
           <div class="topbar-overflow-sep" role="separator" />

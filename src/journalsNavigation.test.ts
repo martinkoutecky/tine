@@ -59,6 +59,16 @@ describe("a feed the window already holds is brought forward", () => {
   }
 });
 
+it.each(gestures)("%s-click with the feed active in a later pane looks at no background tab", (_name, init) => {
+  layout([project, feed], [feed]);
+  const backgroundLookups = vi.spyOn(paneRouter("main"), "tabs");
+  click(init);
+  expect(focusedPaneId()).toBe("pane-2");
+  expect(paneRouter("main").route()).toEqual(project);
+  expect(backgroundLookups).not.toHaveBeenCalled();
+  backgroundLookups.mockRestore();
+});
+
 describe("with no feed open", () => {
   it.each(gestures.slice(0, 3))("%s-click opens it in a background tab and the page stays", (_name, init) => {
     layout([project], [other]);

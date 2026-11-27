@@ -74,6 +74,21 @@ describe("topbar workspace placement", () => {
     else expect(paneRouter(layoutPaneIds()[1]).route()).toEqual({ kind: "journals" });
   });
 
+  it.each([
+    ["button", { shiftKey: true }], ["button", { shiftKey: true, altKey: true }], ["button", { shiftKey: true, ctrlKey: true }],
+    ["overflow", { shiftKey: true }], ["overflow", { shiftKey: true, altKey: true }], ["overflow", { shiftKey: true, ctrlKey: true }],
+  ] as const)("GH #1050: a Shift mousedown on Journals in the %s keeps its default", async (surface, init) => {
+    const host = document.body.appendChild(document.createElement("div"));
+    if (surface === "overflow") saveToolbarChoice({ bar: ["settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar", "workspaces"] });
+    dispose = render(() => <App />, host);
+    if (surface === "overflow") host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...init });
+    host.querySelector<HTMLElement>(surface === "button"
+      ? 'header.topbar button[title="Journals"]'
+      : '[data-topbar-overflow-action="journals"]')!.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+  });
+
   it.each(["button", "overflow"])("GH #1050: Shift+Alt-click Journals in the %s still opens today beside the page", async (surface) => {
     const host = document.body.appendChild(document.createElement("div"));
     if (surface === "overflow") saveToolbarChoice({ bar: ["settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar", "workspaces"] });

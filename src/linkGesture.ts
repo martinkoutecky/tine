@@ -51,6 +51,12 @@ export function internalLinkMouseDown(
   if (e.shiftKey || e.button === 1) e.preventDefault();
 }
 
+/** The mousedown half for a control that takes a page link's middle-click but keeps its own Shift-click (the
+ *  Journals toolbar button and overflow row, GH #1050): suppresses only middle-button autoscroll / PRIMARY-paste. */
+export function middleClickMouseDown(e: Pick<MouseEvent, "button" | "preventDefault">): void {
+  if (e.button === 1) e.preventDefault();
+}
+
 /** The auxclick half: a completed middle-click resolves to the background-tab
  *  destination on EVERY internal-link surface (GH #207). `openBackground` is
  *  the surface's own tab-opening action. Returns true when the event was
