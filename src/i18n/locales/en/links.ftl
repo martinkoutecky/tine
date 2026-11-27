@@ -3,6 +3,12 @@ links-open-custom-scheme-confirm = Open this { $scheme }: link in the app your s
 links-open-custom-scheme-title = Open { $scheme }: link
 links-always-open-scheme = Always open { $scheme } links
 links-consent-device-hint = Remembered on this device for all graphs. Forget a scheme in Settings → Editor to ask again before opening its links.
+## tine#985: a file: link whose target is outside the graph folder. The path is never translated.
+links-open-outside-file-title = Open a file outside this graph
+links-open-outside-file-confirm = This link opens a file outside this graph's folder:{ "\u000A\u000A" }{ $path }
+links-outside-file-unreadable-name = Some characters in this name can't be shown and appear as �.
+links-always-open-outside-files = Open files outside this graph without asking
+links-outside-file-graph-hint = Until you close this graph in this window.
 links-remembered-schemes = Remembered app links
 links-forget = Forget
 links-forget-scheme = Forget { $scheme } links

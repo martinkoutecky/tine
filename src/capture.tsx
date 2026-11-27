@@ -60,6 +60,7 @@ import { installMiddleClickPasteGuard } from "./middleClickPaste";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/capture.css";
+import { endCaptureShow } from "./captureShow";
 
 installEditableEmojiPlatform();
 installTextareaPrimarySelectionGuard();
@@ -302,7 +303,11 @@ function Capture() {
     });
   };
 
+  // tine#985: each show owns its outside-file prompts; hiding or a new show
+  // ends them (a native close request hides too: native refuses that show).
+  endCaptureShow();
   const hideWindow = async () => {
+    endCaptureShow();
     blurGate.disarm();
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -690,6 +695,7 @@ function Capture() {
         // Rust's show event refits even without a focus event and refreshes
         // preferences, theme and shortcuts changed while hidden.
         const unShown = await listen("capture-shown", () => {
+          endCaptureShow();
           void initPinyinMatchingSetting();
           loadPref();
           void refreshPolicyThenResettleAndActivate();

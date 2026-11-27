@@ -37,6 +37,10 @@ pub(crate) struct GraphSlot {
     /// it so an IPC queued before an in-place graph switch cannot execute against
     /// the replacement graph after the window label is rebound.
     pub(crate) binding_generation: u64,
+    /// The user allowed this graph's links to open files outside its folder
+    /// (tine#985). Memory only: a graph switch, another window, a fresh bind
+    /// and a restart each start a new slot that asks again.
+    pub(crate) outside_files_granted: AtomicBool,
     /// How long an owner write waits for its turn (`owner::write`); tests shorten it.
     pub(crate) turn_wait: std::time::Duration,
     startup_idle: Mutex<Option<Instant>>,
@@ -190,6 +194,7 @@ impl GraphSlot {
             query_runs: QueryRuns::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            outside_files_granted: AtomicBool::new(false),
             turn_wait: crate::owner::write::TURN_WAIT,
             startup_idle: Mutex::new(None),
             startup_changed: Condvar::new(),
@@ -647,6 +652,14 @@ impl AppState {
 
     pub(crate) fn capture_graph_binding(&self) -> Option<CaptureGraphBinding> {
         self.capture_graph.lock().unwrap().binding.clone()
+    }
+
+    /// The bound show and its binding, read together.
+    pub(crate) fn capture_show_binding(&self) -> Option<(u64, CaptureGraphBinding)> {
+        let show = self.capture_graph.lock().unwrap();
+        show.binding
+            .clone()
+            .map(|binding| (show.generation, binding))
     }
 }
 

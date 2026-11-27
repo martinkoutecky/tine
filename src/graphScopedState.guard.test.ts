@@ -35,6 +35,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
   "src/components/block/readOnlyFold.ts#view": "presentation-only folds of read-only pages, never written to a graph; the accessor checks graphEpoch and clearOnBindingInvalidated drops them",
+  "src/linkSchemePrompt.ts#request": "the pending link prompt (a URL or, tine#985, an outside file's display name; never written to a graph); clearOnBindingInvalidated cancels it, its `live` owner turns a late answer into cancel, and an outside file's agreed call carries the click's binding generation, which native refuses after a switch",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selectionView": "clearSelection, registered with clearOnBindingInvalidated, releases the scope, topology and keyboard history on reset",

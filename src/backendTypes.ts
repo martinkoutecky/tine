@@ -334,6 +334,8 @@ export type LoadGraphResult =
 
 export interface CaptureGraphBindingResult {
   binding_generation: number;
+  /** The native show this binding was read for (tine#985). */
+  show_generation: number;
   meta: GraphMeta;
 }
 

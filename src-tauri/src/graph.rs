@@ -81,6 +81,9 @@ fn capture_target_for_state(state: &AppState) -> Result<String, String> {
 #[derive(serde::Serialize)]
 pub(crate) struct CaptureGraphBindingResult {
     pub(crate) binding_generation: u64,
+    /// The native show this binding was selected for; a capture `file:` call
+    /// carries it (tine#985).
+    pub(crate) show_generation: u64,
     pub(crate) meta: GraphMeta,
 }
 
@@ -116,8 +119,8 @@ pub(crate) fn capture_graph_binding(
 }
 
 fn capture_graph_config(state: &AppState) -> Result<CaptureGraphBindingResult, String> {
-    let binding = state
-        .capture_graph_binding()
+    let (show_generation, binding) = state
+        .capture_show_binding()
         .ok_or("no graph bound for quick capture")?;
     let slot = slot_for_window(state, &binding.target)?;
     if slot.binding_generation != binding.binding_generation {
@@ -125,6 +128,7 @@ fn capture_graph_config(state: &AppState) -> Result<CaptureGraphBindingResult, S
     }
     Ok(CaptureGraphBindingResult {
         binding_generation: binding.binding_generation,
+        show_generation,
         meta: graph_meta(&slot),
     })
 }
