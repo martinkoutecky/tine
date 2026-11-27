@@ -559,6 +559,15 @@ impl Graph {
             .collect()
     }
 
+    /// Whether `path` has a direct-name discovery failure recorded (tests:
+    /// the launch read's own row is kept apart in `unreadable_pages`).
+    #[cfg(test)]
+    pub(crate) fn name_discovery_recorded(&self, path: &Path) -> bool {
+        let id = crate::FileId::from(self.rel_path(path));
+        let cache = self.derived.cache.read().unwrap();
+        cache.discovery.iter().any(|(failed, _)| *failed == id)
+    }
+
     /// Only settled read failures belong in the published automatic notice.
     pub(crate) fn reported_unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
         let cache = self.derived.cache.read().unwrap();

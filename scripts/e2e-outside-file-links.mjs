@@ -1,4 +1,6 @@
-// GH #457: real WebKit -> Tauri -> Linux OS opener, with a recording handler.
+// GH #457, tine#985: real WebKit -> Tauri -> Linux OS opener, with a recording handler.
+// An outside link asks first, naming the file: Cancel hands nothing to the OS,
+// Open hands it once. A link inside the graph opens with no prompt.
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as poll } from "node:timers/promises";
 import fs from "node:fs";
@@ -12,7 +14,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 ensurePrivateSessionBus();
 assert.ok(process.env.DISPLAY, "Run under xvfb-run -a");
 const app = process.env.TINE_APP || path.resolve("target/debug/tine");
-const artifacts = path.resolve("artifacts/gh457");
+const artifacts = path.resolve(process.env.E2E_ARTIFACTS || "artifacts/gh457");
 const testedCommit = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
 fs.mkdirSync(artifacts, { recursive: true });
 const fixture = fs.mkdtempSync(path.join(artifacts, "native-"));
@@ -23,8 +25,11 @@ const bin = path.join(fixture, "bin");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 fs.mkdirSync(path.dirname(document), { recursive: true });
 fs.writeFileSync(document, "external document sentinel\n");
+const inside = path.join(graph, "files", "inside.txt");
+fs.mkdirSync(path.dirname(inside), { recursive: true });
+fs.writeFileSync(inside, "inside sentinel\n");
 const page = path.join(graph, "pages/Outside Links.md");
-const bytes = `- [Sibling](<../documents/a report.txt>)\n- [Absolute](<${document}>)\n- [URL](file://${document.replaceAll(" ", "%20")})\n`;
+const bytes = `- [Inside](files/inside.txt)\n- [Sibling](<../documents/a report.txt>)\n- [Absolute](<${document}>)\n- [URL](file://${document.replaceAll(" ", "%20")})\n`;
 fs.writeFileSync(page, bytes);
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{}\n");
 fs.mkdirSync(bin);
@@ -58,7 +63,16 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 0, connectionRetryTimeout: 60_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: app } } });
   await openPageByName(browser, "Outside Links");
-  for (const [index, label] of ["Sibling", "Absolute", "URL"].entries()) {
+  const click = (label) => browser.execute((text) => [...document.querySelectorAll("a")].find((a) => a.textContent === text).click(), label);
+  const promptShown = () => browser.execute(() => !!document.querySelector(".link-scheme-prompt"));
+  // Inside the graph: no prompt, one handoff of the file in the graph.
+  await click("Inside");
+  await browser.waitUntil(() => calls().length === 1, { timeout: 10_000, timeoutMsg: "the inside link did not reach the OS opener" });
+  assert.deepEqual(calls()[0], [fs.realpathSync(inside)]);
+  assert.equal(await promptShown(), false, "an inside link must not ask");
+  observations.push({ label: "Inside", prompted: false });
+  let handed = 1;
+  for (const label of ["Sibling", "Absolute", "URL"]) {
     const state = await browser.execute((text) => {
       const link = [...document.querySelectorAll("a")].find((a) => a.textContent === text);
       if (!link) throw new Error(`missing link ${text}`);
@@ -66,18 +80,31 @@ try {
     }, label);
     assert.equal(state.title, document); assert.equal(state.broken, false);
     assert.ok(!state.decoration.includes("line-through"));
-    observations.push({ label, ...state });
-    await browser.execute((text) => [...document.querySelectorAll("a")].find((a) => a.textContent === text).click(), label);
-    await browser.waitUntil(() => calls().length === index + 1, { timeout: 10_000, timeoutMsg: `${label} did not reach the OS opener` });
-    assert.deepEqual(calls()[index], [document]);
+    // Outside: the prompt names the file; Cancel hands nothing to the OS.
+    await click(label);
+    await browser.$(".link-scheme-prompt").waitForDisplayed({ timeout: 10_000 });
+    const text = await browser.$(".link-scheme-prompt").getText();
+    assert.ok(text.includes(document), `the prompt names the file: ${text}`);
+    await browser.$('.link-scheme-prompt button[type="button"]').click();
+    await browser.waitUntil(async () => !(await promptShown()), { timeout: 10_000, timeoutMsg: "Cancel did not close the prompt" });
+    assert.equal(calls().length, handed, `${label}: Cancel must hand nothing to the OS`);
+    // Open hands the resolved path once.
+    await click(label);
+    await browser.$(".link-scheme-prompt").waitForDisplayed({ timeout: 10_000 });
+    await browser.$('.link-scheme-prompt button[type="submit"]').click();
+    await browser.waitUntil(() => calls().length === handed + 1, { timeout: 10_000, timeoutMsg: `${label} did not reach the OS opener after Open` });
+    assert.deepEqual(calls()[handed], [document]);
+    handed++;
+    observations.push({ label, ...state, prompted: true, cancelHandoffs: 0, openHandoffs: 1 });
   }
   assert.equal(fs.readFileSync(page, "utf8"), bytes, "opening links must not rewrite the page");
   assert.equal(fs.readFileSync(document, "utf8"), "external document sentinel\n");
+  assert.equal(fs.readFileSync(inside, "utf8"), "inside sentinel\n");
   fs.writeFileSync(path.join(fixture, "journey.json"), JSON.stringify({ testedCommit, observations, handoff: calls(), contentUnchanged: true }, null, 2));
-  console.log(`PASS: sibling, absolute and file URL links reached the native OS opener with the same resolved path; no content changed. ${fixture}`);
+  console.log(`PASS: the inside link opened with no prompt; sibling, absolute and file URL links asked naming the file, Cancel handed nothing to the OS and Open handed the resolved path once; no content changed. ${fixture}`);
 } catch (error) {
   const visible = await browser?.execute(() => document.body.innerText).catch((failure) => String(failure));
-  fs.writeFileSync(path.join(fixture, "failure.txt"), `Tested commit: ${testedCommit} plus uncommitted lane diff\nJourney: outside file handoff\nExpected: OS opener receives resolved path\nObserved: ${error}\nClassification: ambiguous until diagnosed\nVisible state: ${visible}\n`);
+  fs.writeFileSync(path.join(fixture, "failure.txt"), `Tested commit: ${testedCommit} plus uncommitted lane diff\nJourney: outside file handoff\nExpected: inside opens directly; outside asks, Cancel hands nothing, Open hands the resolved path once\nObserved: ${error}\nClassification: ambiguous until diagnosed\nVisible state: ${visible}\n`);
   throw error;
 } finally {
   await browser?.deleteSession().catch(() => {});

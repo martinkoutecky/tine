@@ -155,7 +155,6 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "pageOwed",
   "pageKeptOriginals",
   "pageKeptText",
-  "pageRestoreKept",
   "onPageMail",
   "onGraphOpenWaiting",
   "onGraphOpenOwnerWaiting",

@@ -4,6 +4,7 @@ DraftStatus  # why: graph open reports crash-draft storage status; batch-og-s3b
 FeedPage
 HistoryRouteContext
 KeptOriginal  # why: backend wire type: an original a cancelled rename kept, which the recovery panel lists (GH #540); batch-rcd-restore-entry
+KeptText  # why: backend wire type: Copy original's answer for a kept original, text or not, kept or not, answered or not (GH #540); batch-rcd-restore-entry
 Node
 OutlineScope
 OutlineSelectionTarget  # why: hand the keyboard dispatcher a rendered outline and selection lifetime; batch-fix-793-selall
@@ -16,8 +17,6 @@ PendingEdit  # why: a text edit staged by an editor and written only once the ke
 PublicationRefused  # why: backend wire type: a refused publication wait names the files that refused (tine#1041); batch-fix-1041
 PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 PublishedRevision  # why: actual host publication evidence returned by the existing wait; batch-fix-964-dev-r3
-RestoreOutcome  # why: backend wire type: what became of restoring a kept original (GH #540); batch-rcd-restore-entry
-RestoreRefusal  # why: backend wire type: why a kept original was not restored (GH #540); batch-rcd-restore-entry
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 Unsettled  # why: a refused graph switch names what it refused for, stuck pages or develop's reasons (tine#1041); batch-fix-1041
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
@@ -199,7 +198,6 @@ retireFeedPages  # why: releases measured offscreen journal documents through th
 revealNode
 sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
-saveStep  # why: a refused restore names its failed check as a failed save's toast does (GH #540); batch-rcd-restore-entry
 seenPageSnapshot  # why: "changed since you last looked" sends the page's unsaved-inclusive text to the git read and maps block paths back to runtime ids (ADR 0079); batch-og-seen-ui
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a

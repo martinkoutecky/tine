@@ -116,8 +116,8 @@ pub use page_host::faults as host_faults;
 pub use page_host::{
     ApplyRefusal, DiskToken, DraftOwnership, DraftStatus, Effect as HostEffect,
     Expected as HostExpected, HostInputs, HostOp, HostRead, HostReadError, Input, KeptOriginal,
-    Opened, PageHost, PageMail, PageOperation, PageRefusal, PublishedRevision, Reloaded,
-    RestoreOutcome, RestoreRefusal, RestoreStep, Saved as HostSaved, StopMode, StopState, Stopped,
+    KeptText, Opened, PageHost, PageMail, PageOperation, PageRefusal, PublishedRevision, Reloaded,
+    Saved as HostSaved, StopMode, StopState, Stopped,
 };
 pub use root_binding::BoundDirectory;
 #[cfg(test)]

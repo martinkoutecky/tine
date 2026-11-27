@@ -34,10 +34,11 @@ impl<F: ConformanceIo> Driver<F> {
             &root.path().join(file.as_str()),
             Some(std::str::from_utf8(job.bytes.as_deref().unwrap()).unwrap()),
         );
-        let named = proposed.as_ref().map(|entry| entry.name.as_str());
-        let result = store
-            .page_plan(None)
-            .creating_save_owner(&file, named, named, source.as_ref());
+        let result = store.page_plan(None).creating_save_owner(
+            &file,
+            proposed.as_ref().map(|entry| entry.name.as_str()),
+            source.as_ref(),
+        );
         store.close();
         match result {
             Err(crate::Why::Refused(crate::Refusal::Twin { existing })) => {

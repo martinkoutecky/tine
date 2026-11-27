@@ -9,8 +9,8 @@ use crate::state::{off_ui, slot_for_context, GraphContext, GraphSlot, PageHostSl
 use std::time::Duration;
 use tine_core::model::PageDto;
 use tine_store::{
-    DiskToken, DraftStatus, EditKind, KeptOriginal, Opened, PageHost, PageId, PageMail,
-    PageOperation, PageRefusal, Reloaded, RestoreOutcome,
+    DiskToken, DraftStatus, EditKind, KeptOriginal, KeptText, Opened, PageHost, PageId, PageMail,
+    PageOperation, PageRefusal, Reloaded,
 };
 
 /// Run `work` on the binding's running host, under the slot's host read
@@ -341,7 +341,8 @@ pub(crate) async fn page_owed(
 }
 
 /// The originals a cancelled rename kept (`PageHost::kept_originals`), the
-/// unsaved-changes recovery panel's list; null for another session.
+/// unsaved-changes recovery panel's list; null when not answered (another
+/// session, a host that is down).
 #[tauri::command]
 pub(crate) async fn page_kept_originals(
     session: u64,
@@ -351,26 +352,15 @@ pub(crate) async fn page_kept_originals(
 }
 
 /// One kept original's text, for the panel's Copy original
-/// (`PageHost::kept_text`); null when it is no longer kept.
+/// (`PageHost::kept_text`).
 #[tauri::command]
 pub(crate) async fn page_kept_text(
     session: u64,
     key: String,
     origin: u64,
     ctx: GraphContext<'_>,
-) -> Result<Option<String>, String> {
+) -> Result<KeptText, String> {
     hosted(ctx, move |host| host.kept_text(session, &key, origin)).await
-}
-
-/// Restore one kept original as its file (`PageHost::restore_kept`).
-#[tauri::command]
-pub(crate) async fn page_restore_kept(
-    session: u64,
-    key: String,
-    origin: u64,
-    ctx: GraphContext<'_>,
-) -> Result<RestoreOutcome, String> {
-    hosted(ctx, move |host| host.restore_kept(session, &key, origin)).await
 }
 
 #[tauri::command]

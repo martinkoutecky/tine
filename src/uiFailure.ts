@@ -30,7 +30,6 @@ export type UiFailureFamily =
   | "backup-feedback"
   | "asset-inventory"
   | "trash-inventory"
-  | "kept-originals"
   | "custom-css"
   | "css-draft"
   | "config-read"
@@ -63,7 +62,6 @@ const MESSAGES: Record<UiFailureFamily, Msg> = {
   "graph-verification": msg("ui-failure-graph-verification"),
   "asset-inventory": msg("ui-failure-asset-inventory"),
   "trash-inventory": msg("ui-failure-trash-inventory"),
-  "kept-originals": msg("ui-failure-kept-originals"),
   "backup-read": msg("ui-failure-backup-read"),
   "backup-feedback": msg("ui-failure-backup-feedback"),
   "page-inventory": msg("ui-failure-page-inventory"),
@@ -89,7 +87,7 @@ const MESSAGES: Record<UiFailureFamily, Msg> = {
 const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
   "block-history",
   "query-hydration", "page-inventory", "session-read", "template-read", "journal-feed",
-  "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory", "kept-originals",
+  "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory",
   "custom-css", "config-read", "conflict-inventory", "graph-verification",
   "asset-read", "page-refresh", "export-preview", "sheet-export",
 ]);

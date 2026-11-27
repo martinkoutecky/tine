@@ -602,25 +602,19 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 72)
-# GH #540 (65 -> 72): the recovery window's way back to an original a
+## Page host (ceiling: 69)
+# GH #540 (65 -> 69): the recovery window's way back to an original a
 # cancelled rename kept (src-tauri page_commands.rs page_kept_originals,
-# page_kept_text, page_restore_kept; one command per verb). `kept_originals`
-# lists them for a window session, `kept_text` is Copy original, and
-# `restore_kept` puts one back as its file through the page's own guarded
-# save, waiting as `apply` does. `KeptOriginal` is the row (fields
-# crate-private, serialized only), `RestoreOutcome`/`RestoreRefusal` the
-# typed answer and `RestoreStep` the check a `Failed` names. No existing
-# item answers them: `draft_status` counts the originals but carries no
-# text, `read` refuses an absent page, and `open` + `submit` would write as
-# a window edit (a page save, not a creation) and cannot see the pair.
+# page_kept_text; one command per verb). `kept_originals` lists them for a
+# window session and `kept_text` is Copy original; both only read.
+# `KeptOriginal` is the row (fields crate-private, serialized only) and
+# `KeptText` Copy's typed answer (text, not text, missing, unavailable). No
+# existing item answers them: `draft_status` counts the originals but
+# carries no text, and `read` refuses an absent page.
 fn page_host::PageHost::kept_originals
 fn page_host::PageHost::kept_text
-fn page_host::PageHost::restore_kept
 struct page_host::KeptOriginal
-enum page_host::RestoreOutcome
-enum page_host::RestoreRefusal
-enum page_host::RestoreStep
+enum page_host::KeptText
 # GH #1041 (64 -> 65): `wait_departure`, the barrier a window waits at when it
 # leaves this graph for another (src-tauri page_commands.rs). `wait_published`
 # cannot answer it with a parameter and keep its own promise: its `Applied`
@@ -759,7 +753,7 @@ use crate::storage_diag::DraftAdoptionReason
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftOwnership,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,KeptOriginal,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,RestoreOutcome,RestoreRefusal,RestoreStep,SavedasHostSaved,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftOwnership,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,KeptOriginal,KeptText,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}

@@ -2935,7 +2935,14 @@ pub(in crate::page_host) fn keep_an_original(
     id: &str,
     [source, receiver, referrer]: [&str; 3],
 ) {
-    let stem = |key: &str| Path::new(key).file_stem().unwrap().to_str().unwrap().to_owned();
+    let stem = |key: &str| {
+        Path::new(key)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    };
     let trash = crate::model::trash_root(graph).join("pages");
     fs::create_dir_all(&trash).unwrap();
     let io = ProductionIo::attach(graph, app, id, &trash);
@@ -2961,7 +2968,9 @@ pub(in crate::page_host) fn keep_an_original(
     let referrers = BTreeSet::from([referrer.into()]);
     let format = tine_core::config::FileNameFormat::TripleLowbar;
     let (from, to) = (stem(source), stem(receiver));
-    let renamed = f.host.rename(source, receiver, &referrers, &from, &to, format);
+    let renamed = f
+        .host
+        .rename(source, receiver, &referrers, &from, &to, format);
     assert_eq!(renamed, Disposition::Pending);
     f.drain();
     assert_eq!(f.save(receiver), Outcome::Published);

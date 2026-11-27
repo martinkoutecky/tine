@@ -522,9 +522,8 @@ function refusalMessage(name: string, refusal: PageRefusal | string): import("..
 
 /** ` (<platform step>, os error <n>)` for a failed save's toast, when the
  * host named them (GH #538, #590: `io:InvalidInput` alone could not tell an
- * Android no-replace-rename refusal from a failed temporary-file write); also a
- * refused restore's failed check. */
-export function saveStep(notice: Pick<MailNotice, "operation" | "osError">): string {
+ * Android no-replace-rename refusal from a failed temporary-file write). */
+function saveStep(notice: MailNotice): string {
   const parts = [notice.operation, notice.osError === null ? null : `os error ${notice.osError}`]
     .filter((part): part is string => !!part);
   return parts.length ? ` (${parts.join(", ")})` : "";

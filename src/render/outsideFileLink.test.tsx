@@ -19,6 +19,7 @@ it("opens an authored outside path as an ordinary file link (GH #457)", () => {
     expect(link.hasAttribute("data-broken-file-link")).toBe(false);
     expect(link.title).toBe("/home/user/documents/report.pdf");
     link.click();
-    expect(open).toHaveBeenCalledExactlyOnceWith("file:///home/user/documents/report.pdf");
+    expect(open).toHaveBeenCalledExactlyOnceWith("file:///home/user/documents/report.pdf", undefined,
+      { purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined });
   } finally { dispose(); }
 });

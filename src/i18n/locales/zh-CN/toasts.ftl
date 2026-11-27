@@ -385,8 +385,6 @@ ui-failure-asset-inventory = 无法检查未引用附件，保留上次成功扫
 
 ui-failure-trash-inventory = 无法检查可恢复的回收站，保留上次成功获取的计数。
 
-ui-failure-kept-originals = 无法列出取消重命名后保留的原文，保留上次的列表。
-
 ui-failure-backup-read = 无法完成启动备份。图谱仍保持打开。
 
 ui-failure-backup-feedback = 无法接收备份状态更新。

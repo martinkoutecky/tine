@@ -416,7 +416,7 @@ mod memory_replace_tests;
 mod query_request;
 #[cfg(test)]
 mod subgraph_tests;
-pub(crate) use inventory::{proposed_page_id, InventoryDelta};
+pub(crate) use inventory::InventoryDelta;
 pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;

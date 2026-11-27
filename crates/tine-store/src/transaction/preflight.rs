@@ -576,16 +576,13 @@ impl PagePlan<'_> {
 
     /// A creating host save has already checked the physical slot. Consult
     /// the name claim before renaming and again for the post-rename notice.
-    /// `name`: the operation's claimed name (unreadable owners); `named`: the
-    /// name the saved bytes give (readable claimants).
     pub(crate) fn creating_save_owner(
         &self,
         file: &FileId,
         name: Option<&str>,
-        named: Option<&str>,
         source: Option<&FileId>,
     ) -> Result<(), Why> {
-        self.check_page_claim(file, name, source, ClaimStage::HostSave { named })
+        self.check_page_claim(file, name, source, ClaimStage::HostSave)
     }
 
     /// The page host's open of `file` (STEP3 §2): an eligible page target;

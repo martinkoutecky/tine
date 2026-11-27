@@ -14,6 +14,7 @@ import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
 import { isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
+import { chordEq, isModifierKey, normKey, type Chord } from "./keyChords";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
 // or OG vectors such as `:shortcuts {:cmd ["mod+k" "mod+j"]}`.
@@ -57,7 +58,7 @@ import { undo, redo, blankOutlineSelection, selectionClaim, hasSelection, moveSe
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
-import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
+import { openRenderedSelectionInEditor, releaseHeldHandoffKey, swallowHeldHandoffRepeat } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
 import { toggleCommentMargin } from "./commentMargin";
@@ -104,7 +105,7 @@ import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
 import { installPlainPasteMenu } from "./editor/plainPasteMenu";
 import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
-import { keptOriginalCount, openUnsavedRecovery } from "./unsavedRecovery";
+import { openUnsavedRecovery } from "./unsavedRecovery";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
 /** Open the adjacent journal route (+1 next, -1 previous) from the current
@@ -134,19 +135,6 @@ function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owned = bindPluginBlockSnapshot({ id: node.id, raw: node.raw, parentId: node.parent, depth, format });
   if (!owned || owned.owner.graphRoot !== owner.graphRoot || owned.owner.generation !== owner.generation) return undefined;
   return owned;
-}
-
-interface Chord {
-  mod: boolean;
-  // Physical Control is distinct from portable `mod` on macOS. Elsewhere the
-  // same key remains `mod`, preserving existing cross-platform bindings (GH #378).
-  ctrl: boolean;
-  shift: boolean;
-  alt: boolean;
-  // The Super/Win key on Linux/Windows (distinct from `mod`); on macOS Cmd is
-  // already `mod`, so `meta` is only meaningful off-Mac.
-  meta: boolean;
-  key: string; // lowercase, normalized
 }
 
 export type ShortcutScope = "global" | "editor" | "select";
@@ -385,8 +373,9 @@ const COMMANDS: CommandDef[] = [
   { id: "seen/next-change", binding: "", label: msg("command-seen-next-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), 1) },
   { id: "seen/previous-change", binding: "", label: msg("command-seen-previous-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), -1) },
   { id: "seen/mark-graph", binding: "", label: msg("command-seen-mark-graph"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true; }, run: () => void markGraphSeenNow() },
-  // The standing way back to originals a cancelled rename kept (GH #540).
-  { id: "recovery/review-kept-originals", binding: "", label: msg("command-recovery-review-kept-originals"), scope: "global", available: () => (keptOriginalCount() ?? 0) > 0, run: openUnsavedRecovery, global: true },
+  // The standing way back to originals a cancelled rename kept (GH #540): in
+  // every graph, whatever its launch count, so one kept later is reachable.
+  { id: "recovery/review-kept-originals", binding: "", label: msg("command-recovery-review-kept-originals"), scope: "global", run: openUnsavedRecovery, global: true },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
   { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },
   { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },
@@ -783,31 +772,6 @@ function pluginCommandDefs(): CommandDef[] {
   }));
 }
 
-function normKey(k: string): string {
-  switch (k) {
-    case "arrowup": return "up";
-    case "arrowdown": return "down";
-    case "arrowleft": return "left";
-    case "arrowright": return "right";
-    case "escape": return "esc";
-    case " ":
-    case "spacebar": return "space";
-    default: return k;
-  }
-}
-
-// A bare modifier-key press (so chord recording / sequence matching keeps
-// waiting for the real key). Covers Super/Windows — WebKitGTK reports its
-// `key` as "Super"/"OS", not "Meta" — plus the standard names; also matches by
-// `code` as a fallback.
-const MODIFIER_KEYS = new Set([
-  "control", "shift", "alt", "meta", "super", "hyper", "os", "altgraph", "capslock",
-]);
-function isModifierKey(e: KeyboardEvent): boolean {
-  if (MODIFIER_KEYS.has(e.key.toLowerCase())) return true;
-  return /^(Control|Shift|Alt|Meta|OS|Super|Hyper)(Left|Right)?$/.test(e.code);
-}
-
 function parseChord(s: string): Chord {
   const parts = s.toLowerCase().split("+");
   const chord: Chord = { mod: false, ctrl: false, shift: false, alt: false, meta: false, key: "" };
@@ -870,10 +834,6 @@ export function isTabLikeEvent(e: KeyboardEvent, chord = eventToChord(e)): boole
  * Ctrl+Tab must not normalize into a plain editor Tab. */
 export function isPermittedTabGesture(e: KeyboardEvent, chord = eventToChord(e)): boolean {
   return isTabLikeEvent(e, chord) && !e.ctrlKey && !chord.mod && !chord.alt && !chord.meta;
-}
-
-function chordEq(a: Chord, b: Chord): boolean {
-  return a.mod === b.mod && a.ctrl === b.ctrl && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
 }
 
 // Merged binding table (defaults + config overrides), populated by
@@ -1131,6 +1091,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   };
 
   const handler = (e: KeyboardEvent) => {
+    if (swallowHeldHandoffRepeat(e)) return; // ahead of every editor
     // IME composition owns Escape.  It must not fall through to a transient,
     // shortcut recorder, editor, or pane handler.
     if (e.isComposing || e.keyCode === 229) return;
@@ -1311,11 +1272,11 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       }
     }
 
-    // OG contenteditable parity: Delete/Backspace over a RENDERED (not-editing)
-    // text selection deletes that text from the block's source; without this the
+    // Delete/Backspace over a RENDERED (not-editing) text selection opens the
+    // block's editor with that range selected; without this the
     // keypress reaches no editor and dies silently.
     if (!editing && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
-        && deleteRenderedTextSelection()) {
+        && openRenderedSelectionInEditor(e.key)) {
       e.preventDefault();
       resetSeq();
       return;
@@ -1462,6 +1423,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
+    win.addEventListener("keyup", releaseHeldHandoffKey, true);
+    win.addEventListener("blur", releaseHeldHandoffKey);
     // GTK consumes graph-webview presses before they can reach the DOM.
     // On Windows the native hook filters commands forwarded from WebView2.
     const gtkMainHistory = nativeMainHistory && !webview2MouseHistory && id === MAIN_WINDOW_ID;
@@ -1485,6 +1448,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
+      win.removeEventListener("keyup", releaseHeldHandoffKey, true);
+      win.removeEventListener("blur", releaseHeldHandoffKey);
       if (mainMouse === disposeMouse) mainMouse = undefined;
       disposeMouse();
     };

@@ -627,10 +627,9 @@ pub(crate) fn alternate_extension_twin(path: &Path) -> io::Result<Option<PathBuf
     }
 }
 
-enum ClaimStage<'n> {
+enum ClaimStage {
     Transaction { absent: bool },
-    /// `named`: the page name the saved bytes give (GH #540).
-    HostSave { named: Option<&'n str> },
+    HostSave,
 }
 
 impl Store {
@@ -992,8 +991,8 @@ impl<'a> PagePlan<'a> {
         self.check_page_claim(file, None, source, ClaimStage::Transaction { absent })
     }
 
-    /// The one name/day claim guard. An absent destination claims its filename (a host
-    /// save, the name its bytes give); a move exempts its source; a create also checks unreadable owners. Only a non-move
+    /// The one name/day claim guard. An absent destination claims its filename; a move
+    /// exempts its source; a create also checks unreadable owners. Only a non-move
     /// transaction create uses live discovery when its name memo is cold. At most one
     /// preamble read per unindexed held key.
     fn check_page_claim(
@@ -1001,7 +1000,7 @@ impl<'a> PagePlan<'a> {
         file: &FileId,
         name: Option<&str>,
         source: Option<&FileId>,
-        stage: ClaimStage<'_>,
+        stage: ClaimStage,
     ) -> Result<(), Why> {
         if matches!(stage, ClaimStage::Transaction { .. }) && !self.page(file) {
             return Ok(());
@@ -1020,15 +1019,7 @@ impl<'a> PagePlan<'a> {
             ClaimStage::Transaction { .. } if source.is_none() => {
                 graph.find_entry(&entry.name, entry.kind)
             }
-            ClaimStage::Transaction { .. } => self.store.move_claimant(&entry.name, entry.kind),
-            // A host save names its page by its bytes (a `title::`), which
-            // may differ from the filename stem: a readable claimant of that
-            // name is its twin (`pages/a.md` titled `Named` beside
-            // `pages/Named.md`).
-            // `named` is that name, not the operation's claimed `name`.
-            ClaimStage::HostSave { named } => {
-                self.store.move_claimant(named.unwrap_or(&entry.name), entry.kind)
-            }
+            _ => self.store.move_claimant(&entry.name, entry.kind),
         };
         let twin = claimant
             .map(|existing| existing.path)

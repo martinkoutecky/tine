@@ -244,20 +244,15 @@ impl<F: ConformanceIo> Driver<F> {
             }
             if name == "restoreSource" {
                 let before = self.untouched();
-                let src = key(args[0].as_u64().unwrap() as usize);
-                // The absent-pair case: the host keeps no original of `src`
-                // either, so there is nothing to call; the host's refusals
-                // below must leave the state as they found it.
-                if let Some(at) = self.host.order.kept_of(&src) {
-                    let result = self.host.restore_source(&src, &at);
-                    self.mutate_refusal(name);
-                    assert!(
-                        !matches!(result, Ok(Disposition::Applied)),
-                        "{name}: host restored past the model: {result:?}"
-                    );
-                } else {
-                    self.mutate_refusal(name);
-                }
+                let result = self
+                    .host
+                    .restore_source(&key(args[0].as_u64().unwrap() as usize));
+                self.mutate_refusal(name);
+                assert_ne!(
+                    result,
+                    Disposition::Applied,
+                    "{name}: host restored past the model"
+                );
                 self.assert_untouched(&before, name);
                 self.compare("restoration refusal stutter");
                 return false;
@@ -763,8 +758,7 @@ impl<F: ConformanceIo> Driver<F> {
                     .external(&key(p), text(v(1)), name == "extWrite" || b(2));
             }
             "restoreSource" => {
-                let at = self.host.order.kept_of(&key(p)).expect("a kept original");
-                assert_eq!(self.host.restore_source(&key(p), &at), Ok(Disposition::Applied));
+                assert_eq!(self.host.restore_source(&key(p)), Disposition::Applied);
             }
             "windowCrash" => {
                 self.host.window_crash();

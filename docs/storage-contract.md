@@ -1420,23 +1420,14 @@ from the scanned drafts before any recovered save or choice.
   the source page at risk over an absent base; its own draft and guarded
   create publish it, refused over an occupied slot, a claimant or twin, or
   unsaved text, and that publication cancels the pair. The draft keeps
-  custody until then. The recovery window lists every kept original (both
-  phases: `Order::kept`, one answerer for the list, its count and Restore),
+  custody meanwhile. Kept originals are listed and copyable; Restore is not
+  offered yet. The recovery window lists every kept original (both phases:
+  `Order::kept`, the one predicate for the list, its count and Copy),
   addressed by its source and its record's write sequence, for the window
-  session that listed it (GH #540). Copy original copies the kept text.
-  Restore admits under the page's path lock, and re-checks the session,
-  the original and that no window holds the page (or the page its text
-  names); it waits there behind a busy page, at most the operation bound.
-  Then the host's guarded restoration runs, recorded as a page creation.
-  Restore reports Restored only once the host's own save published those
-  bytes and the index has them. A Use Disk first is Superseded (the window
-  says the file holds other content and offers Open). A save that cannot
-  finish is Unwritten, reported once: by the editor when a window holds
-  the page, else by the panel. Past the bound it is Uncertain. A creating
-  save with no admitted operation's create behind it (a restored original)
-  has its guard look up a readable claimant of the name its bytes give (a
-  `title::`), not only the filename stem. An operation's create keeps the
-  claim its transaction planned.
+  session that listed it (GH #540). Copy original text answers the exact
+  text, or that it is not text (never a lossy conversion), no longer kept,
+  or not answered. Both only read: they write nothing and record no name
+  discovery (`Graph::page_entry_of_text`).
 - A source anchors its original text only while a **source witness** of that
   very file succeeds (`HostIo::source_witnessed`; `Host::source_original` is
   the one answerer; REG-LAUNCH-CUSTODY-SECOND-CUT). Recipe: on one handle,

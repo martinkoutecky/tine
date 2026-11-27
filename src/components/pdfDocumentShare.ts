@@ -14,11 +14,15 @@ export type SharedPdfDocument =
 export type OpenPdfDocument = (adopt: {
   task(task: { destroy(): Promise<void> }): void;
   document(doc: pdfjs.PDFDocumentProxy): void;
+  /** Aborts when the last view releases the document: work it owns (an
+   * outside-file consent prompt, tine#985) stops. */
+  signal: AbortSignal;
 }) => Promise<SharedPdfDocument>;
 
 interface Entry {
   loaded: Promise<SharedPdfDocument>;
   views: number;
+  lifetime: AbortController;
   task: { destroy(): Promise<void> } | null;
   doc: pdfjs.PDFDocumentProxy | null;
   released: boolean;
@@ -41,11 +45,12 @@ export function acquirePdfDocument(key: string, open: OpenPdfDocument): {
 } {
   let entry = entries.get(key);
   if (!entry) {
-    const created: Entry = { loaded: null!, views: 0, task: null, doc: null, released: false, cancelled: false };
+    const created: Entry = { loaded: null!, views: 0, lifetime: new AbortController(), task: null, doc: null, released: false, cancelled: false };
     created.loaded = (async (): Promise<SharedPdfDocument> => {
       let result: SharedPdfDocument;
       try {
         result = await open({
+          signal: created.lifetime.signal,
           task: (task) => {
             if (!created.released) { created.task = task; return; }
             created.cancelled = true; // every view left while the bytes were read
@@ -83,6 +88,7 @@ export function acquirePdfDocument(key: string, open: OpenPdfDocument): {
       released = true;
       if (--held.views > 0) return;
       held.released = true;
+      held.lifetime.abort();
       if (entries.get(key) === held) entries.delete(key);
       if (held.doc) discardPdfDocument(held.doc);
       else if (held.task) { held.cancelled = true; discardPdfDocument(held.task); }

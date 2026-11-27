@@ -108,9 +108,9 @@ export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model
 export { trackAssetWrite } from "./assetWrites";
 export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswer, createPage, CreatePageRefusal, flushAll, flushAllUnsettled, flushPage, installAliasDraftRouteHandler, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, watchCapture, type UnsavedState } from "./host/wiring";
 export { pendingDataRevision } from "./host/wiring";
-export { hostScope, hostSession, saveStep } from "./host/wiring";
+export { hostScope, hostSession } from "./host/wiring";
 export type { Unsettled } from "./host/settle";
-export type { DiskToken, DraftStatus, KeptOriginal, OwedPage, PageMail, PageOperation, PageRefusal, PublicationRefused, PublishedNeed, PublishedRevision, RestoreOutcome, RestoreRefusal } from "./host/protocol";
+export type { DiskToken, DraftStatus, KeptOriginal, KeptText, OwedPage, PageMail, PageOperation, PageRefusal, PublicationRefused, PublishedNeed, PublishedRevision } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 export { admitRead } from "./readAdmission";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";

@@ -107,8 +107,7 @@ export function mockPageHost(graph: PageHostGraph, refusal: () => string) {
     async pageOwed() { return []; },
     /** The preview runs no renames, so it keeps no originals. */
     async pageKeptOriginals() { return []; },
-    async pageKeptText() { return null; },
-    async pageRestoreKept() { return { kind: "refused" as const, reason: "notKept" as const }; },
+    async pageKeptText() { return { kind: "missing" as const }; },
     async pageDraftsRetry() {},
     /** The preview's stand-in for the desktop's file watcher, which scripts
      * drive (`scripts/repro-carry-blur.mjs`): another program writes `text`

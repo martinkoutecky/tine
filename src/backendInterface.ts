@@ -49,6 +49,7 @@ import type { NativeTineLinks } from "./nativeTineLinks";
 import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublicationRefused, PublishedNeed, PublishedRevision } from "./document";
+import type { FileLinkCall, FilePurpose } from "./fileConsentWire";
 
 /** What a native confirmation shows: the action it offers and the way back. */
 export interface ConfirmOptions {
@@ -168,12 +169,11 @@ export interface Backend {
   pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number, departure: boolean): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   pageSaveNow(session: number, keys: readonly string[]): Promise<void>;
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
-  /** The originals a cancelled rename kept; null for another session. */
+  /** The originals a cancelled rename kept; null when not answered (another
+   * session, a host that is down). */
   pageKeptOriginals(session: number): Promise<import("./document").KeptOriginal[] | null>;
-  /** One kept original's text (Copy original); null once it is no longer kept. */
-  pageKeptText(session: number, key: string, origin: number): Promise<string | null>;
-  /** Restore one kept original as its file, while no window holds the page. */
-  pageRestoreKept(session: number, key: string, origin: number): Promise<import("./document").RestoreOutcome>;
+  /** One kept original's text, for Copy original. */
+  pageKeptText(session: number, key: string, origin: number): Promise<import("./document").KeptText>;
   /** Retry crash-draft storage after the host reported it unavailable. */
   pageDraftsRetry(): Promise<void>;
   /** Desktop semantic lease recovery; absent in browser/mobile backends. */
@@ -354,8 +354,11 @@ export interface Backend {
   readCustomCss(): Promise<string>;
   /** Open a web or mail URL, with native routes for file and Tine links.
    * Custom schemes need `confirmedScheme` from `openOutboundLink` (GH #503).
-   * Refused URLs reject before browser or OS handoff (GH #984). */
-  openExternal(url: string, confirmedScheme?: string): Promise<void>;
+   * Refused URLs reject before browser or OS handoff (GH #984). A `file:`
+   * target outside the graph opens only with `file` from a note link's consent
+   * (`withFileConsent`, tine#985); without it (Settings buttons) it rejects
+   * with `outside-file`. A `file` call's first answer may be `FileConsentAsk`. */
+  openExternal(url: string, confirmedScheme?: string, file?: FileLinkCall): Promise<void>;
   // Graph binding: every asset/PDF method that takes `bindingGeneration` needs
   // a positive safe-integer generation for this window's current graph. The frontend
   // rejects missing/invalid generations with missing-graph-binding; after IPC, a
@@ -367,10 +370,11 @@ export interface Backend {
    * unsupported mobile handoff reject. Cost O(path components). */
   openAsset(name: string, bindingGeneration: number): Promise<void>;
   /** Open an existing graph-relative file or folder (a resolved relative link,
-   * GH #457) in the desktop OS default app. A path that leaves the graph folder,
-   * including through a symlink, a missing target, and mobile reject. Read-only
-   * OS handoff. Cost O(path components). */
-  openGraphFile(path: string, bindingGeneration: number): Promise<void>;
+   * GH #457) in the desktop OS default app. A lexical escape, a final target
+   * outside the graph folder, a missing target, and mobile reject; a path not
+   * provable inside without probing outside answers `FileConsentAsk` to a
+   * `link` call (tine#985). Read-only OS handoff. Cost O(path components). */
+  openGraphFile(path: string, bindingGeneration: number, purpose: FilePurpose): Promise<void>;
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean): Promise<void>;
   /** Launch a desktop editor for an existing assets-relative file. Blank command
    * uses the OS opener; otherwise argv is parsed without a shell, replacing `{}`
@@ -520,8 +524,9 @@ export interface Backend {
   readAsset(name: string, maxBytes: number): Promise<Uint8Array>;
   /** Native PDF range reads; browser/published backends retain their byte loader. */
   pdfAssetSource?(name: string, maxBytes: number, bindingGeneration: number): Promise<import("./pdfAssetSource").PdfAssetSource>;
-  /** Desktop-only bounded read, called only after opening a host-rendered PDF link. */
-  readExternalPdf?(url: string, bindingGeneration: number): Promise<Uint8Array>;
+  /** Desktop-only bounded read, called only after opening a host-rendered PDF link.
+   *  An outside PDF answers `FileConsentAsk` to a `link` call (tine#985). */
+  readExternalPdf?(url: string, bindingGeneration: number, purpose: FilePurpose): Promise<Uint8Array>;
   /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
    *  copies the whole media file through IPC. */
   streamAsset(name: string): Promise<string>;
@@ -594,7 +599,10 @@ export interface Backend {
   stopRecording(): Promise<MediaCaptureResult>;
   /** Android: discard an in-progress recording without inserting anything. */
   cancelRecording(): Promise<MediaCaptureResult>;
-  writeText(text: string): Promise<void>;
+  /** Plain text to the clipboard. `still`, when given, is checked after each
+   * await and right before each transport is tried: once it is false, nothing
+   * more is dispatched. */
+  writeText(text: string, still?: () => boolean): Promise<void>;
   /** Copy with text/plain (markdown) + text/html flavors; degrades to text/plain. */
   writeRich(text: string, html: string): Promise<void>;
   /** Write a PNG image (bytes) to the OS clipboard. Goes through the Rust

@@ -241,8 +241,9 @@ describe("a plain press inside a query's results (GH #1000)", () => {
     } finally { dispose(); }
   });
 
-  // (h) a range in a live result's own text is that result's: Delete edits only it
-  it("a range in a result's own text, a press on its group, then Delete: only that text goes, one undo restores it", async () => {
+  // (h) a range in a live result's own text is that result's: Delete opens that
+  // result's editor on the range and writes nothing
+  it("a range in a result's own text, a press on its group, then Delete: that result's editor opens on the range", async () => {
     loadGraph(QUERY);
     const { root, dispose } = mountHost();
     try {
@@ -250,11 +251,11 @@ describe("a plain press inside a query's results (GH #1000)", () => {
       selectText(content, "Beta", 0, 5);
       expect(press(await find(root, `${Q} .query-group:last-child`))).toBe(false);
       keydown("Delete");
-      await vi.waitFor(() => expect(doc.byId.hit2.raw).toBe("result"));
-      expect(doc.byId.query.raw).toBe(QUERY);
-      undo();
+      await vi.waitFor(() => expect(editingId()).toBe("hit2"));
+      expect(editorIn(root.querySelector(`${Q} [data-block-id="hit2"]`)!).selection()).toEqual([0, 5]);
       expect(doc.byId.hit2.raw).toBe("Beta result");
       expect(doc.byId.query.raw).toBe(QUERY);
+      expect(undo()).toBe(false);
     } finally { dispose(); }
   });
 

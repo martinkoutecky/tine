@@ -130,10 +130,13 @@ export function outlineToHtml(md: string): string {
   return out;
 }
 
-/** Ordinary text write: replacing the public clipboard invalidates private data. */
-export function writeClipboardText(text: string): Promise<void> {
+/** Ordinary text write: replacing the public clipboard invalidates private data.
+ * `still`: the caller's owner, re-checked before each transport dispatch
+ * (`Backend.writeText`); a retired owner writes nothing. */
+export function writeClipboardText(text: string, still?: () => boolean): Promise<void> {
+  if (still && !still()) return Promise.resolve();
   clearClipboardPayload();
-  return backend().writeText(text);
+  return backend().writeText(text, still);
 }
 
 /**

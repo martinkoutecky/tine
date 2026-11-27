@@ -337,9 +337,9 @@ export function mockBackend(options: MockOptions = {}): Backend {
     async cancelRecording() {
       return { status: "cancelled" as const };
     },
-    async writeText(text: string): Promise<void> {
+    async writeText(text: string, still: () => boolean = () => true): Promise<void> {
       try {
-        await navigator.clipboard.writeText(text);
+        if (still()) await navigator.clipboard.writeText(text);
       } catch {
         // ignore
       }

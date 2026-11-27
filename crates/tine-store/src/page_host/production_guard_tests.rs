@@ -277,41 +277,6 @@ fn l8_02_raw_creation_rules_survive_failure_and_new_input_revokes_them() {
     store.close();
 }
 
-/// GH #540: a creating host save names its page by its bytes. A readable
-/// file claiming that name is its twin, whichever of the two was published
-/// first: `a.md` titled `Named` beside an existing `Named.md`, and
-/// `Named.md` beside an existing `a.md` titled `Named`. Before, the guard
-/// looked the filename stem up (`a`), and the first order created a second
-/// page named `Named` (a restored original titled `Named`, for one).
-#[test]
-fn a_creating_save_meets_the_readable_claimant_of_its_bytes_name() {
-    for (existing, existing_text, created, created_text) in [
-        ("Named.md", "- named\n", "a.md", "title:: Named\n\n- old\n"),
-        ("a.md", "title:: Named\n\n- old\n", "Named.md", "- named\n"),
-    ] {
-        let mut f = Fixture::new();
-        fs::remove_file(f.graph.join(created)).ok();
-        fs::write(f.graph.join(existing), existing_text).unwrap();
-        let store = Arc::new(crate::Store::open(&f.graph, Default::default()).unwrap().0);
-        store.whole_graph_reconciled().unwrap();
-        f.host.fs = ProductionIo::attach(&store.graph.root, &f.app, "test-graph", &f.trash);
-        f.host.fs.store = Arc::downgrade(&store);
-        let bytes = text(created_text);
-        assert_eq!(
-            f.host.fs.page_owner(created, &bytes, None).unwrap().as_deref(),
-            Some(existing),
-            "{created} created beside {existing}"
-        );
-        // Negative control: other bytes name another page.
-        let other = text("title:: Elsewhere\n\n- x\n");
-        let unnamed = (created == "a.md").then_some(&other);
-        if let Some(other) = unnamed {
-            assert_eq!(f.host.fs.page_owner(created, other, None).unwrap(), None);
-        }
-        store.close();
-    }
-}
-
 #[test]
 fn l8_01_metadata_cost_is_independent_of_page_size() {
     use crate::model::write_target::TARGET_PROBES;

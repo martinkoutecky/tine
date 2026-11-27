@@ -84,7 +84,7 @@ function snapshot(directory, prefix = "") {
 let browser, stage = "startup";
 const evidence = [];
 const screenshot = name => execFileSync("import", ["-window", "root", path.join(out, `${name}.png`)], { timeout: 10000 });
-async function clickLink(label) {
+async function clickLink(label, expectedPath = outside) {
   let match;
   await browser.waitUntil(async () => {
     for (const link of await browser.$$(".main-content a")) {
@@ -93,6 +93,13 @@ async function clickLink(label) {
     return false;
   }, { timeout: 10000, timeoutMsg: `No host PDF link for ${label}` });
   await match.click();
+  // tine#985: every PDF here is outside the graph, so the click asks first,
+  // naming the file, and the reader reads it only after Open.
+  await browser.$(".link-scheme-prompt").waitForDisplayed({ timeout: 10000 });
+  const asked = await browser.$(".link-scheme-prompt").getText();
+  assert.ok(asked.includes(expectedPath), `the prompt should name ${expectedPath}: ${asked}`);
+  evidence.push({ stage, asked: expectedPath });
+  await browser.$('.link-scheme-prompt button[type="submit"]').click();
 }
 async function waitReady() {
   await browser.$('.pdf-viewer[data-pdf-ready="true"] .pdf-page canvas').waitForExist({ timeout: 20000 });
@@ -188,7 +195,7 @@ try {
   }
   for (const [label, expectedPath] of [["Wrong file", wrong], ["Missing file", missing]]) {
     stage = `reader error: ${label}`;
-    await clickLink(label);
+    await clickLink(label, expectedPath);
     await browser.$(".pdf-load-error").waitForExist({ timeout: 10000 });
     const message = await browser.$(".pdf-load-error").getText();
     assert.ok(message.includes(expectedPath), message);

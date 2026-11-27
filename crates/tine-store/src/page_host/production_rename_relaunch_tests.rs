@@ -978,8 +978,7 @@ fn restoring(src: &str) -> Fixture {
     assert_eq!(trashed(&f), vec![OLD.to_string()]);
     f.send("c.md", RequestKind::Discard);
     assert!(f.host.order.kept_of(src).is_some(), "Restore");
-    let at = f.host.order.kept_of(src).expect("kept");
-    assert_eq!(f.host.restore_source(src, &at), Ok(Disposition::Applied));
+    assert_eq!(f.host.restore_source(src), Disposition::Applied);
     f
 }
 

@@ -62,6 +62,7 @@ mod migrate_identifier;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 mod native_integrations;
 mod native_mouse_history;
+mod outside_file;
 mod owner;
 mod owner_protection;
 mod page_backlinks;
@@ -1241,7 +1242,6 @@ pub fn run() {
             page_commands::page_owed,
             page_commands::page_kept_originals,
             page_commands::page_kept_text,
-            page_commands::page_restore_kept,
             page_commands::page_drafts_retry,
             page_commands::bench_event,
             load_session,

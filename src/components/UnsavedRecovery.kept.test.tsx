@@ -1,22 +1,23 @@
 // GH #540: the recovery panel's kept originals. A cancelled rename kept a
 // page's original text after its file was removed; the panel lists it with
-// Restore and Copy original. Each outcome is reported once, by one producer
-// (`reportRestore`); an answer for a graph or host session that is gone is
-// dropped; a save the page's own editor reports adds no toast.
+// Copy original text. Copy hands the exact text to the clipboard writer; a
+// binary original says "not text" and offers no Copy; an answer for a panel,
+// graph or host session that is gone is dropped, and a retired owner puts
+// nothing on the clipboard.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { resetStore, type KeptOriginal, type RestoreOutcome } from "../document";
+import { resetStore, type KeptOriginal, type KeptText } from "../document";
 import { bindTestHost, type TestHost } from "../document/host/wiring.test.support";
 import { invalidateBinding } from "../binding";
 import { UnsavedRecovery } from "./UnsavedRecovery";
-import { closeUnsavedRecovery, keptOriginalCount, openUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
+import { closeUnsavedRecovery, openUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
+import { paletteCommands } from "../keybindings";
+import { noticeKeptOriginals } from "../graph";
 import { setToasts, toasts } from "../toasts";
-import { render as renderMessage } from "../i18n";
 
-const ROW: KeptOriginal = { key: "pages/a.md", origin: 7, path: "pages/a.md", name: "a", kind: "page", len: 6 };
+const ROW: KeptOriginal = { key: "pages/a.md", origin: 7, path: "pages/a.md", name: "a", kind: "page", len: 7, text: true };
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
-const texts = () => toasts().map((t) => typeof t.message === "string" ? t.message : renderMessage(t.message));
 
 /** A promise and its resolver: an answer the test releases. */
 function later<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -26,14 +27,15 @@ function later<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 }
 
 let host: TestHost;
-let rows: KeptOriginal[];
+let rows: KeptOriginal[] | null;
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
-const button = (label: string) => [...root.querySelectorAll("button")].find((b) => b.textContent === label);
+const COPY = "Copy original text";
+const buttons = (label: string) => [...root.querySelectorAll("button")].filter((b) => b.textContent === label);
+const status = () => root.querySelector(".unsaved-recovery-entry p[role=status]")?.textContent ?? "";
 
 beforeEach(async () => {
   resetStore();
-  setToasts([]);
   host = await bindTestHost();
   rows = [ROW];
   vi.spyOn(backend(), "pageKeptOriginals").mockImplementation(async () => rows);
@@ -46,83 +48,89 @@ afterEach(() => {
   closeUnsavedRecovery();
   vi.restoreAllMocks();
   resetStore();
-  setToasts([]);
   document.body.innerHTML = "";
 });
 
-async function openPanel() {
+async function openPanel(rowsShown = 1) {
   openUnsavedRecovery();
   dispose = render(() => <UnsavedRecovery />, root);
-  await vi.waitFor(() => expect(button("Restore")).toBeDefined());
+  await vi.waitFor(() => expect(root.querySelectorAll(".recovery-kept-row")).toHaveLength(rowsShown));
 }
 
 describe("kept originals in the recovery panel (GH #540)", () => {
-  it("lists the original for its session, restores it with one toast, and offers Open", async () => {
-    const restore = vi.spyOn(backend(), "pageRestoreKept").mockImplementation(async () => {
-      rows = [];
-      return { kind: "restored" };
-    });
+  it("lists the original for its session and Copy hands the clipboard writer its exact CRLF text", async () => {
+    vi.spyOn(backend(), "pageKeptText").mockResolvedValue({ kind: "text", text: "- old\r\n" });
+    const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
     await openPanel();
     expect(backend().pageKeptOriginals).toHaveBeenCalledWith(host.session);
     expect(root.textContent).toContain("Kept after a cancelled rename");
-    expect(keptOriginalCount()).toBe(1);
-    button("Restore")!.click();
-    await vi.waitFor(() => expect(texts()).toEqual(["Restored pages/a.md."]));
-    expect(restore).toHaveBeenCalledWith(host.session, "pages/a.md", 7);
-    await vi.waitFor(() => expect(button("Restore")).toBeUndefined());
-    expect(keptOriginalCount()).toBe(0);
-    expect(button("Open")).toBeDefined();
-    expect(texts()).toHaveLength(1);
+    expect(root.textContent).not.toContain("Restore");
+    buttons(COPY)[0].click();
+    await vi.waitFor(() => expect(status()).toBe("Copied. Paste it into a separate file to keep a copy."));
+    expect(backend().pageKeptText).toHaveBeenCalledWith(host.session, "pages/a.md", 7);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0][0]).toBe("- old\r\n");
   });
 
-  it("a refusal says why once and keeps the row", async () => {
-    vi.spyOn(backend(), "pageRestoreKept").mockResolvedValue({ kind: "refused", reason: "held", name: "a" });
-    await openPanel();
-    button("Restore")!.click();
-    await vi.waitFor(() => expect(texts()).toEqual(["Close a, then Restore."]));
-    await flush();
-    expect(button("Restore")).toBeDefined();
-    expect(texts()).toHaveLength(1);
+  it("a binary row and a hidden text row from one List: not text without Copy, and Copy", async () => {
+    rows = [
+      { key: "journals/Loose.md", origin: 3, path: "journals/Loose.md", name: null, kind: null, len: 3, text: false },
+      { key: "pages/x.md", origin: 4, path: "pages/x.md", name: null, kind: null, len: 3, text: true },
+    ];
+    await openPanel(2);
+    const [binary, text] = [...root.querySelectorAll(".recovery-kept-row")];
+    expect(binary.textContent).toContain("Not text");
+    expect(binary.querySelector("button")).toBeNull();
+    expect(text.querySelector("button")?.textContent).toBe(COPY);
+    expect(backend().pageKeptOriginals).toHaveBeenCalledTimes(1);
   });
 
-  it("other content first: says so, offers Open, and keeps the original listed", async () => {
-    vi.spyOn(backend(), "pageRestoreKept").mockResolvedValue({ kind: "superseded" });
+  it("a Copy answer that is not text puts nothing on the clipboard", async () => {
+    vi.spyOn(backend(), "pageKeptText").mockResolvedValue({ kind: "notText", len: 3 });
+    const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
     await openPanel();
-    button("Restore")!.click();
-    await vi.waitFor(() => expect(texts()).toEqual(["pages/a.md now holds other content. The original stays kept while Tine has it."]));
-    await vi.waitFor(() => expect(button("Open")).toBeDefined());
-    expect(button("Restore")).toBeDefined();
+    buttons(COPY)[0].click();
+    await vi.waitFor(() => expect(status()).toContain("Not text"));
+    expect(write).not.toHaveBeenCalled();
   });
 
-  it("an unwritten save is reported once: by the panel, or by the editor when a window holds the page", async () => {
-    const outcomes: RestoreOutcome[] = [{ kind: "unwritten", held: false }, { kind: "unwritten", held: true }];
-    vi.spyOn(backend(), "pageRestoreKept").mockImplementation(async () => outcomes.shift()!);
+  it("no longer kept only for Missing; Unavailable says so and keeps the last list", async () => {
+    const answers: KeptText[] = [{ kind: "unavailable" }, { kind: "missing" }];
+    vi.spyOn(backend(), "pageKeptText").mockImplementation(async () => answers.shift()!);
+    const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
     await openPanel();
-    button("Restore")!.click();
-    await vi.waitFor(() => expect(texts()).toEqual(["pages/a.md is not saved yet; the original stays kept."]));
-    await vi.waitFor(() => expect(button("Restore")?.disabled).toBe(false));
-    button("Restore")!.click();
-    await flush();
-    await vi.waitFor(() => expect(backend().pageRestoreKept).toHaveBeenCalledTimes(2));
-    await flush();
-    expect(texts()).toHaveLength(1);
+    buttons(COPY)[0].click();
+    await vi.waitFor(() => expect(status()).toBe("Recovery is unavailable right now."));
+    expect(buttons(COPY)).toHaveLength(1);
+    rows = [];
+    buttons(COPY)[0].click();
+    await vi.waitFor(() => expect(status()).toBe("This original is no longer kept."));
+    await vi.waitFor(() => expect(buttons(COPY)).toHaveLength(0));
+    expect(write).not.toHaveBeenCalled();
   });
 
-  it("an answer arriving after a graph switch reports nothing", async () => {
-    const answer = later<RestoreOutcome>();
-    vi.spyOn(backend(), "pageRestoreKept").mockReturnValue(answer.promise);
+  it("a List that is not answered keeps the last list and says recovery is unavailable", async () => {
     await openPanel();
-    button("Restore")!.click();
-    await vi.waitFor(() => expect(button("Restoring…")).toBeDefined());
-    invalidateBinding();
-    expect(unsavedRecoveryOpen()).toBe(false);
-    answer.resolve({ kind: "restored" });
-    await flush();
-    expect(texts()).toEqual([]);
+    rows = null;
+    await bindTestHost();
+    await vi.waitFor(() => expect(status()).toBe("Recovery is unavailable right now."));
+    expect(buttons(COPY)).toHaveLength(1);
+  });
+
+  it("lists on open and on a rebind, never in the panel's poll", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await openPanel();
+      expect(backend().pageKeptOriginals).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(backend().pageKeptOriginals).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a rebind relists for the new session and drops the old list's late answer", async () => {
-    const first = later<KeptOriginal[]>();
+    const first = later<KeptOriginal[] | null>();
     const lists = vi.spyOn(backend(), "pageKeptOriginals")
       .mockReturnValueOnce(first.promise)
       .mockImplementation(async () => [{ ...ROW, origin: 9 }]);
@@ -131,22 +139,67 @@ describe("kept originals in the recovery panel (GH #540)", () => {
     await vi.waitFor(() => expect(lists).toHaveBeenCalledTimes(1));
     const rebound = await bindTestHost();
     await vi.waitFor(() => expect(lists).toHaveBeenLastCalledWith(rebound.session));
-    await vi.waitFor(() => expect(button("Restore")).toBeDefined());
-    first.resolve([ROW]);
+    await vi.waitFor(() => expect(buttons(COPY)).toHaveLength(1));
+    first.resolve([ROW, { ...ROW, key: "pages/old.md" }]);
     await flush();
-    const restore = vi.spyOn(backend(), "pageRestoreKept").mockResolvedValue({ kind: "refused", reason: "notKept" });
-    button("Restore")!.click();
-    await vi.waitFor(() => expect(restore).toHaveBeenCalledWith(rebound.session, "pages/a.md", 9));
     expect(root.querySelectorAll(".recovery-kept-row")).toHaveLength(1);
+    const copy = vi.spyOn(backend(), "pageKeptText").mockResolvedValue({ kind: "missing" });
+    buttons(COPY)[0].click();
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledWith(rebound.session, "pages/a.md", 9));
   });
 
-  it("Copy original copies the kept text", async () => {
-    vi.spyOn(backend(), "pageKeptText").mockResolvedValue("- old\r\n");
+  it("a Copy read answered across a rebind is dropped: nothing reaches the clipboard", async () => {
+    const answer = later<KeptText>();
+    vi.spyOn(backend(), "pageKeptText").mockReturnValue(answer.promise);
     const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
     await openPanel();
-    button("Copy original")!.click();
-    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("- old\r\n"));
-    await vi.waitFor(() => expect(root.textContent).toContain("Copied. Paste it into a separate file to keep a copy."));
-    expect(backend().pageKeptText).toHaveBeenCalledWith(host.session, "pages/a.md", 7);
+    buttons(COPY)[0].click();
+    await bindTestHost();
+    answer.resolve({ kind: "text", text: "- old\n" });
+    await flush();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("a graph switch after the read answers and before the clipboard transport dispatches writes nothing and shows nothing", async () => {
+    vi.spyOn(backend(), "pageKeptText").mockResolvedValue({ kind: "text", text: "- old\n" });
+    // The transport yields (the native clipboard plugin's import) before it
+    // dispatches, re-checking the caller's owner first, as `TauriBackend` does.
+    const gate = later<void>();
+    const dispatched: string[] = [];
+    vi.spyOn(backend(), "writeText").mockImplementation(async (text, still = () => true) => {
+      await gate.promise;
+      if (still()) dispatched.push(text);
+    });
+    await openPanel();
+    buttons(COPY)[0].click();
+    await vi.waitFor(() => expect(backend().writeText).toHaveBeenCalledTimes(1));
+    invalidateBinding();
+    expect(unsavedRecoveryOpen()).toBe(false);
+    gate.resolve();
+    await flush();
+    expect(dispatched).toEqual([]);
+    expect(document.body.textContent).not.toContain("Copied");
+  });
+
+  it("the palette offers the panel in a bound graph whatever the launch count", async () => {
+    const command = paletteCommands(null).find((c) => c.id === "recovery/review-kept-originals");
+    expect(command).toBeDefined();
+    command!.run();
+    expect(unsavedRecoveryOpen()).toBe(true);
+  });
+
+  it("the launch notice's Review opens its own graph's panel and retires with that graph", async () => {
+    setToasts([]);
+    noticeKeptOriginals(1);
+    const [notice] = toasts();
+    expect(notice.action).toBeDefined();
+    invalidateBinding();
+    expect(toasts()).toEqual([]);
+    notice.action!.run();
+    expect(unsavedRecoveryOpen()).toBe(false);
+    noticeKeptOriginals(2);
+    toasts()[0].action!.run();
+    expect(unsavedRecoveryOpen()).toBe(true);
+    setToasts([]);
   });
 });

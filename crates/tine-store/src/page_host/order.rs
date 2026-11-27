@@ -199,22 +199,17 @@ pub(super) struct Pair {
 
 impl Pair {
     /// A kept original: a decided pair whose source's admitted text a Use
-    /// Disk left only in the operation draft (Restore or Retained), so it
-    /// may be restored. A superseded pair (newer source text) is never one.
+    /// Disk left only in the operation draft (Restore or Retained). The one
+    /// predicate (`Order::kept`); a superseded pair (newer source text) is
+    /// never one.
     pub fn kept(&self) -> bool {
         matches!(self.phase, PairPhase::Restore | PairPhase::Retained)
-            && matches!(self.choice, PairChoice::SourceDisk | PairChoice::ReceiverDisk)
+            && matches!(
+                self.choice,
+                PairChoice::SourceDisk | PairChoice::ReceiverDisk
+            )
             && self.preimage.is_some()
     }
-}
-
-/// Where a kept original's pair is: its operation vehicle and its index
-/// there (`Order::kept_at`), so the steps after a search need no other.
-/// Valid within the driver step that found it (a rewrite moves pairs).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Locator {
-    pub name: String,
-    pub index: usize,
 }
 
 /// A decided pair launch judges (`Order::launch_judged`): its place
@@ -301,6 +296,9 @@ pub(super) struct Order {
     release_receivers: BTreeMap<PageKey, PageKey>,
     publication_pending: BTreeMap<ReplyId, PublicationWatch>,
     publication_versions: BTreeMap<PageKey, (u64, Arc<PublicationWatch>)>,
+    /// Walks for kept originals (`Order::kept`), counted for the cost tests.
+    #[cfg(feature = "test-faults")]
+    pub kept_searches: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Clone, Debug)]
@@ -961,46 +959,40 @@ impl Order {
         changed
     }
 
-    /// Every kept original (`Pair::kept`), with where it is. One walk over
-    /// the durable pairs: `kept_at`, the window's list and its count read
-    /// it.
-    pub fn kept(&self) -> impl Iterator<Item = (&String, usize, &Pair)> {
-        (self.paired.iter())
-            .flat_map(|(name, op)| (op.pairs.iter().enumerate()).map(move |(i, p)| (name, i, p)))
-            .filter(|(.., p)| p.kept())
+    /// Every kept original (`Pair::kept`), with its operation vehicle's
+    /// name. One walk over the durable pairs: `kept_at`, the window's list
+    /// and its count read it.
+    pub fn kept(&self) -> impl Iterator<Item = (&String, &Pair)> {
+        #[cfg(feature = "test-faults")]
+        (self.kept_searches).fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.pairs().filter(|(_, p)| p.kept())
     }
 
     /// The kept original of source `key` whose source record is `origin`
     /// (`Pair::origin`); a receiver key, or an original no longer kept,
     /// answers None.
-    pub fn kept_at(&self, key: &str, origin: u64) -> Option<Locator> {
-        (self.kept())
-            .find(|(.., p)| p.source == key && p.origin == origin)
-            .map(|(name, index, _)| Locator {
-                name: name.clone(),
-                index,
-            })
+    pub fn kept_at(&self, key: &str, origin: u64) -> Option<&Pair> {
+        let at = |(_, p): &(&String, &Pair)| p.source == key && p.origin == origin;
+        self.kept().find(at).map(|(_, p)| p)
     }
 
-    /// The first kept original of source `key`, whatever its origin.
-    #[cfg(test)]
-    pub fn kept_of(&self, key: &str) -> Option<Locator> {
-        let origin = self.kept().find(|(.., p)| p.source == key)?.2.origin;
-        self.kept_at(key, origin)
+    /// The first kept original of source `key`, whatever its origin, as
+    /// (vehicle name, preimage): the key-only lookup of the model's
+    /// `restoreSource`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn kept_of(&self, key: &str) -> Option<(String, Text)> {
+        let (name, p) = self.kept().find(|(_, p)| p.source == key)?;
+        Some((name.clone(), p.preimage.clone()))
     }
 
-    /// The pair `at` names while it is still kept: no search.
-    pub fn kept_pair(&self, at: &Locator) -> Option<&Pair> {
-        let pair = self.paired.get(&at.name)?.pairs.get(at.index)?;
-        pair.kept().then_some(pair)
-    }
-
-    /// A restoration of the kept original `at` was selected: its pair
-    /// awaits the guarded create (the model's `selectPair(.., "restore")`).
-    pub fn select_restore(&mut self, at: &Locator) {
-        if let Some(pair) = (self.paired.get_mut(&at.name)).and_then(|op| op.pairs.get_mut(at.index)) {
-            pair.phase = PairPhase::Restore;
-        }
+    /// A restoration of `key` was selected: its pair awaits the guarded
+    /// create (the model's `selectPair(.., "restore")`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn select_restore(&mut self, key: &str) -> Option<String> {
+        let name = self.kept_of(key)?.0;
+        let pair = self.pair_mut(key)?;
+        pair.phase = PairPhase::Restore;
+        Some(name)
     }
 
     /// The page whose disk bytes a Discard of `key` also reads: a running
@@ -1372,63 +1364,46 @@ impl<F: HostIo> Host<F> {
         (vehicle.stage, (file, decision))
     }
 
-    /// Restore the kept original `at` (source `key`) after its pair's Use
-    /// Disk left the text only in the operation draft (the model's
-    /// `restoreSource`): the page takes the preimage at risk over an absent
-    /// base, so its own draft and its guarded create publish it, and that
-    /// publication cancels the pair. Waits while the page or the allocator
-    /// is busy, or for `key`'s lock. Refused while the page holds unsaved
-    /// text, and unless, under the lock, the slot is free on disk (an
-    /// occupied slot keeps the preimage as custody) and no other spelling
-    /// claims the page; a claimant or twin that appears later fails the
-    /// create, as for any creation. A refusal changes nothing.
-    pub(super) fn restore_source(
-        &mut self,
-        key: &str,
-        at: &Locator,
-    ) -> Result<Disposition, io::RestoreRefusal> {
+    /// Restore `key`'s admitted preimage after its pair's Use Disk left the
+    /// text only in the operation draft (the model's `restoreSource`): the
+    /// page takes the preimage at risk over an absent base, so its own draft
+    /// and its guarded create publish it, and that publication cancels the
+    /// pair. Refused unless the slot is free on disk (an occupied slot keeps
+    /// the preimage as custody) and the page holds no unsaved text; a
+    /// claimant or twin fails the create, as for any creation.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn restore_source(&mut self, key: &str) -> Disposition {
         if !self.alive {
-            return Ok(Disposition::Disabled);
+            return Disposition::Disabled;
         }
-        let Some(pair) = self.order.kept_pair(at).filter(|p| p.source == key) else {
-            return Err(io::RestoreRefusal::NotKept);
+        let Some((name, preimage)) = self.order.kept_of(key) else {
+            return Disposition::Refused;
         };
-        let preimage = pair.preimage.clone();
         if self.busy(key) || self.allocator_busy() {
-            return Ok(Disposition::Waiting);
+            return Disposition::Waiting;
         }
         if self.pages.get(key).is_some_and(|p| !p.clean()) {
-            return Err(io::RestoreRefusal::Unsaved);
+            return Disposition::Refused;
         }
         let keys = BTreeSet::from([key.to_owned()]);
         if self.lacks_locks(&keys) {
-            return Ok(Disposition::Waiting);
+            return Disposition::Waiting;
         }
         self.with_locks(&keys, |host| {
             // The slot is absent and no other spelling claims the page
             // (the creation guard's twin check); its save re-checks both.
-            let failed = |step, failure: io::IoFailure| io::RestoreRefusal::Failed {
-                step,
-                operation: failure.operation,
-                os_error: failure.os_error,
-            };
-            match host.fs.read_page(key) {
-                Ok(None) => {}
-                Ok(Some(_)) => return Err(io::RestoreRefusal::Occupied),
-                Err(failure) => return Err(failed(io::RestoreStep::SlotRead, failure)),
-            }
-            match host.fs.page_twin(key) {
-                Ok(None) => {}
-                Ok(Some(file)) => return Err(io::RestoreRefusal::Twin { file }),
-                Err(failure) => return Err(failed(io::RestoreStep::TwinProbe, failure)),
+            if !matches!(host.fs.read_page(key), Ok(None))
+                || !matches!(host.fs.page_twin(key), Ok(None))
+            {
+                return Disposition::Refused;
             }
             #[cfg(test)]
             host.events.push(Event::OperationRead {
                 page: key.to_owned(),
                 base: Base::Known(None),
             });
-            host.order.select_restore(at);
-            host.repair_op(&at.name);
+            host.order.select_restore(key);
+            host.repair_op(&name);
             host.version = host.next_version();
             let page = Page {
                 buf: preimage,
@@ -1441,7 +1416,7 @@ impl<F: HostIo> Host<F> {
                 obs: Some(None),
             };
             host.set_page(key, Some(page));
-            Ok(Disposition::Applied)
+            Disposition::Applied
         })
     }
 

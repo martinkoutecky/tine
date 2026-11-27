@@ -72,7 +72,7 @@ export function renderedSelectionTarget(selection: Selection | null): RenderedSe
   const format = pageByName(node.page)?.format === "org" ? "org" : "md";
   const raw = node.raw;
   // A calc block's editor shows the fence-stripped expressions, not this text
-  // (same refusal as deleteRenderedTextSelection).
+  // (same refusal as openRenderedSelectionInEditor).
   if (calcSource(raw) !== null) return null;
   const start = exactEditorOffsetFromRenderedRange(root, range, raw, BUILTIN_HIDE, format, "start");
   const end = exactEditorOffsetFromRenderedRange(root, { startContainer: range.endContainer, startOffset: range.endOffset }, raw, BUILTIN_HIDE, format, "end");

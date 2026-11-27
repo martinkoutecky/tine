@@ -290,40 +290,16 @@ unsaved-recovery-summary =
 
 unsaved-recovery-kept-heading = Kept after a cancelled rename
 
-unsaved-recovery-kept-detail = A rename was cancelled after these files were removed, and Tine kept their original text. Restore puts a file back while no window has its page open; Copy original copies the text.
+unsaved-recovery-kept-detail = A rename was cancelled after these files were removed, and Tine kept their original text. Copy original text puts it on the clipboard; Tine keeps the original.
 
-unsaved-recovery-restore = Restore
-
-unsaved-recovery-restoring = Restoring…
-
-unsaved-recovery-copy-original = Copy original
+unsaved-recovery-copy-original = Copy original text
 
 unsaved-recovery-original-copied = Copied. Paste it into a separate file to keep a copy.
 
 unsaved-recovery-original-copy-failed = Could not copy the original. Tine still keeps it here.
 
-unsaved-recovery-open-file = Open
+unsaved-recovery-original-not-text = Not text, so it cannot be copied as text. Tine still keeps it.
 
-unsaved-recovery-restored = Restored { $path }.
+unsaved-recovery-original-not-kept = This original is no longer kept.
 
-unsaved-recovery-restore-not-kept = This original is no longer kept.
-
-unsaved-recovery-restore-ineligible = { $path } is not a page of this graph now, so Tine can't restore it. Copy original copies its text.
-
-unsaved-recovery-restore-held = Close { $name }, then Restore.
-
-unsaved-recovery-restore-unsaved = { $path } has unsaved changes; save or discard them first.
-
-unsaved-recovery-restore-occupied = A file is already at { $path }. The original stays kept; Copy original copies it.
-
-unsaved-recovery-restore-twin = Couldn't restore { $path }: { $file } is already this page. The original stays kept.
-
-unsaved-recovery-restore-failed = Couldn't restore { $path }: Tine could not check its folder{ $step }. The original stays kept.
-
-unsaved-recovery-restore-unavailable = Restore is unavailable right now.
-
-unsaved-recovery-restore-superseded = { $path } now holds other content. The original stays kept while Tine has it.
-
-unsaved-recovery-restore-unwritten = { $path } is not saved yet; the original stays kept.
-
-unsaved-recovery-restore-uncertain = Tine has not confirmed that { $path } was restored. The original stays kept until it is on disk.
+unsaved-recovery-kept-unavailable = Recovery is unavailable right now.

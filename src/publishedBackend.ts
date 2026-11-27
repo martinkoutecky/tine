@@ -175,9 +175,9 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
       const url = assetUrl(name);
       if (url) await answered.openExternal(url);
     },
-    async writeText(text: string) {
+    async writeText(text: string, still: () => boolean = () => true) {
       const { writeClipboardTextStrict } = await import("./clipboard");
-      await writeClipboardTextStrict(text);
+      if (still()) await writeClipboardTextStrict(text);
     },
     async writeRich(text: string) {
       const { writeClipboardTextStrict } = await import("./clipboard");
@@ -422,10 +422,7 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
       return [];
     },
     async pageKeptText() {
-      return null;
-    },
-    async pageRestoreKept() {
-      return { kind: "refused" as const, reason: "notKept" as const };
+      return { kind: "missing" as const };
     },
     onPageMail: unsubscribed,
     onGraphOpenWaiting: unsubscribed,

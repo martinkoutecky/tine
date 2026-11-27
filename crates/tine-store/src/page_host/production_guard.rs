@@ -66,7 +66,7 @@ impl ProductionIo {
         // A retained raw create or binary rescue keeps opaque bytes, as its
         // transaction does. Only decodable text contributes a preamble name;
         // the filename identity and unreadable-owner rules still apply.
-        let text = crate::model::created_text(bytes.as_deref());
+        let text = std::str::from_utf8(bytes.as_deref().unwrap_or_default()).unwrap_or("");
         let proposed = store.graph.entry_for_path_in(&target, Some(text));
         let rule = self
             .creation_rules
@@ -79,17 +79,9 @@ impl ProductionIo {
         let source = rule
             .and_then(|rule| rule.source.as_ref())
             .or(source.as_ref());
-        // An admitted operation's create keeps the claim its transaction
-        // planned (a raw create may name an existing page). A creating save
-        // with no such rule (a restored original) is named by its bytes, so
-        // a readable claimant of that name is its twin (GH #540).
-        let named = match rule {
-            Some(_) => None,
-            None => proposed.as_ref().map(|entry| entry.name.as_str()),
-        };
         match store
             .page_plan(None)
-            .creating_save_owner(&file, name, named, source)
+            .creating_save_owner(&file, name, source)
         {
             Ok(()) => Ok(None),
             Err(crate::Why::Refused(crate::Refusal::Twin { existing })) => {

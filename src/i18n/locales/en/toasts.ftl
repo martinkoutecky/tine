@@ -418,8 +418,6 @@ ui-failure-asset-inventory = Couldn't inspect orphan assets. The last successful
 
 ui-failure-trash-inventory = Couldn't inspect recoverable trash. The last successful count is kept.
 
-ui-failure-kept-originals = Couldn't list the originals kept after a cancelled rename. The last list is kept.
-
 ui-failure-backup-read = Couldn't complete the launch backup. Your graph is still open.
 
 ui-failure-backup-feedback = Couldn't receive backup status updates.

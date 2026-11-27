@@ -67,6 +67,32 @@ it("records a slow command when it crosses the threshold and again when it compl
   expect(JSON.stringify(phases())).not.toContain("secret");
 });
 
+// tine#985: an outside-file Ask is an answer. A slow one is reported like any
+// slow command that completes; a fast one reports nothing; never `failed`, and
+// the path is in no diagnostic argument.
+it("reports a slow outside-file Ask as slow then completed, and a fast one not at all", async () => {
+  const ask = `file-consent:${JSON.stringify({ display: "/home/someone/secret.txt", lossy: false, show: null })}`;
+  let answer!: (error: unknown) => void;
+  invoke.mockImplementation((cmd: string) => cmd === "open_external"
+    ? new Promise((_, reject) => { answer = reject; })
+    : Promise.resolve(null));
+  const backend = await tauriBackend();
+  await backend.startupGraphPath();
+  const { FileConsentAsk } = await import("./fileConsent");
+  vi.useFakeTimers();
+  const slow = backend.openExternal("file:///home/someone/secret.txt", undefined, { purpose: "link", bindingGeneration: 3 });
+  await vi.advanceTimersByTimeAsync(600);
+  answer(ask);
+  await expect(slow).rejects.toBeInstanceOf(FileConsentAsk);
+  expect(phases().map((args) => (args as { phase: string }).phase)).toEqual(["slow", "completed"]);
+  expect(JSON.stringify(phases())).not.toContain("secret");
+  invoke.mockClear();
+  invoke.mockImplementation((cmd: string) => cmd === "open_external" ? Promise.reject(ask) : Promise.resolve(null));
+  const fast = backend.openExternal("file:///home/someone/secret.txt", undefined, { purpose: "link", bindingGeneration: 3 });
+  await expect(fast).rejects.toMatchObject({ display: "/home/someone/secret.txt", lossy: false });
+  expect(phases()).toEqual([]);
+});
+
 it("exposes commands past the slow threshold to the UI until they settle (GH #332)", async () => {
   let finish!: (value: unknown) => void;
   invoke.mockImplementation((cmd: string) => cmd === "inspect_graph_access"

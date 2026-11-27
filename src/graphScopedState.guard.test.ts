@@ -35,6 +35,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
   "src/components/block/readOnlyFold.ts#view": "presentation-only folds of read-only pages, never written to a graph; the accessor checks graphEpoch and clearOnBindingInvalidated drops them",
+  "src/linkSchemePrompt.ts#request": "the pending link prompt (a URL or, tine#985, an outside file's display name; never written to a graph); clearOnBindingInvalidated cancels it, its `live` owner turns a late answer into cancel, and an outside file's agreed call carries the click's binding generation, which native refuses after a switch",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selectionView": "clearSelection, registered with clearOnBindingInvalidated, releases the scope, topology and keyboard history on reset",
@@ -301,7 +302,6 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // Readers of a graph-scoped target that do not prove a binding check, and why
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
-  "src/keybindings.ts#keptOriginalCount": "a count gating a command's availability; the command only opens the recovery window, which lists and restores through its own binding and session checks. graphScopedSignal clears the count at binding invalidation",
   "src/components/CommentEntry.tsx#replyFocusRequest": "reveals the mounted block's thread only; no graph write or delayed action. The entry unmounts with its source block and graphScopedSignal clears the request on binding invalidation",
   "src/changeSummary.ts#latest": "read-only publication evidence; graphScopedSignal clears it at binding invalidation, the accessor checks graphEpoch, and it never writes graph content",
   "src/queryResultDrafts.ts#drafts": "read-only result retention leases, not a popup writer; graphScopedSignal clears them at binding invalidation, release checks its captured binding, and captureResultDraft guards the actual cell write",

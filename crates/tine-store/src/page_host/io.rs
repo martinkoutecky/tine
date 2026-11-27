@@ -122,7 +122,7 @@ pub(super) struct MoveResult {
 /// `unsaved` is the persistent indicator at an open (SPEC-s2 §4.11, S9):
 /// the pages the host holds whose text is not on disk yet. `kept` counts the
 /// originals a cancelled rename kept (`Order::kept`), which the window's
-/// recovery panel lists and restores.
+/// recovery panel lists.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftStatus {
@@ -143,84 +143,39 @@ pub struct KeptOriginal {
     pub(crate) origin: u64,
     /// The source's file, relative to the graph root.
     pub(crate) path: String,
-    /// The page the restored file would be, as its creating save names it;
-    /// None when the graph's settings no longer make the file a page.
+    /// The page a file at `path` holding the original would be, named from
+    /// its text; None when the graph's settings no longer make the file a
+    /// page (a hidden path).
     pub(crate) name: Option<String>,
-    /// Whether it would be a page or a journal day.
-    pub(crate) kind: tine_core::model::PageKind,
-    /// The kept text's length in bytes.
+    /// Whether that is a page or a journal day; None with `name`.
+    pub(crate) kind: Option<tine_core::model::PageKind>,
+    /// The original's length in bytes.
     pub(crate) len: usize,
+    /// The original is UTF-8 text, so Copy original can copy it
+    /// (`KeptText::Text`); independent of `name` and `kind`.
+    pub(crate) text: bool,
 }
 
-/// The check a restore's locked step could not make (`RestoreRefusal`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RestoreStep {
-    /// Reading the page's slot.
-    SlotRead,
-    /// Looking for another spelling of the page.
-    TwinProbe,
-}
-
-/// Why a kept original was not restored (`PageHost::restore_kept`). Each one
-/// changes nothing: the original stays kept.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "reason", rename_all = "camelCase")]
-pub enum RestoreRefusal {
-    /// It is no longer kept (restored, released, or another original now).
-    NotKept,
-    /// The graph's settings no longer make its file a page.
-    Ineligible,
-    /// A window holds the page, or the page its text names.
-    Held {
-        /// The page's name.
-        name: String,
-    },
-    /// The page has unsaved input (a recovered draft, admitted input).
-    Unsaved,
-    /// A file is at its slot.
-    Occupied,
-    /// Another file is already this page.
-    Twin {
-        /// That file, relative to the graph root.
-        file: String,
-    },
-    /// A check could not be made.
-    Failed {
-        /// Which check.
-        step: RestoreStep,
-        /// The file operation that failed, when known.
-        operation: Option<&'static str>,
-        /// The OS error code, when there is one.
-        #[serde(rename = "osError")]
-        os_error: Option<i32>,
-    },
-    /// Another window session, or a host that is down or stopping.
-    Unavailable,
-}
-
-/// What became of a restore (`PageHost::restore_kept`), as develop's host
-/// operation waiter answers an admitted operation.
+/// A kept original's text for Copy original (`PageHost::kept_text`).
+/// Never a lossy conversion: bytes that are not UTF-8 answer `NotText`.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-pub enum RestoreOutcome {
-    /// The host's own save published the original, and the index has it.
-    Restored,
-    /// Refused before anything was written.
-    Refused(RestoreRefusal),
-    /// Other content reached the page before that publication (a Use Disk
-    /// took the file's bytes): the original stays kept while its pair
-    /// holds it.
-    Superseded,
-    /// The page cannot be saved yet (a conflict, or saves that keep
-    /// failing). `held`: a window holds the page now, and its editor says
-    /// so.
-    Unwritten {
-        /// A window holds the page now.
-        held: bool,
+pub enum KeptText {
+    /// The original, decoded exactly (line endings included).
+    Text {
+        /// The original's text.
+        text: String,
     },
-    /// Not known within the wait.
-    Uncertain,
+    /// The original is not UTF-8 text; it stays kept.
+    NotText {
+        /// The original's length in bytes.
+        len: usize,
+    },
+    /// The current session's host keeps no such original.
+    Missing,
+    /// Not answered: the host is down, its driver ended, or `session` is
+    /// not the current window session.
+    Unavailable,
 }
 
 /// A page whose text is not on disk yet, and why (STEP3 §9, B-QA).

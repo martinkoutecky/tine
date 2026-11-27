@@ -164,14 +164,6 @@ pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
 /// The config an open reads at `path` through `source`: the parsed text; a
 /// missing file is the defaults with [`missing_config_problem`]; another
 /// read error is the defaults with that error.
-/// The text a creating save names its page by: its bytes as UTF-8. Opaque
-/// bytes (a retained raw create, a binary rescue) give none, so the
-/// filename names the page. The page host's create guard and its kept
-/// originals both read a created page's name through this.
-pub(crate) fn created_text(bytes: Option<&[u8]>) -> &str {
-    std::str::from_utf8(bytes.unwrap_or_default()).unwrap_or("")
-}
-
 pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
     match read_parse_input_in(source, path) {
         Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
@@ -3831,14 +3823,36 @@ impl Graph {
         Some(entry)
     }
 
-    /// The page entry a creating save of `bytes` at `path` makes
-    /// ([`created_text`]); no name memo is touched.
-    pub(crate) fn created_entry(&self, path: &Path, bytes: Option<&[u8]>) -> Option<PageEntry> {
-        self.page_entry_in(path, Some(created_text(bytes)))
+    /// The page entry `path` names, its page name from `text` when given.
+    /// Records the name's discovery (`discover_page_name`).
+    pub(crate) fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
+        self.page_entry_named(path, |stem, fmt| {
+            self.discover_page_name(path, stem, fmt, text)
+        })
     }
 
-    /// The page entry `path` names, its page name from `text` when given.
-    pub(crate) fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
+    /// The page entry a file at `path` holding `text` would be, with no
+    /// discovery or memo effect: a malformed preamble names it by its file
+    /// name, as `page_entry_in` does, without recording the failure. Only
+    /// custody naming reads it (a kept original's row, GH #540); a live
+    /// read names its file through `page_entry_in`.
+    pub(crate) fn page_entry_of_text(&self, path: &Path, text: &str) -> Option<PageEntry> {
+        self.page_entry_named(path, |stem, fmt| {
+            let filename = decode_page_name(stem, fmt);
+            Some(
+                page_identity::effective_page_name_from_text(path, &filename, text)
+                    .unwrap_or(filename),
+            )
+        })
+    }
+
+    /// `page_entry_in`'s entry for an eligible `path`, its page name (not a
+    /// journal's) from `name` of its stem.
+    fn page_entry_named(
+        &self,
+        path: &Path,
+        name: impl FnOnce(&str, FileNameFormat) -> Option<String>,
+    ) -> Option<PageEntry> {
         if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
@@ -3853,8 +3867,7 @@ impl Graph {
                 path: path.to_path_buf(),
             }
         } else {
-            let name =
-                self.discover_page_name(path, stem, self.current_config().file_name_format, text)?;
+            let name = name(stem, self.current_config().file_name_format)?;
             let (name, kind, date_key) =
                 page_identity::page_file_claim(&self.current_journal_format(), name);
             PageEntry {

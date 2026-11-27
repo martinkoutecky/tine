@@ -7,12 +7,12 @@ import { askAliasDialog } from "./renameAliasDialog";
 import { applyHelperEdits, mergeContested, moveDayNotes, type AppliedEdits, type HelperEdit } from "./renameHelpers";
 import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
-import { captureBinding, bindingCurrent } from "./binding";
+import { captureBinding, bindingCurrent, clearOnBindingInvalidated } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { dismissToast, pushToast } from "./toasts";
-import { openUnsavedRecovery, setKeptOriginalCount } from "./unsavedRecovery";
+import { openUnsavedRecovery } from "./unsavedRecovery";
 import { restartTine } from "./update";
 import { bindHost, resetStore, flushAllUnsettled, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -423,6 +423,23 @@ function switchRefused(reason: Unsettled | null): void {
  * The pages whose text is not on disk yet are named at every open (SPEC-s2
  * §4.11): what launch recovered (STEP3 §9), and what a host kept from a
  * closed window still holds, with why (B-QA). */
+/** The launch notice of originals a cancelled rename kept (GH #540), while
+ * the graph that raised it is bound. */
+let keptNotice: number | null = null;
+clearOnBindingInvalidated(() => {
+  if (keptNotice !== null) dismissToast(keptNotice);
+  keptNotice = null;
+});
+
+/** Say at an open that `count` originals are kept. Its Review opens the panel
+ * of the graph that raised it only, and the notice retires with that graph. */
+export function noticeKeptOriginals(count: number): void {
+  const binding = captureBinding();
+  const review = () => { if (bindingCurrent(binding)) openUnsavedRecovery(); };
+  keptNotice = pushToast(msg("graph-kept-originals", { count }), "info",
+    { sticky: true, action: { label: msg("graph-review-kept-originals"), run: review } });
+}
+
 function reportDraftStatus(status: DraftStatus | null): void {
   const unsaved = status?.unsaved ?? [];
   const recovered = unsaved.filter((page) => page.recovered);
@@ -437,11 +454,7 @@ function reportDraftStatus(status: DraftStatus | null): void {
     pushToast(msg("graph-page-s-still-have-edits-that-are", { count: held.length, pages: held.map((page) => page.path + why(page)).join(", ") }),
       held.some((page) => page.conflict || page.failing) ? "error" : "info", { sticky: true });
   }
-  setKeptOriginalCount(status?.kept ?? 0);
-  if (status?.kept) {
-    pushToast(msg("graph-kept-originals", { count: status.kept }), "info",
-      { sticky: true, action: { label: msg("graph-review-kept-originals"), run: openUnsavedRecovery } });
-  }
+  if (status?.kept) noticeKeptOriginals(status.kept);
   if (status?.unreadable.length) {
     pushToast(msg("graph-tine-left-unreadable-crash-recovery-file-s-in-place", { count: status.unreadable.length, files: status.unreadable.join(", ") }), "error", { sticky: true });
   }

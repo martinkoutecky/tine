@@ -76,34 +76,12 @@ impl Drop for ReplySlot {
 
 /// One step of save-first input handling, decided on the driver
 /// ([`PageHost::bounded`]).
-pub(super) enum Step<R> {
+enum Step<R> {
     Done(R),
     /// Waiting on a busy page; `renaming`: on a rename still finishing.
     Wait {
         renaming: bool,
     },
-}
-
-/// [`PageHost::bounded`]'s policy over `step`.
-fn busy_policy<R>(
-    deadline: tine_core::clock::Instant,
-    mut step: impl FnMut(&mut HostState) -> Step<R>,
-) -> impl FnMut(&mut HostState) -> Wait<Result<R, FlushRefusal>> {
-    move |state: &mut HostState| {
-        if !state.progress.host.alive {
-            return Wait::Ready(Err(FlushRefusal::Busy));
-        }
-        match step(state) {
-            Step::Done(done) => Wait::Ready(Ok(done)),
-            Step::Wait { renaming } => {
-                let now = tine_core::clock::Instant::now();
-                if now >= deadline && renaming {
-                    return Wait::Ready(Err(FlushRefusal::Busy));
-                }
-                Wait::Until((now < deadline).then_some(deadline))
-            }
-        }
-    }
 }
 
 /// The pages among `keys` with unsaved input (Q3), including an admitted
@@ -149,20 +127,24 @@ impl PageHost {
     fn bounded<R: Send + 'static>(
         &self,
         deadline: tine_core::clock::Instant,
-        step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
+        mut step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
     ) -> Result<R, FlushRefusal> {
-        let answer = (self.driver.shared).wait(Deadline::Never, busy_policy(deadline, step));
-        answer.unwrap_or(Err(FlushRefusal::Busy))
-    }
-
-    /// [`Self::bounded`] for a step that takes the path locks it plans
-    /// (`Shared::locked_wait`): it runs again from the top under them.
-    pub(super) fn bounded_locked<R: Send + 'static>(
-        &self,
-        deadline: tine_core::clock::Instant,
-        step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
-    ) -> Result<R, FlushRefusal> {
-        let answer = (self.driver.shared).locked_wait(Deadline::Never, busy_policy(deadline, step));
+        let wait = move |state: &mut HostState| {
+            if !state.progress.host.alive {
+                return Wait::Ready(Err(FlushRefusal::Busy));
+            }
+            match step(state) {
+                Step::Done(done) => Wait::Ready(Ok(done)),
+                Step::Wait { renaming } => {
+                    let now = tine_core::clock::Instant::now();
+                    if now >= deadline && renaming {
+                        return Wait::Ready(Err(FlushRefusal::Busy));
+                    }
+                    Wait::Until((now < deadline).then_some(deadline))
+                }
+            }
+        };
+        let answer = self.driver.shared.wait(Deadline::Never, wait);
         answer.unwrap_or(Err(FlushRefusal::Busy))
     }
 

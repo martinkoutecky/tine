@@ -108,37 +108,26 @@ export interface DraftStatus {
 }
 
 /** An original a cancelled rename kept (`io.rs` `KeptOriginal`), addressed by
- * (`key`, `origin`). `name` is the page its restored file would be; null when
- * the graph's settings no longer make the file a page. */
+ * (`key`, `origin`). `name` and `kind`: the page a file at `path` holding it
+ * would be; null when the graph's settings no longer make the file a page.
+ * `text`: it is UTF-8 text, so Copy original can copy it. */
 export interface KeptOriginal {
   key: string;
   origin: number;
   path: string;
   name: string | null;
-  kind: "page" | "journal";
+  kind: "page" | "journal" | null;
   len: number;
+  text: boolean;
 }
 
-/** Why a kept original was not restored (`io.rs` `RestoreRefusal`); each one
- * changed nothing. */
-export type RestoreRefusal =
-  | { reason: "notKept" }
-  | { reason: "ineligible" }
-  | { reason: "held"; name: string }
-  | { reason: "unsaved" }
-  | { reason: "occupied" }
-  | { reason: "twin"; file: string }
-  | { reason: "failed"; step: "slotRead" | "twinProbe"; operation: string | null; osError: number | null }
-  | { reason: "unavailable" };
-
-/** What became of a restore (`io.rs` `RestoreOutcome`). `unwritten.held`: a
- * window holds the page now, and its editor reports the save. */
-export type RestoreOutcome =
-  | { kind: "restored" }
-  | ({ kind: "refused" } & RestoreRefusal)
-  | { kind: "superseded" }
-  | { kind: "unwritten"; held: boolean }
-  | { kind: "uncertain" };
+/** A kept original's text for Copy original (`io.rs` `KeptText`): its exact
+ * text; not text (never a lossy string); no longer kept; or not answered. */
+export type KeptText =
+  | { kind: "text"; text: string }
+  | { kind: "notText"; len: number }
+  | { kind: "missing" }
+  | { kind: "unavailable" };
 
 /** A page whose text is not on disk yet (`io.rs` `UnsavedPage`). `recovered`:
  * launch recovered it from a crash-recovery copy and Tine is saving it. */

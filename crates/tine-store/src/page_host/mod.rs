@@ -10,7 +10,7 @@ pub use binding::{
     HostReadError, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
     PublishedRevision, Reloaded, Saved, StopMode, StopState, Stopped,
 };
-pub use io::{DraftStatus, KeptOriginal, RestoreOutcome, RestoreRefusal, RestoreStep};
+pub use io::{DraftStatus, KeptOriginal, KeptText};
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]

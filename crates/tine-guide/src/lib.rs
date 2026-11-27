@@ -366,6 +366,7 @@ mod journal_guide_tests {
             "each further press opens the next level",
             "ignoring leaves",
             "each press is one Undo step",
+            "when a press folds or opens the results themselves, it also reaches writable results not drawn yet",
         ] {
             assert!(
                 tips.contains(outcome),
@@ -655,6 +656,11 @@ mod journal_guide_tests {
         // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
         assert!(files.contains("pages kept in other folders or at the graph root"));
         assert!(files.contains("moved into the restore's recovery folder"));
+        // GH #540: a cancelled rename's kept original is reachable, and the
+        // page says Tine does not put the file back by itself yet.
+        assert!(files.contains("**Kept after a cancelled rename** with **Copy original text**"));
+        assert!(files.contains("**Review originals kept after a cancelled rename**"));
+        assert!(files.contains("it does not put the old file back by itself yet"));
         // og-backup-zip (ADR 0074): a snapshot is one zip a user can open
         // without Tine, found per platform; unrestorable ones are labelled.
         for control in [
@@ -1656,6 +1662,19 @@ mod rename_guide_tests {
         assert!(search.contains("sibling `files` folder outside the graph"));
         assert!(search.contains("Parent steps such as `../../` are preserved"));
         assert!(!search.contains("shown struck through and never opened"));
+    }
+
+    #[test]
+    fn outside_file_guide_says_it_asks_first_and_how_long_allow_lasts() {
+        // tine#985: a file outside the graph opens only after a prompt naming it;
+        // the per-graph allowance is not permanent, and Quick Capture never keeps it.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("is opened only after Tine asks, naming the file"));
+        assert!(search.contains("until the graph is closed in this window"));
+        assert!(search.contains("Quick Capture asks every time"));
+        assert!(search.contains("Files inside the graph open without asking"));
+        let pdf = include_str!("templates/pdf.md");
+        assert!(pdf.contains("A PDF outside the graph folder asks first"));
     }
 
     #[test]

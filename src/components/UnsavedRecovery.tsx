@@ -1,4 +1,4 @@
-import { msg, t } from "../i18n";
+import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
 // The unsaved-changes recovery panel (GH #540, master dc3f2104b). Opened when the
 // user declines to discard at close, or from a failed-save toast. It lists every
@@ -6,15 +6,13 @@ import { DialogActions } from "./DialogActions";
 // retry the ordinary save, open the page (its conflict bar resolves it), or copy
 // the draft. Copying is read-only and never acknowledges a save.
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
-import { flushAll, hostScope, hostSession, saveStep, unsavedDrafts, type KeptOriginal, type RestoreOutcome } from "../document";
+import { flushAll, hostScope, hostSession, unsavedDrafts, type KeptOriginal, type KeptText } from "../document";
 import { backend } from "../backend";
 import { bindingCurrent, captureBinding, type Binding } from "../binding";
-import { pushToast } from "../toasts";
-import { bindingOwner, latestOwner, readOwned, writeOwned } from "../owned";
-import { reportUiFailure } from "../uiFailure";
+import { latestOwner, ownedWhen, readOwned } from "../owned";
 import { mainPaneRouter } from "../router";
 import { writeClipboardText } from "../clipboard";
-import { closeUnsavedRecovery, setKeptOriginalCount, unsavedRecoveryOpen } from "../unsavedRecovery";
+import { closeUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
 import { registerTransientLayer } from "../transientLayers";
 import { DEFAULT_EXPORT_OPTIONS, exportOutline, type ExportNode } from "../editor/exportText";
 import type { PageDto } from "../types";
@@ -47,132 +45,88 @@ function RecoveryDraft(props: { page: PageDto }): JSX.Element {
   </div>;
 }
 
-/** The one report of a restore's outcome (GH #540): one toast per Restore, none
- * once the session that asked is gone, and none for a save the page's own editor
- * reports (`unwritten.held`). */
-export function reportRestore(outcome: RestoreOutcome, path: string): void {
-  switch (outcome.kind) {
-    case "restored": pushToast(msg("unsaved-recovery-restored", { path }), "info"); return;
-    case "superseded": pushToast(msg("unsaved-recovery-restore-superseded", { path }), "info"); return;
-    case "unwritten": if (!outcome.held) pushToast(msg("unsaved-recovery-restore-unwritten", { path }), "error"); return;
-    case "uncertain": pushToast(msg("unsaved-recovery-restore-uncertain", { path }), "error"); return;
-  }
-  switch (outcome.reason) {
-    case "notKept": pushToast(msg("unsaved-recovery-restore-not-kept"), "info"); return;
-    case "ineligible": pushToast(msg("unsaved-recovery-restore-ineligible", { path }), "error"); return;
-    case "held": pushToast(msg("unsaved-recovery-restore-held", { name: outcome.name }), "info"); return;
-    case "unsaved": pushToast(msg("unsaved-recovery-restore-unsaved", { path }), "info"); return;
-    case "occupied": pushToast(msg("unsaved-recovery-restore-occupied", { path }), "error"); return;
-    case "twin": pushToast(msg("unsaved-recovery-restore-twin", { path, file: outcome.file }), "error"); return;
-    case "failed": pushToast(msg("unsaved-recovery-restore-failed", { path, step: saveStep(outcome) }), "error"); return;
-    case "unavailable": pushToast(msg("unsaved-recovery-restore-unavailable"), "error"); return;
-  }
-}
-
 /** The list one host session gave, which its rows carry. */
 interface KeptList { session: number; rows: KeptOriginal[] }
 
-/** The originals a cancelled rename kept, each with Restore and Copy original
- * (GH #540). Each mounted panel lists them itself: when it opens, after each
- * Restore, and whenever a (re)bind moves the host scope. A reply applies only to
- * this panel's latest request, in the scope and graph binding it was asked in;
- * every command carries the session that listed its row, which the host checks. */
+/** The originals a cancelled rename kept, each with Copy original text (GH #540).
+ * Only reads: nothing here writes to the graph. The panel lists them when it
+ * opens and whenever a (re)bind moves the host scope (a window reload's new
+ * session), never in its poll. A reply applies only to this panel, in the scope
+ * and graph binding it was asked in; a list reply only if it is the newest. Every
+ * command carries the session that listed its row, which the host checks. */
 function KeptOriginals(props: { binding: Binding }): JSX.Element {
   const [list, setList] = createSignal<KeptList | null>(null);
-  /** Rows this panel restored, or found holding other content: Open, until the
-   * panel closes. */
-  const [restored, setRestored] = createSignal<{ row: KeptOriginal; other: boolean }[]>([]);
-  /** This panel's own request sequence (`latestOwner`): a reply applies only to
-   * its newest list request. */
+  const [notice, setNotice] = createSignal("");
+  /** This panel's own request sequence (`latestOwner`). */
   const requests = {};
   let mounted = true;
   onCleanup(() => { mounted = false; });
-  const relist = async () => {
+  /** The owner of work asked now: this panel, its graph and its host scope. */
+  const owned = () => {
     const scope = hostScope();
+    return () => mounted && bindingCurrent(props.binding) && scope === hostScope();
+  };
+  const unavailable = () => setNotice(t("unsaved-recovery-kept-unavailable"));
+  const relist = async () => {
     const session = hostSession();
-    const owner = latestOwner(requests, "kept-originals",
-      bindingOwner(() => mounted && scope === hostScope() && bindingCurrent(props.binding)));
-    if (session === null || !owner()) return setList(null);
+    const owner = latestOwner(requests, "kept-originals", owned());
+    if (session === null) return unavailable();
+    let rows: KeptOriginal[] | null;
     try {
-      const rows = await readOwned(owner, backend().pageKeptOriginals(session));
-      if (rows.kind === "stale") return;
-      // None: another session listed nothing of this one's.
-      setList(rows.value && { session, rows: rows.value });
-      if (rows.value) setKeptOriginalCount(rows.value.length);
-    } catch (error) {
-      // The last list stays; its rows carry the session they were listed in.
-      if (owner()) reportUiFailure("kept-originals", error);
+      const read = await readOwned(owner, backend().pageKeptOriginals(session));
+      if (read.kind === "stale") return;
+      rows = read.value;
+    } catch {
+      if (!owner()) return;
+      rows = null;
     }
+    // Not answered: the last list stays.
+    if (rows === null) return unavailable();
+    setList({ session, rows });
   };
   createEffect(on(hostScope, () => void relist()));
-  const open = (row: KeptOriginal) => {
-    if (!bindingCurrent(props.binding) || row.name === null) return void relist();
-    closeUnsavedRecovery();
-    mainPaneRouter.openFile(row.path, row.name, row.kind, { inPlace: true });
+  const copy = async (row: KeptOriginal, session: number) => {
+    const owner = ownedWhen(owned(), () => hostSession() === session);
+    if (!owner()) return;
+    let answer: KeptText;
+    try {
+      const read = await readOwned(owner, backend().pageKeptText(session, row.key, row.origin));
+      if (read.kind === "stale") return;
+      answer = read.value;
+    } catch {
+      if (!owner()) return;
+      answer = { kind: "unavailable" };
+    }
+    switch (answer.kind) {
+      case "text":
+        try {
+          // The owner is checked again before each clipboard transport.
+          await writeClipboardText(answer.text, owner);
+          if (owner()) setNotice(t("unsaved-recovery-original-copied"));
+        } catch {
+          if (owner()) setNotice(t("unsaved-recovery-original-copy-failed"));
+        }
+        return;
+      case "notText": return setNotice(t("unsaved-recovery-original-not-text"));
+      case "missing":
+        setNotice(t("unsaved-recovery-original-not-kept"));
+        return void relist();
+      case "unavailable": return unavailable();
+    }
   };
-  return <Show when={list()?.rows.length || restored().length}>
+  return <Show when={list()?.rows.length || notice()}>
     <section class="unsaved-recovery-entry">
       <h3>{t("unsaved-recovery-kept-heading")}</h3>
       <p>{t("unsaved-recovery-kept-detail")}</p>
-      <For each={restored()}>{({ row, other }) => <div class="recovery-kept-row">
-        <span>{other ? t("unsaved-recovery-restore-superseded", { path: row.path }) : t("unsaved-recovery-restored", { path: row.path })}</span>
-        <button class="settings-btn" type="button" onClick={() => open(row)}>{t("unsaved-recovery-open-file")}</button>
+      <For each={list()?.rows ?? []}>{(row) => <div class="recovery-kept-row">
+        <span>{row.path}</span>
+        <Show when={row.text} fallback={<span>{t("unsaved-recovery-original-not-text")}</span>}>
+          <button class="settings-btn" type="button" onClick={() => void copy(row, list()!.session)}>{t("unsaved-recovery-copy-original")}</button>
+        </Show>
       </div>}</For>
-      <For each={list()?.rows ?? []}>{(row) => <KeptRow row={row} session={list()!.session} binding={props.binding}
-        done={(outcome) => {
-          if (outcome.kind === "restored" || outcome.kind === "superseded") {
-            setRestored((rows) => [...rows, { row, other: outcome.kind === "superseded" }]);
-          }
-          void relist();
-        }} />}</For>
+      <p role="status">{notice()}</p>
     </section>
   </Show>;
-}
-
-function KeptRow(props: { row: KeptOriginal; session: number; binding: Binding; done: (outcome: RestoreOutcome) => void }): JSX.Element {
-  const [restoring, setRestoring] = createSignal(false);
-  const [message, setMessage] = createSignal("");
-  const { key, origin, path } = props.row;
-  const live = () => bindingCurrent(props.binding) && hostSession() === props.session;
-  const restore = async () => {
-    if (restoring()) return;
-    setRestoring(true);
-    const owner = bindingOwner(live);
-    let outcome: RestoreOutcome;
-    try {
-      const answer = await writeOwned(owner, backend().pageRestoreKept(props.session, key, origin));
-      setRestoring(false);
-      if (answer.kind === "stale") return;
-      outcome = answer.value;
-    } catch {
-      // The command did not answer: nothing is known to be written.
-      setRestoring(false);
-      if (!owner()) return;
-      outcome = { kind: "refused", reason: "unavailable" };
-    }
-    reportRestore(outcome, path);
-    props.done(outcome);
-  };
-  const copy = async () => {
-    const owner = bindingOwner(live);
-    try {
-      const text = await readOwned(owner, backend().pageKeptText(props.session, key, origin));
-      if (text.kind === "stale") return;
-      if (text.value === null) throw new Error("not kept");
-      await writeClipboardText(text.value);
-      setMessage(t("unsaved-recovery-original-copied"));
-    } catch {
-      if (owner()) setMessage(t("unsaved-recovery-original-copy-failed"));
-    }
-  };
-  return <div class="recovery-kept-row">
-    <span>{path}</span>
-    <button class="settings-btn" type="button" disabled={restoring()} onClick={() => void restore()}>
-      {restoring() ? t("unsaved-recovery-restoring") : t("unsaved-recovery-restore")}
-    </button>
-    <button class="settings-btn" type="button" onClick={() => void copy()}>{t("unsaved-recovery-copy-original")}</button>
-    <p role="status">{message()}</p>
-  </div>;
 }
 
 export function UnsavedRecovery(): JSX.Element {

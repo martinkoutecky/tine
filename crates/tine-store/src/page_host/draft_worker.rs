@@ -200,22 +200,11 @@ impl<F: HostIo> Host<F> {
         let decisions = self.order.paired(op).map(|p| p.decisions.clone());
         tasks.extend((decisions.into_iter().flatten()).map(|(name, _)| Vehicle::remove(name)));
         let task = tasks.pop_front().unwrap();
-        // Each page's logical draft until the retirement applies: its
-        // winning record, which for a superseded page is the newer
-        // vehicle's, not this operation's history (GH #540: a restored
-        // original settles its pair while the referrer's newer draft
-        // stands).
-        let before = (records.into_iter())
-            .map(|r| {
-                let winner = self.durable.get(&r.page).cloned().unwrap_or(r);
-                (winner.page.clone(), winner)
-            })
-            .collect();
         self.worker = Some(DraftWorker {
             effect: op.into(),
             refresh: None,
             pages,
-            before,
+            before: records.into_iter().map(|r| (r.page.clone(), r)).collect(),
             task,
             application: Some(Application::Retire),
             remaining: tasks,
