@@ -5,6 +5,7 @@ import { bumpGraphEpoch } from "../graphSession";
 import { resetPageIndex } from "../pageIndex";
 import { resetTabsToJournals, route } from "../router";
 import type { PageInventoryEntry } from "../types";
+import { withOrdinaryParent } from "../namespaceInventory.test.support";
 import { resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
 import { Sidebar } from "./Sidebar";
 
@@ -12,7 +13,8 @@ import { Sidebar } from "./Sidebar";
 // gains one entry that opens the full Namespaces view in the main pane; the phone
 // drawer closes after it, like every other successful destination.
 
-const existing = (name: string): PageInventoryEntry => ({
+// Each row carries the tree parent the store answers.
+const existing = (name: string): PageInventoryEntry => withOrdinaryParent({
   key: name.toLowerCase(), name, is_journal: false, day: null,
   target: { kind: "existing", id: `pages/${name.replaceAll("/", "___")}.md`, others: [] },
 });

@@ -127,6 +127,10 @@
       "is_journal": false,
       "key": "proj/sub",
       "name": "proj/sub",
+      "parent": {
+        "kind": "page",
+        "name": "proj"
+      },
       "target": {
         "id": "pages/proj%2Fsub.md",
         "kind": "absent"

@@ -86,6 +86,10 @@
       },
       "name": "kb/sub",
       "namespace_excluded": true,
+      "parent": {
+        "kind": "page",
+        "name": "kb"
+      },
       "target": {
         "kind": "alias",
         "owners": [

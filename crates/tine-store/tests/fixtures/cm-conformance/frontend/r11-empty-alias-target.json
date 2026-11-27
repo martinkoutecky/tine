@@ -137,6 +137,10 @@
       "is_journal": false,
       "key": "ml notes/x",
       "name": "ML notes/x",
+      "parent": {
+        "kind": "page",
+        "name": "ML notes"
+      },
       "target": {
         "id": "pages/ML notes%2Fx.md",
         "kind": "existing",
