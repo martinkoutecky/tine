@@ -69,8 +69,8 @@ export function queryResultFolds(hostId: string): QueryResultFold[] {
 
 /** One query result list (a `QueryGroups` instance), registered under its query block (GH #1004).
  *  `resultFold` is the last one-level press that committed this host's result level. A writable
- *  result root with children takes it as its first snapshot when its own row first draws, so the
- *  groups not drawn at the press fold or open with the drawn ones. O(1) per list; dies with it. */
+ *  result root with children takes it as its one fold snapshot at its first read once it has a
+ *  live row, so the groups not drawn at the press fold or open with the drawn ones. O(1) per list; dies with it. */
 export interface QueryResultList { resultFold: boolean | undefined }
 const resultLists = new Map<string, Set<QueryResultList>>();
 clearOnBindingInvalidated(() => {

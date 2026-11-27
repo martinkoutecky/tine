@@ -1,8 +1,9 @@
 // GH #1004: "Collapse (one level)" / "Expand (one level)" on a selected query block reach the result groups that
 // were not drawn yet. Results on many pages draw one group per page as it comes near the screen; the command only
 // saw the drawn groups, so the late ones drew later with their default folds. Now the list keeps the press that
-// committed its result level, and a writable result root with children takes it as its first snapshot when its
-// own row first draws. The groups here are held off "screen" (observeNear) after the first few.
+// committed its result level, and a writable result root with children takes it as its one fold snapshot (shared
+// by every occurrence of the id) once it has a live row.
+// The groups here are held off "screen" (observeNear) after the first few.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block, SurfaceContext } from "./Block";
@@ -22,6 +23,8 @@ import { setGraphConfigProblem } from "../graphConfig";
 import { advanceResultsEpoch } from "../queryResultsEpoch";
 import { bumpDataRev } from "../dataRevision";
 import { readOnlyFold } from "./block/readOnlyFold";
+import { editorIn } from "../tests/editorDriver";
+import { editingId } from "../editorController";
 import type { BlockDto, RefGroup } from "../types";
 
 const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
@@ -252,13 +255,15 @@ describe("one-level fold commands reach query result groups not drawn yet (GH #1
   const rowOf = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`.query-group [data-block-id="${id}"]`)!;
   const inRow = (row: HTMLElement, id: string) => row.querySelector(`[data-block-id="${id}"]`) !== null;
 
-  it("the descendant border keeps develop's choice for a hit that is also a descendant of another hit (check finding 1)", async () => {
+  /** Check finding 1's tree: A has foldable descendants B (also a hit) and C. `drawn` draws the group before the
+   *  press, which is develop's answer for the late group. */
+  const borderTree = async (drawn: boolean) => {
     setGraphMeta({ root: "/graphs/A", ref_default_open_blocks_level: 10 } as never);
     loadTree({
       L: ["P0", null, ["l1"]], l1: ["P0", "L", []],
       A: ["PX", null, ["B", "C"]], B: ["PX", "A", ["b1"]], b1: ["PX", "B", []], C: ["PX", "A", ["c1"]], c1: ["PX", "C", []],
     }, [["P0", ["L"]], ["PX", ["A", "B"]]]);
-    gate.near = (index) => index < 1;
+    gate.near = (index) => drawn || index < 1;
     const { root, dispose } = mount();
     try {
       await settle();
@@ -266,18 +271,103 @@ describe("one-level fold commands reach query result groups not drawn yet (GH #1
       run("editor/collapse-children");
       await settle();
       await scroll();
-      const a = rowOf(root, "A");
-      expect(inRow(a, "B")).toBe(false); // A drew folded, with the press
-      a.querySelector<HTMLElement>(".collapse-toggle")!.click(); // reopen A by its arrow
+      const before = inRow(rowOf(root, "A"), "B");
+      rowOf(root, "A").querySelector<HTMLElement>(".collapse-toggle")!.click(); // reopen A by its arrow
       await settle();
-      expect(inRow(rowOf(root, "A"), "c1")).toBe(true);
       const border = rowOf(root, "A").querySelector<HTMLButtonElement>(".block-children-left-border")!;
-      expect(border.getAttribute("aria-expanded")).toBe("true"); // develop: every descendant open, so "Collapse all"
+      const choice = border.getAttribute("aria-expanded");
       border.click();
       await settle();
-      expect(inRow(rowOf(root, "A"), "C")).toBe(true);
-      expect(inRow(rowOf(root, "A"), "c1")).toBe(false);
-      expect(inRow(rowOf(root, "A"), "b1")).toBe(false);
+      const a = rowOf(root, "A");
+      return { before, choice, after: ["B", "b1", "C", "c1"].map((id) => inRow(a, id)), c: doc.byId.C.collapsed, b: doc.byId.B.collapsed };
+    } finally { dispose(); }
+  };
+  it("the descendant border over a hit that is also another hit's descendant chooses as when the group was drawn at the press (check finding 1)", async () => {
+    const late = await borderTree(false);
+    resetStore(); resetSharedQueryResultsForTests(); resetNearObserverForTests(); document.body.innerHTML = "";
+    gate.index = 0; gate.held = [];
+    const drawn = await borderTree(true);
+    expect(late.before).toBe(false); // A drew folded, with the press
+    expect(late).toEqual(drawn);
+  });
+
+  /** The review's tree: a late group with hits A and its child B; B has a child b1. */
+  const nestedHit = async (level: number, drawn = false) => {
+    setGraphMeta({ root: "/graphs/A", ref_default_open_blocks_level: level } as never);
+    loadTree({
+      L: ["P0", null, ["l1"]], l1: ["P0", "L", []],
+      A: ["PX", null, ["B", "C"]], B: ["PX", "A", ["b1"]], b1: ["PX", "B", []], C: ["PX", "A", []],
+    }, [["P0", ["L"]], ["PX", ["A", "B"]]]);
+    gate.near = (index) => drawn || index < 1;
+    return mount();
+  };
+  /** Put the caret in the occurrence of B nested under A, so the one-level commands act on it. */
+  const editNested = async (root: HTMLElement) => {
+    const nested = rowOf(root, "A").querySelector<HTMLElement>('.ls-block[data-block-id="B"]')!;
+    nested.querySelector<HTMLElement>(".block-content-wrapper")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 0, clientY: 0 }));
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 0, clientY: 0 }));
+    await settle();
+    return editorIn(rowOf(root, "A"), "B");
+  };
+  /** Whether each drawn occurrence of B shows b1, in document order. */
+  const bOccurrences = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>('.query-group .ls-block[data-block-id="B"]')]
+    .map((row) => row.querySelector('[data-block-id="b1"]') !== null);
+
+  it("every occurrence of a late hit shares one fold: Collapse, then reopen its parent hit", async () => {
+    const { root, dispose } = await nestedHit(10);
+    try {
+      await settle();
+      selectBlock("query");
+      run("editor/collapse-children");
+      await settle();
+      await scroll();
+      rowOf(root, "A").querySelector<HTMLElement>(".collapse-toggle")!.click();
+      await settle();
+      expect(bOccurrences(root)).toEqual([false, false]); // nested under A, and the standalone hit
+      // Expand (one level) on the nested B opens both; Collapse folds both.
+      await editNested(root);
+      run("editor/expand-children");
+      await settle();
+      expect(bOccurrences(root)).toEqual([true, true]);
+      run("editor/collapse-children");
+      await settle();
+      expect(bOccurrences(root)).toEqual([false, false]);
+    } finally { dispose(); }
+  });
+
+  it("every occurrence of a late hit shares one fold: Expand with hits folded by default (level 1)", async () => {
+    const { root, dispose } = await nestedHit(1);
+    try {
+      await settle();
+      selectBlock("query");
+      run("editor/expand-children");
+      await settle();
+      await scroll();
+      expect(bOccurrences(root)).toEqual([true, true]);
+      await editNested(root);
+      run("editor/collapse-children");
+      await settle();
+      expect(bOccurrences(root)).toEqual([false, false]);
+    } finally { dispose(); }
+  });
+
+  it.each([["Collapse", "editor/collapse-children", 10], ["Expand", "editor/expand-children", 1]] as const)("after %s, Down from the nested late hit goes to the row drawn next", async (_label, command, level) => {
+    const { root, dispose } = await nestedHit(level);
+    try {
+      await settle();
+      selectBlock("query");
+      run(command);
+      await settle();
+      await scroll();
+      if (!inRow(rowOf(root, "A"), "B")) { rowOf(root, "A").querySelector<HTMLElement>(".collapse-toggle")!.click(); await settle(); }
+      const nested = rowOf(root, "A").querySelector<HTMLElement>('.ls-block[data-block-id="B"]')!;
+      const rows = [...root.querySelectorAll<HTMLElement>(".query-group .ls-block[data-block-id]")];
+      const expected = rows[rows.indexOf(nested) + 1].dataset.blockId;
+      const editor = await editNested(root);
+      editor.select(editor.value().length, editor.value().length);
+      editor.keydown({ key: "ArrowDown", bubbles: true, cancelable: true });
+      await settle();
+      expect(editingId()).toBe(expected);
     } finally { dispose(); }
   });
 

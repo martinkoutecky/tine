@@ -182,6 +182,24 @@ describe("GH #1004 press and first-draw costs", () => {
     } finally { dispose(); }
   });
 
+  it("a scroll with no press keeps one fold snapshot per drawn id, as develop", async () => {
+    load();
+    gate.near = (index) => index < LIVE;
+    const dispose = mount("main");
+    try {
+      await settle();
+      const before = __livRefGroupInternals.foldSnapshots;
+      for (const show of gate.held.splice(0, 100)) show(); // groups 8..107
+      await settle();
+      const drawn = new Set<string>();
+      for (let i = LIVE; i < LIVE + 100; i++) {
+        for (const id of [`h${i}`, `c${i}`]) if (document.querySelector(`.query-group [data-block-id="${id}"]`)) drawn.add(id);
+      }
+      expect(drawn.size).toBe(200);
+      expect(__livRefGroupInternals.foldSnapshots - before).toBe(drawn.size);
+    } finally { dispose(); }
+  });
+
   // Design row 7 (press and first-draw medians within 1.05x of develop's) is a cross-revision measurement:
   // TINE_1004_TIMING=1 prints the medians to compare against the same run on develop.
   it.skipIf(!process.env.TINE_1004_TIMING)("prints press and first-draw medians", async () => {

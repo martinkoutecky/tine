@@ -5,7 +5,7 @@ import { bindLiveOutlineSelection, bindOutlineSelection, createOutlineOwner, Out
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
-import { admitRead, beginPageHeaderEdit, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, liveDtoBlock, pageByName, pinPageNearViewport, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
+import { admitRead, beginPageHeaderEdit, blockPageReadOnly, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, liveDtoBlock, pageByName, pinPageNearViewport, setCollapsed, setCollapsedBlocks, sourceFormatForPage, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
@@ -49,9 +49,10 @@ import { retainResultDraft } from "../queryResultDrafts";
 // walk below actually runs. A regression test uses it to prove the walk fires on
 // result-membership change but NOT on unrelated descendant edits. Cost is one
 // integer increment per real prune.
-// GH #1004: `resultFoldSnapshots` counts the result-root snapshots taken while
-// the list held a press (each reads one child count).
-export const __livRefGroupInternals = { pruneRuns: 0, resultFoldSnapshots: 0 };
+// GH #1004: `foldSnapshots` counts entries written to the per-id fold snapshot;
+// `resultFoldSnapshots` the result-root snapshots taken while the list held a
+// press (each reads one child count).
+export const __livRefGroupInternals = { pruneRuns: 0, foldSnapshots: 0, resultFoldSnapshots: 0 };
 
 // GH #746: a refresh answers with new objects even for unchanged blocks, and
 // rows keyed by object would remount and render their text again after every
@@ -130,8 +131,6 @@ interface LocalCollapseRow { v: boolean; bulk?: boolean }
 interface RefOccurrence {
   surface: string;
   initialCollapsed: Map<string, boolean>;
-  /** GH #1004: a result root's snapshot as its own row first drew it. */
-  rootRowCollapsed: Map<string, boolean>;
   localCollapsed: Signal<Record<string, LocalCollapseRow>>;
   contextRoots: Signal<Record<string, string>>;
   excerptFull: Signal<Record<string, boolean>>;
@@ -156,7 +155,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const occurrence: RefOccurrence = {
     surface: props.surfaceKey ?? (props.surface === "embed" && props.hostBlockId
       ? `embed:${ownerSurface}\u0000${props.hostBlockId}` : `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId()),
-    initialCollapsed: new Map(), rootRowCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
+    initialCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
     excerptFull: createSignal({}), pendingEdits: createSignal(0), geometry: new Map(),
   };
   ownSelectionSurface(occurrence.surface, undefined, ownerSurface);
@@ -616,31 +615,26 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     }
     return false;
   };
-  // Embeds are live and source-authoritative (GH #360): never snapshot.
-  const defaultCollapsed = (id: string, stored: boolean): boolean =>
-    isEmbed() || inPulledContext(id) ? stored : snapshot(id, stored);
-  const rootRowCollapsed = props.occurrence.rootRowCollapsed;
-  /** GH #1004: a result root read as itself. Its own row's first live draw
-   *  (`take`) takes the snapshot: the list's last one-level press when that
-   *  press is set and the root has children, else the default. A read-only
-   *  root's row reads the session view instead (`hostFolded`), never this.
-   *  Every earlier reader (layout, stand-in, a command) gets the default and
-   *  leaves no snapshot; a read of the id as another row's descendant never
-   *  comes here. The press is a plain field, so no reader subscribes to it. */
-  const rootCollapsed = (id: string, stored: boolean, take: boolean): boolean => {
-    if (inPulledContext(id)) return stored;
-    const taken = resultRootIds().has(id) ? rootRowCollapsed.get(id) : undefined;
-    if (taken !== undefined) return taken;
-    if (!take) return snapshot(id, stored);
-    const press = props.resultList?.resultFold;
-    if (press !== undefined) __livRefGroupInternals.resultFoldSnapshots += 1;
-    const value = press !== undefined && (liveNode(id)?.children.length ?? 0) > 0 ? press : snapshot(id, stored);
-    rootRowCollapsed.set(id, value);
-    return value;
-  };
-  const snapshot = (id: string, stored: boolean): boolean => {
+  /** GH #1004: while the list holds a one-level press, a result root takes
+   *  its snapshot at the first read once it has a live row: the press when
+   *  the root is writable and has children, else the default. Before that a
+   *  reader (a stand-in's layout) gets the default and leaves no snapshot.
+   *  Every occurrence of the id, as a hit or as another hit's descendant,
+   *  and every reader (row, border, layout, traversal, commands) reads this
+   *  one snapshot. The press is a plain field, so no reader subscribes to it. */
+  const defaultCollapsed = (id: string, stored: boolean): boolean => {
+    // Embeds are live and source-authoritative (GH #360): never snapshot.
+    if (isEmbed() || inPulledContext(id)) return stored;
     const previous = initialCollapsed.get(id);
     if (previous !== undefined) return previous;
+    const press = resultRootIds().has(id) ? props.resultList?.resultFold : undefined;
+    if (press === undefined) return snapshot(id, initialFold(id, stored));
+    if (!ready() || !liveNode(id)) return initialFold(id, stored);
+    __livRefGroupInternals.resultFoldSnapshots += 1;
+    const pressed = !blockPageReadOnly(id) && (liveNode(id)?.children.length ?? 0) > 0;
+    return snapshot(id, pressed ? press : initialFold(id, stored));
+  };
+  const initialFold = (id: string, stored: boolean): boolean => {
     const depth = relativeDepth(id);
     const hasChildren = (liveNode(id)?.children.length ?? 0) > 0;
     // Released OG initializes reference/query disclosure from the source state
@@ -648,16 +642,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     // local to the result view (GH #793). Tine's displayed hit is relative depth
     // 0 (OG level 1), so with level 2 the branches immediately below it default
     // folded; a larger level opens deeper, a level of 1 or less folds the hit.
-    const initial = stored || (props.surface !== "embed" && depth !== null && foldsByDefaultInResults(depth, hasChildren));
-    initialCollapsed.set(id, initial);
-    return initial;
+    return stored || (props.surface !== "embed" && depth !== null && foldsByDefaultInResults(depth, hasChildren));
   };
-  const chosen = (id: string, stored: boolean, fallback: (id: string, stored: boolean) => boolean): boolean => {
-    const local = localCollapsed();
-    // Bulk actions saved the source. Follow it live, including Undo, while
-    // ordinary per-result disclosure keeps its released local semantics.
-    if (local[id]?.bulk) return stored;
-    return Object.prototype.hasOwnProperty.call(local, id) ? local[id].v : fallback(id, stored);
+  const snapshot = (id: string, value: boolean): boolean => {
+    __livRefGroupInternals.foldSnapshots += 1;
+    initialCollapsed.set(id, value);
+    return value;
   };
   const collapseSurface: CollapseSurfaceApi = {
     collapsed: (id, stored) => {
@@ -665,7 +655,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
         const host = embedRoot(id);
         return host ? embedRootFold(host, stored) : stored;
       }
-      return chosen(id, stored, (row, value) => rootCollapsed(row, value, false));
+      const local = localCollapsed();
+      // Bulk actions saved the source. Follow it live, including Undo, while
+      // ordinary per-result disclosure keeps its released local semantics.
+      if (local[id]?.bulk) return stored;
+      return Object.prototype.hasOwnProperty.call(local, id) ? local[id].v : defaultCollapsed(id, stored);
     },
     toggle: (id, current) => {
       const host = embedRoot(id);
@@ -678,14 +672,6 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       for (const id of ids) next[id] = { v: collapsed };
       return next;
     }),
-  };
-  // GH #1004: a result root's row reads its own fold as itself (the first live
-  // draw takes the snapshot); its descendants and their controls (the border)
-  // read the develop answer, even for an id that is also a result root.
-  const rootRowSurface = (root: string): CollapseSurfaceApi | null => props.surface !== "query" ? (props.surface === "preview" ? null : collapseSurface) : {
-    collapsed: (id, stored) => chosen(id, stored, id === root ? (row, value) => rootCollapsed(row, value, true) : defaultCollapsed),
-    toggle: collapseSurface.toggle,
-    setMany: collapseSurface.setMany,
   };
   const liveRow = (id: string) => ready() && (!props.excerpt || contextRootIds().has(id)) && liveNode(id);
   const liveRoots = () => ready() ? groupedIds().filter(liveRow) : [];
@@ -753,9 +739,6 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       for (const root of roots) visit(root);
       for (const id of initialCollapsed.keys()) {
         if (!present.has(id)) initialCollapsed.delete(id);
-      }
-      for (const id of rootRowCollapsed.keys()) {
-        if (!present.has(id)) rootRowCollapsed.delete(id);
       }
       setLocalCollapsed((state) => {
         let changed = false;
@@ -889,9 +872,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                       </div>
                     )}
                   </Show>
-                  <CollapseSurfaceContext.Provider value={rootRowSurface(id)}>
-                    <Block id={id} authorNeighbors={authorNeighbors} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
-                  </CollapseSurfaceContext.Provider>
+                  <Block id={id} authorNeighbors={authorNeighbors} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
                 </Show>
               </>
             );
