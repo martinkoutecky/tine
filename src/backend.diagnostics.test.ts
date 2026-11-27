@@ -71,7 +71,7 @@ it("records a slow command when it crosses the threshold and again when it compl
 // slow command that completes; a fast one reports nothing; never `failed`, and
 // the path is in no diagnostic argument.
 it("reports a slow outside-file Ask as slow then completed, and a fast one not at all", async () => {
-  const ask = `file-consent:${JSON.stringify({ display: "/home/someone/secret.txt", lossy: false })}`;
+  const ask = `file-consent:${JSON.stringify({ display: "/home/someone/secret.txt", lossy: false, show: null })}`;
   let answer!: (error: unknown) => void;
   invoke.mockImplementation((cmd: string) => cmd === "open_external"
     ? new Promise((_, reject) => { answer = reject; })

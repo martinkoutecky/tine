@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { bindingOwner, graphOwner, ownedWhen, readOwned } from "../owned";
-import { captureShowGeneration, captureShowSignal } from "../captureShow";
+import { captureShowSignal } from "../captureShow";
 import { withFileConsent } from "../fileConsent";
 import {
   DEFERRED_HREF, anchorDecision, anchorKeepsHref, linkScheme, refusedLinkScheme,
@@ -58,8 +58,8 @@ async function openFileLink(dest: string): Promise<void> {
   const signal = captureShowSignal();
   const owner = bindingOwner(...(signal ? [() => !signal.aborted] : []));
   try {
-    const api = backend(), bindingGeneration = api.graphBindingGeneration(), show = captureShowGeneration();
-    await withFileConsent(owner, purpose => api.openExternal(dest, undefined, { purpose, bindingGeneration, show }),
+    const api = backend(), bindingGeneration = api.graphBindingGeneration();
+    await withFileConsent(owner, (purpose, show) => api.openExternal(dest, undefined, { purpose, bindingGeneration, show }),
       { signal, remember: !signal });
   } catch (error) {
     let current = true;

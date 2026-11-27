@@ -73,8 +73,9 @@ pub(crate) enum Binding<'a> {
         granted: &'a AtomicBool,
     },
     /// Quick Capture: no graph folder of its own, so nothing is proven inside
-    /// and nothing is remembered. Its current show was checked by the caller.
-    Capture,
+    /// and nothing is remembered. `show` is native's current show, checked by
+    /// the caller; an Ask carries it, so Open is admitted only in that show.
+    Capture { show: u64 },
 }
 
 /// What the route does next.
@@ -82,8 +83,13 @@ pub(crate) enum Binding<'a> {
 pub(crate) enum Admit {
     /// Run the route's operation on exactly this path.
     Go(PathBuf),
-    /// Show the prompt; nothing was opened or read.
-    Ask { display: String, lossy: bool },
+    /// Show the prompt; nothing was opened or read. `show` is the Quick
+    /// Capture show the gesture belongs to (none in a graph window).
+    Ask {
+        display: String,
+        lossy: bool,
+        show: Option<u64>,
+    },
 }
 
 impl Admit {
@@ -91,9 +97,13 @@ impl Admit {
     pub(crate) fn into_path(self) -> Result<PathBuf, String> {
         match self {
             Self::Go(path) => Ok(path),
-            Self::Ask { display, lossy } => Err(format!(
+            Self::Ask {
+                display,
+                lossy,
+                show,
+            } => Err(format!(
                 "{FILE_CONSENT}{}",
-                serde_json::json!({ "display": display, "lossy": lossy })
+                serde_json::json!({ "display": display, "lossy": lossy, "show": show })
             )),
         }
     }
@@ -108,7 +118,7 @@ pub(crate) fn admit(
     probe: &mut impl Probe,
 ) -> Result<Admit, String> {
     let (admitted, display) = match binding {
-        Binding::Capture => (path.to_path_buf(), path.as_os_str().to_owned()),
+        Binding::Capture { .. } => (path.to_path_buf(), path.as_os_str().to_owned()),
         Binding::Graph { root_key, .. } => match containment(SEMANTICS, root_key, path, probe) {
             Containment::Inside(admitted) | Containment::Missing(admitted) => {
                 return Ok(Admit::Go(admitted))
@@ -116,9 +126,9 @@ pub(crate) fn admit(
             Containment::Unproven { admitted, display } => (admitted, display),
         },
     };
-    let granted = match binding {
-        Binding::Graph { granted, .. } => Some(*granted),
-        Binding::Capture => None,
+    let (granted, show) = match binding {
+        Binding::Graph { granted, .. } => (Some(*granted), None),
+        Binding::Capture { show } => (None, Some(*show)),
     };
     match purpose {
         Purpose::Settings => Err(OUTSIDE_FILE.into()),
@@ -127,7 +137,11 @@ pub(crate) fn admit(
         }
         Purpose::Link => {
             let (display, lossy) = readable(&display);
-            Ok(Admit::Ask { display, lossy })
+            Ok(Admit::Ask {
+                display,
+                lossy,
+                show,
+            })
         }
         Purpose::LinkAgreed => Ok(Admit::Go(admitted)),
         Purpose::LinkAgreedRemember => {
@@ -141,22 +155,34 @@ pub(crate) fn admit(
     }
 }
 
-/// A display of `name` for the prompt: lossy UTF-8 with control characters
-/// replaced, and whether anything was replaced. O(length).
+/// The Unicode bidirectional controls (embeddings, overrides, isolates and
+/// marks). Shown as they are, any of them can reorder the name on screen, so
+/// the user could approve `txt.exe` displayed as `exe.txt`.
+const BIDI_CONTROLS: [char; 12] = [
+    '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}',
+    '\u{2069}', '\u{200E}', '\u{200F}', '\u{061C}',
+];
+
+/// What the prompt shows for `name`, and whether that differs from the name:
+/// lossy UTF-8, control characters replaced by U+FFFD, and each bidi control
+/// written as a visible `<U+202E>` escape, so the order on screen is the order
+/// of the path. The dialog renders only this. O(length).
 fn readable(name: &OsStr) -> (String, bool) {
+    use std::fmt::Write;
     let text = name.to_string_lossy();
     let mut lossy = name.to_str().is_none();
-    let display = text
-        .chars()
-        .map(|c| {
-            if c.is_control() {
-                lossy = true;
-                char::REPLACEMENT_CHARACTER
-            } else {
-                c
-            }
-        })
-        .collect();
+    let mut display = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            lossy = true;
+            display.push(char::REPLACEMENT_CHARACTER);
+        } else if BIDI_CONTROLS.contains(&c) {
+            lossy = true;
+            let _ = write!(display, "<U+{:04X}>", u32::from(c));
+        } else {
+            display.push(c);
+        }
+    }
     (display, lossy)
 }
 
@@ -345,7 +371,9 @@ fn windows_parse(path: &str) -> Option<Loc> {
         return None;
     };
     let mut parts: Vec<OsString> = Vec::new();
-    for name in tail.split('\\') {
+    // An empty tail is the volume or share root itself (`\\?\C:\`,
+    // `\\?\UNC\srv\share`, `\\srv\share\`): a graph may live there.
+    for name in tail.split('\\').filter(|_| !tail.is_empty()) {
         match name {
             "" | "." if !verbatim => {}
             ".." if !verbatim => {
@@ -446,7 +474,8 @@ fn classify(sem: Semantics, payload: &Path, volume: &OsStr) -> Payload {
 ///    bound is the platform's own.
 ///
 /// Cost: one `lstat` per component below the root plus one `read_link` per
-/// hop, at most the platform's hop bound.
+/// hop, at most the platform's hop bound; each probe's path is built by
+/// appending one name to the previous one.
 pub(crate) fn containment(
     sem: Semantics,
     root_key: &Path,
@@ -482,7 +511,7 @@ pub(crate) fn containment(
         if current.root != key.root || !current.parts.starts_with(&key.parts) {
             return unproven(current.path(sem).into_os_string());
         }
-        let mut stack = key.parts.clone();
+        let mut prefix = Prefix::new(sem, &key);
         let mut rest: std::collections::VecDeque<OsString> =
             current.parts[key.parts.len()..].iter().cloned().collect();
         while let Some(name) = rest.pop_front() {
@@ -490,11 +519,12 @@ pub(crate) fn containment(
                 continue;
             }
             if name == ".." {
-                if stack.len() == key.parts.len() {
+                if prefix.names.len() == key.parts.len() {
                     if key.parts.is_empty() {
                         continue; // `/..` is `/`
                     }
-                    let mut parts = stack[..stack.len() - 1].to_vec();
+                    prefix.pop();
+                    let mut parts = prefix.names;
                     parts.extend(rest);
                     let loc = Loc {
                         root: key.root.clone(),
@@ -502,16 +532,12 @@ pub(crate) fn containment(
                     };
                     return unproven(loc.path(sem).into_os_string());
                 }
-                stack.pop();
+                prefix.pop();
                 continue;
             }
-            stack.push(name);
-            let here = Loc {
-                root: key.root.clone(),
-                parts: stack.clone(),
-            }
-            .path(sem);
-            match probe.kind(&here) {
+            prefix.push(name);
+            let here = prefix.path();
+            match probe.kind(here) {
                 Ok(Kind::Dir) => {}
                 Ok(Kind::File) => {
                     if rest.iter().any(|name| name != ".") {
@@ -523,10 +549,10 @@ pub(crate) fn containment(
                     if hops > sem.max_hops() {
                         return unproven(path.as_os_str().to_owned());
                     }
-                    let Ok(payload) = probe.read_link(&here) else {
+                    let Ok(payload) = probe.read_link(here) else {
                         return unproven(path.as_os_str().to_owned());
                     };
-                    stack.pop();
+                    prefix.pop();
                     match classify(sem, &payload, &key.root) {
                         Payload::Absolute(mut target) => {
                             target.parts.extend(rest);
@@ -561,41 +587,130 @@ pub(crate) fn containment(
     }
 }
 
-/// The binding a `file:` call is admitted under. A graph window's call must
-/// carry its current lease. Quick Capture has no slot (`state.rs`); its call
-/// must carry the show it came from, and that show must still be current and
-/// visible, so a prompt from show A can never open anything in show B, even
-/// when the WebView missed `capture-shown`.
-pub(crate) fn caller_slot(
-    ctx: &crate::state::GraphContext<'_>,
-    show: Option<u64>,
-) -> Result<Option<std::sync::Arc<crate::state::GraphSlot>>, String> {
-    if ctx.window.label() == "capture" {
-        let visible = ctx.window.is_visible().unwrap_or(false);
-        capture_show_admits(&ctx.state, show, visible)?;
-        return Ok(None);
-    }
-    crate::state::slot_for_context(ctx).map(Some)
+/// The walk's current prefix: one buffer that grows and shrinks by one name,
+/// so building a probe's path costs the bytes of that name, never a rebuild of
+/// the whole prefix.
+struct Prefix {
+    sep: &'static str,
+    /// The encoded bytes of the root and `names`, `sep`-joined.
+    bytes: Vec<u8>,
+    /// Where each name's bytes end; the root ends at `root_len`.
+    ends: Vec<usize>,
+    root_len: usize,
+    names: Vec<OsString>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Bytes appended to any walk's prefix on this thread.
+    pub(crate) static PREFIX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl Prefix {
+    fn new(sem: Semantics, key: &Loc) -> Self {
+        let bytes = key.root.as_encoded_bytes().to_vec();
+        let mut prefix = Self {
+            sep: sem.separator(),
+            root_len: bytes.len(),
+            bytes,
+            ends: Vec::new(),
+            names: Vec::new(),
+        };
+        for name in &key.parts {
+            prefix.push(name.clone());
+        }
+        prefix
+    }
+
+    fn push(&mut self, name: OsString) {
+        #[cfg(test)]
+        let before = self.bytes.len();
+        if !self.names.is_empty() {
+            self.bytes.extend_from_slice(self.sep.as_bytes());
+        }
+        self.bytes.extend_from_slice(name.as_encoded_bytes());
+        #[cfg(test)]
+        PREFIX_BYTES.with(|count| count.set(count.get() + self.bytes.len() - before));
+        self.ends.push(self.bytes.len());
+        self.names.push(name);
+    }
+
+    fn pop(&mut self) {
+        self.ends.pop();
+        self.names.pop();
+        self.bytes
+            .truncate(self.ends.last().copied().unwrap_or(self.root_len));
+    }
+
+    fn path(&self) -> &Path {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            Path::new(OsStr::from_bytes(&self.bytes))
+        }
+        // Windows names come from `&str` (`windows_parse`, `classify`), so
+        // the buffer is UTF-8; were it not, the empty path fails its probe and
+        // the walk asks.
+        #[cfg(not(unix))]
+        {
+            Path::new(std::str::from_utf8(&self.bytes).unwrap_or_default())
+        }
+    }
+}
+
+/// Who makes a `file:` call: a graph window's binding, or a Quick Capture show.
+pub(crate) enum Caller {
+    Graph(std::sync::Arc<crate::state::GraphSlot>),
+    Capture { show: u64 },
+}
+
+impl Caller {
+    /// A graph window's call must carry its current lease. Quick Capture has
+    /// no slot (`state.rs`); the show it is admitted in is native's current
+    /// one (`capture_show_admits`).
+    pub(crate) fn of(
+        ctx: &crate::state::GraphContext<'_>,
+        purpose: Purpose,
+        show: Option<u64>,
+    ) -> Result<Self, String> {
+        if ctx.window.label() == "capture" {
+            let visible = ctx.window.is_visible().unwrap_or(false);
+            return capture_show_admits(&ctx.state, purpose, show, visible)
+                .map(|show| Self::Capture { show });
+        }
+        crate::state::slot_for_context(ctx).map(Self::Graph)
+    }
+
+    pub(crate) fn binding(&self) -> Binding<'_> {
+        match self {
+            Self::Graph(slot) => Binding::Graph {
+                root_key: &slot.root_key,
+                granted: &slot.outside_files_granted,
+            },
+            Self::Capture { show } => Binding::Capture { show: *show },
+        }
+    }
+}
+
+/// The Quick Capture show a call belongs to; native's current show is its one
+/// answerer. A first call is admitted in the current visible show, which its
+/// Ask then names; Open is admitted only with that show, so a prompt from show
+/// A can never open anything in show B, even when the WebView missed
+/// `capture-shown`. A hidden window admits nothing. O(1).
 pub(crate) fn capture_show_admits(
     state: &crate::state::AppState,
+    purpose: Purpose,
     show: Option<u64>,
     visible: bool,
-) -> Result<(), String> {
-    match show {
-        Some(show) if visible && state.capture_show_is_current(show) => Ok(()),
+) -> Result<u64, String> {
+    match (state.bound_capture_show().filter(|_| visible), purpose) {
+        (Some(current), Purpose::Link | Purpose::Settings) => Ok(current),
+        (Some(current), Purpose::LinkAgreed | Purpose::LinkAgreedRemember)
+            if show == Some(current) =>
+        {
+            Ok(current)
+        }
         _ => Err(crate::state::STALE_BINDING.into()),
-    }
-}
-
-pub(crate) fn binding_of(slot: Option<&crate::state::GraphSlot>) -> Binding<'_> {
-    match slot {
-        Some(slot) => Binding::Graph {
-            root_key: &slot.root_key,
-            granted: &slot.outside_files_granted,
-        },
-        None => Binding::Capture,
     }
 }
 

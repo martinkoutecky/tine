@@ -6,7 +6,7 @@ links-consent-device-hint = Remembered on this device for all graphs. Forget a s
 ## tine#985: a file: link whose target is outside the graph folder. The path is never translated.
 links-open-outside-file-title = Open a file outside this graph
 links-open-outside-file-confirm = This link opens a file outside this graph's folder:{ "\u000A\u000A" }{ $path }
-links-outside-file-unreadable-name = Some characters in this name can't be shown and appear as �.
+links-outside-file-unreadable-name = Some characters in this name can't be shown as they are and appear as � or as a code such as <U+202E>.
 links-always-open-outside-files = Open files outside this graph without asking
 links-outside-file-graph-hint = Until you close this graph in this window.
 links-remembered-schemes = Remembered app links

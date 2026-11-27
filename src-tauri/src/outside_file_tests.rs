@@ -253,6 +253,77 @@ fn windows_hop_bound_is_the_platform_bound() {
     );
 }
 
+#[test]
+fn windows_graphs_at_a_drive_or_share_root_hold_their_files() {
+    // The canonical key of a graph at a volume or share root has nothing
+    // after the root; it parses, and a file under it is inside.
+    let drive = ("C:\\files", "C:\\files\\x.txt");
+    let share = ("\\\\srv\\share\\files", "\\\\srv\\share\\files\\x.txt");
+    for (root, (dir, file)) in [
+        ("\\\\?\\C:\\", drive),
+        ("C:\\", drive),
+        ("c:/", drive),
+        ("\\??\\C:\\", drive),
+        ("\\\\?\\UNC\\srv\\share", share),
+        ("\\\\?\\UNC\\srv\\share\\", share),
+        ("\\\\srv\\share", share),
+        ("\\\\srv\\share\\", share),
+    ] {
+        let mut fs = WinFs::with(&[(dir, Entry::Dir), (file, Entry::File)]);
+        assert_eq!(
+            win(root, file, &mut fs),
+            Containment::Inside(file.into()),
+            "{root}"
+        );
+        assert_eq!(fs.probed, [dir, file], "{root}");
+        // Another volume or share is still outside, with zero probes.
+        for other in ["D:\\files\\x.txt", "\\\\srv\\other\\files\\x.txt"] {
+            let mut fs = WinFs::default();
+            assert!(
+                matches!(win(root, other, &mut fs), Containment::Unproven { .. }),
+                "{root} {other}"
+            );
+            assert!(fs.probed.is_empty(), "{root} {other}");
+        }
+    }
+    // A rooted link payload resolves on the root volume.
+    let mut fs = WinFs::with(&[
+        ("C:\\r", Entry::Link("\\files")),
+        ("C:\\files", Entry::Dir),
+        ("C:\\files\\x.txt", Entry::File),
+    ]);
+    assert_eq!(
+        win("\\\\?\\C:\\", "C:\\r\\x.txt", &mut fs),
+        Containment::Inside("C:\\r\\x.txt".into())
+    );
+}
+
+#[test]
+fn a_deep_walk_builds_each_probe_path_by_appending_one_name() {
+    // One probe per component, and the bytes the walk appends to its prefix
+    // are the bytes of the final path below the root: linear in depth, not
+    // a rebuild of the whole prefix per probe.
+    for depth in [64usize, 128] {
+        let mut path = String::from("C:\\G");
+        let mut entries: Vec<(&'static str, Entry)> = Vec::new();
+        for _ in 0..depth {
+            path.push_str("\\d");
+            entries.push((Box::leak(path.clone().into_boxed_str()), Entry::Dir));
+        }
+        path.push_str("\\x.txt");
+        entries.push((Box::leak(path.clone().into_boxed_str()), Entry::File));
+        let mut fs = WinFs::with(&entries);
+        let before = PREFIX_BYTES.with(|count| count.get());
+        assert_eq!(
+            win("C:\\G", &path, &mut fs),
+            Containment::Inside(path.clone().into())
+        );
+        let appended = PREFIX_BYTES.with(|count| count.get()) - before;
+        assert_eq!(fs.probed.len(), depth + 1);
+        assert_eq!(appended, path.len() - "C:\\".len(), "depth {depth}");
+    }
+}
+
 /// The POSIX fixture: graph `G` holding `files/x.txt`, `files/in.pdf`, links
 /// `out → T`, `back → G/files`, `loop → loop`; outside it `T/s.txt`, `T/s.pdf`
 /// and `T/back → G/files`.
@@ -685,17 +756,22 @@ fn quick_capture_asks_for_every_file_and_remembers_nothing() {
     let f = fixture();
     for path in [f.graph.join("files/x.txt"), f.outside.join("s.txt")] {
         let mut probe = Recording::default();
-        let (result, opened) = p1(&Binding::Capture, &path, Purpose::Link, &mut probe);
+        let (result, opened) = p1(
+            &Binding::Capture { show: 1 },
+            &path,
+            Purpose::Link,
+            &mut probe,
+        );
         assert!(is_ask(&result) && opened.is_empty() && probe.probed.is_empty());
         let (result, opened) = p1(
-            &Binding::Capture,
+            &Binding::Capture { show: 1 },
             &path,
             Purpose::LinkAgreedRemember,
             &mut Recording::default(),
         );
         assert_eq!((result, opened.len()), (Ok(()), 1));
         let (result, _) = p1(
-            &Binding::Capture,
+            &Binding::Capture { show: 1 },
             &path,
             Purpose::Link,
             &mut Recording::default(),
@@ -705,7 +781,7 @@ fn quick_capture_asks_for_every_file_and_remembers_nothing() {
 }
 
 #[test]
-fn a_capture_call_from_an_earlier_show_or_a_hidden_window_is_stale() {
+fn a_capture_gesture_belongs_to_natives_current_show() {
     let state = crate::state::AppState {
         graphs: std::sync::RwLock::new(Default::default()),
         graph_load: std::sync::Mutex::new(()),
@@ -714,24 +790,65 @@ fn a_capture_call_from_an_earlier_show_or_a_hidden_window_is_stale() {
         #[cfg(desktop)]
         next_window: std::sync::atomic::AtomicU64::new(2),
     };
+    let stale = Err(crate::state::STALE_BINDING.to_string());
+    assert_eq!(
+        capture_show_admits(&state, Purpose::Link, None, true),
+        stale
+    );
     state.bind_capture_graph("main".into(), 7);
     let show_a = state.bound_capture_show().unwrap();
-    assert_eq!(capture_show_admits(&state, Some(show_a), true), Ok(()));
-    assert!(capture_show_admits(&state, None, true).is_err());
+    // A first call needs no show of the frontend's: native names its own, and
+    // the Ask carries it.
+    assert_eq!(
+        capture_show_admits(&state, Purpose::Link, None, true),
+        Ok(show_a)
+    );
+    let ask = admit(
+        &Binding::Capture { show: show_a },
+        Path::new("/T/s.txt"),
+        Purpose::Link,
+        &mut Recording::default(),
+    )
+    .unwrap()
+    .into_path()
+    .unwrap_err();
+    assert_eq!(ask_display(&ask)["show"], show_a);
+    assert_eq!(
+        capture_show_admits(&state, Purpose::LinkAgreed, Some(show_a), true),
+        Ok(show_a)
+    );
+    assert_eq!(
+        capture_show_admits(&state, Purpose::LinkAgreed, None, true),
+        stale
+    );
     // A close request hides natively; the frontend may not know.
     assert_eq!(
-        capture_show_admits(&state, Some(show_a), false),
-        Err(crate::state::STALE_BINDING.into())
+        capture_show_admits(&state, Purpose::LinkAgreed, Some(show_a), false),
+        stale
+    );
+    assert_eq!(
+        capture_show_admits(&state, Purpose::Link, None, false),
+        stale
     );
     state.bind_capture_graph("main".into(), 7);
     let show_b = state.bound_capture_show().unwrap();
     assert_ne!(show_a, show_b);
+    for purpose in [Purpose::LinkAgreed, Purpose::LinkAgreedRemember] {
+        assert_eq!(
+            capture_show_admits(&state, purpose, Some(show_a), true),
+            stale,
+            "show A's prompt opens nothing in show B, whether or not capture-shown arrived"
+        );
+    }
+    // A fresh gesture in B is B's, whatever the WebView last heard.
     assert_eq!(
-        capture_show_admits(&state, Some(show_a), true),
-        Err(crate::state::STALE_BINDING.into()),
-        "show A's click is refused in show B, whether or not capture-shown arrived"
+        capture_show_admits(&state, Purpose::Link, Some(show_a), true),
+        Ok(show_b)
     );
-    assert_eq!(capture_show_admits(&state, Some(show_b), true), Ok(()));
+    assert_eq!(
+        capture_show_admits(&state, Purpose::LinkAgreed, Some(show_b), true),
+        Ok(show_b)
+    );
 }
 
 #[cfg(unix)]
@@ -761,6 +878,64 @@ fn unreadable_names_get_a_readable_display_and_the_exact_bytes_open() {
     );
     assert_eq!(result, Ok(()));
     assert_eq!(opened, [target]);
+}
+
+#[test]
+fn bidi_controls_show_as_escapes_in_path_order_with_the_unreadable_notice() {
+    // Every Unicode bidi control, in a file name and in a folder name.
+    for (control, escape) in [
+        ('\u{202A}', "<U+202A>"),
+        ('\u{202B}', "<U+202B>"),
+        ('\u{202C}', "<U+202C>"),
+        ('\u{202D}', "<U+202D>"),
+        ('\u{202E}', "<U+202E>"),
+        ('\u{2066}', "<U+2066>"),
+        ('\u{2067}', "<U+2067>"),
+        ('\u{2068}', "<U+2068>"),
+        ('\u{2069}', "<U+2069>"),
+        ('\u{200E}', "<U+200E>"),
+        ('\u{200F}', "<U+200F>"),
+        ('\u{061C}', "<U+061C>"),
+    ] {
+        for (name, shown) in [
+            (format!("/T/a{control}b.txt"), format!("/T/a{escape}b.txt")),
+            (
+                format!("/T/d{control}/x.txt"),
+                format!("/T/d{escape}/x.txt"),
+            ),
+        ] {
+            assert_eq!(
+                readable(OsStr::new(&name)),
+                (shown, true),
+                "U+{:04X}",
+                u32::from(control)
+            );
+        }
+    }
+    // Other right-to-left text is the name itself: shown as it is.
+    assert_eq!(
+        readable(OsStr::new("/T/שלום.txt")),
+        ("/T/שלום.txt".into(), false)
+    );
+}
+
+#[test]
+fn the_prompt_fixture_is_the_native_ask_for_a_right_to_left_override() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/outside-file-ask-bidi.json"
+    ))
+    .unwrap();
+    let granted = AtomicBool::new(false);
+    let binding = Binding::Graph {
+        root_key: Path::new("/G"),
+        granted: &granted,
+    };
+    let path = Path::new(fixture["path"].as_str().unwrap());
+    let ask = admit(&binding, path, Purpose::Link, &mut Recording::default())
+        .unwrap()
+        .into_path()
+        .unwrap_err();
+    assert_eq!(ask, fixture["wire"].as_str().unwrap());
 }
 
 #[cfg(unix)]
@@ -795,9 +970,19 @@ fn the_ask_wire_is_the_exact_token_the_frontend_decodes() {
     let ask = Admit::Ask {
         display: "/T/a \"b\"\\c\u{FFFD}".into(),
         lossy: true,
+        show: None,
     };
     assert_eq!(
         ask.into_path(),
-        Err(r#"file-consent:{"display":"/T/a \"b\"\\c�","lossy":true}"#.to_string())
+        Err(r#"file-consent:{"display":"/T/a \"b\"\\c�","lossy":true,"show":null}"#.to_string())
+    );
+    let ask = Admit::Ask {
+        display: "/T/s".into(),
+        lossy: false,
+        show: Some(42),
+    };
+    assert_eq!(
+        ask.into_path(),
+        Err(r#"file-consent:{"display":"/T/s","lossy":false,"show":42}"#.to_string())
     );
 }

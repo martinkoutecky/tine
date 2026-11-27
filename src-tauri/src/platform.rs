@@ -1036,14 +1036,13 @@ pub(crate) fn url_scheme(url: &str) -> Option<String> {
     .then(|| scheme.to_ascii_lowercase())
 }
 
-/// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
-/// Logseq sends http(s)/mailto to `shell.openExternal` and hands EVERY other
-/// scheme, `file:` included, to the OS default application with no confirmation
-/// and no extension filtering. Tine matches that for `file:`: a graph is the
-/// user's own content, and a link that silently does nothing (GH #444, where
-/// this gate rejected `file:` outright and the frontend then discarded the
-/// rejection) is worse for the honest case than the parity behaviour is for the
-/// hostile one.
+/// `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!` hands it to
+/// the OS default application with no confirmation): a `file:` URL becomes its
+/// local path here and is never refused (GH #444, where this gate rejected
+/// `file:` outright and a link silently did nothing). The caller then admits
+/// the path through `outside_file::open_local` (tine#985), an intentional
+/// difference from Logseq: a target inside the graph opens directly, one
+/// outside it opens only after the user agrees in a prompt naming the file.
 ///
 /// Any other scheme (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) OG
 /// also hands to the OS silently. Tine opens it only when `confirmed_scheme`
@@ -1087,8 +1086,8 @@ pub(crate) fn external_open_plan(
 /// Open a web/mail URL, a local `file:` link, or a user-confirmed custom-scheme
 /// link (GH #503) in the user's default external application. The URL is passed as a single argument (no shell), so it can't
 /// inject commands. A `file:` target goes through `outside_file::open_local`
-/// (tine#985): `purpose` says who asks, and Quick Capture's `show` names the
-/// show the click came from.
+/// (tine#985): `purpose` says who asks, and an agreed Quick Capture call's
+/// `show` is the one its Ask named.
 /// Starting the opener (PATH search, exec) runs on the blocking pool, off the
 /// UI thread (GH #623, I-21).
 #[tauri::command]
@@ -1113,10 +1112,10 @@ pub(crate) async fn open_external(
         #[cfg(desktop)]
         {
             let purpose = crate::outside_file::Purpose::parse(purpose.as_deref())?;
-            let slot = crate::outside_file::caller_slot(&state, show)?;
+            let caller = crate::outside_file::Caller::of(&state, purpose, show)?;
             return crate::state::off_ui(move || {
                 crate::outside_file::open_local(
-                    &crate::outside_file::binding_of(slot.as_deref()),
+                    &caller.binding(),
                     &path,
                     purpose,
                     &mut crate::outside_file::Fs,

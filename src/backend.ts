@@ -93,7 +93,6 @@ export { QueryPrintRefusedError, queryPrintRefusal } from "./queryPrintRefusal";
 import { queryPrintRefusal } from "./queryPrintRefusal";
 import { dropDisplayedFor } from "./seen/displayed";
 import { fileConsentAsk, type FileLinkCall, type FilePurpose } from "./fileConsentWire";
-import { noteCaptureShow } from "./captureShow";
 
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
@@ -255,7 +254,6 @@ class TauriBackend implements Backend {
   async bindCaptureGraph() {
     const result = await this.call<CaptureGraphBindingResult>("capture_graph_binding");
     this.bindingGeneration = result.binding_generation;
-    noteCaptureShow(result.show_generation);
     return result.meta;
   }
   listKnownGraphs() {

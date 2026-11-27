@@ -653,14 +653,6 @@ impl AppState {
     pub(crate) fn capture_graph_binding(&self) -> Option<CaptureGraphBinding> {
         self.capture_graph.lock().unwrap().binding.clone()
     }
-
-    /// The bound show and its binding, read together.
-    pub(crate) fn capture_show_binding(&self) -> Option<(u64, CaptureGraphBinding)> {
-        let show = self.capture_graph.lock().unwrap();
-        show.binding
-            .clone()
-            .map(|binding| (show.generation, binding))
-    }
 }
 
 pub(crate) struct GraphContext<'a, R: Runtime = tauri::Wry> {

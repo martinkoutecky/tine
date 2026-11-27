@@ -119,7 +119,7 @@
     },
     "scripts/e2e-external-pdf.mjs": {
       "contracts": [
-        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent, written absolute or relative to the graph folder (`../x.pdf`, `file:../x.pdf`), opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
+        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent, written absolute or relative to the graph folder (`../x.pdf`, `file:../x.pdf`), opens a synthetic PDF outside the scratch graph in the ordinary desktop reader after the user agrees in a prompt naming the file. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; tine#985; docs/contracts/external-pdf.md"},
         {"class":"exact-safety-interoperability","userOutcome":"Every file and directory in the scratch graph is identical before and after opening and reading outside PDFs; no import, sidecar, highlight page or capture image is created.","blocking":false,"authority":"GH #732 read-only decision"}
       ],
       "acceptableVariations": ["Pane geometry, toolbar wrapping, selection appearance and reader timing can vary while the tools and preserved file outcomes hold."],

@@ -5,7 +5,7 @@ use std::fs;
 /// pin the reader's own guards. Admission is pinned in outside_file_tests.rs.
 fn read_pdf(url: &str) -> Result<Vec<u8>, String> {
     super::read_pdf(
-        &Binding::Capture,
+        &Binding::Capture { show: 1 },
         url,
         Purpose::LinkAgreed,
         &mut crate::outside_file::Fs,

@@ -7,12 +7,13 @@ import { invalidateBinding } from "../binding";
 import { setToasts, toasts } from "../toasts";
 import { LinkSchemePrompt } from "../components/LinkSchemePrompt";
 import { openOutboundLink } from "../components/ExternalLink";
-import { FileConsentAsk } from "../fileConsent";
-import { endCaptureShow, noteCaptureShow } from "../captureShow";
+import { FileConsentAsk, fileConsentAsk } from "../fileConsent";
+import { endCaptureShow } from "../captureShow";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { acquirePdfDocument } from "../components/pdfDocumentShare";
 import { ExternalPdfLink } from "./ExternalPdfLink";
 import * as panes from "../panes";
+import bidi from "../../tests/fixtures/outside-file-ask-bidi.json";
 
 // tine#985: a file: link whose target is outside the graph asks first, naming
 // the file; Cancel opens nothing, Open opens once; a late answer after the
@@ -123,30 +124,75 @@ describe("note links (P1)", () => {
     expect(prompt()!.textContent).toContain("can't be shown");
     cancel(); await pending;
   });
+
+  it("a right-to-left override in the name shows as an escape in path order, with the unreadable note", async () => {
+    // The wire is native's Ask for this path (outside_file_tests pins it).
+    vi.spyOn(backend(), "openExternal").mockImplementation(async (_url, _scheme, file) => {
+      if (file?.purpose === "link") throw fileConsentAsk(new Error(bidi.wire));
+    });
+    const pending = openOutboundLink("file:///T/invoice%E2%80%AEfdp.exe");
+    await flush();
+    const text = prompt()!.textContent!;
+    expect(text).toContain("/T/invoice<U+202E>fdp.exe");
+    expect(text).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]/);
+    expect(text).toContain("can't be shown");
+    cancel(); await pending;
+  });
 });
 
 describe("Quick Capture shows", () => {
   afterEach(() => { endCaptureShow(); });
 
-  it("carries the show, never offers to remember, and a hide cancels the prompt", async () => {
-    endCaptureShow(); noteCaptureShow(41);
-    const open = askThenOpen("/G/files/x.txt");
+  /** Native's show check: a call naming a show must name the current one; a
+   * first call is admitted in the current show and its Ask names it. */
+  function nativeCapture(display: string) {
+    const native = { show: 41 };
+    const open = vi.spyOn(backend(), "openExternal").mockImplementation(async (_url, _scheme, file) => {
+      if (file?.show !== undefined && file.show !== native.show) throw new Error("stale-graph-binding");
+      if (file?.purpose === "link") throw new FileConsentAsk(display, false, native.show);
+      if (file?.show !== native.show) throw new Error("stale-graph-binding");
+    });
+    return { native, open };
+  }
+
+  it("Open carries the show the Ask named, never offers to remember, and a hide cancels the prompt", async () => {
+    endCaptureShow();
+    const { open } = nativeCapture("/G/files/x.txt");
+    const opened = openOutboundLink("file:///G/files/x.txt", false);
+    await flush();
+    expect(prompt()!.querySelector('input[type="checkbox"]')).toBeNull();
+    prompt()!.requestSubmit();
+    await opened;
+    expect(open.mock.calls.map(call => call[2]?.show)).toEqual([undefined, 41]);
     const pending = openOutboundLink("file:///G/files/x.txt", false);
     await flush();
-    expect(open.mock.calls[0][2]?.show).toBe(41);
-    expect(prompt()!.querySelector('input[type="checkbox"]')).toBeNull();
     endCaptureShow(); // hide
     await pending;
     expect(prompt()).toBeNull();
-    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(3);
+    expect(toasts()).toEqual([]);
+  });
+
+  it("a click in show B prompts and opens in B when capture-shown was missed", async () => {
+    endCaptureShow(); // show A
+    const { native, open } = nativeCapture("/T/s.txt");
+    endCaptureShow(); // hide A
+    native.show = 42; // show B; its capture-shown never arrives
+    const pending = openOutboundLink("file:///T/s.txt", false);
+    await flush();
+    expect(prompt()).not.toBeNull();
+    prompt()!.requestSubmit();
+    await pending;
+    expect(open.mock.calls.map(call => call[2]?.show)).toEqual([undefined, 42]);
+    expect(toasts()).toEqual([]);
   });
 
   it("show A's late first reply in show B shows no prompt", async () => {
-    endCaptureShow(); noteCaptureShow(41);
+    endCaptureShow();
     let answer!: (error: unknown) => void;
     vi.spyOn(backend(), "openExternal").mockImplementation(() => new Promise((_, reject) => { answer = reject; }));
     const pending = openOutboundLink("file:///T/s.txt", false);
-    endCaptureShow(); noteCaptureShow(42); // capture-shown for B
+    endCaptureShow(); // capture-shown for B
     answer(ask("/T/s.txt"));
     await pending;
     expect(prompt()).toBeNull();
