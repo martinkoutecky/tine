@@ -166,6 +166,43 @@ fn insert_after_unclosed_fence_survives_save_and_reopen() {
     reopened_store.close();
 }
 
+/// Pasted text whose literal lines sit left of the bullet's text column: paste
+/// drops the same leading bytes the page reader drops from that text in a
+/// file, and the guarded save and a fresh reopen keep exactly that raw.
+#[test]
+fn pasted_literal_lines_left_of_the_bullet_text_save_and_reopen_as_read() {
+    let _integration_guard = crate::integration_lock();
+    let cases = [
+        (
+            "- A\n  ```python\nif True:\n x = 1\n  ```",
+            "A\n```python\nif True:\nx = 1\n```",
+            "- A\n  ```python\n  if True:\n  x = 1\n  ```\n",
+        ),
+        (
+            "- A\n  $$\n   a\n b\n  $$",
+            "A\n$$\n a\nb\n$$",
+            "- A\n  $$\n   a\n  b\n  $$\n",
+        ),
+    ];
+    for (text, raw, written) in cases {
+        let pasted = tine_core::doc::read_pasted(text, false);
+        assert_eq!(pasted, tine_core::doc::parse(text), "{text:?}");
+        let raws: Vec<&str> = pasted.roots.iter().map(|b| b.raw()).collect();
+        assert_eq!(raws, [raw], "{text:?}");
+
+        let page = Page::new("- keep\n  body\n");
+        let saved = page.save(EditKind::InsertBlocks, |doc| {
+            doc.blocks.push(block(raw));
+        });
+        assert_eq!(saved, format!("- keep\n  body\n{written}"), "{text:?}");
+        let reopened_store = Store::open(&page.root, Default::default()).unwrap().0;
+        let reopened = reopened_store.page(&page.id).unwrap().doc;
+        let raws: Vec<&str> = reopened.blocks.iter().map(|b| b.raw.as_str()).collect();
+        assert_eq!(raws, ["keep\nbody", raw], "{text:?}");
+        reopened_store.close();
+    }
+}
+
 #[test]
 fn indent_and_outdent_rebase_only_the_moved_subtree() {
     let _integration_guard = crate::integration_lock();

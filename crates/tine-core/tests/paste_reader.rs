@@ -40,23 +40,54 @@ fn as_pasted(document: Document) -> Value {
 
 #[test]
 fn pasted_blocks_are_the_page_readers_through_save_and_reopen() {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("../../../tests/fixtures/paste-reader-blocks.json"))
-            .unwrap();
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/paste-reader-blocks.json"
+    ))
+    .unwrap();
     assert!(cases.len() > 30);
     for case in &cases {
-        let (name, text, want) = (&case["name"], case["text"].as_str().unwrap(), &case["blocks"]);
+        let (name, text, want) = (
+            &case["name"],
+            case["text"].as_str().unwrap(),
+            &case["blocks"],
+        );
         let is_org = case["format"] == "org";
-        let read = |text: &str| if is_org { org::parse_org(text) } else { doc::parse(text) };
-        assert_eq!(&as_pasted(read(text)), want, "{name}: reader");
-        assert_eq!(&as_pasted(doc::read_pasted(text, is_org)), want, "{name}: paste");
+        let read = |text: &str| {
+            if is_org {
+                org::parse_org(text)
+            } else {
+                doc::parse(text)
+            }
+        };
+        let pasted = as_pasted(doc::read_pasted(text, is_org));
+        assert_eq!(
+            pasted,
+            as_pasted(read(text)),
+            "{name}: paste is the reader's"
+        );
+        assert_eq!(&pasted, want, "{name}: paste");
 
-        let existing = if is_org { "* keep  \nbody\n" } else { "- keep  \n  body\n" };
+        let existing = if is_org {
+            "* keep  \nbody\n"
+        } else {
+            "- keep  \n  body\n"
+        };
         let mut page = read(existing);
         page.roots.extend(blocks(want));
-        let out = if is_org { org::serialize_org(&page) } else { doc::serialize(&page) };
-        assert!(out.starts_with(existing), "{name}: existing block bytes changed: {out:?}");
+        let out = if is_org {
+            org::serialize_org(&page)
+        } else {
+            doc::serialize(&page)
+        };
+        assert!(
+            out.starts_with(existing),
+            "{name}: existing block bytes changed: {out:?}"
+        );
         let reopened = read(&out);
-        assert_eq!(&tree(&reopened.roots[1..]), want, "{name}: save and reopen: {out:?}");
+        assert_eq!(
+            &tree(&reopened.roots[1..]),
+            want,
+            "{name}: save and reopen: {out:?}"
+        );
     }
 }

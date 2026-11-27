@@ -343,8 +343,12 @@ pub fn parse_document_json(text: &str, is_org: bool) -> String {
 pub fn pasted_outline_json(text: &str, is_org: bool) -> String {
     let document = tine_core::doc::read_pasted(text, is_org);
     let mut blocks = Vec::new();
-    let mut pending: Vec<(usize, &tine_core::doc::DocBlock)> =
-        document.roots.iter().rev().map(|block| (0, block)).collect();
+    let mut pending: Vec<(usize, &tine_core::doc::DocBlock)> = document
+        .roots
+        .iter()
+        .rev()
+        .map(|block| (0, block))
+        .collect();
     while let Some((depth, block)) = pending.pop() {
         blocks.push((depth, block.raw()));
         pending.extend(block.children.iter().rev().map(|child| (depth + 1, child)));

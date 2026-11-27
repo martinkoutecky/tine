@@ -411,12 +411,16 @@ fn pasted_bullet_bodies_survive_save_and_reopen() {
         "T\n| 1 | 2 |\n| --- | --- |\n| ![x](https://example.org/a.png) | B |",
         "F\n\n🏁 G",
     ];
-    page.roots.extend(pasted.iter().map(|raw| DocBlock::new(*raw)));
+    page.roots
+        .extend(pasted.iter().map(|raw| DocBlock::new(*raw)));
     let mut child = DocBlock::new("H\n\nbody");
     child.children.push(DocBlock::new("child\n\nchild body"));
     page.roots.push(child);
     let out = doc::serialize(&page);
-    assert!(out.starts_with(existing), "existing block bytes changed: {out:?}");
+    assert!(
+        out.starts_with(existing),
+        "existing block bytes changed: {out:?}"
+    );
 
     let reopened = doc::parse(&out);
     let raws: Vec<&str> = reopened.roots.iter().map(DocBlock::raw).collect();
@@ -425,9 +429,17 @@ fn pasted_bullet_bodies_survive_save_and_reopen() {
     assert_eq!(reopened.roots[5].children[0].raw(), "child\n\nchild body");
 
     let reduced = "- A\n  B\n- C\n  \n  D\n  \n  E";
-    let raws = |d: doc::Document| d.roots.iter().map(|b| b.raw().to_string()).collect::<Vec<_>>();
+    let raws = |d: doc::Document| {
+        d.roots
+            .iter()
+            .map(|b| b.raw().to_string())
+            .collect::<Vec<_>>()
+    };
     for text in [reduced.to_string(), reduced.replace('\n', "\r\n")] {
         assert_eq!(doc::read_pasted(&text, false), doc::parse(&text));
-        assert_eq!(raws(doc::read_pasted(&text, false)), ["A\nB", "C\n\nD\n\nE"]);
+        assert_eq!(
+            raws(doc::read_pasted(&text, false)),
+            ["A\nB", "C\n\nD\n\nE"]
+        );
     }
 }
