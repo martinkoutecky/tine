@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PageInventoryEntry } from "./types";
+const inventory = vi.hoisted(() => ({ entries: [] as PageInventoryEntry[] }));
+vi.mock("./backend", () => ({ backend: () => ({
+  graphBindingGeneration: () => 0,
+  pageInventory: async () => ({ rev: "1", entries: inventory.entries }),
+}) }));
 import { buildNamespaceTree, namespaceTreeFor } from "./components/Namespace";
+import { refreshPageIndex, resetPageIndex } from "./pageIndex";
+import { ordinaryRows } from "./namespaceInventory.test.support";
 import {
   allExpanded,
   defaultExpanded,
@@ -38,6 +46,14 @@ const withParents = (names: string[]) => {
   }
   return [...all];
 };
+/** Install `names` as the inventory: the store answers each row's parent. */
+async function listed(names: string[]): Promise<string[]> {
+  inventory.entries = ordinaryRows(names);
+  resetPageIndex();
+  await refreshPageIndex();
+  return names;
+}
+beforeEach(() => listed(NAMES));
 const index = () => indexNamespaces(buildNamespaceTree(NAMES));
 const fulls = (entries: ReturnType<typeof index>, rows: number[]) => rows.map((i) => entries[i].node.full);
 
@@ -69,9 +85,9 @@ describe("indexNamespaces", () => {
     expect(namespaceTreeFor(names)).toBe(namespaceTreeFor(names));
   });
 
-  it("is iterative: a thousand-level name does not overflow the stack", () => {
+  it("is iterative: a thousand-level name does not overflow the stack", async () => {
     const deep = Array.from({ length: 2000 }, (_, i) => `s${i}`).join("/");
-    const entries = indexNamespaces(buildNamespaceTree(withParents([deep])));
+    const entries = indexNamespaces(buildNamespaceTree(await listed(withParents([deep]))));
     expect(entries).toHaveLength(2000);
     expect(entries[1999].depth).toBe(1999);
     expect(entries[0].end).toBe(2000);
@@ -141,9 +157,10 @@ describe("cost on a 30k-page graph", () => {
   // for the receipt. Filtering is one substring test per entry; expand/collapse walks visible rows.
   const names: string[] = [];
   for (let a = 0; a < 30; a++) for (let b = 0; b < 40; b++) for (let c = 0; c < 25; c++) names.push(`Area ${a}/Topic ${b}/Note ${c}`);
-  it("indexes, filters and re-walks 30,000 namespaced pages", () => {
+  it("indexes, filters and re-walks 30,000 namespaced pages", async () => {
+    const all = await listed(withParents(names));
     const t0 = performance.now();
-    const entries = indexNamespaces(buildNamespaceTree(withParents(names)));
+    const entries = indexNamespaces(buildNamespaceTree(all));
     const t1 = performance.now();
     const hits = matchingEntries(entries, "topic 7/note 1");
     const t2 = performance.now();

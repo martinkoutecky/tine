@@ -96,6 +96,10 @@
       },
       "name": "old/sub",
       "namespace_excluded": true,
+      "parent": {
+        "kind": "page",
+        "name": "old"
+      },
       "target": {
         "kind": "alias",
         "owners": [

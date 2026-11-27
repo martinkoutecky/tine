@@ -366,21 +366,23 @@ export function linkTarget(name: string): LinkDestination {
   return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, nameAnswer);
 }
 
-/** The inventory's typed namespace identity, or its immediate parent.
- *  Prefix spelling is only a fallback before inventory/for legacy rows. */
-export function namespaceTarget(name: string, parent = false, kind?: PageKind): LinkDestination | null {
+/** The inventory's typed namespace identity of `name`; with `kind`, only that
+ *  kind's row, `null` when it is absent or alias-only. */
+export function namespaceTarget(name: string, kind?: PageKind): LinkDestination | null {
+  const entry = namespaceRow(name, kind);
+  if (kind && (!entry || entry.namespace_excluded)) return null;
+  return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
+}
+
+/** The row `namespaceTarget` reads for `name` (with `kind`, that kind's row):
+ *  the namespace tree reads the store's `parent` candidate and `namespace_day`
+ *  from it and derives nothing from the name. O(1). */
+export function namespaceRow(name: string, kind?: PageKind): PageInventoryEntry | undefined {
   ensureInstalled();
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
-  const entry = kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
+  return kind ? (kind === "journal" ? answer?.journals : answer?.pages)?.get(key)
     : answer?.pages.get(key) ?? answer?.journals.get(key) ?? journalRowIn(answer, name, nameAnswer);
-  if (kind && (!entry || entry.namespace_excluded)) return null;
-  if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
-  if (entry?.parent) return entry.parent;
-  const parts = name.split("/");
-  parts.pop();
-  while (parts.length && !parts.join("/")) parts.pop();
-  return parts.length ? { name: parts.join("/"), kind: "page" } : null;
 }
 
 /** Typed entity navigation preserves an absent day's safe opening spelling. */

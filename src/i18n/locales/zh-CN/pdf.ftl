@@ -94,6 +94,7 @@ pdf-external-not-regular = 此路径不是常规文件。
 pdf-external-too-large = 此 PDF 超过 256 MiB，无法安全打开。
 pdf-external-invalid-link = 需要使用绝对路径的 file:// PDF 链接。
 pdf-external-unsupported-url = 此平台不支持此文件 URL。
+pdf-external-not-opened = 未打开。
 pdf-external-load-failed = 无法加载此 PDF。（{ $detail }）
 
 pdf-theme = 主题

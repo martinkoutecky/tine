@@ -5,8 +5,9 @@ import { bumpGraphEpoch } from "../graphSession";
 import { resetPageIndex } from "../pageIndex";
 import { resetTabsToJournals } from "../router";
 import type { PaneRouter } from "../router";
-import { resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
+import { contextMenu, resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
 import type { PageInventoryEntry } from "../types";
+import { withOrdinaryParent } from "../namespaceInventory.test.support";
 import { Namespaces, NAMESPACES_ROW_HEIGHT } from "./Namespaces";
 
 // GH #335 (D-20261101-L5): the full Namespaces view. The user outcomes: a namespaced
@@ -15,13 +16,14 @@ import { Namespaces, NAMESPACES_ROW_HEIGHT } from "./Namespaces";
 // full path, a row opens its page by the ordinary link gestures, and none of it reads
 // the backend beyond the shared page inventory (and the windowed icon batch).
 
-const existing = (name: string): PageInventoryEntry => ({
+// Each row carries the tree parent the store answers.
+const existing = (name: string): PageInventoryEntry => withOrdinaryParent({
   key: name.toLowerCase(), name, is_journal: false, day: null,
   target: { kind: "existing", id: `pages/${name.replaceAll("/", "___")}.md`, others: [] },
 });
 // A namespace parent as the backend lists it (CM step 2 batch 10, model rule 1):
 // an absent entry that opens itself, flagged `namespace_parent`.
-const parent = (name: string): PageInventoryEntry => ({
+const parent = (name: string): PageInventoryEntry => withOrdinaryParent({
   key: name.toLowerCase(), name, is_journal: false, day: null, namespace_parent: true,
   target: { kind: "absent", id: `pages/${name.replaceAll("/", "___")}.md` },
 });
@@ -156,6 +158,28 @@ describe("the Namespaces view", () => {
       const notes = rows.find((el) => el.title === "Project/Notes")!;
       notes.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
       expect(router.openPageTargetInNewTab).toHaveBeenCalledWith({ name: "Project/Notes", pageKind: "page" });
+    } finally { dispose(); }
+  });
+
+  it("gives a journal row's menu (so its favorite) and opening the journal it is", async () => {
+    // A slash day whose month is only an alias: no node for its candidate,
+    // so it is a top row.
+    const day: PageInventoryEntry = {
+      key: "2026/11/02", name: "2026/11/02", is_journal: true, day: 20261102, namespace_day: true,
+      parent: { name: "2026/11", kind: "page" },
+      target: { kind: "existing", id: "journals/2026_11_02.md", others: [] },
+    };
+    const alias: PageInventoryEntry = {
+      key: "2026/11", name: "2026/11", is_journal: false, day: null, namespace_excluded: true,
+      target: { kind: "alias", owners: ["pages/Plain.md"] },
+    };
+    const { host, router, dispose } = await mountNamespaces([day, alias, existing("Plain")]);
+    try {
+      const row = host.querySelector<HTMLElement>(".ns-view-row")!;
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 3, clientY: 4 }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "2026/11/02", pageKind: "journal" });
+      host.querySelector<HTMLElement>(".ns-view-open")!.click();
+      expect(router.openPageTarget).toHaveBeenCalledWith({ name: "2026/11/02", pageKind: "journal" });
     } finally { dispose(); }
   });
 

@@ -17,6 +17,9 @@ const backendMock = vi.hoisted(() => {
       ? { kind: "existing" as const, id: `pages/${encodeURIComponent(name)}.md`, others: [] }
       : { kind: "absent" as const, id: `pages/${encodeURIComponent(name)}.md` },
     ...(notNamespace ? { not_namespace: true } : {}),
+    // The tree parent the store answers: a namespace name's
+    // immediate prefix; a name that is no namespace name has none.
+    ...(!notNamespace && name.includes("/") ? { parent: { name: name.slice(0, name.lastIndexOf("/")), kind: "page" as const } } : {}),
   });
   return {
     graphBindingGeneration: () => 0,

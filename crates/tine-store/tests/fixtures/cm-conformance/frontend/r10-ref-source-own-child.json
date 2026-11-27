@@ -53,6 +53,10 @@
       "is_journal": false,
       "key": "kb/x",
       "name": "kb/x",
+      "parent": {
+        "kind": "page",
+        "name": "kb"
+      },
       "target": {
         "id": "pages/kb%2Fx.md",
         "kind": "existing",

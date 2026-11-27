@@ -328,10 +328,15 @@ uses the actual recomputed directed relation.
 
 ### Namespace tree
 
-A displayed tree parent is only the immediate namespace parent of the canonical spelling and only
-when that identity is present in the page universe. There is no alias or grandparent fallback.
-Children are the deduplicated pages with that parent; the global namespace tree includes rows with
-a parent or at least one child, excluding isolated pages. Namespace closure itself remains core.
+A row's tree parent candidate is the typed page that its last proper prefix with a nonempty page
+key other than its own names, before alias opening: the prefix's real owner, else the day or
+ordinary page the prefix spells. The candidate is dropped when it is the row itself or when its
+page key has as many `/`-separated parts as the row's page key or more; parts are counted on the
+folded page key, empty parts included, so `2026/11/` counts two. The displayed tree parent is the
+candidate only when that typed identity is present in the page universe. There is no alias or
+grandparent fallback. Children are the deduplicated pages with that parent; the global namespace
+tree includes rows with a parent or at least one child, and a day whose title has a prefix with a
+nonempty page key; other isolated pages are excluded. Namespace closure itself remains core.
 
 ### 6.4 Actual changes
 

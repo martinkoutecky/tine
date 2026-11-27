@@ -28,6 +28,7 @@ import { RightSidebar } from "./RightSidebar";
 import { PageView } from "./Page";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import type { PageInventoryEntry, QueryExecution } from "../types";
+import { withOrdinaryParent } from "../namespaceInventory.test.support";
 import { LONG_PRESS_DELAY } from "../render/longPress";
 import { backendReadsQueries } from "../tests/queryReadingsTestkit";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
@@ -145,7 +146,8 @@ async function seedNamespaceInventory(names: string[]) {
       entries.push({ key, name: prefix, is_journal: false, day: null, namespace_parent: true, target: { kind: "absent", id: `pages/${prefix.replaceAll("/", "___")}.md` } });
     }
   }
-  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
+  // Each row carries the tree parent the store answers.
+  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: entries.map(withOrdinaryParent) });
   resetPageIndex();
   await refreshPageIndex();
 }

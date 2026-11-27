@@ -1,6 +1,8 @@
 import { bindingCurrent, captureBinding, clearOnBindingInvalidated } from "./binding";
 
-export type ExternalPdfRead = () => Promise<Uint8Array>;
+/** Read an outside PDF for the pending shared document; `signal` aborts when
+ * its last view releases it (tine#985: the consent prompt dies with it). */
+export type ExternalPdfRead = (signal: AbortSignal) => Promise<Uint8Array>;
 const sources = new Map<string, { filename: string; read: ExternalPdfRead }>();
 clearOnBindingInvalidated(() => sources.clear());
 
@@ -8,8 +10,8 @@ clearOnBindingInvalidated(() => sources.clear());
  * contains this closure. No file I/O until the new reader consumes its source. */
 export function authorizeExternalPdf(viewId: string, filename: string, read: ExternalPdfRead): void {
   const binding = captureBinding();
-  sources.set(viewId, { filename, read: () => bindingCurrent(binding)
-    ? read() : Promise.reject(new Error("stale PDF graph binding")) });
+  sources.set(viewId, { filename, read: (signal) => bindingCurrent(binding)
+    ? read(signal) : Promise.reject(new Error("stale PDF graph binding")) });
 }
 
 /** Consume once: mounting a restored route or revisiting it after its document

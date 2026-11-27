@@ -9,6 +9,8 @@ import { graphMeta, setGraphMeta } from "../graphSession";
 vi.mock("../nativeChrome", async (original) => ({ ...await original<typeof import("../nativeChrome")>(), isMobilePlatform: true }));
 beforeAll(initParser);
 afterEach(() => { vi.restoreAllMocks(); document.body.replaceChildren(); });
+// tine#985: the file: call carries its purpose and the click's generation.
+const fileCall = () => ({ purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined });
 
 it.each([
   ["![paper](file:///tmp/paper.pdf)", "md"],
@@ -21,7 +23,7 @@ it.each([
   try {
     expect(host.querySelector(".pdf-link")).toBeNull();
     host.querySelector<HTMLAnchorElement>("a")!.click();
-    expect(external).toHaveBeenCalledExactlyOnceWith("file:///tmp/paper.pdf");
+    expect(external).toHaveBeenCalledExactlyOnceWith("file:///tmp/paper.pdf", undefined, fileCall());
     expect(reader).not.toHaveBeenCalled();
   } finally { dispose(); }
 });
@@ -39,7 +41,7 @@ it.each([
   try {
     expect(host.querySelector(".pdf-link")).toBeNull();
     host.querySelector<HTMLAnchorElement>("a")!.click();
-    expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/papers/paper.pdf");
+    expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/papers/paper.pdf", undefined, fileCall());
     expect(reader).not.toHaveBeenCalled();
   } finally { dispose(); setGraphMeta(null); }
 });

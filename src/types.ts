@@ -354,8 +354,15 @@ export interface PageInventoryEntry {
    *  (`n` for `n/y`; conceptual model rule 1, `InventoryEntry::namespace_parent`).
    *  Absent means false. */
   namespace_parent?: boolean;
-  /** Canonical typed immediate namespace parent, before alias opening. */
+  /** The namespace tree parent candidate (the store's `InventoryEntry::parent`),
+   *  before alias opening: the tree attaches the row below it when that typed
+   *  row is listed. Absent means no candidate; no view derives one from the
+   *  name's prefix. */
   parent?: { name: string; kind: PageKind };
+  /** A day shown at the top of the namespace tree when it has no parent, even
+   *  with nothing below it (the store's `InventoryEntry::namespace_day`: its
+   *  title has a nonempty namespace prefix). Absent means false. */
+  namespace_day?: boolean;
   /** Frozen published v1 compatibility. Live inventories never set it. */
   empty_alias?: boolean;
   /** Set when the name contains `/` but is not a namespace name (Logseq's

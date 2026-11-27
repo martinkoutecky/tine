@@ -1502,27 +1502,39 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
 }
 
 /// Open a graph-relative file or folder that a file link resolved to
-/// (GH #457) in the OS default app. `crate::platform::graph_relative_target`
-/// refuses a path that leaves the graph folder, including through a symlink,
-/// and a missing target. Read-only OS handoff on the blocking pool (I-21);
-/// iOS/Android refuse, as for `open_asset`.
+/// (GH #457) in the OS default app. A lexical escape is refused; a path that
+/// cannot be proven inside the graph without probing outside asks first
+/// (tine#985, `outside_file::open_graph_relative`); after Open, a final target
+/// outside the graph folder is still refused, and a missing one reported.
+/// Read-only OS handoff on the blocking pool (I-21); iOS/Android refuse
+/// before any lookup, as for `open_asset`.
 #[tauri::command]
-pub(crate) async fn open_graph_file(path: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn open_graph_file(
+    path: String,
+    purpose: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let target = crate::platform::graph_relative_target(&slot.root_key, &path)?;
-        #[cfg(desktop)]
-        {
-            open_page_source(&target)
-        }
-        #[cfg(not(desktop))]
-        {
-            let _ = target;
-            Err("opening files from links is available on desktop only".to_string())
-        }
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    #[cfg(desktop)]
+    {
+        let purpose = crate::outside_file::Purpose::parse(purpose.as_deref())?;
+        crate::state::off_ui(move || {
+            crate::outside_file::open_graph_relative(
+                &slot.root_key,
+                &slot.outside_files_granted,
+                &path,
+                purpose,
+                &mut crate::outside_file::Fs,
+                open_page_source,
+            )
+        })
+        .await
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (path, purpose, slot);
+        Err("opening files from links is available on desktop only".to_string())
+    }
 }
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
