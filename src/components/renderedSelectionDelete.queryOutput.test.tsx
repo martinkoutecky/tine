@@ -16,6 +16,7 @@ import { installKeybindings } from "../keybindings";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { Block } from "./Block";
+import { editorIn } from "../tests/editorDriver";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 
 beforeAll(async () => {
@@ -228,12 +229,13 @@ describe("Delete over a selection in a query's generated output", () => {
     }
   });
 
-  // Unchanged: both ends lie in the block's own text and the user visibly
-  // selected the whole query between them, so everything selected goes.
+  // Both ends lie in the block's own text and the user visibly selected the
+  // whole query between them: the editor opens with that range selected
+  //, and nothing is written.
   it.each([
-    ["a paragraph", `abc ${QUERY} xyz`, "az"],
-    ["a heading", `# abc ${QUERY} xyz`, "# az"],
-  ])("still deletes a selection that spans the whole query in %s", async (_name, source, expected) => {
+    ["a paragraph", `abc ${QUERY} xyz`, "bc " + QUERY + " xy"],
+    ["a heading", `# abc ${QUERY} xyz`, "bc " + QUERY + " xy"],
+  ])("opens the editor on a selection that spans the whole query in %s", async (_name, source, expected) => {
     const m = await mountQueryBlock(source);
     try {
       const wrapper = document.querySelector('[data-block-id="host"] > .block-main .block-content-wrapper') as HTMLElement;
@@ -247,8 +249,11 @@ describe("Delete over a selection in a query's generated output", () => {
       expect(before && after).toBeTruthy();
       select([before!, before!.data.indexOf("abc") + 1], [after!, after!.data.indexOf("xyz") + 2]);
       keydown("Delete");
-      expect(raw()).toBe(expected);
+      expect(raw()).toBe(source);
       expect(editingId()).toBe("host");
+      const editor = editorIn(document.querySelector('[data-block-id="host"]')!);
+      const [s, e] = editor.selection();
+      expect(editor.value().slice(s, e)).toBe(expected);
     } finally {
       m.dispose();
     }
