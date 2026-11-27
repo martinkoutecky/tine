@@ -151,7 +151,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // goes through publish_live).
         // -1 CM step 2 batch 12: rename_page moved to commands/rename.rs.
         // -1 D-20261122-WEX: query_facets reuses off_ui_graph_read.
-        34,
+        // -1 tine#985: open_graph_file uses state::off_ui (the same awaited
+        // blocking job, behind the shared helper).
+        33,
         "command future",
         "caller awaits blocking result",
     ),

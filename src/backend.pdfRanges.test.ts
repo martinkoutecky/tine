@@ -24,9 +24,9 @@ it("pins an explicit outside-PDF binary read to its captured binding", async () 
   invoke.mockResolvedValue(new Uint8Array([37, 80, 68, 70, 45]).buffer);
   const { backend } = await import("./backend");
   const url = "file:///tmp/outside%20paper.pdf";
-  expect(await backend().readExternalPdf!(url, 17)).toEqual(new Uint8Array([37, 80, 68, 70, 45]));
-  expect(invoke).toHaveBeenCalledWith("read_external_pdf", { url, bindingGeneration: 17 });
+  expect(await backend().readExternalPdf!(url, 17, "link")).toEqual(new Uint8Array([37, 80, 68, 70, 45]));
+  expect(invoke).toHaveBeenCalledWith("read_external_pdf", { url, purpose: "link", bindingGeneration: 17 });
   invoke.mockClear();
-  await expect(backend().readExternalPdf!(url, 0)).rejects.toThrow("missing-graph-binding");
+  await expect(backend().readExternalPdf!(url, 0, "link")).rejects.toThrow("missing-graph-binding");
   expect(invoke).not.toHaveBeenCalled();
 });

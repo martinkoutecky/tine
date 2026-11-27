@@ -5,10 +5,17 @@ import { applySidebarSession, rightSidebar, setFavorites, setRecentPages } from 
 import { setToasts, toasts, toUiText } from "../toasts";
 import { renderEnglish } from "../i18n";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
-import { mainPaneRouter, openJournals, openPageInNewTab, resetTabsToJournals, route } from "../router";
+import { mainPaneRouter, openJournals, openPageInNewTab, resetTabsToJournals, route, tabRoute, type Route } from "../router";
 import { appNow, journalTitle } from "../journal";
 import { runGlobalCommand } from "../keybindings";
 import { readFileSync } from "node:fs";
+import { focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
+
+const viewport = vi.hoisted(() => ({ singlePane: false }));
+vi.mock("../viewportClass", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../viewportClass")>()),
+  isSinglePaneShell: () => viewport.singlePane,
+}));
 
 it("GH #926: the named close icon shares the graph picker row and first-level rows share a casing class", () => {
   setFavorites([{ name: "Tine", kind: "page" }]);
@@ -56,6 +63,64 @@ it("GH #740: Shift-click the top-left Journals entry keeps the main page and ope
     expect(runGlobalCommand("go/journals")).toBe(true);
     expect(route()).toMatchObject({ kind: "journals" });
   } finally { dispose(); }
+});
+
+// GH #1050: Ctrl/Cmd, middle-click and Alt on the Journals entry take the page-link destinations (the helper's
+// own cases are in journalsNavigation.test.ts). The mobile drawer closes when the feed is shown here, as on a
+// plain click, and stays open when it went to a background tab or the other pane.
+describe("GH #1050: modifier clicks on the left sidebar Journals entry", () => {
+  const feed: Route = { kind: "journals" };
+  const project: Route = { kind: "page", name: "Project", pageKind: "page" };
+  const tab = (r: Route) => ({ history: [r], pos: 0, pinned: false });
+  const clickJournals = (init: MouseEventInit) => {
+    const completed = vi.fn();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <Sidebar onActiveNavigationComplete={completed} />, root);
+    try {
+      const journals = [...root.querySelectorAll<HTMLElement>(".nav-item")].find(el => el.textContent === "Journals")!;
+      journals.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...init }));
+      journals.dispatchEvent(new MouseEvent(init.button === 1 ? "auxclick" : "click", { bubbles: true, cancelable: true, ...init }));
+    } finally { dispose(); }
+    return completed;
+  };
+  afterEach(() => {
+    viewport.singlePane = false;
+    resetPaneLayoutToSingle({ tabs: [tab(feed)], activeIndex: 0 });
+  });
+
+  it.each([
+    ["Ctrl", { ctrlKey: true }, "background"],
+    ["Cmd", { metaKey: true }, "background"],
+    ["middle", { button: 1 }, "background"],
+    ["Alt", { altKey: true }, "pane"],
+  ] as const)("%s-click opens the feed like a page link and keeps the page", (_name, init, destination) => {
+    resetPaneLayoutToSingle({ tabs: [tab(project)], activeIndex: 0 });
+    const completed = clickJournals(init);
+    expect(paneRouter("main").route()).toEqual(project);
+    if (destination === "background") expect(paneRouter("main").tabs().map(tabRoute)).toEqual([project, feed]);
+    else expect(paneRouter(layoutPaneIds()[1]).route()).toEqual(feed);
+    expect(completed).not.toHaveBeenCalled();
+  });
+
+  it.each([["Ctrl", { ctrlKey: true }], ["middle", { button: 1 }], ["Alt", { altKey: true }]] as const)(
+    "%s-click with the feed open in the other pane brings it forward and closes the drawer", (_name, init) => {
+      restorePaneLayout({ kind: "split", dir: "row", ratio: 0.5, children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pane-2" }] },
+        new Map([["main", { tabs: [tab(project)], activeIndex: 0 }], ["pane-2", { tabs: [tab(feed)], activeIndex: 0 }]]), "main");
+      const completed = clickJournals(init);
+      expect(focusedPaneId()).toBe("pane-2");
+      expect(paneRouter("main").tabs().map(tabRoute)).toEqual([project]);
+      expect(paneRouter("pane-2").tabs().map(tabRoute)).toEqual([feed]);
+      expect(completed).toHaveBeenCalledOnce();
+    });
+
+  it("Alt-click on a layout that cannot split opens the feed here and closes the drawer", () => {
+    viewport.singlePane = true;
+    resetPaneLayoutToSingle({ tabs: [tab(project)], activeIndex: 0 });
+    const completed = clickJournals({ altKey: true });
+    expect(layoutPaneIds()).toEqual(["main"]);
+    expect(paneRouter("main").route()).toEqual(feed);
+    expect(completed).toHaveBeenCalledOnce();
+  });
 });
 
 it("GH #761: sidebar sections and graph switcher share SVG disclosures that follow folding", () => {

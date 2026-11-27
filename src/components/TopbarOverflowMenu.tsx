@@ -1,5 +1,6 @@
 import { render, t } from "../i18n";
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { internalLinkAuxClick, middleClickMouseDown } from "../linkGesture";
 import { toolbarActionLabel, type ToolbarActionId } from "../toolbarChoice";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 
@@ -84,7 +85,11 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
         <div ref={menu} class="topbar-overflow-menu" role="menu" aria-label={t("topbar-overflow-menu-more-toolbar-actions")}>
           <For each={rows()}>{id => <button type="button" role="menuitem" data-topbar-overflow-action={id}
             disabled={id === "share" && props.canShare ? !props.canShare() : false}
-            onClick={event => run(() => handlers()[id]!(event))}>{render(toolbarActionLabel(id))}</button>}</For>
+            onClick={event => run(() => handlers()[id]!(event))}
+            // Journals also takes a page link's middle-click (GH #1050).
+            onMouseDown={id === "journals" ? middleClickMouseDown : undefined}
+            onAuxClick={id === "journals" ? event => internalLinkAuxClick(event, () => run(() => props.onJournals(event))) : undefined}
+          >{render(toolbarActionLabel(id))}</button>}</For>
           <div class="topbar-overflow-sep" role="separator" />
           <button type="button" role="menuitem" data-topbar-overflow-action="back" disabled={!props.canGoBack()} onClick={() => run(props.onBack)}>{t("topbar-overflow-menu-back")}</button>
           <button type="button" role="menuitem" data-topbar-overflow-action="forward" disabled={!props.canGoForward()} onClick={() => run(props.onForward)}>{t("topbar-overflow-menu-forward")}</button>

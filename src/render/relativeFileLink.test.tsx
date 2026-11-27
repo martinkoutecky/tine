@@ -19,6 +19,8 @@ afterEach(() => {
   vi.restoreAllMocks(); document.body.replaceChildren(); resetStore();
   setToasts([]); setGraphMeta(null); applySidebarSession({ right: false, items: [] });
 });
+// tine#985: the file: call carries its purpose and the click's generation.
+const fileCall = () => ({ purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined });
 
 function clickLink(raw: string, format: "md" | "org" = "md") {
   const host = document.createElement("div"); document.body.append(host);
@@ -40,7 +42,7 @@ describe("file links resolve from the graph folder (GH #457)", () => {
       const open = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
       const external = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
       clickLink(raw, format);
-      expect(open).toHaveBeenCalledExactlyOnceWith(opened, backend().graphBindingGeneration());
+      expect(open).toHaveBeenCalledExactlyOnceWith(opened, backend().graphBindingGeneration(), "link");
       expect(external).not.toHaveBeenCalled();
     });
   }
@@ -71,7 +73,7 @@ describe("file links resolve from the graph folder (GH #457)", () => {
       const link = clickLink(raw, format);
       expect(link.hasAttribute("data-broken-file-link")).toBe(false);
       expect(link.title).toBe(path);
-      expect(external).toHaveBeenCalledExactlyOnceWith(filePathUrl(path));
+      expect(external).toHaveBeenCalledExactlyOnceWith(filePathUrl(path), undefined, fileCall());
       expect(open).not.toHaveBeenCalled(); expect(reader).not.toHaveBeenCalled();
     });
   }
@@ -98,7 +100,7 @@ describe("file links resolve from the graph folder (GH #457)", () => {
         blocks: [{ id: "rel-link-block", raw: "[file](../files/a.txt)", collapsed: false, children: [] }] });
       const external = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);
       clickLink("[file](../files/a.txt)");
-      expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/files/a.txt");
+      expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/files/a.txt", undefined, fileCall());
     });
   }
 
@@ -120,7 +122,7 @@ describe("file links resolve from the graph folder (GH #457)", () => {
       const dispose = render(() => surface === "page" ? <PageView /> : surface === "sidebar" ? <RightSidebar /> : <AstBody raw="{{embed [[Plan]]}}" />, host);
       try {
         const link = await vi.waitFor(() => { const link = host.querySelector<HTMLAnchorElement>("a.file-link"); expect(link).not.toBeNull(); return link!; });
-        link.click(); expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/files/report.odt");
+        link.click(); expect(external).toHaveBeenCalledExactlyOnceWith("file:///home/user/files/report.odt", undefined, fileCall());
       } finally { dispose(); }
     });
   }
@@ -157,6 +159,6 @@ describe("file path classification and encoding", () => {
     const link = clickLink(`[file](<${dest}>)`);
     expect(link.title).toBe(path);
     expect(link.hasAttribute("data-broken-file-link")).toBe(false);
-    expect(external).toHaveBeenCalledExactlyOnceWith(dest);
+    expect(external).toHaveBeenCalledExactlyOnceWith(dest, undefined, fileCall());
   });
 });

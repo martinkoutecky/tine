@@ -25,7 +25,11 @@
    code block's longest unwrapped line (its `pre` scrolls in the view) widened the whole block while the prose beside
    it was edited (CM6-WIDE). Let it shrink to the column, as the rendered block does. */
 .cm6-block-editor .cm-content { min-width: 0; }
-.cm6-preview { cursor: text; }
+/* A pointer on a concealed construct reveals its source (cm6PreviewWidget.tsx) instead of following or toggling it, so
+   the preview, the link kinds it draws (page refs, tags, block refs, links) and the task checkbox show the text cursor,
+   not the view's hand; what a link kind draws inside it (a referenced block's code) inherits that, since a press there
+   reveals the ref too. Every element with its own cursor rule (a resize grip's, the code language button's) keeps it. */
+.cm6-preview, .cm6-preview :is(.page-ref, .tag, .block-ref, a[href], .block-task-checkbox) { cursor: text; }
 /* A concealed page reference is drawn by the read renderer, brackets included when the graph preference shows them
    (they were hidden here, which made the line 24px narrower than the view until the caret reached it). */
 .cm6-block-editor .code-editor-region > div:has(> .cm-editor) { min-width: 0; }
@@ -42,8 +46,7 @@
 .cm6-block-editor.calc-wrap .code-editor-region > div:has(> .cm-editor) { grid-column: 2; }
 .cm6-block-editor.calc-wrap .cm-scroller { overflow-x: auto; }
 /* The marker's checkbox is drawn by the view's own `.block-task-checkbox`; here a pointer reveals the source (it does not
-   toggle), so it keeps the text cursor and shows no hover tint. */
-.cm6-preview .block-task-checkbox { cursor: text; }
+   toggle), so it keeps the text cursor (above) and shows no hover tint. */
 .cm6-preview .block-task-checkbox:not(.checked):hover { background: none; }
 
 /* Empty document: the caret is drawn by src/editor/cm6EmptyCaret.ts (WebKitGTK paints no native caret in an empty

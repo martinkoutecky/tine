@@ -5,14 +5,15 @@ import { resetStore } from "../document";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
-import { deleteRenderedTextSelection } from "../editor/renderedSelectionDelete";
+import { openRenderedSelectionInEditor } from "../editor/renderedSelectionDelete";
 import { Block } from "./Block";
+import { editorIn } from "../tests/editorDriver";
 import { RefBlocks } from "./RefBlocks";
 
 // Delete/Backspace pressed while a RENDERED (not-editing) block's text is
-// selected must delete that text (OG contenteditable parity). Without the
-// handling the keypress reached no editor and died silently: selection stayed,
-// nothing changed — Martin's "select text and hit delete, nothing happens".
+// selected opens that block's editor with the range selected and writes
+// nothing. Without the handling the keypress reached no editor
+// and died silently: Martin's "select text and hit delete, nothing happens".
 beforeAll(async () => {
   await initParser();
 });
@@ -105,7 +106,7 @@ afterEach(() => {
 });
 
 describe("rendered-text selection delete (OG parity)", () => {
-  it("Delete removes a rendered selection and opens the editor at the join point", () => {
+  it("Delete opens the editor with the rendered selection and writes nothing", () => {
     const m = mount(["a", "b"], {
       a: node("a", "hello world sample text", null),
       b: node("b", "second block stays", null),
@@ -115,9 +116,12 @@ describe("rendered-text selection delete (OG parity)", () => {
       expect(selectRenderedText("a", "hello world sample text", 6, 11)).toBe(true); // "world"
       expect(editingId()).toBeNull();
       keydown("Delete");
-      expect(doc.byId["a"].raw).toBe("hello  sample text");
+      expect(doc.byId["a"].raw).toBe("hello world sample text");
       expect(doc.byId["b"].raw).toBe("second block stays");
       expect(editingId()).toBe("a");
+      expect(editorIn(document.querySelector('[data-block-id="a"]')!).selection()).toEqual([6, 11]);
+      const left = window.getSelection()!;
+      expect(!left.rangeCount || left.isCollapsed || !left.anchorNode?.parentElement?.closest("[data-rendered-block]")).toBe(true);
     } finally {
       disposeKeys();
       m.dispose();
@@ -130,21 +134,23 @@ describe("rendered-text selection delete (OG parity)", () => {
     try {
       expect(selectRenderedText("a", "hello world sample text", 0, 5)).toBe(true); // "hello"
       keydown("Backspace");
-      expect(doc.byId["a"].raw).toBe(" world sample text");
+      expect(doc.byId["a"].raw).toBe("hello world sample text");
       expect(editingId()).toBe("a");
+      expect(editorIn(document.querySelector('[data-block-id="a"]')!).selection()).toEqual([0, 5]);
     } finally {
       disposeKeys();
       m.dispose();
     }
   });
 
-  it("preserves hidden property lines (id::) when splicing visible text", () => {
+  it("selects in visible coordinates past a hidden property line (id::)", () => {
     const m = mount(["a"], { a: node("a", "visible text here\nid:: 12345678-abcd", null) });
     const disposeKeys = installKeybindings();
     try {
       expect(selectRenderedText("a", "visible text here", 8, 12)).toBe(true); // "text"
       keydown("Delete");
-      expect(doc.byId["a"].raw).toBe("visible  here\nid:: 12345678-abcd");
+      expect(doc.byId["a"].raw).toBe("visible text here\nid:: 12345678-abcd");
+      expect(editorIn(document.querySelector('[data-block-id="a"]')!).selection()).toEqual([8, 12]);
     } finally {
       disposeKeys();
       m.dispose();
@@ -171,7 +177,7 @@ describe("rendered-text selection delete (OG parity)", () => {
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
-      expect(deleteRenderedTextSelection()).toBe(false);
+      expect(openRenderedSelectionInEditor("Delete")).toBe(false);
       expect(doc.byId["a"].raw).toBe("hello world");
       expect(doc.byId["b"].raw).toBe("second block");
     } finally {
@@ -237,7 +243,7 @@ describe("rendered-text selection delete (OG parity)", () => {
     try {
       expect(document.querySelector('[data-block-id="a"]')?.classList.contains("ref-block")).toBe(true);
       expect(selectRenderedText("a", "hello world sample text", 6, 11)).toBe(true);
-      expect(deleteRenderedTextSelection()).toBe(false);
+      expect(openRenderedSelectionInEditor("Delete")).toBe(false);
       keydown("Delete");
       expect(doc.byId["a"].raw).toBe("hello world sample text");
       expect(editingId()).toBeNull();
@@ -250,7 +256,7 @@ describe("rendered-text selection delete (OG parity)", () => {
   it("ignores a collapsed (caret-only) selection and absent selection", () => {
     const m = mount(["a"], { a: node("a", "hello world", null) });
     try {
-      expect(deleteRenderedTextSelection()).toBe(false);
+      expect(openRenderedSelectionInEditor("Delete")).toBe(false);
       expect(doc.byId["a"].raw).toBe("hello world");
     } finally {
       m.dispose();

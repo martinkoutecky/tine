@@ -1346,6 +1346,7 @@ export interface MessageArgs {
   "kernel-page-properties-stay-at-the-top-of-the-page": {};
   "launcher-ranking-could-not-load-adaptive-launcher-ranking-preference": {};
   "link-depth-embed-depth-is-too-deep": {};
+  "links-always-open-outside-files": {};
   "links-always-open-scheme": { "scheme": string | number };
   "links-consent-device-hint": {};
   "links-consent-save-failed": {};
@@ -1355,7 +1356,11 @@ export interface MessageArgs {
   "links-no-remembered-schemes": {};
   "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
   "links-open-custom-scheme-title": { "scheme": string | number };
+  "links-open-outside-file-confirm": { "path": string | number };
+  "links-open-outside-file-title": {};
   "links-opened-in-new-tab": {};
+  "links-outside-file-graph-hint": {};
+  "links-outside-file-unreadable-name": {};
   "links-remembered-schemes": {};
   "live-conflicts-the-file-on-disk-now": {};
   "live-conflicts-your-unsaved-edits": {};
@@ -1599,6 +1604,7 @@ export interface MessageArgs {
   "pdf-external-desktop-only": {};
   "pdf-external-invalid-link": {};
   "pdf-external-load-failed": { "detail": string | number };
+  "pdf-external-not-opened": {};
   "pdf-external-not-pdf": {};
   "pdf-external-not-regular": {};
   "pdf-external-read-only": {};

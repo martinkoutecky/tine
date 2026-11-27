@@ -232,6 +232,27 @@ export function feedPaneId(windowId = currentLayoutWindowId()): string | null {
   return layoutPaneIds(layoutRoot(windowId)).find((id) => paneRouter(id).route().kind === "journals") ?? null;
 }
 
+/** Bring forward a Journals feed some tab of this window already shows, as a plain Journals click does for an
+ *  active one: an active feed is `feedPaneId`'s answer and only its pane is focused; else the first background tab
+ *  holding it is selected and its pane focused. False when no tab holds it. Background tabs are scanned only when
+ *  no pane shows the feed. Asked by the modified Journals click (journalsNavigation.ts, GH #1050). */
+export function revealOpenJournalsFeed(windowId = currentLayoutWindowId()): boolean {
+  const active = feedPaneId(windowId);
+  if (active) {
+    focusPane(active);
+    return true;
+  }
+  for (const paneId of layoutPaneIds(layoutRoot(windowId))) {
+    const router = paneRouter(paneId);
+    const tab = router.tabs().find((t) => tabRoute(t).kind === "journals");
+    if (!tab) continue;
+    router.setActiveTab(tab.id);
+    focusPane(paneId);
+    return true;
+  }
+  return false;
+}
+
 export function replacePaneInLayout(
   node: LayoutNode,
   paneId: string,

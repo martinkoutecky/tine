@@ -18,6 +18,8 @@ afterEach(() => {
   resetStore();
   applySidebarSession({ right: false, items: [] });
 });
+// tine#985: the file: call carries its purpose and the click's generation.
+const fileCall = () => ({ purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined });
 
 describe("GH #577: file PDF links are reads through the OS opener (I-2, I-4)", () => {
   for (const [source, destination, format] of [
@@ -39,7 +41,7 @@ describe("GH #577: file PDF links are reads through the OS opener (I-2, I-4)", (
         const link = host.querySelector("a")!;
         expect(link).not.toBeNull();
         link.click();
-        expect(external).toHaveBeenCalledExactlyOnceWith(destination);
+        expect(external).toHaveBeenCalledExactlyOnceWith(destination, undefined, fileCall());
         expect(asset).not.toHaveBeenCalled();
         expect(reader, "I-4: file links must not enter the annotation writer via panes.openPdf").not.toHaveBeenCalled();
       } finally { dispose(); }
@@ -120,7 +122,7 @@ describe("GH #577: file PDF links are reads through the OS opener (I-2, I-4)", (
         });
         expect(link.getAttribute("href")).toBeNull();
         link.click();
-        expect(external).toHaveBeenCalledExactlyOnceWith("file:///tmp/external.pdf");
+        expect(external).toHaveBeenCalledExactlyOnceWith("file:///tmp/external.pdf", undefined, fileCall());
         expect(reader).not.toHaveBeenCalled();
       } finally { dispose(); }
     });

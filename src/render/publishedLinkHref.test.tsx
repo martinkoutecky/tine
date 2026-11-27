@@ -159,8 +159,9 @@ it("file and drive links use their Beta click routes without a browser href", ()
     expect(link.getAttribute("href")).toBeNull();
     activate(link, "click");
   }
-  expect(external.mock.calls).toEqual([["file:///tmp/note.txt"], ["file:///D:/notes/note.txt"]]);
-  expect(graph).toHaveBeenCalledExactlyOnceWith("docs/note.txt", backend().graphBindingGeneration());
+  const file = { purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined };
+  expect(external.mock.calls).toEqual([["file:///tmp/note.txt", undefined, file], ["file:///D:/notes/note.txt", undefined, file]]);
+  expect(graph).toHaveBeenCalledExactlyOnceWith("docs/note.txt", backend().graphBindingGeneration(), "link");
 });
 
 it("expanded web audio uses the same remote source as inline playback", async () => {
