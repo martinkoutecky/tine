@@ -64,6 +64,9 @@ describe("OG-P11B one parser door", () => {
     const source = readFileSync("src/editor/outline.ts", "utf8");
     expect(source).toContain("blockRegions(text, format).literals");
     expect(outlineLiteralScanners(source)).toEqual([]);
+    const html = readFileSync("src/editor/htmlOutlineMarkdown.ts", "utf8");
+    expect(html).toContain("blockRegions(normalized, format).literals");
+    expect(outlineLiteralScanners(html)).toEqual([]);
   });
   it("detects planted fence and src recognition in outline paste", () => {
     for (const source of ["const fence = /^`{3,}/.exec(line);", 'const src = line.startsWith("#+BEGIN_SRC");', 'const close = new RegExp(marker);']) {
