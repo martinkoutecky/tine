@@ -228,29 +228,29 @@ export function removePageTargetAcrossPanes(target: PageTarget) {
   for (const router of routers.values()) router.removePageTarget(target);
 }
 
-/** The window's one Journals feed (ADR 0032): the first tab, active or in the
- *  background, whose current route is the feed — the one restore keeps. */
-function feedTab(windowId: string): { paneId: string; tabId: string } | null {
-  for (const paneId of layoutPaneIds(layoutRoot(windowId))) {
-    const tab = paneRouter(paneId).tabs().find((t) => tabRoute(t).kind === "journals");
-    if (tab) return { paneId, tabId: tab.id };
-  }
-  return null;
-}
-
 export function feedPaneId(windowId = currentLayoutWindowId()): string | null {
-  return feedTab(windowId)?.paneId ?? null;
+  return layoutPaneIds(layoutRoot(windowId)).find((id) => paneRouter(id).route().kind === "journals") ?? null;
 }
 
-/** The feed singleton's answer to "show the feed in `paneId`'s tab `tabId`
- *  (absent: a new tab)": when the window already holds the feed elsewhere,
- *  focus it there and return true. */
-function focusFeedInstead(paneId: string, r: Route, tabId?: string): boolean {
-  if (r.kind !== "journals") return false;
-  const feed = feedTab(windowOfPane(paneId));
-  if (!feed || (feed.paneId === paneId && feed.tabId === tabId)) return false;
-  paneRouter(feed.paneId).setActiveTab(feed.tabId);
-  focusPane(feed.paneId);
+/** Bring forward a Journals feed some tab of this window already shows, active or in the background, as a plain
+ *  Journals click does for an active one: focus its pane, after selecting the tab. False when no tab holds it.
+ *  One scan of the window's tabs. Asked by the modified Journals click (journalsNavigation.ts, GH #1050). */
+export function revealOpenJournalsFeed(windowId = currentLayoutWindowId()): boolean {
+  let held: { paneId: string; tabId: string } | null = null;
+  for (const paneId of layoutPaneIds(layoutRoot(windowId))) {
+    const router = paneRouter(paneId);
+    if (router.route().kind === "journals") {
+      focusPane(paneId);
+      return true;
+    }
+    if (!held) {
+      const tab = router.tabs().find((t) => tabRoute(t).kind === "journals");
+      if (tab) held = { paneId, tabId: tab.id };
+    }
+  }
+  if (!held) return false;
+  paneRouter(held.paneId).setActiveTab(held.tabId);
+  focusPane(held.paneId);
   return true;
 }
 
@@ -625,8 +625,6 @@ export function adjustPaneSize(paneId: string, axis: "width" | "height", grow: b
 }
 
 export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId()): string | null {
-  // The feed singleton answers before any split exists.
-  if (focusFeedInstead(sourcePaneId, route)) return feedPaneId(windowOfPane(sourcePaneId));
   const root = layoutRoot(windowOfPane(sourcePaneId));
   const ids = layoutPaneIds(root);
   let target = nearestPane(root, sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
@@ -832,7 +830,15 @@ installPaneRouterRegistry({
 });
 installHistoryRouteContextAdapter(historyRouteContextAdapter);
 installLastTabCloseHandler((paneId) => closePane(paneId));
-installNavigationInterceptor((paneId, r, { tabId }) => focusFeedInstead(paneId, r, tabId));
+installNavigationInterceptor((paneId, r) => {
+  if (r.kind !== "journals") return false;
+  const existing = feedPaneId(windowOfPane(paneId));
+  if (existing && existing !== paneId) {
+    focusPane(existing);
+    return true;
+  }
+  return false;
+});
 registerPaneRouteProvider(activePaneRoutes);
 // Pointer/focus-driven pane changes are genuine foreground activations. Raw
 // setFocusedPaneId remains for restore/preload/layout construction, which must

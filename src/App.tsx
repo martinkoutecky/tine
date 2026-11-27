@@ -54,7 +54,7 @@ import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { openJournalsFromClick, openJournalsInNewTab } from "./journalsNavigation";
+import { openJournalsFromClick } from "./journalsNavigation";
 import { internalLinkAuxClick, internalLinkMouseDown } from "./linkGesture";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { openShareDialog } from "./shareState";
@@ -1195,7 +1195,7 @@ export function App(): JSX.Element {
     ),
     "journals": () => (
       <button class="icon-btn topbar-optional-action" data-toolbar-action="journals" style={toolbar.style("journals")} title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}
-        onMouseDown={internalLinkMouseDown} onAuxClick={(e) => internalLinkAuxClick(e, openJournalsInNewTab)}>
+        onMouseDown={internalLinkMouseDown} onAuxClick={(e) => internalLinkAuxClick(e, () => topbarActions.journals(e))}>
         <JournalsIcon />
       </button>
     ),

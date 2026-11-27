@@ -9,8 +9,13 @@ import { mainPaneRouter, openJournals, openPageInNewTab, resetTabsToJournals, ro
 import { appNow, journalTitle } from "../journal";
 import { runGlobalCommand } from "../keybindings";
 import { readFileSync } from "node:fs";
-import { focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "../panes";
-import { applyParsedSession, buildPersistedSession, parsePersistedSession } from "../session";
+import { focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
+
+const viewport = vi.hoisted(() => ({ singlePane: false }));
+vi.mock("../viewportClass", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../viewportClass")>()),
+  isSinglePaneShell: () => viewport.singlePane,
+}));
 
 it("GH #926: the named close icon shares the graph picker row and first-level rows share a casing class", () => {
   setFavorites([{ name: "Tine", kind: "page" }]);
@@ -60,125 +65,61 @@ it("GH #740: Shift-click the top-left Journals entry keeps the main page and ope
   } finally { dispose(); }
 });
 
-// GH #1050: Ctrl/Cmd+click and Alt+click on Journals do what they do on a page link (linkGesture.ts): the feed
-// opens in a background tab or the other pane, and the main page stays. Logseq ignores both modifiers here.
-it.each([
-  ["Ctrl", { ctrlKey: true }, "background"],
-  ["Cmd", { metaKey: true }, "background"],
-  ["Alt", { altKey: true }, "pane"],
-] as const)("GH #1050: %s-click the left sidebar Journals entry opens the feed like a page link", (_name, modifier, destination) => {
-  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Project", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
-  const before = paneRouter("main").route();
-  const completed = vi.fn();
-  const root = document.body.appendChild(document.createElement("div"));
-  const dispose = render(() => <Sidebar onActiveNavigationComplete={completed} />, root);
-  try {
-    const journals = [...root.querySelectorAll<HTMLElement>(".nav-item")].find(el => el.textContent === "Journals")!;
-    journals.dispatchEvent(new MouseEvent("click", { bubbles: true, ...modifier }));
-    expect(paneRouter("main").route()).toEqual(before);
-    if (destination === "background") {
-      expect(paneRouter("main").tabs()).toHaveLength(2);
-      expect(paneRouter("main").tabs()[1].history[0]).toEqual({ kind: "journals" });
-    } else {
-      expect(layoutPaneIds()).toHaveLength(2);
-      expect(paneRouter(layoutPaneIds()[1]).route()).toEqual({ kind: "journals" });
-    }
-    expect(completed).not.toHaveBeenCalled();
-  } finally {
-    dispose();
-    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
-  }
-});
-
-// GH #1050 round 2: a window holds one feed (ADR 0032), so when one is already open, in any pane or tab, a
-// modifier click focuses it like a plain click; no split and no second feed tab, and the feed survives restore.
-describe("GH #1050: a modifier click on Journals with the feed already open focuses that feed", () => {
-  const tab = (route: Route) => ({ history: [route], pos: 0, pinned: false });
-  const project: Route = { kind: "page", name: "Project", pageKind: "page" };
+// GH #1050: Ctrl/Cmd, middle-click and Alt on the Journals entry take the page-link destinations (the helper's
+// own cases are in journalsNavigation.test.ts). The mobile drawer closes when the feed is shown here, as on a
+// plain click, and stays open when it went to a background tab or the other pane.
+describe("GH #1050: modifier clicks on the left sidebar Journals entry", () => {
   const feed: Route = { kind: "journals" };
-  const panes = (...routes: Route[]) => {
-    const ids = routes.map((_, i) => i === 0 ? "main" : `pane-${i + 1}`);
-    const node = (i: number): LayoutNode => i === ids.length - 1
-      ? { kind: "pane", paneId: ids[i] }
-      : { kind: "split", dir: "row", ratio: 0.5, children: [{ kind: "pane", paneId: ids[i] }, node(i + 1)] };
-    restorePaneLayout(node(0), new Map(ids.map((id, i) => [id, { tabs: [tab(routes[i])], activeIndex: 0 }])), "main");
-  };
-  const feedTabs = () => layoutPaneIds().flatMap(id => paneRouter(id).tabs().filter(t => tabRoute(t).kind === "journals"));
-  const clickJournals = (modifier: MouseEventInit) => {
+  const project: Route = { kind: "page", name: "Project", pageKind: "page" };
+  const tab = (r: Route) => ({ history: [r], pos: 0, pinned: false });
+  const clickJournals = (init: MouseEventInit) => {
+    const completed = vi.fn();
     const root = document.body.appendChild(document.createElement("div"));
-    const dispose = render(() => <Sidebar />, root);
+    const dispose = render(() => <Sidebar onActiveNavigationComplete={completed} />, root);
     try {
       const journals = [...root.querySelectorAll<HTMLElement>(".nav-item")].find(el => el.textContent === "Journals")!;
-      journals.dispatchEvent(new MouseEvent("click", { bubbles: true, ...modifier }));
+      journals.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...init }));
+      journals.dispatchEvent(new MouseEvent(init.button === 1 ? "auxclick" : "click", { bubbles: true, cancelable: true, ...init }));
     } finally { dispose(); }
+    return completed;
   };
-  const restoreSavedSession = () => applyParsedSession(parsePersistedSession(JSON.stringify(buildPersistedSession()))!);
-  afterEach(() => resetPaneLayoutToSingle({ tabs: [tab(feed)], activeIndex: 0 }));
-
-  it("Alt-click with the feed in the only pane creates no split", () => {
+  afterEach(() => {
+    viewport.singlePane = false;
     resetPaneLayoutToSingle({ tabs: [tab(feed)], activeIndex: 0 });
-    clickJournals({ altKey: true });
-    expect(layoutPaneIds()).toEqual(["main"]);
-    expect(paneRouter("main").tabs()).toHaveLength(1);
-    expect(paneRouter("main").route()).toEqual(feed);
-  });
-
-  it("Alt-click with the feed in a background tab of the only pane shows that tab", () => {
-    resetPaneLayoutToSingle({ tabs: [tab(project), tab(feed)], activeIndex: 0 });
-    clickJournals({ altKey: true });
-    expect(layoutPaneIds()).toEqual(["main"]);
-    expect(paneRouter("main").tabs()).toHaveLength(2);
-    expect(paneRouter("main").route()).toEqual(feed);
   });
 
   it.each([
-    ["the other pane", [project, feed], "pane-2"],
-    ["a third pane", [project, project, feed], "pane-3"],
-  ] as const)("Alt-click with the feed in %s focuses it there", (_where, routes, feedPane) => {
-    panes(...routes);
-    clickJournals({ altKey: true });
-    expect(layoutPaneIds()).toHaveLength(routes.length);
-    expect(focusedPaneId()).toBe(feedPane);
-    expect(feedTabs()).toHaveLength(1);
+    ["Ctrl", { ctrlKey: true }, "background"],
+    ["Cmd", { metaKey: true }, "background"],
+    ["middle", { button: 1 }, "background"],
+    ["Alt", { altKey: true }, "pane"],
+  ] as const)("%s-click opens the feed like a page link and keeps the page", (_name, init, destination) => {
+    resetPaneLayoutToSingle({ tabs: [tab(project)], activeIndex: 0 });
+    const completed = clickJournals(init);
     expect(paneRouter("main").route()).toEqual(project);
+    if (destination === "background") expect(paneRouter("main").tabs().map(tabRoute)).toEqual([project, feed]);
+    else expect(paneRouter(layoutPaneIds()[1]).route()).toEqual(feed);
+    expect(completed).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["Ctrl", { ctrlKey: true }],
-    ["Cmd", { metaKey: true }],
-  ] as const)("%s-click opens no second feed tab, and the visible feed survives restore", (_name, modifier) => {
-    panes(project, feed);
-    clickJournals(modifier);
-    expect(paneRouter("main").tabs()).toHaveLength(1);
-    expect(feedTabs()).toHaveLength(1);
-    expect(focusedPaneId()).toBe("pane-2");
-    restoreSavedSession();
-    expect(layoutPaneIds()).toEqual(["main", "pane-2"]);
-    expect(paneRouter("pane-2").route()).toEqual(feed);
-    expect(paneRouter("main").route()).toEqual(project);
-  });
+  it.each([["Ctrl", { ctrlKey: true }], ["middle", { button: 1 }], ["Alt", { altKey: true }]] as const)(
+    "%s-click with the feed open in the other pane brings it forward and closes the drawer", (_name, init) => {
+      restorePaneLayout({ kind: "split", dir: "row", ratio: 0.5, children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pane-2" }] },
+        new Map([["main", { tabs: [tab(project)], activeIndex: 0 }], ["pane-2", { tabs: [tab(feed)], activeIndex: 0 }]]), "main");
+      const completed = clickJournals(init);
+      expect(focusedPaneId()).toBe("pane-2");
+      expect(paneRouter("main").tabs().map(tabRoute)).toEqual([project]);
+      expect(paneRouter("pane-2").tabs().map(tabRoute)).toEqual([feed]);
+      expect(completed).toHaveBeenCalledOnce();
+    });
 
-  // The singleton sees background tabs, so a plain click and the sidebar's middle-click answer the same way.
-  it("a plain click with the feed in a background tab shows that tab instead of a second feed", () => {
-    resetPaneLayoutToSingle({ tabs: [tab(feed), tab(project)], activeIndex: 1 });
-    clickJournals({});
-    expect(paneRouter("main").tabs()).toHaveLength(2);
+  it("Alt-click on a layout that cannot split opens the feed here and closes the drawer", () => {
+    viewport.singlePane = true;
+    resetPaneLayoutToSingle({ tabs: [tab(project)], activeIndex: 0 });
+    const completed = clickJournals({ altKey: true });
+    expect(layoutPaneIds()).toEqual(["main"]);
     expect(paneRouter("main").route()).toEqual(feed);
-    expect(feedTabs()).toHaveLength(1);
-  });
-
-  it("middle-click with the feed in the other pane focuses it and adds no tab", () => {
-    panes(project, feed);
-    const root = document.body.appendChild(document.createElement("div"));
-    const dispose = render(() => <Sidebar />, root);
-    try {
-      const journals = [...root.querySelectorAll<HTMLElement>(".nav-item")].find(el => el.textContent === "Journals")!;
-      journals.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 1 }));
-      journals.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
-    } finally { dispose(); }
-    expect(paneRouter("main").tabs()).toHaveLength(1);
-    expect(feedTabs()).toHaveLength(1);
-    expect(focusedPaneId()).toBe("pane-2");
+    expect(completed).toHaveBeenCalledOnce();
   });
 });
 

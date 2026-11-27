@@ -3,12 +3,11 @@ import { render } from "solid-js/web";
 import { App } from "./App";
 import { setLeftSidebarOpen } from "./ui";
 import { closeShareDialog, shareTarget } from "./shareState";
-import { mainPaneRouter, resetTabsToJournals } from "./router";
+import { mainPaneRouter, resetTabsToJournals, tabRoute, type Route } from "./router";
 import { applySidebarSession, rightSidebar } from "./ui";
 import { appNow, journalTitle } from "./journal";
 import { saveToolbarChoice } from "./toolbarChoice";
-import { focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { applyParsedSession, buildPersistedSession, parsePersistedSession } from "./session";
+import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "./panes";
 
 let dispose = () => {};
 
@@ -47,66 +46,48 @@ describe("topbar workspace placement", () => {
     expect(mainPaneRouter.route()).toMatchObject({ kind: "journals" });
   });
 
-  // GH #1050: the toolbar Journals controls follow the page-link contract (linkGesture.ts) for Ctrl/Cmd and Alt;
-  // the button also takes the link's middle-click.
+  // GH #1050: the toolbar button and the overflow row hand Ctrl/Cmd, middle-click and Alt to the Journals helper
+  // (its cases are in journalsNavigation.test.ts): the feed opens like a page link and the page stays.
   it.each([
     ["button", "Ctrl", { ctrlKey: true }, "background"],
     ["button", "middle", { button: 1 }, "background"],
     ["button", "Alt", { altKey: true }, "pane"],
     ["overflow", "Ctrl", { ctrlKey: true }, "background"],
+    ["overflow", "middle", { button: 1 }, "background"],
     ["overflow", "Alt", { altKey: true }, "pane"],
-  ] as const)("GH #1050: %s %s-click Journals opens the feed like a page link", async (surface, gesture, modifier, destination) => {
+  ] as const)("GH #1050: %s %s-click Journals opens the feed like a page link", async (surface, gesture, init, destination) => {
     const host = document.body.appendChild(document.createElement("div"));
     if (surface === "overflow") saveToolbarChoice({ bar: ["settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar", "workspaces"] });
-    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Project", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
-    const before = paneRouter("main").route();
+    const project: Route = { kind: "page", name: "Project", pageKind: "page" };
+    resetPaneLayoutToSingle({ tabs: [{ history: [project], pos: 0, pinned: false }], activeIndex: 0 });
     dispose = render(() => <App />, host);
     if (surface === "overflow") host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
     const journals = host.querySelector<HTMLElement>(surface === "button"
       ? 'header.topbar button[title="Journals"]'
       : '[data-topbar-overflow-action="journals"]')!;
-    journals.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...modifier }));
-    journals.dispatchEvent(new MouseEvent(gesture === "middle" ? "auxclick" : "click", { bubbles: true, cancelable: true, ...modifier }));
-    expect(paneRouter("main").route()).toEqual(before);
-    if (destination === "background") {
-      expect(paneRouter("main").tabs()).toHaveLength(2);
-      expect(paneRouter("main").tabs()[1].history[0]).toEqual({ kind: "journals" });
-    } else {
-      expect(layoutPaneIds()).toHaveLength(2);
-      expect(paneRouter(layoutPaneIds()[1]).route()).toEqual({ kind: "journals" });
-    }
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...init });
+    journals.dispatchEvent(down);
+    journals.dispatchEvent(new MouseEvent(gesture === "middle" ? "auxclick" : "click", { bubbles: true, cancelable: true, ...init }));
+    if (gesture === "middle") expect(down.defaultPrevented).toBe(true);
+    expect(paneRouter("main").route()).toEqual(project);
+    if (destination === "background") expect(paneRouter("main").tabs().map(tabRoute)).toEqual([project, { kind: "journals" }]);
+    else expect(paneRouter(layoutPaneIds()[1]).route()).toEqual({ kind: "journals" });
   });
 
-  // GH #1050 round 2: with the feed already open in the other pane, the toolbar's modifier and middle clicks focus
-  // that feed (ADR 0032's one feed per window): no split, no second feed tab, and the feed survives restore.
-  it.each([
-    ["button", "Ctrl", { ctrlKey: true }],
-    ["button", "middle", { button: 1 }],
-    ["button", "Alt", { altKey: true }],
-    ["overflow", "Ctrl", { ctrlKey: true }],
-    ["overflow", "Alt", { altKey: true }],
-  ] as const)("GH #1050: %s %s-click Journals with the feed open in the other pane focuses it", async (surface, gesture, modifier) => {
+  it.each(["button", "overflow"])("GH #1050: Shift+Alt-click Journals in the %s still opens today beside the page", async (surface) => {
     const host = document.body.appendChild(document.createElement("div"));
     if (surface === "overflow") saveToolbarChoice({ bar: ["settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar", "workspaces"] });
-    const project = { kind: "page", name: "Project", pageKind: "page" } as const;
-    restorePaneLayout({ kind: "split", dir: "row", ratio: 0.5, children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pane-2" }] },
-      new Map([["main", { tabs: [{ history: [project], pos: 0, pinned: false }], activeIndex: 0 }],
-        ["pane-2", { tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 }]]), "main");
+    mainPaneRouter.openPage("Project", "page", { inPlace: true });
+    const before = mainPaneRouter.route();
     dispose = render(() => <App />, host);
     if (surface === "overflow") host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
-    const journals = host.querySelector<HTMLElement>(surface === "button"
+    host.querySelector<HTMLElement>(surface === "button"
       ? 'header.topbar button[title="Journals"]'
-      : '[data-topbar-overflow-action="journals"]')!;
-    journals.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...modifier }));
-    journals.dispatchEvent(new MouseEvent(gesture === "middle" ? "auxclick" : "click", { bubbles: true, cancelable: true, ...modifier }));
-    expect(layoutPaneIds()).toEqual(["main", "pane-2"]);
-    expect(focusedPaneId()).toBe("pane-2");
-    expect(paneRouter("main").tabs()).toHaveLength(1);
-    expect(paneRouter("pane-2").tabs()).toHaveLength(1);
-    applyParsedSession(parsePersistedSession(JSON.stringify(buildPersistedSession()))!);
-    expect(layoutPaneIds()).toEqual(["main", "pane-2"]);
-    expect(paneRouter("main").route()).toEqual(project);
-    expect(paneRouter("pane-2").route()).toEqual({ kind: "journals" });
+      : '[data-topbar-overflow-action="journals"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, altKey: true }));
+    expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: journalTitle(appNow()), pageKind: "journal" }));
+    expect(mainPaneRouter.route()).toEqual(before);
+    expect(layoutPaneIds()).toEqual(["main"]);
   });
 
   it("puts the full workspace switcher in the sidebar and only mounts a compact fallback while it is closed", async () => {

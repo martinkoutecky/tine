@@ -312,10 +312,8 @@ let sessionPersistence = {
 };
 
 let lastTabCloseHandler: (paneId: string) => boolean = () => false;
-/** Asked before a pane's tab `tabId` (absent: a new tab) shows `route`; true when it handled the
- *  navigation instead (the Journals feed singleton, panes.ts). */
-type NavigationInterceptor = (paneId: string, route: Route, opts: { sticky?: boolean; tabId?: string }) => boolean;
-let navigationInterceptor: NavigationInterceptor = () => false;
+let navigationInterceptor: (paneId: string, route: Route, opts: { sticky?: boolean }) => boolean =
+  () => false;
 
 export function installSessionPersistence(handlers: {
   schedule: () => void;
@@ -329,7 +327,9 @@ export function installLastTabCloseHandler(handler: (paneId: string) => boolean)
   lastTabCloseHandler = handler;
 }
 
-export function installNavigationInterceptor(handler: NavigationInterceptor) {
+export function installNavigationInterceptor(
+  handler: (paneId: string, route: Route, opts: { sticky?: boolean }) => boolean
+) {
   navigationInterceptor = handler;
 }
 
@@ -549,7 +549,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   // pass `sticky`. Programmatic resets (graph switch, post-delete) pass `inPlace`
   // to force the active tab regardless of pin or reuse.
   function navigate(r: Route, opts: { sticky?: boolean } = {}) {
-    if (navigationInterceptor(paneId, r, { ...opts, tabId: activeId() })) return;
+    if (navigationInterceptor(paneId, r, opts)) return;
     rememberScroll(); // capture where we are before leaving this entry
     const active = activeTab();
     if (opts.sticky && navReuseTabs()) {
@@ -826,7 +826,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   function openInNewTab(r: Route, foreground = false) {
-    if (navigationInterceptor(paneId, r, {})) return;
+    if (foreground && navigationInterceptor(paneId, r, {})) return;
     if (foreground) intentRevision++;
     // Open a new tab. Default is *background* (no focus switch) - matches a
     // browser's middle-click. `foreground` is used by the sticky-tab redirect, so
@@ -930,7 +930,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function setActiveTab(id: string) {
     const next = tabs().find((t) => t.id === id);
     if (!next || next.id === activeId()) return;
-    if (navigationInterceptor(paneId, tabRoute(next), { tabId: id })) return;
+    if (navigationInterceptor(paneId, tabRoute(next), {})) return;
     intentRevision++;
     rememberScroll(); // save the outgoing tab's scroll so switching back restores it
     setActiveId(id);

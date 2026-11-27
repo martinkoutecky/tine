@@ -5,7 +5,7 @@ import { HomeIcon, JournalsIcon } from "./JournalsIcon";
 import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { openAllGraphs, openAllPages, openNamespaces, openConflicts, openPage, openPageInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openJournalsFromClick, openJournalsInNewTab } from "../journalsNavigation";
+import { openJournalsFromClick } from "../journalsNavigation";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -132,10 +132,12 @@ export function Sidebar(props: {
               class="nav-item nav-first-level"
               classList={{ active: route().kind === "journals" }}
               onClick={(event) => {
-                if (openJournalsFromClick(event) === "default") props.onActiveNavigationComplete?.();
+                if (openJournalsFromClick(event)) props.onActiveNavigationComplete?.();
               }}
               onMouseDown={internalLinkMouseDown}
-              onAuxClick={(e) => internalLinkAuxClick(e, openJournalsInNewTab)}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => {
+                if (openJournalsFromClick(e)) props.onActiveNavigationComplete?.();
+              })}
             >
               <JournalsIcon />
               <span>{t("sidebar-journals")}</span>

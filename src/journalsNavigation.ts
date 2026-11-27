@@ -1,6 +1,6 @@
 import { appNow, journalTitle } from "./journal";
-import { internalLinkDest, type InternalLinkDest } from "./linkGesture";
-import { openRouteInOtherPane } from "./panes";
+import { internalLinkDest } from "./linkGesture";
+import { openRouteInOtherPane, revealOpenJournalsFeed } from "./panes";
 import { openInNewTab, openJournals } from "./router";
 import { openPageInSidebar } from "./ui";
 
@@ -11,24 +11,24 @@ export function openTodayInSidebar(): void {
   openPageInSidebar(journalTitle(appNow()), "journal");
 }
 
-/** The Journals click (left sidebar, toolbar, toolbar overflow) at the shared
- *  link destination (linkGesture.ts, GH #1050): Shift opens today beside the
- *  current page (OG's `sidebar-journals!`), Ctrl/Cmd the feed in a background
- *  tab, Alt the feed in the other pane, a plain click the feed here; a feed the
- *  window already holds is focused instead (panes.ts, one feed). Logseq has
- *  no tabs or panes and ignores Ctrl/Alt on Journals as on page links; those two
- *  are Tine's link contract (GH #283/#438). Returns the destination so a caller
- *  completes its own navigation (the mobile drawer) only for "default". */
-export function openJournalsFromClick(event: MouseEvent): InternalLinkDest {
-  const dest = internalLinkDest(event);
-  if (dest === "sidebar") openTodayInSidebar();
-  else if (dest === "background") openJournalsInNewTab();
-  else if (dest === "pane") openRouteInOtherPane({ kind: "journals" });
-  else openJournals();
-  return dest;
-}
-
-/** The feed in a background tab: Ctrl/Cmd+click and middle-click on Journals. */
-export function openJournalsInNewTab(): void {
-  openInNewTab({ kind: "journals" });
+/** A click or middle-click on Journals (left sidebar, toolbar, toolbar overflow): the one answer for all three.
+ *  Shift opens today beside the current page (OG's Journals Shift-click), a plain click the feed here. Ctrl/Cmd,
+ *  middle-click and Alt take the page-link destinations (linkGesture.ts, GH #1050): a feed some tab of this window
+ *  already shows is brought forward instead; else Ctrl/Cmd and middle-click open it in a background tab, and Alt
+ *  in the other pane, or here when the layout has no other pane. Logseq has no tabs or panes and treats these
+ *  as a plain click. True when the feed is shown where the click was (a drawer then closes, as on a plain click). */
+export function openJournalsFromClick(event: MouseEvent): boolean {
+  if (event.shiftKey && event.button !== 1) {
+    openTodayInSidebar();
+    return false;
+  }
+  const dest = event.button === 1 ? "background" : internalLinkDest(event);
+  if (dest !== "default" && revealOpenJournalsFeed()) return true;
+  if (dest === "background") {
+    openInNewTab({ kind: "journals" });
+    return false;
+  }
+  if (dest === "pane" && openRouteInOtherPane({ kind: "journals" })) return false;
+  openJournals();
+  return true;
 }
