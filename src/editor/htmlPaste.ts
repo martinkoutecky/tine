@@ -2,8 +2,7 @@ import DOMPurify from "dompurify";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import type { Format } from "../types";
-import type { OutlineNode } from "./outline";
-import { parseHtmlOutlineMarkdown } from "./htmlOutlineMarkdown";
+import { parseOutline, type OutlineNode } from "./outline";
 
 export const HTML_PASTE_LIMITS = {
   inputBytes: 2 * 1024 * 1024,
@@ -114,6 +113,6 @@ export function structuredHtmlPaste(html: string, plain: string, format: Format 
   // semantics; retain the browser/native plain path in that case.
   if (structural.length <= 1 && markdown === plain.trim()) return null;
   if (!structural.length) return { outline: [{ raw: markdown, children: [] }], inlineText: markdown };
-  const outline = parseHtmlOutlineMarkdown(markdown);
+  const outline = parseOutline(markdown);
   return outline.length ? { outline, inlineText: null } : null;
 }

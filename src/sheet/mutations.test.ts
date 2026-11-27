@@ -305,8 +305,7 @@ describe("sheet structural mutations", () => {
     expect(pageToDto("Sheet")).toEqual(before);
   });
 
-  // GH #1051: indented text with no bullet is one block, as the page reader reads it.
-  it("pastes indented text as one block under the anchor cell", () => {
+  it("pastes indented text as nested blocks under the anchor cell", () => {
     const gridId = loadGrid();
     const before = pageToDto("Sheet");
 
@@ -315,8 +314,9 @@ describe("sheet structural mutations", () => {
     expect(next).toEqual({ kind: "cell", gridId, row: 0, col: 0 });
     const anchor = cellId(gridId, 0, 0)!;
     const child = doc.byId[anchor].children[0];
-    expect(doc.byId[child].raw).toBe("parent\n  child");
-    expect(doc.byId[child].children).toEqual([]);
+    expect(doc.byId[child].raw).toBe("parent");
+    expect(doc.byId[doc.byId[child].children[0]].raw).toBe("child");
+    expect(blockSubtreeMarkdown(anchor, 0, true)).toContain("\t- child");
 
     undo();
     expect(pageToDto("Sheet")).toEqual(before);

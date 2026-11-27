@@ -1,5 +1,6 @@
 //! GH #1051: the paste table `tests/fixtures/paste-reader-blocks.json`, whose
-//! blocks the frontend's paste must produce (`src/editor/outline.test.ts`), is
+//! blocks the frontend's `readPastedOutline` must produce (the paste of text
+//! that opens with a block header; `src/editor/outline.test.ts`), is
 //! what the page reader reads from the same text as a file, and those blocks,
 //! pasted after an existing block, come back unchanged after save and reopen.
 
