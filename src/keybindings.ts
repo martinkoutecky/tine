@@ -966,13 +966,12 @@ function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
     || !!el?.closest?.('[data-block-editor="cm6"]');
 }
 
-const esc = (value: string) =>
-  typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
-
 function focusedGridSurface(gridId: string): string | null {
   const paneId = focusedPaneId();
   const expected = paneId === "main" ? "main" : `pane:${paneId}`;
   if (typeof document === "undefined") return expected;
+  const esc = (value: string) =>
+    typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
   const pane = queryAllWindows<HTMLElement>(`[data-pane-id="${esc(paneId)}"]`);
   if (!pane) return expected;
   const surfaces = new Set(
@@ -981,25 +980,6 @@ function focusedGridSurface(gridId: string): string | null {
       .filter((surface): surface is string => !!surface)
   );
   return surfaces.size === 1 ? [...surfaces][0] : null;
-}
-
-/** Whether a dialog owns this key rather than a selection it does not hold:
- *  the target is inside such a dialog, or such a modal dialog is the top
- *  transient layer (a hover preview is not modal: a key on the page still
- *  reaches the page's selection while one shows). Select All and every
- *  selection key (block, blank outline, cell) ask this one question.
- *  O(DOM depth) plus `holds`. */
-function dialogOwnsKey(target: EventTarget | null, holds: (dialog: Element) => boolean): boolean {
-  const dialog = isElementNode(target) && target.closest(selectAllDialogs);
-  if (dialog && !holds(dialog)) return true;
-  const top = topTransientLayer()?.root?.();
-  return !!top?.matches(selectAllDialogs) && top.getAttribute("aria-modal") === "true" && !holds(top);
-}
-
-/** A dialog holds a block or cell selection when it renders that selection's
- *  block (a hover preview does; the recovery panel does not). */
-function rendersBlock(id: string | null | undefined): (dialog: Element) => boolean {
-  return (dialog) => !!id && !!dialog.querySelector(`[data-block-id="${esc(id)}"]`);
 }
 
 function writeSelectionToClipboard(cut: boolean, blank: object | null = null): void {
@@ -1137,10 +1117,6 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         && (e.target as HTMLElement | null)?.tagName === "BUTTON") {
       resetSeq(); return;
     }
-    // A modal dialog owns the key over a selection it does not hold: Delete,
-    // Cut or typing in the recovery panel never reaches the page behind it.
-    const selected = editing ? undefined : cellSel()?.gridId ?? topSelected()[0];
-    const toDialog = selected !== undefined && dialogOwnsKey(e.target, rendersBlock(selected));
 
     // Escape, in priority order, so focus mode peels off one layer at a time
     // (Logseq-like): overlays first; then if editing a block's text let the
@@ -1243,7 +1219,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     }
 
     // Cell-selection mode keys (no editor focused).
-    if (!editing && !toDialog && cellSel()) {
+    if (!editing && cellSel()) {
       if (handleCellSelectionKey(e)) {
         e.preventDefault();
         resetSeq();
@@ -1260,13 +1236,16 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         resetSeq();
         return;
       }
-      if (owner && dialogOwnsKey(target, (dialog) => dialog.contains(owner.host))) {
-        resetSeq();
-        return;
+      if (owner) {
+        const dialog = isElementNode(target) && target.closest(selectAllDialogs);
+        const top = topTransientLayer()?.root?.();
+        if ((dialog && !dialog.contains(owner.host)) || (top?.matches(selectAllDialogs) && !top.contains(owner.host))) {
+          resetSeq();
+          return;
+        }
       }
-      const blankHere = blank && !toDialog;
-      if (!editing && (blankHere || owner)) {
-        if (blankHere || (owner?.outline && expandBlockSelection(owner.outline))) {
+      if (!editing && (blank || owner)) {
+        if (blank || (owner?.outline && expandBlockSelection(owner.outline))) {
           selectionOf(e)?.removeAllRanges();
           e.preventDefault();
         } else clearSelection(); // a hit with no live rows never leaves another outline selected
@@ -1276,7 +1255,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       }
     }
 
-    if (blank && !editing && !toDialog && (blankClipboard || blankDelete)) {
+    if (blank && !editing && (blankClipboard || blankDelete)) {
       if (blankClipboard) writeSelectionToClipboard(modKey === "x", blank);
       else deleteSelection();
       e.preventDefault();
@@ -1285,7 +1264,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     }
 
     // Block-selection mode keys (no editor focused).
-    if (!editing && !toDialog && hasSelection()) {
+    if (!editing && hasSelection()) {
       if (handleSelectionKey(e)) {
         e.preventDefault();
         resetSeq();
