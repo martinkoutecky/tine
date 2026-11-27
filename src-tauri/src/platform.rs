@@ -951,21 +951,19 @@ pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     (path.as_os_str().len() > 0).then_some(path)
 }
 
-/// The OS path of `relative` (a `/`-separated graph-relative path that a file
-/// link resolved to as OG does, GH #457, src/render/relativeFileLink.ts) inside
-/// the graph at `root`. Refusal scenario (in scope: malformed or imported
-/// Markdown, a synced note): a link in a note is untrusted content, so a path
-/// that leaves the graph folder, lexically (`..` above the root, an absolute or
-/// drive component) or through a symlink, is refused rather than handed to the
-/// OS opener. That is an intentional difference from OG, which opens absolute
-/// paths and lets its path join climb out of the graph. A missing target
-/// is reported instead of opening an unrelated window. Read-only; Cost
-/// O(path components) plus two canonicalizations.
-pub(crate) fn graph_relative_target(
-    root: &std::path::Path,
-    relative: &str,
-) -> Result<std::path::PathBuf, String> {
-    const OUTSIDE: &str = "that link points outside the graph folder";
+const GRAPH_RELATIVE_OUTSIDE: &str = "that link points outside the graph folder";
+
+/// The lexical half of a graph-relative file link (a `/`-separated path that a
+/// file link resolved to as OG does, GH #457, src/render/relativeFileLink.ts):
+/// its clean relative path, with no filesystem access. Refusal scenario (in
+/// scope: malformed or imported Markdown, a synced note): a link in a note is
+/// untrusted content, so a path that leaves the graph folder lexically (`..`
+/// above the root, an absolute or drive component) is refused rather than
+/// handed to the OS opener. That is an intentional difference from OG, which
+/// opens absolute paths and lets its path join climb out of the graph.
+/// Cost O(path components).
+pub(crate) fn graph_relative_path(relative: &str) -> Result<std::path::PathBuf, String> {
+    const OUTSIDE: &str = GRAPH_RELATIVE_OUTSIDE;
     if relative.starts_with(['/', '\\']) {
         return Err(OUTSIDE.into());
     }
@@ -987,15 +985,27 @@ pub(crate) fn graph_relative_target(
             }
         }
     }
+    Ok(clean)
+}
+
+/// The physical half, run on the admitted path after `outside_file::admit`
+/// (tine#985): a target whose final location leaves the graph folder through
+/// a symlink is refused, a missing one is reported instead of opening an
+/// unrelated window. `clean` names the link in the error. Read-only; cost two
+/// canonicalizations.
+pub(crate) fn graph_relative_target(
+    root: &std::path::Path,
+    admitted: &std::path::Path,
+    clean: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     let graph = root
         .canonicalize()
         .map_err(|error| format!("the graph folder could not be read: {error}"))?;
-    let target = root
-        .join(&clean)
+    let target = admitted
         .canonicalize()
         .map_err(|_| format!("{} could not be found", clean.display()))?;
     if !target.starts_with(&graph) {
-        return Err(OUTSIDE.into());
+        return Err(GRAPH_RELATIVE_OUTSIDE.into());
     }
     Ok(target)
 }
@@ -1026,14 +1036,13 @@ pub(crate) fn url_scheme(url: &str) -> Option<String> {
     .then(|| scheme.to_ascii_lowercase())
 }
 
-/// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
-/// Logseq sends http(s)/mailto to `shell.openExternal` and hands EVERY other
-/// scheme, `file:` included, to the OS default application with no confirmation
-/// and no extension filtering. Tine matches that for `file:`: a graph is the
-/// user's own content, and a link that silently does nothing (GH #444, where
-/// this gate rejected `file:` outright and the frontend then discarded the
-/// rejection) is worse for the honest case than the parity behaviour is for the
-/// hostile one.
+/// `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!` hands it to
+/// the OS default application with no confirmation): a `file:` URL becomes its
+/// local path here and is never refused (GH #444, where this gate rejected
+/// `file:` outright and a link silently did nothing). The caller then admits
+/// the path through `outside_file::open_local` (tine#985), an intentional
+/// difference from Logseq: a target inside the graph opens directly, one
+/// outside it opens only after the user agrees in a prompt naming the file.
 ///
 /// Any other scheme (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) OG
 /// also hands to the OS silently. Tine opens it only when `confirmed_scheme`
@@ -1051,6 +1060,11 @@ pub(crate) fn external_open_plan(
         let path = file_url_to_path(url)
             .ok_or_else(|| "that file link does not name a local file".to_string())?;
         return Ok(ExternalOpen::LocalPath(path));
+    }
+    // `FILE:` (any case but the literal) never reaches the URL opener, even
+    // when confirmed: it would bypass the outside-file consent (tine#985).
+    if url_scheme(url).as_deref() == Some("file") {
+        return Err("that file link does not name a local file".into());
     }
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
         return Ok(ExternalOpen::Url);
@@ -1071,7 +1085,9 @@ pub(crate) fn external_open_plan(
 
 /// Open a web/mail URL, a local `file:` link, or a user-confirmed custom-scheme
 /// link (GH #503) in the user's default external application. The URL is passed as a single argument (no shell), so it can't
-/// inject commands.
+/// inject commands. A `file:` target goes through `outside_file::open_local`
+/// (tine#985): `purpose` says who asks, and an agreed Quick Capture call's
+/// `show` is the one its Ask named.
 /// Starting the opener (PATH search, exec) runs on the blocking pool, off the
 /// UI thread (GH #623, I-21).
 #[tauri::command]
@@ -1079,29 +1095,38 @@ pub(crate) async fn open_external(
     app: tauri::AppHandle,
     url: String,
     confirmed_scheme: Option<String>,
+    purpose: Option<String>,
+    show: Option<u64>,
+    state: GraphContext<'_>,
 ) -> Result<(), String> {
     if url.starts_with("tine:") {
         crate::deep_links::receive_url(&app, url);
         return Ok(());
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        if let ExternalOpen::LocalPath(path) =
-            external_open_plan(&url, confirmed_scheme.as_deref())?
+    if let ExternalOpen::LocalPath(path) = external_open_plan(&url, confirmed_scheme.as_deref())? {
+        #[cfg(not(desktop))]
         {
-            // Every OS opener accepts a path that is not there — `explorer.exe` even
-            // opens an unrelated window for one — so without this check a stale link
-            // reproduces the reported "clicking does nothing" from the other side.
-            if !path.exists() {
-                return Err(format!("{} could not be found", path.display()));
-            }
-            #[cfg(desktop)]
-            return open_page_source(&path);
-            #[cfg(not(desktop))]
-            {
-                let _ = (path, &app);
-                return Err("opening local files is available on desktop only".into());
-            }
+            let _ = (path, purpose, show, state);
+            return Err("opening local files is available on desktop only".into());
         }
+        #[cfg(desktop)]
+        {
+            let purpose = crate::outside_file::Purpose::parse(purpose.as_deref())?;
+            let caller = crate::outside_file::Caller::of(&state, purpose, show)?;
+            return crate::state::off_ui(move || {
+                crate::outside_file::open_local(
+                    &caller.binding(),
+                    &path,
+                    purpose,
+                    &mut crate::outside_file::Fs,
+                    open_page_source,
+                )
+            })
+            .await;
+        }
+    }
+    let _ = (purpose, show, state);
+    tauri::async_runtime::spawn_blocking(move || {
         // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
         // the env-scrubbed browser policy; see opener_command_env).
         #[cfg(all(desktop, not(target_os = "windows")))]
@@ -2026,7 +2051,28 @@ mod reveal_platform_arms {
 
 #[cfg(test)]
 mod graph_relative_target_tests {
-    use super::graph_relative_target;
+    /// The P3 route after the user agreed (tine#985: the first call asks for
+    /// a symlink out; outside_file_tests.rs pins that), returning what the OS
+    /// opener would receive.
+    fn graph_relative_target(
+        graph: &std::path::Path,
+        relative: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        let root = graph.canonicalize().unwrap();
+        let mut opened = None;
+        crate::outside_file::open_graph_relative(
+            &root,
+            &std::sync::atomic::AtomicBool::new(false),
+            relative,
+            crate::outside_file::Purpose::LinkAgreed,
+            &mut crate::outside_file::Fs,
+            |path| {
+                opened = Some(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .map(|()| opened.unwrap())
+    }
 
     /// GH #457: a resolved file link opens the file inside the graph, and a
     /// path that leaves the graph folder, lexically or through a symlink, is

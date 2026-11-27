@@ -92,6 +92,7 @@ export function isTauri(): boolean {
 export { QueryPrintRefusedError, queryPrintRefusal } from "./queryPrintRefusal";
 import { queryPrintRefusal } from "./queryPrintRefusal";
 import { dropDisplayedFor } from "./seen/displayed";
+import { fileConsentAsk, type FileLinkCall, type FilePurpose } from "./fileConsentWire";
 
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
@@ -162,6 +163,13 @@ class TauriBackend implements Backend {
       this.reportCommandTiming(cmd, started);
       return result;
     } catch (error) {
+      // tine#985: an outside-file Ask is an answer, not a failure: a slow one
+      // completes like any slow command; no failure report, no path logged.
+      const ask = fileConsentAsk(error);
+      if (ask) {
+        if (slow) this.reportIpcPhase(cmd, "completed", started);
+        throw ask;
+      }
       this.reportIpcPhase(cmd, "failed", started);
       dbg(`command ${cmd} failed: ${String(error)}`); // opt-in --debug log only (GH #594)
       // A write refused because config.edn could not be read arrives as a wire
@@ -581,14 +589,15 @@ class TauriBackend implements Backend {
   readCustomCss() {
     return this.call<string>("read_custom_css");
   }
-  openExternal(url: string, confirmedScheme?: string) {
-    return this.call<void>("open_external", { url, confirmedScheme: confirmedScheme ?? null });
+  openExternal(url: string, confirmedScheme?: string, file?: FileLinkCall) {
+    const args = { url, confirmedScheme: confirmedScheme ?? null, purpose: file?.purpose ?? null, show: file?.show ?? null };
+    return file ? this.call<void>("open_external", args, file.bindingGeneration) : this.call<void>("open_external", args);
   }
   openAsset(name: string, bindingGeneration: number) {
     return this.assetCall<void>("open_asset", { name }, bindingGeneration);
   }
-  openGraphFile(path: string, bindingGeneration: number) {
-    return this.assetCall<void>("open_graph_file", { path }, bindingGeneration);
+  openGraphFile(path: string, bindingGeneration: number, purpose: FilePurpose) {
+    return this.assetCall<void>("open_graph_file", { path, purpose }, bindingGeneration);
   }
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean) {
     return this.call<void>("open_page_file", { name, kind, path: path || null, reveal });
@@ -645,8 +654,8 @@ class TauriBackend implements Backend {
     return { length: info.length, read: async (begin: number, end: number) => new Uint8Array(
       await this.assetCall<ArrayBuffer>("read_asset_range", { name, maxBytes, begin, end, version: info.version }, bindingGeneration)) };
   }
-  async readExternalPdf(url: string, bindingGeneration: number) {
-    return new Uint8Array(await this.assetCall<ArrayBuffer>("read_external_pdf", { url }, bindingGeneration));
+  async readExternalPdf(url: string, bindingGeneration: number, purpose: FilePurpose) {
+    return new Uint8Array(await this.assetCall<ArrayBuffer>("read_external_pdf", { url, purpose }, bindingGeneration));
   }
   async streamAsset(name: string) {
     const path = await this.call<string>("stream_asset_path", { name });

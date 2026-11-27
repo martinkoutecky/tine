@@ -55,8 +55,8 @@ it("reads the link's click-time URL even if its rendered destination changes", a
     expect(read).not.toHaveBeenCalled();
     host.querySelector<HTMLAnchorElement>("a")!.click();
     setUrl("file:///tmp/second.pdf");
-    await open.mock.calls[0][4]!.externalRead!();
-    expect(read).toHaveBeenCalledExactlyOnceWith("file:///tmp/first.pdf", api.graphBindingGeneration());
+    await open.mock.calls[0][4]!.externalRead!(new AbortController().signal);
+    expect(read).toHaveBeenCalledExactlyOnceWith("file:///tmp/first.pdf", api.graphBindingGeneration(), "link");
   } finally { dispose(); if (original) api.readExternalPdf = original; else delete api.readExternalPdf; }
 });
 
@@ -98,8 +98,8 @@ it.each([
     link!.click();
     expect(open).toHaveBeenCalledWith(url, "paper", undefined, undefined,
       expect.objectContaining({ externalRead: expect.any(Function) }));
-    await open.mock.calls[0][4]!.externalRead!();
-    expect(read).toHaveBeenCalledExactlyOnceWith(url, api.graphBindingGeneration());
+    await open.mock.calls[0][4]!.externalRead!(new AbortController().signal);
+    expect(read).toHaveBeenCalledExactlyOnceWith(url, api.graphBindingGeneration(), "link");
     for (const spy of [external, graphFile, asset]) expect(spy).not.toHaveBeenCalled();
   } finally { dispose(); if (original) api.readExternalPdf = original; else delete api.readExternalPdf; }
 });
@@ -135,8 +135,9 @@ it.each([
   try {
     expect(host.querySelector("a.pdf-link")).toBeNull();
     host.querySelector<HTMLAnchorElement>("a")!.click();
-    if (opener === "external") expect(external).toHaveBeenCalledExactlyOnceWith(target);
-    else expect(graphFile).toHaveBeenCalledExactlyOnceWith(target, backend().graphBindingGeneration());
+    if (opener === "external") expect(external).toHaveBeenCalledExactlyOnceWith(target, undefined,
+      { purpose: "link", bindingGeneration: backend().graphBindingGeneration(), show: undefined });
+    else expect(graphFile).toHaveBeenCalledExactlyOnceWith(target, backend().graphBindingGeneration(), "link");
     expect(open).not.toHaveBeenCalled();
   } finally { dispose(); }
 });

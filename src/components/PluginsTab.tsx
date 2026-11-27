@@ -13,6 +13,7 @@ import { pushToast } from "../toasts";
 import { platformKind } from "../platform";
 import { Toggle } from "./settingsField";
 import { backend } from "../backend";
+import { openExternal } from "./primitives";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
 import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES } from "../plugins/manifest";
 import {
@@ -293,12 +294,12 @@ function PluginsTabContent(props: { target?: SettingDescriptor }): JSX.Element {
             </div>
             <Show when={plugin.manifest.portedFrom} keyed>
               {(origin) => (
-                <div class="plugin-origin-card"><strong>{origin.relationship === "behavioral-port" ? t("plugins-behavioral-port") : t("plugins-source-derived-port")}</strong><br /><span>{t("plugins-from-for-original-authors", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</span><br /><button class="settings-link" onClick={() => void backend().openExternal(origin.source)}>{t("plugins-original-source-at", { revision: origin.revision.slice(0, 12) })}</button>
+                <div class="plugin-origin-card"><strong>{origin.relationship === "behavioral-port" ? t("plugins-behavioral-port") : t("plugins-source-derived-port")}</strong><br /><span>{t("plugins-from-for-original-authors", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</span><br /><button class="settings-link" onClick={() => openExternal(origin.source)}>{t("plugins-original-source-at", { revision: origin.revision.slice(0, 12) })}</button>
                 </div>
               )}
             </Show><div class="settings-section">{t("plugins-settings")}</div>
             <PluginSettingsForm plugin={plugin} busy={busy} hold={hold} /><div class="settings-section">{t("plugins-package")}</div>
-            <div class="plugin-detail-actions"><button class="settings-btn" onClick={() => void backend().openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
+            <div class="plugin-detail-actions"><button class="settings-btn" onClick={() => openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
               <button
                 class="settings-btn settings-btn-danger"
                 disabled={busy() !== null}
@@ -495,7 +496,7 @@ function PluginsTabContent(props: { target?: SettingDescriptor }): JSX.Element {
                 {plugin.manifest.description}<br />
                 <code>{plugin.manifest.id}</code> · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}
                 <Show when={plugin.manifest.aiDevelopment && plugin.manifest.aiDevelopment !== "none"}>{" · "}{t("plugins-ai", { developmentMethod: plugin.manifest.aiDevelopment ?? "" })}
-                </Show><br />{t("plugins-capabilities-list", { kind: plugin.manifest.capabilities.length ? "some" : "none", capabilities: plugin.manifest.capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
+                </Show><br />{t("plugins-capabilities-list", { kind: plugin.manifest.capabilities.length ? "some" : "none", capabilities: plugin.manifest.capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
               </div>
               <Show when={plugin.error}>
                 <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{plugin.error}</div>

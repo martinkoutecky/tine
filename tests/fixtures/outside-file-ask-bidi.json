@@ -1,0 +1,5 @@
+{
+  "comment": "tine#985: a file link outside the graph whose name holds a right-to-left override (U+202E). `wire` is the native Ask for `path` (src-tauri/src/outside_file_tests.rs checks it); src/render/outsideFileConsent.test.tsx renders that wire in the prompt.",
+  "path": "/T/invoice‮fdp.exe",
+  "wire": "file-consent:{\"display\":\"/T/invoice<U+202E>fdp.exe\",\"lossy\":true,\"show\":null}"
+}
