@@ -366,6 +366,7 @@ mod journal_guide_tests {
             "each further press opens the next level",
             "ignoring leaves",
             "each press is one Undo step",
+            "when a press folds or opens the results themselves, it also reaches writable results not drawn yet",
         ] {
             assert!(
                 tips.contains(outcome),

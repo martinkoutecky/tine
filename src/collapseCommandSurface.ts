@@ -66,3 +66,30 @@ export function registerQueryResultFold(group: QueryResultFold): () => void {
 export function queryResultFolds(hostId: string): QueryResultFold[] {
   return [...resultFolds].filter((group) => group.hostId() === hostId);
 }
+
+/** One query result list (a `QueryGroups` instance), registered under its query block (GH #1004).
+ *  `resultFold` is the last one-level press that committed this host's result level. A writable
+ *  result root with children takes it as its one fold snapshot at its first read once it has a
+ *  live row, so the groups not drawn at the press fold or open with the drawn ones. O(1) per list; dies with it. */
+export interface QueryResultList { resultFold: boolean | undefined }
+const resultLists = new Map<string, Set<QueryResultList>>();
+clearOnBindingInvalidated(() => {
+  for (const lists of resultLists.values()) for (const list of lists) list.resultFold = undefined;
+  resultLists.clear();
+});
+
+export function registerQueryResultList(hostId: string, list: QueryResultList): () => void {
+  let lists = resultLists.get(hostId);
+  if (!lists) resultLists.set(hostId, lists = new Set());
+  lists.add(list);
+  return () => {
+    const current = resultLists.get(hostId);
+    if (!current?.delete(list) || current.size) return;
+    resultLists.delete(hostId);
+  };
+}
+
+/** The open result lists of query block `hostId`: one map lookup. */
+export function queryResultLists(hostId: string): ReadonlySet<QueryResultList> | undefined {
+  return resultLists.get(hostId);
+}
