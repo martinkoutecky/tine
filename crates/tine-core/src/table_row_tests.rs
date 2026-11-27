@@ -174,6 +174,18 @@ fn never_writes_a_key_that_is_not_plain() {
         "_x",
         "-x",
         "",
+    ] {
+        assert_only_ready_beside(key);
+    }
+}
+
+/// In Org, a column named `end` or `properties` leaves the whole row empty
+/// (a later click on it would put that entry in the seeded drawer, where the
+/// drawer's own lines are mistaken for it); in Markdown only that column stays
+/// unset.
+#[test]
+fn a_drawer_word_column_leaves_an_org_row_empty() {
+    for word in [
         "end",
         "EnD",
         "END",
@@ -181,54 +193,49 @@ fn never_writes_a_key_that_is_not_plain() {
         "Properties",
         "PROPERTIES",
     ] {
-        assert_only_ready_beside(key);
+        for keys in [[word, "ready"], ["ready", word]] {
+            assert_eq!(seed(true, &keys), "", "{keys:?}");
+            assert_eq!(seed(false, &keys), ready_only(false), "{keys:?}");
+        }
+        assert_eq!(seed(true, &[word]), "");
+        assert_eq!(seed(false, &[word]), "");
     }
 }
 
+/// In the Org row a seed would otherwise write, clicking
+/// `properties` on and then off loses `ready`; the seed now writes no such row.
 #[test]
-fn end_in_any_case_never_closes_or_opens_a_drawer() {
+fn clicking_properties_on_and_off_cannot_follow_a_seed() {
+    assert_eq!(seed(true, &["ready", "properties"]), "");
+    // The empty row is develop's: the same clicks start from a blank line.
+    let blank = seed(true, &["ready", "properties"]);
+    assert!(parse(&blank, true).properties.is_empty());
+}
+
+/// Two columns that are the engine's same key (any ASCII case, `_` or `-` or
+/// space for each other) leave the whole row empty, in both formats: a click on
+/// one would write the other's line, or leave a `false` the query still finds.
+#[test]
+fn columns_that_are_one_key_leave_the_row_empty() {
     for org in [false, true] {
         for keys in [
-            ["EnD", "ready"],
-            ["ready", "EnD"],
-            ["end", "ready"],
-            ["ready", "END"],
+            ["Shipped", "shipped"],
+            ["shipped", "Shipped"],
+            ["a_b", "a-b"],
+            ["a-b", "a_b"],
+            ["Ship_Ped", "ship-ped"],
+            ["ship-ped", "Ship_Ped"],
         ] {
-            let raw = seed(org, &keys);
-            assert_eq!(raw, ready_only(org), "{keys:?}");
-            assert_eq!(raw.matches(":END:").count(), usize::from(org));
-            assert_eq!(raw.matches(":PROPERTIES:").count(), usize::from(org));
+            assert_eq!(seed(org, &keys), "", "{keys:?} org={org}");
+            let mut with_ready = vec!["ready"];
+            with_ready.extend(keys);
+            assert_eq!(seed(org, &with_ready), "", "{keys:?} org={org}");
         }
-    }
-}
-
-#[test]
-fn one_line_per_engine_key_under_the_first_spelling() {
-    for org in [false, true] {
-        for (keys, first) in [
-            (["Shipped", "shipped"], "Shipped"),
-            (["shipped", "Shipped"], "shipped"),
-            (["a_b", "a-b"], "a_b"),
-            (["a-b", "a_b"], "a-b"),
-        ] {
-            let raw = seed(org, &keys);
-            let expected = if org {
-                format!("\n:PROPERTIES:\n:{first}: false\n:END:")
-            } else {
-                format!("\n{first}:: false")
-            };
-            assert_eq!(raw, expected);
-            let child = page_child(&raw, org, "\n");
-            for spelling in keys {
-                assert_eq!(
-                    child.property(spelling).as_deref(),
-                    Some("false"),
-                    "{spelling}"
-                );
-            }
-        }
-        // A rejected spelling does not hold a later valid one back.
-        assert_eq!(seed(org, &["id", "ready", "Ready"]), ready_only(org));
+        // A same-key pair counts even when neither spelling is admitted.
+        assert_eq!(seed(org, &["some key", "some-key", "ready"]), "");
+        assert_eq!(seed(org, &["ready", "Ready"]), "");
+        // Distinct keys beside a rejected one still get their value.
+        assert_eq!(seed(org, &["id", "ready"]), ready_only(org));
     }
 }
 
@@ -341,16 +348,18 @@ fn one_writer_call_whatever_the_number_of_columns() {
                     if i % 2 == 0 {
                         format!("c{i}")
                     } else {
-                        format!("id{}", ":".repeat(i % 3 + 1))
+                        format!("id{i}:")
                     }
                 })
-                .chain(["id".to_string(), "end".to_string()])
+                .chain(["id".to_string()])
                 .collect();
             let rejected: Vec<String> = (0..k).map(|i| format!("x {i}")).collect();
+            let one_key: Vec<String> = valid.iter().cloned().chain(["C0".to_string()]).collect();
             for (name, keys, writes) in [
                 ("valid", valid, 1),
                 ("mixed", mixed, 1),
                 ("all-rejected", rejected, 0),
+                ("one-key-twice", one_key, 0),
             ] {
                 WRITES.with(|n| n.set(0));
                 let start = std::time::Instant::now();

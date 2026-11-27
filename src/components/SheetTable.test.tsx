@@ -1889,17 +1889,33 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it.each(["md", "org"] as const)("children add-row writes only plain, ordinary checkbox columns, once per key (%s) (tine#1047)", async (format) => {
-    const columns = ["template", "tine.quote", "Tags", "done", "file-path", "État", "a:b", "c d", "EnD", "Shipped", "shipped", "a_b", "a-b", "ready"];
+  it.each(["md", "org"] as const)("children add-row writes only plain, ordinary checkbox columns (%s) (tine#1047)", async (format) => {
+    const columns = ["template", "tine.quote", "Tags", "done", "file-path", "État", "a:b", "c d", "Shipped", "a_b", "ready"];
     const { id, dispose } = await addRowUnderSchema(tableOf(columns.map((key) => `${key}=checkbox`).join(";"), format), format);
     expect(doc.byId[id].raw).toBe(seededRaw(["Shipped", "a_b", "ready"], format));
-    // The table reads a column by its exact spelling; both engine spellings are pinned natively.
     expect(blockProperty(id, "Shipped")).toBe("false");
     expect(blockProperty(id, "a_b")).toBe("false");
-    for (const key of ["template", "tine.quote", "done", "file-path", "État", "EnD"]) expect(blockProperty(id, key)).toBeNull();
+    for (const key of ["template", "tine.quote", "done", "file-path", "État"]) expect(blockProperty(id, key)).toBeNull();
     dispose();
     undo();
     expect(doc.byId[id]).toBeUndefined();
+  });
+
+  // A later click could reach a drawer or key-spelling defect from these rows, so they stay the empty row
+  // Add row inserted before the seed.
+  it.each([
+    ["md", ["Shipped", "shipped", "ready"], ""],
+    ["org", ["Shipped", "shipped", "ready"], ""],
+    ["md", ["a_b", "a-b", "ready"], ""],
+    ["org", ["a_b", "a-b", "ready"], ""],
+    ["org", ["ready", "properties"], ""],
+    ["org", ["EnD", "ready"], ""],
+    ["md", ["ready", "properties"], "\nready:: false"],
+    ["md", ["EnD", "ready"], "\nready:: false"],
+  ] as const)("children add-row (%s, %j) writes %j (tine#1047)", async (format, columns, raw) => {
+    const { id, dispose } = await addRowUnderSchema(tableOf(columns.map((key) => `${key}=checkbox`).join(";"), format), format);
+    expect(doc.byId[id].raw).toBe(raw);
+    dispose();
   });
 
   it("children add-row under a filter that excludes `false` writes the row and opens no editor (tine#1047)", async () => {
