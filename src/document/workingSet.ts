@@ -323,13 +323,24 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusa
  * that file (or `absent` when the page has no file yet) through
  * `ensurePageLoaded`, so another file holding the name is replaced when it has
  * no uncommitted input and refused (`"unsaved-work"`) when it has: the write
- * never lands in a file other than the one the name resolves to. "stale" when
- * `owner` retired; a failed read rejects. */
-export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageLoadRefusal | "stale" | null> {
-  const result = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => ensurePageLoaded(dto ?? absent));
-  if (result.kind === "stale") return "stale";
-  return result.value;
+ * never lands in a file other than the one the name resolves to. Admitted, it
+ * answers the target: the slot the file now holds, which is the resolved
+ * page's own name (another spelling, an alias or a date can resolve to it),
+ * and that file (null: none yet, the slot under `absent`'s name). "stale"
+ * when `owner` retired; a failed read rejects. */
+export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageAdmission> {
+  const result = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], (dto): PageAdmission => {
+    const page: PageDto & { id?: string } = dto ?? absent;
+    const refusal = ensurePageLoaded(page);
+    return refusal ? { kind: "refused", refusal } : { kind: "admitted", target: { name: page.name, file: page.id || null } };
+  });
+  return result.kind === "stale" ? result : result.value;
 }
+
+/** Where an admitted write lands: the name slot and the file it holds (null: no file yet). */
+export interface AdmittedPage { readonly name: string; readonly file: string | null }
+export type PageAdmission = { readonly kind: "stale" } | { readonly kind: "refused"; readonly refusal: PageLoadRefusal }
+  | { readonly kind: "admitted"; readonly target: AdmittedPage };
 
 /** Admit a routed DTO when safe, retaining the live copy if replacement is unsafe.
  * Marks the document loaded so later dirty pages can save; it neither dirties this

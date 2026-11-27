@@ -2,21 +2,25 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { installQuickCaptureReceiver } from "./App";
 import { backend } from "./backend";
 import { loadSingle } from "./document/workingSet";
-import { resetStore, pageByName } from "./document";
+import { resetStore, pageByName, indentBlock } from "./document";
+import { installDiskHost } from "./diskHost.test.support";
 import { doc } from "./document/model";
 import { answerOpensFromDocument } from "./document/host/documentHost.test.support";
 import { journalTitle, appNow } from "./journal";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { mainPaneRouter, route } from "./router";
 import { setGraphMeta } from "./graphSession";
-import type { GraphMeta } from "./types";
+import type { GraphMeta, PageDto } from "./types";
 
 import { initParser } from "./render/parse";
 beforeAll(() => initParser());
 
 const h = vi.hoisted(() => ({ receive: null as null | ((event: { payload: unknown }) => Promise<void>), ack: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_: string, receive: typeof h.receive) => { h.receive = receive; return () => { h.receive = null; }; },
+  listen: async (name: string, receive: typeof h.receive) => {
+    if (name !== "quick-capture") return () => {};
+    h.receive = receive; return () => { h.receive = null; };
+  },
   emitTo: h.ack,
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
@@ -35,7 +39,8 @@ it.each(["Destination", ""])("L9-08: retries a landed capture without inserting 
   const payload = { id: `retry-landed-${title}`, target: "main", bindingGeneration: 11, title, text: "- captured thought" };
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: false, landed: true });
-  wait.mockResolvedValue([]);
+  // The host's own save wrote the version it took: its wait says so.
+  wait.mockImplementation(async (_session, needs) => needs.map(({ key, version }) => ({ key, version, rev: "after" })));
   await h.receive!({ payload });
   expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
   expect(pageByName(name)!.roots.map(id => doc.byId[id].raw).filter(raw => raw === "captured thought")).toHaveLength(1);
@@ -241,4 +246,52 @@ it("GH #832: redirect-page? opens the page the capture landed on", async () => {
   mainPaneRouter.openPage("Elsewhere");
   await receiveConfigured({ quick_capture_default_page: "Inbox", quick_capture_redirect_page: true }, { text: "- go" }, ["Inbox"]);
   expect(route()).toMatchObject({ kind: "page", name: "Inbox" });
+});
+
+/** Quick Capture into `pages/Inbox.md` (typed as `title`, which names that page) whose first delivery's saves fail;
+ *  the disk recovers before the retry, and the host writes what it owes once a flush asks for that page. */
+async function captureWithFailedFirstSave(title: string, id: string) {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(11);
+  const files = new Map<string, PageDto & { rev: string }>([["pages/Inbox.md",
+    { name: "Inbox", kind: "page", title: "Inbox", pre_block: null, rev: "r0", blocks: [{ id: "earlier", raw: "earlier", collapsed: false, children: [] }] }]]);
+  loadSingle({ name: "Elsewhere", kind: "page", title: "Elsewhere", id: "pages/Elsewhere.md", pre_block: null, blocks: [] });
+  let failing = true;
+  installDiskHost(await bindTestHost(), {
+    read: (path) => structuredClone(files.get(path)) ?? null,
+    write: (path, dto) => {
+      if (failing) throw new Error("disk full");
+      files.set(path, { ...structuredClone(dto), rev: `r${files.size + 1}` });
+      return files.get(path)!.rev;
+    },
+  }, { retryFailed: true });
+  // The resolver: any spelling of the name reads the one file.
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name) =>
+    name.toLowerCase() === "inbox" ? { ...structuredClone(files.get("pages/Inbox.md")!), id: "pages/Inbox.md" } : null);
+  const dispose = await installQuickCaptureReceiver();
+  const payload = { id, target: "main", bindingGeneration: 11, title, text: "- captured thought" };
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id, ok: false, landed: true });
+  failing = false;
+  const onDisk = () => files.get("pages/Inbox.md")!.blocks;
+  return { payload, onDisk, dispose };
+}
+
+it("a retried capture to another spelling of a page acknowledges only once that page's file holds it", async () => {
+  const { payload, onDisk, dispose } = await captureWithFailedFirstSave("inbox", "retry-spelling");
+  expect(onDisk().map((b) => b.raw)).toEqual(["earlier"]);
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
+  expect(onDisk().map((b) => b.raw)).toEqual(["earlier", "captured thought"]);
+  dispose();
+});
+
+it("a retried capture the user has since indented still acknowledges, once its page's file holds it", async () => {
+  const { payload, onDisk, dispose } = await captureWithFailedFirstSave("Inbox", "retry-moved");
+  const captured = pageByName("Inbox")!.roots.find((id) => doc.byId[id].raw === "captured thought")!;
+  indentBlock(captured, 0);
+  await h.receive!({ payload });
+  expect(h.ack).toHaveBeenLastCalledWith("capture", "quick-capture-ack", { id: payload.id, ok: true });
+  expect(onDisk().map((b) => b.raw)).toEqual(["earlier"]);
+  expect(onDisk()[0].children.map((b) => b.raw)).toEqual(["captured thought"]);
+  dispose();
 });

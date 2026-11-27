@@ -8,7 +8,8 @@ use crate::store::{journal_ids_from_entries, ChangeKind, LoadStatus, Origin};
 
 fn collect_restore(core: &Core) -> RestoreBaseline {
     let mut files = collect_with_revs(&core.graph.root, &core.graph.current_config());
-    let mut stack = vec![core.graph.assets_path()];
+    let assets = core.graph.assets_path();
+    let mut stack = vec![assets.clone()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(dir) else {
             continue;
@@ -19,8 +20,9 @@ fn collect_restore(core: &Core) -> RestoreBaseline {
                 continue;
             };
             if kind.is_dir() {
-                if path.file_name().and_then(|name| name.to_str()) == Some(".tine-restore-recovery")
-                {
+                if crate::asset_watch::in_restore_recovery(
+                    path.strip_prefix(&assets).unwrap_or(&path),
+                ) {
                     continue;
                 }
                 stack.push(path);

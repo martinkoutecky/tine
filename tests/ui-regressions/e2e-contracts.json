@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-1012-picker-untitled.mjs": {
+      "setup": "Synthetic routed Plan page with one seed block; scratch HOME/XDG and account-home shim; run once with E2E_EDITOR=textarea and once with E2E_EDITOR=cm6, Linux native.",
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"A date picked through the date picker on an empty block of a routed page is saved as `-` then `  SCHEDULED: <date>`, the shape Logseq reads as a date, in the textarea and the CodeMirror editor.","blocking":true,"authority":"GH #1012"},{"class":"core-operation","userOutcome":"The next character typed after the pick goes into the block's title line, so the saved block is `- TODO x` then `  SCHEDULED: <date>`, and today's journal agenda lists it.","blocking":true}],
+      "acceptableVariations": ["Picker position, chip styling, completion-menu layout and save latency may vary while the saved bytes and the agenda row hold."],
+      "nonRequirements": ["Blocks with title text, Org pages, deadlines and the boundary shapes covered by unit tests; native certification outside Linux WebKitGTK; manager burn-in."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-cm-refusal.mjs": {
       "setup": "Synthetic routed Old page and properties-only-bullet referrer; scratch HOME/XDG, account-home shim, native Linux WebKitGTK at 1920x1080.",
       "contracts": [{"class":"stateful-ux","userOutcome":"A title rename refuses without writing and explains the named referrer's first-save layout change. Save it and rename is explicit; clicking it saves the referrer normally and repeats the same rename. Exact source, referrer and unrelated file contents and the new routed title are verified.","blocking":false,"authority":"D-20261116-P3H; D-20261115-HELP; UI-CM-REFUSAL-HELP"}],
@@ -9,6 +16,7 @@
       "nonRequirements": ["No automatic repair loop, new model outcome, release burn-in or other-platform runtime certification."],
       "stability": "burn-in"
     },
+    "scripts/e2e-query-blank-press.mjs": {"setup": "Synthetic routed page (not the journal) holding one grouped query of 40 results in 8 page groups; scratch HOME/XDG, account-home shim, native Linux WebKitGTK at 1280x800.", "contracts": [{"class": "core-operation", "userOutcome": "With the query scrolled to its middle, a click on the gap between two page groups and a click on a result row's side padding open no editor, the main scroller's scrollTop stays within 1 px and the results stay drawn; the page holding the query is unchanged on disk.", "blocking": false, "authority": "GH #1000; UI-GH1000-QUERY-BLANK-PRESS"}], "acceptableVariations": ["Exact hit points, layout and row heights vary with the engine and the theme; the journey picks blank points inside the results at run time."], "nonRequirements": ["Which selections a press keeps, touch, other platforms, or the strip under the last group."], "stability": "burn-in"},
     "scripts/e2e-gh1001-query-scroll.mjs": {
       "setup":"Synthetic routed page with three queries and 28 nested results, a plain outline, and a scratch account and graph. An opt-in scratch copy of the anonymized corpus can be measured with and without custom CSS.",
       "contracts":[{"class":"core-operation","userOutcome":"An expanded query shows its nested results and the reader can scroll down through them and back up on the routed page.","blocking":false,"authority":"GH #1001"}],
@@ -144,7 +152,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-table-wrap.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"Reading a routed Markdown page, journal, embed and sidebar in either editor keeps wide prose, many columns and URLs inside the pane with wrapping; unbreakable content scrolls inside its table and reading preserves file bytes.","blocking":false,"authority":"GH #802; D-20261107-R11"}],
+      "contracts": [{"class":"core-operation","userOutcome":"Reading a routed Markdown page, journal, embed and sidebar in either editor keeps wide prose, many columns and URLs inside the pane with wrapping; unbreakable content scrolls inside its table and reading preserves file bytes. The GH #802 fifth-comment table (empty header, a short first cell beside 18 words) gives its first column under 40% of the table at a narrow, a normal and a wide desktop pane.","blocking":false,"authority":"GH #802; D-20261107-R11"}],
       "acceptableVariations": ["Column allocation, wrapping positions, table markup and spacing may vary while readable content fits the pane."],
       "nonRequirements": ["Wrap setting, user column widths, release burn-in, Windows/macOS/mobile device certification. A narrow desktop WebKit window is not a mobile device."],
       "stability":"burn-in"
@@ -219,7 +227,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-pdf-area-ref.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the PDF viewer, Find's box keeps taking characters while matches land (GH #1037): after one search, selecting the query and typing a new one leaves the whole new query in the box. A seeded PDF rectangle highlight's Copy ref action places a reference that can be pasted into another routed page; the selected image loads in Markdown and Org, in an embed and on the highlights page, and clicking the reference image opens the exact PDF highlight.","blocking":false,"authority":"GH #869; UI-GH869-PDF-AREA-REF"}],
       "acceptableVariations": ["Crop dimensions, layout, theme and loading latency may vary while the image loads and navigation identifies the highlight."],
       "nonRequirements": ["No reporter attachments, private graph, Windows runtime certification or release acceptance. Crop generation is covered by the existing PDF journey."],
       "stability":"burn-in"
@@ -430,6 +438,12 @@
       "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; tens-of-thousands scale and filter cost are measured in unit tests and the scale screenshot; phone drawer completion has component coverage."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh1041-switch-draft.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A page deleted on disk under unsaved typing is in conflict. Once the window has edited it (the editor may be closed again), a graph switch is refused with a notice that names that page's path and has no action, and the graph is not switched. After a forced quit, with the app reopened on another page, the switch to another graph goes through (at the latest on the third try), the draft's text stays in the first graph's drafts and the page's file stays absent; reopening the first graph reports the recovered edits and names the page.","blocking":true,"authority":"GH #1041; UI-GH1041-SWITCH-REFUSED-NAMES-PAGES; UI-GH1041-SWITCH-PAST-HOST-DRAFT"}],
+      "acceptableVariations": ["Notice wording beyond naming the page's path, notice layout, draft, save and render latency."],
+      "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; orphan adoption as the way in; a return while the old graph's host is still stopping; closing the window or quitting over such a draft; the count after three keys, opaque keys and other refusal reasons are covered by unit and render tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-all-graphs.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
       "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],
@@ -607,6 +621,7 @@
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
+        { "class": "core-operation", "userOutcome": "Started under another plain file name, the program's usage lines and a refusal's hint (answered by the serve owner it starts) print that name; under a name that is not one plain word they print tine (#1011).", "blocking": true, "authority": "GH #1011; the Beta's Linux packages install the command as tine-beta" },
         { "class": "core-operation", "userOutcome": "Page-property CLI edits, aliases and new-page header imports work with serve and app owners in Markdown and Org; a title edit updates the open page, and existing-page header-shape refusals explain page-property recovery (#839).", "blocking": true, "authority": "docs/contracts/cli-output.md page.prop; GH #839" },
         { "class": "exact-safety-interoperability", "userOutcome": "Explicit blank add authors refuse without changing the file; blank client TINE_AUTHOR defaults to agent and nonblank names are trimmed, even with an existing owner.", "blocking": true, "authority": "GH #930; docs/contracts/cli-output.md" },
         { "class": "core-operation", "userOutcome": "Six parallel tine add commands to one page all land while the real app owns the graph, with the page open in its window and with it closed (#842).", "blocking": true, "authority": "docs/contracts/cli-output.md Writes; GH #842" },
@@ -675,7 +690,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-git-autocommit.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; the interval typed with real keys and left by Tab stores what the number field parses (-1 keeps the stored 10 and the field shows 10 again, 1e2 stores 100; #1035); renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
       "acceptableVariations":["Commit timing and Settings layout may vary while both commits land in this order with these subjects."],
       "nonRequirements":["Interval-driven commits (covered by Rust tests), push or pull, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -771,7 +786,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-one-level-fold.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true},{"class":"core-operation","userOutcome":"Bound Collapse (one level) with the caret in, or with the selection on, a block whose children are block embeds hides each embed's children and saves collapsed:: true on each embedding block, while the block itself stays open and the embedded source file is byte-identical (GH #1032).","blocking":true}],
       "acceptableVariations":["Selection styling, animation and save latency may vary while the saved collapsed properties and visible rows agree."],
       "nonRequirements":["Page-scope (no selection) behaviour and multi-level progressions, which component tests cover; native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -852,8 +867,8 @@
       "stability":"burn-in"
     },
     "scripts/e2e-gh671-journal-startup.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
-      "acceptableVariations":["Heading classes, startup timing and layout may vary while the expected journal content is visible and existing files remain unchanged."],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, shows a heading block the template made as a heading at once (GH #1036), keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
+      "acceptableVariations":["Heading size, startup timing and layout may vary while the expected journal content is visible, the template's heading is a heading and existing files remain unchanged."],
       "nonRequirements":["Exact pixels, a specific remount count or Android device certification from Linux WebKitGTK."],
       "stability":"burn-in"
     },
@@ -926,6 +941,12 @@
       "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live. Editing a property and clicking its group title saves the value and preserves linked keys in every group for that source page. The main page and Linked References show the same linked keys before and after editing; clicking a key opens its page (GH #753).","blocking":true}],
       "acceptableVariations":["Result order, pane layout, typography and watcher delivery latency may vary while answer membership remains correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-org-table-file.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"An Org page whose file holds only a table with a #+TBLFM line under a list bullet and no headline (tine#1054, the reported bytes with LF, CRLF or no final line break) opens by name and shows the table's cells on the routed page, as do a table without a bullet, with two formula lines, under a #+NAME: line, and in a headline's body; opening a page leaves its file unchanged.","blocking":true}],
+      "acceptableVariations":["Table styling, row chrome, pane layout and typography may vary while the cells are shown in a table."],
+      "nonRequirements":["Evaluating #+TBLFM formulas, exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-org-headline-refs.mjs": {
@@ -1293,8 +1314,8 @@
       "stability":"burn-in"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart. A composition left open when another window takes native focus (Quick Capture dismisses itself and keeps the draft, no compositionend) does not block ordinary typing or File capture after Quick Capture is reopened; the composition events are synthetic, the focus loss is real. A window-manager close request (Alt+F4) hides Quick Capture instead of destroying it: the draft is still there when the next --capture shows it, and typing and filing still work.", "blocking": true }],
-      "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart. A composition left open when another window takes native focus (Quick Capture dismisses itself and keeps the draft, no compositionend) does not block ordinary typing or File capture after Quick Capture is reopened; the composition events are synthetic, the focus loss is real. A window-manager close request (Alt+F4) hides Quick Capture instead of destroying it: the draft is still there when the next --capture shows it, and typing and filing still work. A capture titled with another spelling of an existing page's name (`home` for pages/Home.md) files into that page's file, keeping its earlier text, and creates no second file. A capture into a page whose file changed outside under typing is kept in the capture window; after the page's review takes the disk version (which drops the captured block), filing that capture again does not report it saved: the window keeps the text and says it cannot confirm, the file is unchanged, and Start a new capture then files the text exactly once.", "blocking": true }],
+      "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager. The conflict review may need its choice applied a second time when it was read before the capture reached the page."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"
     },
@@ -1725,6 +1746,16 @@
       "acceptableVariations": ["Save timing within the host's debounce and backoff, notice wording beyond the named phrases, and which watcher mode delivers the outside change may vary."],
       "nonRequirements": ["Exact toast placement, pixels, DOM nesting, or certification outside Linux WebKitGTK (the disk error is a read-only pages folder and the crash is SIGKILL)."],
       "stability":"burn-in"
+    },
+    "scripts/e2e-launch-custody.mjs": {
+      "setup": "Per scenario a synthetic graph holding pages/Source.md and its own scratch XDG profile, the account-home shim, native Linux WebKitGTK at 1920x1080. A first app launch creates the graph's draft namespace; the store's ignored setup test (launch_custody_journey_setup, the app host's production IO) then leaves in it a rename of Source to Receiver interrupted before Receiver published, recovered, Receiver published with its own text, decided by Use Disk on Source, and interrupted again before the decision retired.",
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "At the next launch Source keeps its text on disk and shows it, Receiver shows its own text, and the pair is released: neither page shows a conflict surface, the pair's own drafts are gone and no draft names Source.", "blocking": true, "authority": "docs/storage-contract.md, superseding custody: launch release of a decided pair" },
+        { "class": "exact-safety-interoperability", "userOutcome": "With Receiver unreadable at that launch, the pair stays held: a draft keeps Source's original text, and Source still shows its text, takes an edit and saves it to its file.", "blocking": true, "authority": "docs/storage-contract.md, superseding custody: a failed launch witness keeps the pair retained" }
+      ],
+      "acceptableVariations": ["Launch, retirement and save timing within the host's progress loop, and how the unreadable page is reported, may vary."],
+      "nonRequirements": ["Reaching the decided state through the UI (two crashes inside millisecond windows), exact toast or panel wording, pixels, DOM nesting, or certification outside Linux (the unreadable receiver is chmod 000)."],
+      "stability": "burn-in"
     },
     "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"},
     "scripts/e2e-gh524-new-page-sidebar.mjs": {

@@ -9,6 +9,10 @@ graph-allow-external-assets-directory = 允许外部附件目录吗？
 graph-graph-not-opened-its-external-assets-directory = 图谱未打开：其外部附件目录未获授权（{ $assetsDirectory }）。
 
 graph-some-pages-couldn-t-be-saved-resolve = 部分页面无法保存，请先解决冲突再切换图谱。
+graph-switch-refused-pages = { $more ->
+    [0] 以下页面的更改尚未保存，因此未切换图谱：{ $pages }。
+   *[other] 以下页面的更改尚未保存，因此未切换图谱：{ $pages }，以及另外 { $more } 个页面。
+    }
 
 graph-couldn-t-prepare-the-icloud-graph = 无法准备 iCloud 图谱。（{ $error }）
 
@@ -110,7 +114,5 @@ root-recovery-moved-durability-unwitnessed = 未保存的编辑已移入当前�
 graph-open-other-app = 此图谱已在另一个 Tine 窗口中打开。
 root-moved-draft-error = 图谱文件夹被移动、替换或断开连接，且无法写入恢复副本。请保持此窗口打开并复制未保存的文本，直到设备存储恢复正常。
 graph-merge-unites-tags = 两个页面都有标签。合并前，保留页面的标签将变为：{ $tags }
-graph-kept-original-text-of-cancelled-renames = { $count ->
-   *[other] Tine 保留了 { $count } 个已取消重命名的页面的原始文本：{ $pages }。点击“查看”以恢复。
-    }
-graph-review-kept-pages = 查看
+graph-kept-originals = Tine 保留了 { $count } 个重命名被取消的页面的原文。
+graph-review-kept-originals = 查看

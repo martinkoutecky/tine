@@ -12,7 +12,7 @@ import { toLoadablePage } from "./convert";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 import { pushToast } from "../toasts";
 import { showRewriteRefusal } from "../renameRefusal";
-import { pageIdentityKey } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 import type { RenameDone, RenamedPage, RenameProbeText, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { adoptRenamedFavorites } from "../favorites";

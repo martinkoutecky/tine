@@ -587,6 +587,16 @@ mod journal_guide_tests {
             .contains("other than Logseq's default priority sort"));
     }
 
+    /// GH #1000: a click inside a query's results does not open the query.
+    #[test]
+    fn a_click_inside_query_results_is_documented() {
+        let queries = include_str!("templates/queries.md");
+        assert!(
+            queries.contains("A click inside a query's results belongs to the blocks shown there")
+        );
+        assert!(queries.contains("click the query's header beside its title, or the block's edge"));
+    }
+
     /// Card hB3Lv8 (Martin 2026-10-19): day-relative queries follow the date.
     #[test]
     fn day_relative_queries_following_the_date_are_documented() {
@@ -989,12 +999,13 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn ctrl_y_redo_alias_is_documented_in_the_bundled_guide() {
-        // GH #491: both redo chords, the platforms that get the second one, and
-        // that remapping Redo replaces both.
+    fn mod_y_redo_alias_is_documented_in_the_bundled_guide() {
+        // GH #491, #1044: both redo chords, the second one on each platform, that
+        // remapping Redo replaces both.
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("redo is Ctrl/Cmd+Shift+Z"));
-        assert!(tips.contains("On Windows and Linux **Ctrl+Y** also redoes"));
+        assert!(tips.contains("**Ctrl+Y** also redoes on Windows and Linux"));
+        assert!(tips.contains("and **Cmd+Y** on macOS, as in Logseq"));
         assert!(tips.contains("remapping Redo replaces both"));
     }
 
@@ -1244,6 +1255,16 @@ mod rename_guide_tests {
         ] {
             assert!(mobile.contains(detail), "missing mobile preview guidance: {detail}");
         }
+    }
+
+    #[test]
+    fn phones_show_page_title_buttons_without_a_tap() {
+        // GH #1025: no hover on a phone, so the title's buttons need no tap; one group, menu last. A narrow
+        // journal with carry buttons keeps Share and the star in the menu.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("**A page title's buttons always show on a phone or tablet.**"));
+        assert!(mobile.contains("move as one group below a long title, with **⋯** last"));
+        assert!(mobile.contains("keeps Share and the star in its **⋯** menu"));
     }
 
     #[test]
@@ -2129,10 +2150,12 @@ mod customize_look_guide_tests {
             // Discussion #714: the transient toggle class for theme animations.
             "`just-toggled`",
             "never there when a page loads",
-            // GH #583: arrows render as typed unless the user opts in.
+            // glyphs by default, the same in the editor; Off shows them as typed.
             "**Typographic replacements**",
-            "It is **Off** by default",
-            "**On (while reading)**",
+            "**On (display only)**, the default",
+            "clicking into a block does not change how it looks",
+            "**Off** shows them as typed",
+            "While Find in page is open, they show as typed",
             // GH #773: individual tags and page links can be themed by name.
             "a.tag[data-ref=\"ai-note\"]",
             "lowercased page name",
@@ -2297,6 +2320,8 @@ mod og_20d_guide_tests {
             "Advanced-query shapes that run",
             "Tagged-page name results",
             "numeric `yyyymmdd` inputs",
+            "each exactly one of four date sources for `?d`",
+            "a comparison on `?d` before the `or` or inside an alternative",
             "strict `>` / `<`",
             "reversed bounds return nothing",
             "`direct_ref('project')`",
@@ -2378,6 +2403,42 @@ mod og_20d_guide_tests {
         }
     }
 
+    /// tine#1011: a packaged Tine Beta is started as `tine-beta`. A page that tells the
+    /// reader to run `tine …` gives that one substitution where its first command stands;
+    /// no step spells a second command.
+    #[test]
+    fn pages_with_tine_commands_give_the_packaged_beta_substitution() {
+        // These name a command while describing something else; nobody is told to run it.
+        let mentions = [
+            "Reference/Files, external edits, and backups",
+            "Reference/Platforms and mobile",
+        ];
+        let mut ruled = 0;
+        for t in GUIDE_TEMPLATES.iter() {
+            let Some(first) = t.markdown.lines().find(|line| line.contains("`tine ")) else {
+                continue;
+            };
+            assert!(
+                !t.markdown.contains("`tine-beta "),
+                "{} spells out a Beta command line",
+                t.title
+            );
+            if mentions.contains(&t.title) {
+                continue;
+            }
+            assert!(
+                first.contains("type `tine-beta`"),
+                "{}: the first `tine` command comes without the packaged Beta's: {first}",
+                t.title
+            );
+            ruled += 1;
+        }
+        assert_eq!(
+            ruled, 3,
+            "command line, quick capture, bring an existing graph"
+        );
+    }
+
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
     /// command and og's create-only export contract, and the guide index links it.
     #[test]
@@ -2386,6 +2447,7 @@ mod og_20d_guide_tests {
         for promised in [
             "tine --help",
             "tine --version",
+            "has its own command, `tine-beta`, so it can sit next to Tine",
             "tine open GRAPH",
             "tine capture",
             "tine export static GRAPH",
@@ -2900,6 +2962,7 @@ mod asset_manifest_tests {
             .markdown;
         assert!(guide.contains("additions stay for your next capture"));
         assert!(guide.contains("plain retry"));
+        assert!(guide.contains("says it can't confirm the capture and keeps the text"));
         assert!(guide.contains("**Add text** reminder"));
         assert!(guide.contains("never reached a graph"));
         assert!(guide.contains("After a refused filing, **Esc** keeps the text too"));

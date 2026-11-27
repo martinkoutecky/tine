@@ -34,6 +34,13 @@ fs.writeFileSync(embedSourceFile, embedSource.replace(PARENT, EMBED));
 const embedHostFile = path.join(graph, "pages", "Embed Host.md");
 fs.writeFileSync(embedHostFile, `- {{embed ((${EMBED}))}}\n  collapsed:: true\n- Page embed parent\n  - {{embed [[Page Body]]}}\n    collapsed:: true\n- [[Embed Host]]\n`);
 fs.writeFileSync(path.join(graph, "pages", "Page Body.md"), "- Embedded page body\n");
+// GH #1032: a block whose children are block embeds; each source has a child of its own.
+const KID_A = "10320a00-0000-4000-8000-00000000000a", KID_B = "10320b00-0000-4000-8000-00000000000b";
+const kidsSource = `- Kid source A\n  id:: ${KID_A}\n  - Kid source A child\n- Kid source B\n  id:: ${KID_B}\n  - Kid source B child\n`;
+const kidsSourceFile = path.join(graph, "pages", "Embed Kids Source.md");
+fs.writeFileSync(kidsSourceFile, kidsSource);
+const kidsHostFile = path.join(graph, "pages", "Embed Kids.md");
+fs.writeFileSync(kidsHostFile, `- Embed kids parent\n  - {{embed ((${KID_A}))}}\n  - {{embed ((${KID_B}))}}\n`);
 const env = { ...process.env, ...scratchProfile(out), TINE_GRAPH: graph,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4874);
@@ -109,7 +116,8 @@ try {
     await browser.$(`${scope} ${editorSelector}`).waitForExist();
   };
   const visibleText = async (scope, text, expected) => browser.waitUntil(() => browser.execute((scope, text, expected) =>
-    [...document.querySelectorAll(`${scope} .block-content`)].some(el => el.textContent.trim() === text && el.offsetParent) === expected,
+    // A row being edited shows its text in the editor, not in its rendered content.
+    [...document.querySelectorAll(`${scope} .block-content, ${scope} .cm-content`)].some(el => el.textContent.trim() === text && el.offsetParent) === expected,
     scope, text, expected), { timeout: 10000, timeoutMsg: `${text}: expected visible=${expected} in ${scope}` });
   const chord = async key => browser.keys(["Control", "Alt", key, "NULL"]);
   for (const scope of [".main-content", ".right-sidebar"]) {
@@ -149,8 +157,30 @@ try {
     execFileSync("import", ["-window", "root", path.join(out, scope === ".main-content" ? "embeds-main.png" : "embeds-sidebar.png")], { env });
   }
   proof.embedNestedFoldOnSource = true;
+  stage = "GH #1032 Collapse (one level) over block-embed children";
+  await openPageByName(browser, "Embed Kids");
+  const hostsFolded = value => text => [KID_A, KID_B].every(id => text.includes(`- {{embed ((${id}))}}\n    collapsed:: ${value}\n`))
+    && !ownProps(text, "- Embed kids parent")?.some(line => line.startsWith("collapsed::"));
+  await visibleText(".main-content", "Kid source A child", true);
+  await editRow(".main-content", "Embed kids parent");
+  await chord("k");
+  proof.embedKidsCaret = await waitForFileText(kidsHostFile, hostsFolded("true"));
+  await visibleText(".main-content", "Kid source A child", false);
+  await visibleText(".main-content", "Kid source B child", false);
+  await visibleText(".main-content", "Kid source A", true);
+  await visibleText(".main-content", "Embed kids parent", true);
+  await chord("j");
+  await waitForFileText(kidsHostFile, hostsFolded("false"));
+  await visibleText(".main-content", "Kid source A child", true);
+  await browser.keys(["Escape"]); // the same press with the parent selected
+  await chord("k");
+  proof.embedKidsSelected = await waitForFileText(kidsHostFile, hostsFolded("true"));
+  await visibleText(".main-content", "Kid source B child", false);
+  await visibleText(".main-content", "Embed kids parent", true);
+  if (fs.readFileSync(kidsSourceFile, "utf8") !== kidsSource) throw Error("Collapse over block embeds changed the embedded source file");
+  execFileSync("import", ["-window", "root", path.join(out, "embed-kids-folded.png")], { env });
   proof.outcome = "PASS";
-  proof.journey += "; GH #768 block embed opens its own root then children; GH #769 child page embeds open and close, main pane and right sidebar";
+  proof.journey += "; GH #768 block embed opens its own root then children; GH #769 child page embeds open and close, main pane and right sidebar; GH #1032 Collapse (one level) on a block whose children are block embeds folds each embed on its host, with the caret and with the block selected, leaving the block open and the source file unchanged";
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #696: ${out}`);
 } catch (error) {

@@ -2,6 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { advancedMatch, matchedDescription, rankedSettingMatches, settingMatches, settingHighlight } from "./settingsSearch";
 import { settingEntries } from "./settingsRegistry";
 import { msg, render, setActiveLocale, type Msg } from "../i18n";
+import { expectOrderedIn } from "../testOrder.test.support";
 
 afterEach(() => setActiveLocale("en"));
 
@@ -75,7 +76,7 @@ it("a one-character query matches shown-language names and descriptions, not hid
   // 图谱 and 拼写检查语言 contain 发 in their descriptions: beta.5 dropped them (4 -> 2).
   const fa = labelsFor("发");
   expect(fa).toEqual(expect.arrayContaining(["开发者工具", "发布", "图谱", "拼写检查语言"]));
-  expect(fa.indexOf("图谱")).toBeGreaterThan(fa.indexOf("发布"));
+  expectOrderedIn(fa, "发布", "图谱");
   // A single "S" in the Chinese interface matches only text shown in Chinese (CSS, collapsed::),
   // not the English label of almost every setting.
   const s = labelsFor("S");
@@ -120,7 +121,7 @@ it("lists label, keyword and alias matches before description-only matches, keep
   expect(ranked).toHaveLength(all.length);
   const names = ranked.map(entry => text(entry.label));
   expect(names[0]).toBe("Developer tools");
-  expect(names.indexOf("Developer tools")).toBeLessThan(names.indexOf("Query export size limit"));
+  expectOrderedIn(names, "Developer tools", "Query export size limit");
   const nameHit = (entry: typeof all[number]) => [entry.label, entry.keywords ?? "", ...(entry.aliases ?? [])]
     .some(text => (typeof text === "string" ? text : render(text)).toLowerCase().includes("dev"));
   const flags = ranked.map(nameHit);

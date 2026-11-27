@@ -1300,3 +1300,153 @@ fn q_git_pull_inside_a_bigger_work_tree_refuses() {
     let outcome = pull(&graph.slot());
     assert_eq!(outcome.code(), "refused", "{outcome:?}");
 }
+
+/// Review of 6fb074e9f: the resume test (s3.7 P3) leaves out exactly the
+/// temp names Tine writes. Beside a half-applied pull, each of those keeps the
+/// autocommit deferred; a user's file that only looks like one is a local
+/// change, so the autocommit is not deferred.
+#[test]
+fn q_git_resume_test_leaves_out_exactly_tines_temp_names() {
+    use crate::device_io::atomic_file::{tine_temp_names, TEMP_LOOK_ALIKES};
+    use crate::owner::git_autocommit::open_checked;
+    use crate::owner::git_pull::defers_autocommit;
+    test_hook::clear();
+    let graph = Graph::new();
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let up = upstream(
+        &repo,
+        &[
+            Edit::Write("pages/a.md", b"- theirs\n"),
+            Edit::Write("assets/n.txt", b"note\n"),
+        ],
+    );
+    test_hook::crash_at(Step::AfterPages);
+    assert!(matches!(pull(&slot), PullOutcome::Incomplete(_)));
+    let _ = std::fs::remove_file(repo.path().join("index.lock"));
+    test_hook::restart(&graph.root);
+    let deferred = || defers_autocommit(&open_checked(&graph.root).unwrap());
+    assert!(deferred(), "the half-applied pull alone defers");
+
+    let tine: Vec<_> = tine_temp_names("a.md")
+        .iter()
+        .map(|name| graph.root.join("pages").join(name))
+        .collect();
+    for path in &tine {
+        std::fs::write(path, b"half a save").unwrap();
+    }
+    assert!(
+        deferred(),
+        "a temp Tine writes was taken for a local change"
+    );
+    for name in TEMP_LOOK_ALIKES {
+        let path = graph.root.join("pages").join(name);
+        std::fs::write(&path, b"the user's").unwrap();
+        assert!(!deferred(), "{name} was left out of the resume test");
+        std::fs::remove_file(&path).unwrap();
+    }
+    for path in &tine {
+        std::fs::remove_file(path).unwrap();
+    }
+    landed(&pull(&slot));
+    assert_eq!(head(&repo), up);
+}
+
+/// Review of c897398d8, B1: a temp an older Tine committed, still on disk, in
+/// an otherwise clean checkout. The remote edits a page; the pull fast-forwards
+/// with no local commit before it (the pre-pull autocommit used to remove the
+/// temp in a commit of its own, and the pull then reported Diverged).
+#[test]
+fn a_tracked_tine_temp_still_on_disk_lets_a_clean_checkout_fast_forward() {
+    const TEMPS: &[&str] = &[
+        "assets/.a.png.4242.21.capture.tmp",
+        "pages/.a.md.4242.17.tmp",
+        "assets/.tine-tx-1759000000000-1.tmp",
+    ];
+    test_hook::clear();
+    let graph = Graph::new();
+    for path in TEMPS {
+        let full = graph.root.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, b"half a save").unwrap();
+    }
+    let repo = repo(&graph);
+    let slot = graph.slot();
+    let up = upstream(&repo, &[Edit::Write("pages/a.md", b"- theirs\n")]);
+    landed(&pull(&slot));
+    assert_eq!(
+        head(&repo),
+        up,
+        "a local commit came before the fast-forward"
+    );
+    assert_eq!(disk(&graph, "pages/a.md").unwrap(), b"- theirs\n");
+    for path in TEMPS {
+        assert_eq!(disk(&graph, path).unwrap(), b"half a save", "{path}");
+    }
+}
+
+/// Model check of c897398d8: the remote deletes a temp an older Tine
+/// committed, and the pull stops after deleting it, before `HEAD` moves. The
+/// next autocommit defers (the deletion is the pull's progress, not a local
+/// change) and the retried pull lands on `U` with no local deletion commit.
+#[test]
+fn an_interrupted_pull_that_deleted_a_tracked_tine_temp_resumes() {
+    const TEMP: &str = "assets/.a.png.4242.21.capture.tmp";
+    for step in [Step::AfterBarrier, Step::AfterIndex] {
+        test_hook::clear();
+        let graph = Graph::new();
+        std::fs::create_dir_all(graph.root.join("assets")).unwrap();
+        std::fs::write(graph.root.join(TEMP), b"half a save").unwrap();
+        let repo = repo(&graph);
+        let slot = graph.slot();
+        let h = head(&repo);
+        let up = upstream(&repo, &[Edit::Remove(TEMP)]);
+        test_hook::crash_at(step);
+        assert!(
+            matches!(pull(&slot), PullOutcome::Incomplete(_)),
+            "{step:?}"
+        );
+        assert_eq!(disk(&graph, TEMP), None, "{step:?}: the pull deleted it");
+        assert_eq!(head(&repo), h, "{step:?}");
+        let _ = std::fs::remove_file(repo.path().join("index.lock"));
+        test_hook::restart(&graph.root);
+        assert_eq!(
+            commit_now(&graph.root, "Tine: autosave").unwrap(),
+            Outcome::PullPending,
+            "{step:?}: the pull's own deletion was taken for a local change"
+        );
+        assert_eq!(head(&repo), h, "{step:?}");
+        landed(&pull(&slot));
+        assert_eq!(head(&repo), up, "{step:?}");
+    }
+}
+
+/// The resume rule alone (model check of c897398d8), from the state an
+/// interrupted pull leaves: `H` tracks a temp, `U` deletes it, the file is
+/// gone from disk, `HEAD` and the index are still at `H`. The deletion is the
+/// pull's progress: the autocommit defers. The same deletion with no pull
+/// pending is the user's, committed like any deletion.
+#[test]
+fn the_resume_test_counts_a_pulled_temp_deletion_as_progress() {
+    const TEMP: &str = "assets/.a.png.4242.21.capture.tmp";
+    for pending in [true, false] {
+        test_hook::clear();
+        let graph = Graph::new();
+        std::fs::create_dir_all(graph.root.join("assets")).unwrap();
+        std::fs::write(graph.root.join(TEMP), b"half a save").unwrap();
+        let repo = repo(&graph);
+        let h = head(&repo);
+        if pending {
+            upstream(&repo, &[Edit::Remove(TEMP)]);
+        }
+        std::fs::remove_file(graph.root.join(TEMP)).unwrap();
+        let outcome = commit_now(&graph.root, "Tine: autosave").unwrap();
+        if pending {
+            assert_eq!(outcome, Outcome::PullPending);
+            assert_eq!(head(&repo), h);
+        } else {
+            assert!(matches!(outcome, Outcome::Committed(_)), "{outcome:?}");
+            assert!(tree_of(&repo, head(&repo)) != tree_of(&repo, h));
+        }
+    }
+}

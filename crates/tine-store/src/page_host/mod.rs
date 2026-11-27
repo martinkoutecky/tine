@@ -10,7 +10,7 @@ pub use binding::{
     HostReadError, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
     PublishedRevision, Reloaded, Saved, StopMode, StopState, Stopped,
 };
-pub use io::DraftStatus;
+pub use io::{DraftStatus, KeptOriginal, RestoreOutcome, RestoreRefusal, RestoreStep};
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]
@@ -50,7 +50,7 @@ mod tests;
 mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
-use io::{ErrorKind, HostIo, IoFailure, Witness};
+use io::{ErrorKind, HostIo, IoFailure, SourceWitness, Witness, WitnessStep};
 use logical::LiveOp;
 use order::{Gates, OperationReply, Removal, Reply, ReplyId};
 use save::SaveJob;
@@ -1273,15 +1273,16 @@ impl<F: HostIo> Host<F> {
         {
             return false;
         }
-        let drafts = self.logical_drafts();
         self.keys.iter().all(|key| {
             let page = self.pages.get(key);
+            #[cfg(test)]
+            assert_eq!(self.draft_of(key), self.logical_drafts().get(key));
             page.is_none_or(|p| p.clean() || p.risk)
                 && match page.filter(|p| p.risk) {
-                    Some(p) => drafts.get(key).is_some_and(|r| r.holds(p)),
+                    Some(p) => self.exact_copy(key, p),
                     // A paired draft still owing a settlement keeps its
                     // records for the next launch, which reinstalls it.
-                    None => !drafts.contains_key(key) || self.pair_retains(key),
+                    None => self.draft_of(key).is_none() || self.pair_retains(key),
                 }
         })
     }
@@ -1356,12 +1357,12 @@ impl<F: HostIo> Host<F> {
         for key in self.custody.keys().cloned().collect::<Vec<_>>() {
             self.settle(&key);
         }
-        self.fs.graph_launch(&self.keys.iter().cloned().collect());
         // The pairing's one answerer (`Order`) is installed from the scan
         // before any recovered work is dispatched or choice offered. A pair
         // a durable Use Disk cancelled recovers neither its receiver's nor
         // its source's operation record: both keep their disk state, newer
-        // page drafts still win.
+        // page drafts still win. It runs the graph's launch directory pass
+        // (`HostIo::graph_launch`), which also witnesses decided sources.
         let skipped = self.adopt_pairing(&scan);
         self.with_locks(&keys, |host| {
             for (key, record) in &scan.logical {

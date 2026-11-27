@@ -288,36 +288,42 @@ unsaved-recovery-summary =
        *[other] { NUMBER($count, useGrouping: 0) } affected pages. Review or copy your drafts before closing. Copying does not save the graph.
     }
 
-unsaved-recovery-kept-after-a-cancelled-rename = { $path } — kept after a cancelled rename
+unsaved-recovery-kept-heading = Kept after a cancelled rename
 
-unsaved-recovery-kept-after-a-cancelled-rename-detail = A rename of this page was cancelled after its file was removed. Tine kept the original text below; Restore puts it back as { $path }.
+unsaved-recovery-kept-detail = A rename was cancelled after these files were removed, and Tine kept their original text. Restore puts a file back while no window has its page open; Copy original copies the text.
 
 unsaved-recovery-restore = Restore
 
 unsaved-recovery-restoring = Restoring…
 
-unsaved-recovery-restore-waiting = { $path } is busy. Try Restore again in a moment.
-
-unsaved-recovery-restore-refused = Tine couldn't start restoring { $path }. Its entry here says what Tine knows; the original text stays here to copy.
-
-unsaved-recovery-restore-refused-occupied = Couldn't restore { $path }: a file with that name exists again. The original text stays here; copy it to keep it.
-
-unsaved-recovery-restore-refused-claimed = Couldn't restore { $path }: { $file } claims that page. The original text stays here; copy it to keep it.
-
-unsaved-recovery-restore-refused-unsaved = Couldn't restore { $path }: the page has unsaved edits. The original text stays here; copy it to keep it.
-
-unsaved-recovery-restore-refused-failed = Couldn't restore { $path }: Tine could not check its folder{ $step }. Try Restore again; the original text stays here.
-
-unsaved-recovery-restore-retrying-claimed = Not restored yet: { $file } claims the page { $path }. Tine keeps trying; rename or move that file, or copy the text below.
-
-unsaved-recovery-restore-retrying-failed = Not restored yet: writing { $path } failed{ $step }. Tine keeps trying; the original text stays here.
-
-unsaved-recovery-restored = Restored { $path }.
-
-unsaved-recovery-restore-uncertain = Tine has not confirmed the restore of { $path } yet; it keeps trying.
-
-unsaved-recovery-restore-failed = Couldn't restore { $path }: { $error }
+unsaved-recovery-copy-original = Copy original
 
 unsaved-recovery-original-copied = Copied. Paste it into a separate file to keep a copy.
 
-unsaved-recovery-original-copy-failed = Could not copy. Select the text below and copy it manually. It stays here.
+unsaved-recovery-original-copy-failed = Could not copy the original. Tine still keeps it here.
+
+unsaved-recovery-open-file = Open
+
+unsaved-recovery-restored = Restored { $path }.
+
+unsaved-recovery-restore-not-kept = This original is no longer kept.
+
+unsaved-recovery-restore-ineligible = { $path } is not a page of this graph now, so Tine can't restore it. Copy original copies its text.
+
+unsaved-recovery-restore-held = Close { $name }, then Restore.
+
+unsaved-recovery-restore-unsaved = { $path } has unsaved changes; save or discard them first.
+
+unsaved-recovery-restore-occupied = A file is already at { $path }. The original stays kept; Copy original copies it.
+
+unsaved-recovery-restore-twin = Couldn't restore { $path }: { $file } is already this page. The original stays kept.
+
+unsaved-recovery-restore-failed = Couldn't restore { $path }: Tine could not check its folder{ $step }. The original stays kept.
+
+unsaved-recovery-restore-unavailable = Restore is unavailable right now.
+
+unsaved-recovery-restore-superseded = { $path } now holds other content. The original stays kept while Tine has it.
+
+unsaved-recovery-restore-unwritten = { $path } is not saved yet; the original stays kept.
+
+unsaved-recovery-restore-uncertain = Tine has not confirmed that { $path } was restored. The original stays kept until it is on disk.

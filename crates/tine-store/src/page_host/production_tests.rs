@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 mod guard_tests;
 #[path = "production_crash_tests.rs"]
 mod production_crash_tests;
+#[path = "production_launch_custody_journey_tests.rs"]
+mod production_launch_custody_journey;
 #[path = "production_move_crash_tests.rs"]
 mod production_move_crash_tests;
 #[path = "production_rename_relaunch_tests.rs"]
@@ -540,7 +542,9 @@ fn m3_partial_replan_refusal_retains_root_sync_until_restoration() {
 fn launch_sync_error_is_reported_best_effort_without_refusing_graph_saves() {
     let mut f = Fixture::new();
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.fs.graph_launch(&BTreeSet::from(["a.md".into()]));
+    f.host
+        .fs
+        .graph_launch(&BTreeSet::from(["a.md".into()]), &[]);
     assert_eq!(
         f.host.fs.launch_warnings,
         vec![(f.graph.clone(), io::ErrorKind::Other)]
@@ -2177,7 +2181,7 @@ fn r2_marker_temp_crash_cuts_do_not_accumulate() {
                 &marker,
                 crate::atomic_file::Source::Bytes(b"M"),
                 crate::atomic_file::Mode::Default,
-                "",
+                crate::atomic_file::TempTag::Replace,
             )
             .unwrap(),
         );
@@ -2917,4 +2921,64 @@ fn without_marker_files_a_deletion_leaves_no_custody_file() {
     assert_eq!(markers(&mut f), 0);
     assert!(f.host.fs.unwritten.is_empty(), "retired");
     assert!(trash_holds(&f, b"A"));
+}
+
+/// GH #540: a rename of `source` to `receiver` (over `referrer`, which
+/// links it), cancelled after the source's removal published: another
+/// program replaced the receiver, and Use Disk on it kept the source's
+/// original (`Order::kept`). Then the process dies. The next host started
+/// on `graph` and `app` (draft namespace `id`) reinstalls the kept pair at
+/// launch. Each key is graph-relative; the titles are the file stems.
+pub(in crate::page_host) fn keep_an_original(
+    graph: &Path,
+    app: &Path,
+    id: &str,
+    [source, receiver, referrer]: [&str; 3],
+) {
+    let stem = |key: &str| Path::new(key).file_stem().unwrap().to_str().unwrap().to_owned();
+    let trash = crate::model::trash_root(graph).join("pages");
+    fs::create_dir_all(&trash).unwrap();
+    let io = ProductionIo::attach(graph, app, id, &trash);
+    let locks = [source, receiver, referrer]
+        .into_iter()
+        .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+        .collect();
+    let mut host = shared_counters(Host::new(io, locks));
+    host.stop();
+    assert!(matches!(
+        host.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
+    let mut f = Fixture {
+        graph: graph.into(),
+        app: app.into(),
+        trash,
+        host,
+        // Unused: the fixture owns no directory of the caller's.
+        root: tempfile::tempdir().unwrap(),
+    };
+    f.drain();
+    let referrers = BTreeSet::from([referrer.into()]);
+    let format = tine_core::config::FileNameFormat::TripleLowbar;
+    let (from, to) = (stem(source), stem(receiver));
+    let renamed = f.host.rename(source, receiver, &referrers, &from, &to, format);
+    assert_eq!(renamed, Disposition::Pending);
+    f.drain();
+    assert_eq!(f.save(receiver), Outcome::Published);
+    assert_eq!(f.save(referrer), Outcome::Published);
+    assert_eq!(f.host.start_save(source), Disposition::Pending);
+    while graph.join(source).exists() {
+        f.host.advance_save();
+        assert!(f.host.job.is_some());
+    }
+    fs::write(graph.join(receiver), "- other\n").unwrap();
+    for _ in 0..15 {
+        f.host.advance_save();
+        if f.host.job.is_none() {
+            break;
+        }
+    }
+    f.send(receiver, RequestKind::Discard);
+    assert!(f.host.order.kept_of(source).is_some(), "kept");
+    f.drain();
 }

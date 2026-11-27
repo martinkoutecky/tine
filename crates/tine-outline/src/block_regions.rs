@@ -740,9 +740,18 @@ impl BlockRegions {
         if let Some((_, replacement)) = edits.iter_mut().find(|(r, _)| r.0 == at) {
             *replacement = text;
         } else {
-            edits.push((Range(at, at), text));
+            edits.push((Range(at, at), Self::planning_line(raw, at, text)));
         }
         splice(raw, edits)
+    }
+    /// Planning written where a block without title text begins goes after an
+    /// empty first line: a block's first line is its title, and Logseq takes no date from it.
+    fn planning_line(raw: &str, at: usize, text: String) -> String {
+        if at == 0 {
+            format!("{}{text}", newline(raw))
+        } else {
+            text
+        }
     }
     /// Where rows after the title go: after lsdoc's headline, or around a
     /// container the block opens with.
@@ -1119,7 +1128,8 @@ impl BlockRegions {
                         );
                         splice(raw, edits)
                     } else {
-                        self.inserted(raw, self.title_end(raw, org), &text)
+                        let at = self.title_end(raw, org);
+                        self.inserted(raw, at, &Self::planning_line(raw, at, text))
                     }
                 } else {
                     splice(

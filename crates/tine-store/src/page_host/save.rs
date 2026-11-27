@@ -161,6 +161,32 @@ impl<F: HostIo> Host<F> {
         bytes == image && fs.durable_page(receiver)
     }
 
+    /// The one answer to "does this source hold its pair's original text"
+    /// (the model's `sourcePresent`), read as `bytes`: they are the admitted
+    /// `preimage` (`order::source_present`), and `witness` (the one source
+    /// evidence producer, `HostIo::source_witnessed`, or launch's shared pass
+    /// `HostIo::graph_launch`) found that very file flushed and its
+    /// directory entries up to the graph root synced (D), or the weak
+    /// witness of a filesystem without directory sync (W). A failed step
+    /// (U) anchors nothing: a power cut may still drop or revert the file.
+    /// The witness runs only for matching bytes. Every custody decision asks
+    /// this: launch's decided phases, Use Disk's phase, and a paired
+    /// source's publication (disarm and restoration).
+    pub(super) fn source_original(
+        preimage: &Text,
+        bytes: &Text,
+        witness: impl FnOnce() -> SourceWitness,
+    ) -> order::Original {
+        if !order::source_present(preimage, bytes) {
+            return order::Original::No;
+        }
+        match witness() {
+            SourceWitness::Durable => order::Original::Durable,
+            SourceWitness::Weak => order::Original::Weak,
+            SourceWitness::Failed(_) => order::Original::Failed,
+        }
+    }
+
     /// Surface a diverged receiver as its ordinary read (a held page with
     /// unsaved text conflicts, as for any outside change).
     fn receiver_differs(&mut self, receiver: &str, bytes: Text) {
@@ -178,7 +204,6 @@ impl<F: HostIo> Host<F> {
         &mut self,
         job: &mut SaveJob,
         cause: &mut Option<IoFailure>,
-        claimed: &mut Option<String>,
     ) -> Option<Outcome> {
         let key = job.page.clone();
         match self.creation_twin(job) {
@@ -191,7 +216,6 @@ impl<F: HostIo> Host<F> {
                 None
             }
             Ok(Some(existing)) => {
-                *claimed = Some(existing.clone());
                 self.events.push(Event::Twin {
                     page: key,
                     existing,
@@ -277,8 +301,6 @@ impl<F: HostIo> Host<F> {
         let key = job.page.clone();
         // The failed step's diagnosis for the page's notice (Q-P2b-3).
         let mut cause = None;
-        // The file a creation's twin check found claiming the page.
-        let mut claimed = None;
         let result = match job.phase {
             // A failure is saveFail (L442-445): nothing was renamed. After three
             // consecutive filesystem errors the save goes ahead, the error stays
@@ -345,7 +367,7 @@ impl<F: HostIo> Host<F> {
                             cause = Some(e);
                             Some(Outcome::Failed)
                         }
-                        Ok(None) => self.twin_or_marker(&mut job, &mut cause, &mut claimed),
+                        Ok(None) => self.twin_or_marker(&mut job, &mut cause),
                     }
                 }
                 // A page an order waits for whose path already holds this
@@ -356,17 +378,12 @@ impl<F: HostIo> Host<F> {
                 // its post-check still guards the pair.
                 Ok(bytes) if bytes == job.bytes && self.order.awaits(&key) => {
                     job.base = Base::Known(bytes);
-                    self.twin_or_marker(&mut job, &mut cause, &mut claimed)
+                    self.twin_or_marker(&mut job, &mut cause)
                 }
                 Ok(bytes) => {
                     if self.allocator_busy() {
                         self.job = Some(job);
                         return Disposition::Waiting;
-                    }
-                    // A restore's create over a slot taken meanwhile ends:
-                    // the page shows that file's text (its record says so).
-                    if bytes.is_some() {
-                        (self.order).restore_failed(&key, io::RestoreRefusal::Occupied);
                     }
                     self.adopt_read(&key, bytes);
                     // The base-revision guard ended this save without a
@@ -590,12 +607,25 @@ impl<F: HostIo> Host<F> {
                             }
                             Err(_) => false,
                         };
-                        let anchored = order::anchored(&preimage, &job.bytes, certified);
+                        // The full witness on the slot, never `job.bytes`
+                        // plus a stamp: another program may have written the
+                        // file in place since the rename.
+                        let fs = &mut self.fs;
+                        let original = Self::source_original(&preimage, &job.bytes, || {
+                            fs.source_witnessed(&key, &job.bytes)
+                        });
+                        let anchored = order::anchored(original, certified);
                         if let Some(name) = self.order.disarm(&key, anchored) {
                             self.repair_op(&name);
                         }
                     }
-                    for name in self.order.restored(&key, &job.bytes) {
+                    let fs = &mut self.fs;
+                    let restored = (self.order).restored(&key, |preimage| {
+                        Self::source_original(preimage, &job.bytes, || {
+                            fs.source_witnessed(&key, &job.bytes)
+                        })
+                    });
+                    for name in restored {
                         self.repair_op(&name);
                     }
                 }
@@ -616,16 +646,6 @@ impl<F: HostIo> Host<F> {
                 });
             } else {
                 page.risk = true;
-                // A running restore's create did not publish: its record
-                // names why, and it retries as this save does.
-                let problem = match claimed {
-                    Some(file) => io::RestoreRefusal::Claimed { file },
-                    None => io::RestoreRefusal::Failed {
-                        operation: cause.as_ref().and_then(|c| c.operation),
-                        os_error: cause.as_ref().and_then(|c| c.os_error),
-                    },
-                };
-                self.order.restore_failed(&key, problem);
             }
             self.set_page(&key, Some(page));
             self.events.push(Event::SaveOutcome {

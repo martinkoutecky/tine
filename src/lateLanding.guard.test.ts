@@ -120,7 +120,9 @@ const DURABLE_BACKEND_METHODS = new Set([
   "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
   "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "copyGuideIntoGraph",
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
-  "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageDeleteFile", "pageRestoreSource", "pageSaveNow",
+  "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageDeleteFile", "pageSaveNow",
+  // GH #540: Restore puts a kept original back as its file.
+  "pageRestoreKept",
   "setGuideAnnounced", "renamePage", "followPageIdentity", "publishQuery", "publishLive", "setFavorites",
   "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setEnableTooltip", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
@@ -156,7 +158,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
-  "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting", "pageDraftsRetry",
+  "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "pageKeptOriginals", "pageKeptText", "onPageMail", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting", "pageDraftsRetry",
   "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "registerUnlinkedReference", "registerQuerySubscription", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",

@@ -318,7 +318,9 @@ impl PageHost {
     /// Crash-recovery availability (§4, B-Q1), and the pages whose text is
     /// not on disk yet (SPEC-s2 §4.11, S9), for the `load_graph` reply: a
     /// launch names what it recovered, an adopted host (B-QA) what it still
-    /// holds. Bounded by the held pages and admitted input; no I/O.
+    /// holds; and how many originals a cancelled rename kept. Bounded by the
+    /// held pages, admitted input and one walk over the durable pairs, with
+    /// no allocation for the count; no I/O.
     pub fn draft_status(&self) -> DraftStatus {
         let recovered = self.recovered.clone();
         let status = self.driver.shared.read(move |state| {
@@ -343,63 +345,10 @@ impl PageHost {
                     })
                 })
                 .collect();
-            status.restorable = host.restorable_list();
+            status.kept = host.order.kept().count();
             status
         });
         status.expect("page host driver ended")
-    }
-
-    /// `page_restore_source`: restore the original text a cancelled rename
-    /// kept of `key` (`DraftStatus::restorable`), for the current window
-    /// `session` only (S2), through `Host::restore_source`. How a restore
-    /// stands (restoring, retrying and why, refused and why, restored) is
-    /// the host's record of it, which the restorable list carries
-    /// (`io::RestoreState`); this reply says only whether the host recorded
-    /// it: `Pending` (the list says how it stands, a refusal included),
-    /// `Waiting` while the page or a rename is busy, `Refused` with no
-    /// record (not restorable, another session, a restore already running),
-    /// `Uncertain` past the bound. The restoration writes the page's file:
-    /// `EditKind::CreatePage` (OG-RULES Rule 8), counted when admitted.
-    pub fn restore_source(&self, session: u64, key: &str) -> PageOperation {
-        // Only a listed key takes a lock registration; the step checks again.
-        let owned = key.to_owned();
-        let read = move |state: &State<ProductionIo, SystemClock>| {
-            state.progress.host.order.restorable(&owned).is_some()
-        };
-        if !self.driver.shared.read(read).unwrap_or(false) {
-            return PageOperation::Refused;
-        }
-        let spelling = self.spelling(key);
-        if self.try_register(key, &spelling).is_none() {
-            return PageOperation::Refused;
-        }
-        let key = key.to_owned();
-        let step = move |state: &mut State<ProductionIo, SystemClock>| {
-            if state.book.session != session {
-                return Disposition::Refused;
-            }
-            let (disposition, recorded) = state.progress.with_host(|host| {
-                let before = host.order.restorable_generation();
-                let disposition = host.restore_source(&key);
-                (disposition, host.order.restorable_generation() != before)
-            });
-            if disposition == Disposition::Applied {
-                state.book.took([key.clone()], EditKind::CreatePage);
-            }
-            // A refusal the host recorded is told by the list, like any
-            // other outcome of this restore.
-            if disposition == Disposition::Refused && recorded {
-                return Disposition::Pending;
-            }
-            disposition
-        };
-        let deadline = tine_core::clock::Instant::now() + retained::OPERATION_WAIT;
-        match (self.driver.shared).locked_step(Deadline::At(deadline), step) {
-            Ok(Disposition::Applied | Disposition::Pending) => PageOperation::Pending,
-            Ok(Disposition::Waiting) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
-            Err(Unanswered::Late) => PageOperation::Uncertain,
-            _ => PageOperation::Refused,
-        }
     }
 
     /// `page_drafts_retry` (S3): re-probe down draft I/O in the running

@@ -86,7 +86,8 @@ function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
     // The key press acts on the surface in front of the user; if they move to
     // another pane, tab or route before the resolver answers, the answer must
     // not navigate them back (I-20). `undefined` is a FAILED read that the
-    // resolver already reported (I-9); only `null` means the block is absent.
+    // resolver already reported (I-9), or a window granted no graph read
+    // (Quick Capture); only `null` means the block is absent.
     const owner = focusedSurfaceOwner();
     void readOwned(owner, resolveBlockBatched(uuid)).then((result) => {
       if (result.kind === "stale") return;

@@ -49,8 +49,8 @@ open an issue that describes the change as a **specification**:
   behaves at the edges, how it interacts with Logseq round-tripping),
 - and how Logseq does it, if it mirrors a Logseq behavior.
 
-The maintainer then implements it (often AI-assisted) under direct review, and
-credits you as the proposal's author.
+Tine's AI agents then implement it under the maintainer's direction (see
+[`docs/PRINCIPLES.md`](docs/PRINCIPLES.md)), and the proposal's author is credited.
 
 **Why this way?** Tine reads and writes your real notes with your filesystem
 privileges, and a single maintainer cannot honestly security-review arbitrary

@@ -115,9 +115,9 @@ mod root_binding;
 pub use page_host::faults as host_faults;
 pub use page_host::{
     ApplyRefusal, DiskToken, DraftOwnership, DraftStatus, Effect as HostEffect,
-    Expected as HostExpected, HostInputs, HostOp, HostRead, HostReadError, Input, Opened, PageHost,
-    PageMail, PageOperation, PageRefusal, PublishedRevision, Reloaded, Saved as HostSaved,
-    StopMode, StopState, Stopped,
+    Expected as HostExpected, HostInputs, HostOp, HostRead, HostReadError, Input, KeptOriginal,
+    Opened, PageHost, PageMail, PageOperation, PageRefusal, PublishedRevision, Reloaded,
+    RestoreOutcome, RestoreRefusal, RestoreStep, Saved as HostSaved, StopMode, StopState, Stopped,
 };
 pub use root_binding::BoundDirectory;
 #[cfg(test)]
@@ -132,6 +132,8 @@ mod production_index_guard_tests;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+mod regular_file;
+pub use regular_file::{open_regular_file, FinalSymlink, OpenRegularError};
 #[cfg(not(target_arch = "wasm32"))]
 pub mod restore;
 #[cfg(test)]

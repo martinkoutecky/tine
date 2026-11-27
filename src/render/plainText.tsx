@@ -7,7 +7,7 @@ import type { Inline, Span } from "./ast";
 import type { QuotedRange } from "./quoteHighlight";
 import { EmojiText } from "./emoji";
 import { typographic } from "./typography";
-import { typographyMode } from "../ui";
+import { glyphsShown } from "../inpageFind";
 import { plainSpanAttrs, typographicPlainSpanAttrs, utf8ByteLength, utf8ByteToUtf16Offset } from "./spans";
 
 /** A plain run as text with its source span attributes. */
@@ -15,13 +15,18 @@ export function renderPlain(sourceText: string, span: Span | undefined, spanMap:
   // Render-time typographic replacement (`->`→`→`, `--`→`–`, …) is a Tine
   // opinion applied ONLY to plain text — code/links/math/tags are other node
   // kinds, so they're excluded for free. Source keeps the ASCII.
-  const text = typographyMode() === "render" ? typographic(sourceText) : sourceText;
-  const attrs = spanMode
-    ? text === sourceText
-      ? plainSpanAttrs(span, spanMap)
-      : typographicPlainSpanAttrs(sourceText, span, spanMap)
-    : undefined;
-  return attrs ? <span {...attrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
+  const draw = (text: string) => {
+    const attrs = spanMode
+      ? text === sourceText
+        ? plainSpanAttrs(span, spanMap)
+        : typographicPlainSpanAttrs(sourceText, span, spanMap)
+      : undefined;
+    return attrs ? <span {...attrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
+  };
+  const glyphs = typographic(sourceText);
+  if (glyphs === sourceText) return draw(sourceText);
+  // Only a run with a glyph redraws when glyphsShown() changes (Find opening, the setting).
+  return <>{draw(glyphsShown() ? glyphs : sourceText)}</>;
 }
 
 // A passage a margin comment quotes (vision §3.7) is marked only when it lies

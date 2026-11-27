@@ -9,8 +9,8 @@ use crate::state::{off_ui, slot_for_context, GraphContext, GraphSlot, PageHostSl
 use std::time::Duration;
 use tine_core::model::PageDto;
 use tine_store::{
-    DiskToken, DraftStatus, EditKind, Opened, PageHost, PageId, PageMail, PageOperation,
-    PageRefusal, Reloaded,
+    DiskToken, DraftStatus, EditKind, KeptOriginal, Opened, PageHost, PageId, PageMail,
+    PageOperation, PageRefusal, Reloaded, RestoreOutcome,
 };
 
 /// Run `work` on the binding's running host, under the slot's host read
@@ -260,14 +260,19 @@ pub(crate) struct PublishedNeed {
 /// its barrier still waits.
 const PAGE_WAIT_BOUND: Duration = Duration::from_secs(5);
 
-/// For the window `session` (F1): witnessed own revisions once every need is published; false
-/// on a terminal notice for a needed key, or when the session is no longer
-/// current; null at `bound_ms` (at most 5 s), never success there (S1).
+/// For the window `session` (F1): witnessed own revisions once every need is published;
+/// `{ refused: files }` on a terminal notice for needed keys, naming their current
+/// files; false (a refusal naming none) when the session is no longer current or the host is down; null at
+/// `bound_ms` (at most 5 s), never success there (S1). With `departure` (the
+/// window is leaving this graph for another, tine#1041) the wait is
+/// `wait_departure`: an answer of revisions then lists only the needs that
+/// published, not the ones left to their exact drafts.
 #[tauri::command]
 pub(crate) async fn page_wait(
     session: u64,
     needs: Vec<PublishedNeed>,
     bound_ms: u64,
+    departure: bool,
     ctx: GraphContext<'_>,
 ) -> Result<Option<serde_json::Value>, String> {
     let needs: Vec<_> = needs
@@ -276,7 +281,11 @@ pub(crate) async fn page_wait(
         .collect();
     let bound = Duration::from_millis(bound_ms).min(PAGE_WAIT_BOUND);
     hosted(ctx, move |host| {
-        let (outcome, revisions) = host.wait_published(session, &needs, bound);
+        let (outcome, revisions, stuck) = if departure {
+            host.wait_departure(session, &needs, bound)
+        } else {
+            host.wait_published(session, &needs, bound)
+        };
         match outcome {
             PageOperation::Applied => Some(serde_json::json!(revisions)),
             // `wait_published` answers only Applied, Pending or Refused.
@@ -284,7 +293,8 @@ pub(crate) async fn page_wait(
             | PageOperation::Waiting
             | PageOperation::Uncertain
             | PageOperation::Superseded => None,
-            PageOperation::Refused => Some(serde_json::json!(false)),
+            PageOperation::Refused if stuck.is_empty() => Some(serde_json::json!(false)),
+            PageOperation::Refused => Some(serde_json::json!({ "refused": stuck })),
         }
     })
     .await
@@ -330,15 +340,37 @@ pub(crate) async fn page_owed(
     .await
 }
 
-/// Restore the original text a cancelled rename kept of `key`
-/// (`DraftStatus::restorable`, the unsaved-changes recovery panel).
+/// The originals a cancelled rename kept (`PageHost::kept_originals`), the
+/// unsaved-changes recovery panel's list; null for another session.
 #[tauri::command]
-pub(crate) async fn page_restore_source(
+pub(crate) async fn page_kept_originals(
+    session: u64,
+    ctx: GraphContext<'_>,
+) -> Result<Option<Vec<KeptOriginal>>, String> {
+    hosted(ctx, move |host| host.kept_originals(session)).await
+}
+
+/// One kept original's text, for the panel's Copy original
+/// (`PageHost::kept_text`); null when it is no longer kept.
+#[tauri::command]
+pub(crate) async fn page_kept_text(
     session: u64,
     key: String,
+    origin: u64,
     ctx: GraphContext<'_>,
-) -> Result<PageOperation, String> {
-    hosted(ctx, move |host| host.restore_source(session, &key)).await
+) -> Result<Option<String>, String> {
+    hosted(ctx, move |host| host.kept_text(session, &key, origin)).await
+}
+
+/// Restore one kept original as its file (`PageHost::restore_kept`).
+#[tauri::command]
+pub(crate) async fn page_restore_kept(
+    session: u64,
+    key: String,
+    origin: u64,
+    ctx: GraphContext<'_>,
+) -> Result<RestoreOutcome, String> {
+    hosted(ctx, move |host| host.restore_kept(session, &key, origin)).await
 }
 
 #[tauri::command]

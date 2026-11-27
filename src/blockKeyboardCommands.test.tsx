@@ -559,16 +559,34 @@ describe("Remove author (GH #918)", () => {
     expect(doc.byId[A].raw).toBe(authored);
   });
 
-  it("is offered only where the block context menu offers Remove author", () => {
+  // GH #918: the palette used to list it only while a target existed, so users
+  // could bind it in Settings but never find it in the palette. It is now always
+  // listed, like its sibling block commands, and says so when it cannot act.
+  it("is always offered in the palette, with or without a block in play", () => {
     loadAuthored();
-    expect(offered(), "no block in play").toBe(false);
+    expect(offered(), "no block in play").toBe(true);
     selectBlock(B);
-    expect(offered(), "a block without an author").toBe(false);
+    expect(offered(), "a block without an author").toBe(true);
     selectBlock(A);
     extendSelectionTo(B);
     expect(offered(), "mixed selected blocks").toBe(true);
     selectBlock(A);
     expect(offered(), "one authored block").toBe(true);
+  });
+
+  it("with no authored block, writes nothing, keeps the editor and says so", () => {
+    loadAuthored();
+    const dirty = vi.spyOn(wiring, "markDirty");
+    run("editor/remove-author");
+    expect(toasts().map((t) => t.kind)).toEqual(["warn"]);
+    setToasts([]);
+    startEditing(B, 2);
+    run("editor/remove-author");
+    expect(editingId(), "the edit is not ended").toBe(B);
+    expect(toasts().map((t) => t.kind)).toEqual(["warn"]);
+    expect(dirty).not.toHaveBeenCalled();
+    expect(doc.byId[A].raw).toBe(authored);
+    expect(doc.byId[B].raw).toBe(`Mine\nid:: ${B}`);
   });
 
   it("works from a chord the user binds, while the authored block is being edited", () => {
@@ -624,17 +642,24 @@ describe("Remove author (GH #918)", () => {
     for (const b of blocks) expect(doc.byId[b.id].raw).toBe(b.raw);
   });
 
-  it("offers a parent without attribution when a descendant has it, but skips read-only pages", () => {
+  // GH #918: the palette now lists the command always, so "actionable" is the
+  // answer the block context menu uses to offer it (removeAuthorTarget).
+  it("acts on a parent without attribution when a descendant has it, but skips read-only pages", () => {
+    const actionable = () => removeAuthorTarget() !== null;
     loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,
       blocks: [block(A, "Parent", [authorBlock(C1, "Child\ntine.author:: Ada Test")])] });
     selectBlock(A);
-    expect(offered()).toBe(true);
+    expect(actionable()).toBe(true);
     run("editor/remove-author");
-    expect(offered()).toBe(false);
+    expect(doc.byId[C1].raw).toBe("Child");
+    expect(actionable()).toBe(false);
     loadSingle({ name: "Read only", kind: "page", title: "Read only", format: "md", pre_block: null, read_only: true,
       blocks: [authorBlock(B, authored)] });
     selectBlock(B);
-    expect(offered()).toBe(false);
+    expect(actionable()).toBe(false);
+    run("editor/remove-author");
+    expect(doc.byId[B].raw).toBe(authored);
+    expect(toasts().map((t) => t.kind)).toEqual(["warn"]);
   });
 
   it("skips a read-only page in a mixed selection and batches each writable page", () => {

@@ -16,7 +16,7 @@ import { cutSourceMatches } from "../cutSource";
 import { inFileFormat } from "../convert";
 import {
   STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type OwedPage, type PageMail,
-  type PageRefusal, type PublishedNeed, type RestorableList,
+  type PageRefusal, type PublishedNeed,
 } from "./protocol";
 
 /** What the installed text's bytes were: a file revision, a proved absence, or unknown. */
@@ -70,6 +70,34 @@ type Phase =
 
 export interface Answered { took: boolean; refusal: PageRefusal | string | null }
 
+/** Whether Tine's own save wrote a version of a page whose sent text held given
+ * blocks (`HostClient.watchBlocks`). `proved` turns true once and stays. */
+export interface BlockWatch { readonly proved: boolean; release(): void }
+
+interface Watch {
+  ids: readonly string[];
+  /** The page's outstanding text request, and whether the DTO it sent held every id. */
+  sent: { id: number; holds: boolean } | null;
+  /** The newest version the host took, when its DTO held every id; else null. */
+  held: number | null;
+  proved: boolean;
+  /** Released: forgotten at the page's next send. */
+  dead: boolean;
+}
+
+/** Whether `dto`'s outline contains every id: the text as sent, never the
+ * window's document (a move in flight sends an older text). O(blocks of `dto`). */
+function dtoHolds(dto: PageDto, ids: readonly string[]): boolean {
+  const missing = new Set(ids);
+  const pending = [...dto.blocks];
+  while (missing.size && pending.length) {
+    const block = pending.pop()!;
+    missing.delete(block.id);
+    pending.push(...block.children);
+  }
+  return missing.size === 0;
+}
+
 interface Acquisition {
   pin: boolean;
   commit?: () => Promise<boolean> | boolean;
@@ -118,6 +146,8 @@ interface Page {
   burst: number | null;
   waiters: (() => void)[];
   answered: ((answer: Answered) => void)[];
+  /** Live block watches (`watchBlocks`); empty except while a capture's save is unconfirmed. */
+  watches: Watch[];
 }
 
 /** A cut source stamped with the host page it was cut from (R7). */
@@ -203,11 +233,6 @@ export class HostClient {
    * drop). Every change of `busy`, `owes`, `conflicted`, `isOpen` or `holdsContent` must be told: the
    * query results gate (wiring.ts) reads them only when this moves its revision. */
   onChange: () => void = () => {};
-  /** Told the restorable sources the session starts with (`windowReloaded`,
-   * `session` true) and each list its mail carries (`PageMail.restorable`). A
-   * mailed list can be told again when stashed mail replays; its generation
-   * orders them. */
-  onRestorable: (list: RestorableList, session: boolean) => void = () => {};
 
   constructor(
     readonly host: HostPort,
@@ -217,12 +242,9 @@ export class HostClient {
 
   /** Bind to a session (`page_window_reloaded`): request ids continue above the host's watermark. */
   async bind(): Promise<void> {
-    const { session, nextId, restorable } = await this.host.windowReloaded();
+    const { session, nextId } = await this.host.windowReloaded();
     this.session = session;
     this.nextId = nextId;
-    // The host's list as this session starts, an empty one included: a
-    // rebind to a host whose list emptied meanwhile must not keep the old one.
-    if (restorable) this.onRestorable(restorable, true);
     // windowReloaded retired the prior session's mail. A fresh host starts at
     // zero; a surviving host supplies its existing request floor. Neither the
     // previous client's watermark nor an unconditional zero proves that floor.
@@ -440,6 +462,8 @@ export class HostClient {
     for (const page of [a, b]) { page.editSeq += 1; this.editClock += 1; }
     const id = this.nextId++;
     for (const page of [a, b]) page.phase = { kind: "sending", id, request: "move", editSeq: page.editSeq, instance: this.instanceOf(page) };
+    this.sent(a, id, sourceDto);
+    this.sent(b, id, receiverDto);
     const answers = Promise.all([a, b].map((page) => new Promise<Answered>((resolve) => page.answered.push(resolve))));
     void this.host.move(this.session, id, [a.key!, sourceDto, a.version ?? STALE_VERSION],
       [b.key!, receiverDto, b.version ?? STALE_VERSION], kinds).then((refusal) => {
@@ -538,7 +562,7 @@ export class HostClient {
     this.editClock += 1;
     this.doc.install(page.name, { kind: "page", dto: merged });
     return this.request(page, "submit", (id) =>
-      this.host.submit(this.session, id, page.key!, merged, ticket.version ?? STALE_VERSION, ticket.disk, ["replace-page"]));
+      this.host.submit(this.session, id, page.key!, merged, ticket.version ?? STALE_VERSION, ticket.disk, ["replace-page"]), [], merged);
   }
 
   // ------------------------------------------------------------- creation (R4)
@@ -570,7 +594,7 @@ export class HostClient {
       page.editSeq += 1;
       this.editClock += 1;
       const answer = await this.request(page, "submit", (id) => this.host.submit(this.session, id, page.key!, held,
-        current ? page.version ?? STALE_VERSION : STALE_VERSION, null, options.kinds ?? ["create-page"]));
+        current ? page.version ?? STALE_VERSION : STALE_VERSION, null, options.kinds ?? ["create-page"]), [], held);
       if (!answer.took || page.needed === null) return { kind: "refused", refusal: answer.refusal };
       const version = page.needed;
       await this.saveNow([page.key!]);
@@ -581,47 +605,113 @@ export class HostClient {
     }
   }
 
+  // ------------------------------------------------------------- block watch
+
+  /** Watch for Tine's own save of a version of `name` whose sent text held every
+   * block in `ids`. `proved` turns true, and stays, when a publication wait
+   * reports the page's own-save version EQUAL to the newest version the host
+   * took, and the DTO it took held them: a later version proves nothing (Use
+   * disk leaves the page clean at one without them), an older one is not the
+   * text the page holds now, and the window's document is never consulted. A
+   * watch keeps that one version, however long a save stays blocked. A session
+   * change, a release or a drop of the page forgets it. The returned handle
+   * keeps neither the page nor this client alive. Null without client state
+   * for the page. While watched, each send of the page walks its DTO once per
+   * live watch; each published revision costs O(1). */
+  watchBlocks(name: string, ids: readonly string[]): BlockWatch | null {
+    const page = this.pages.get(name);
+    if (!page || !ids.length) return null;
+    const watch: Watch = { ids: [...ids], sent: null, held: null, proved: false, dead: false };
+    page.watches.push(watch);
+    return {
+      get proved() { return watch.proved; },
+      release: () => { watch.dead = true; watch.ids = []; watch.sent = null; watch.held = null; },
+    };
+  }
+
+  /** The text request `id` hands `dto` to the host for `page`. */
+  private sent(page: Page, id: number, dto: PageDto): void {
+    if (!page.watches.length) return;
+    page.watches = page.watches.filter((watch) => !watch.dead);
+    for (const watch of page.watches) watch.sent = { id, holds: dtoHolds(dto, watch.ids) };
+  }
+
+  /** The host's own save wrote `version` of the page at `key`. */
+  private witnessed(key: string, version: number): void {
+    for (const watch of this.byKey.get(key)?.watches ?? []) {
+      if (watch.held === version) watch.proved = true;
+      // Own-save versions only rise: an older taken version is never written now.
+      if (watch.held !== null && watch.held < version) watch.held = null;
+    }
+  }
+
+  /** The page's taken versions no longer name this binding's host buffers. */
+  private unwatch(page: Page): void {
+    for (const watch of page.watches) { watch.sent = null; watch.held = null; }
+  }
+
   // ------------------------------------------------------------- publication (§4.4, F1)
 
   saveNow(keys: readonly string[]): Promise<void> {
     return this.host.saveNow(this.session, keys);
   }
 
-  /** Whether every need published under this session: asks again while each
-   * bounded host wait passes, false on a terminal notice, a new session or the
-   * client's retirement (which settles a pending wait at once, R3). A true
-   * answer, whoever asked it (a close, a barrier, the data revision),
-   * discharges the publication debt it covers (J6). */
+  /** Whether every need published under this session (`publication`). */
   async published(needs: readonly PublishedNeed[]): Promise<boolean> {
+    return await this.publication(needs) === true;
+  }
+
+  /** True once every need published under this session: asks again while each
+   * bounded host wait passes. Otherwise the files the host refused for (a
+   * terminal notice), or none: a refusal naming no file, a failed call, a new
+   * session or the client's retirement (which settles a pending wait at once,
+   * R3). A true answer, whoever asked it (a close, a barrier, the data
+   * revision), discharges the publication debt it covers (J6). */
+  publication(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {
+    return this.hostWait(needs, false);
+  }
+
+  /** `publication`'s answer for a window leaving this graph for another
+   * (tine#1041): true once the host says every need either published or is a
+   * page no window has worked on, left to the exact draft the next launch recovers.
+   * It is not a publication answer: it marks nothing waited, settles no
+   * pending revision and discharges no debt. */
+  departure(needs: readonly PublishedNeed[]): Promise<true | readonly string[]> {
+    return this.hostWait(needs, true);
+  }
+
+  private async hostWait(needs: readonly PublishedNeed[], departure: boolean): Promise<true | readonly string[]> {
     const session = this.session;
     const covered = new Map(needs.map(({ key, version }) => {
       const page = this.byKey.get(key);
       return [key, { version, page }];
     }));
     while (!this.retired) {
-      const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
-      if (this.retired || this.session !== session) return false;
+      const result = await Promise.race([this.host.waitPublished(session, needs, departure), this.retirement]);
+      if (this.retired || this.session !== session) return [];
       if (result === null) continue;
-      if (result) {
-        for (const [key, { version, page }] of covered) {
-          if (page && this.byKey.get(key) === page) {
-            page.waited = Math.max(page.waited ?? version, version);
-          }
+      if (!result) return [];
+      if ("refused" in result) return result.refused;
+      if (departure) return true;
+      for (const [key, { version, page }] of covered) {
+        if (page && this.byKey.get(key) === page) {
+          page.waited = Math.max(page.waited ?? version, version);
         }
-        for (const { key, version, rev } of result) {
-          const saved = covered.get(key);
-          if (!saved) continue;
-          const { page } = saved;
-          // The host's own-publication witness settles every pending revision
-          // at or below the version it published, whenever the wait started.
-          const base = page && this.byKey.get(key) === page ? page.pending.takeVersion(version) : null;
-          if (page && base) this.proved(page, base.instance, version, rev);
-        }
-        this.onChange();
       }
-      return result !== false;
+      for (const { key, version, rev } of result) {
+        this.witnessed(key, version);
+        const saved = covered.get(key);
+        if (!saved) continue;
+        const { page } = saved;
+        // The host's own-publication witness settles every pending revision
+        // at or below the version it published, whenever the wait started.
+        const base = page && this.byKey.get(key) === page ? page.pending.takeVersion(version) : null;
+        if (page && base) this.proved(page, base.instance, version, rev);
+      }
+      this.onChange();
+      return true;
     }
-    return false;
+    return [];
   }
 
   /** The host's publication debt under this session; false (unknown) after a
@@ -637,9 +727,6 @@ export class HostClient {
   receive(mail: PageMail): void {
     if (this.rebinding) { this.rebinding.push(mail); return; }
     if (mail.session !== this.session) return;
-    if (mail.restorable) this.onRestorable(mail.restorable, false);
-    // A mail with an empty key carries only the restorable sources.
-    if (!mail.key) return;
     const page = this.byKey.get(mail.key);
     if (!page) {
       if ([...this.pages.values()].some((p) => p.phase.kind === "sending" && p.phase.request === "open"))
@@ -661,6 +748,12 @@ export class HostClient {
     page.notice = mail.notice;
     if (answer.outcome.kind === "refused") page.refusal = answer.outcome.reason;
     const result: Answered = { took: answer.took, refusal: answer.outcome.kind === "refused" ? answer.outcome.reason : null };
+    for (const watch of page.watches) {
+      if (watch.sent?.id !== answer.id) continue;
+      // The host's buffer is this text now: an earlier taken version is superseded.
+      if (answer.took) watch.held = watch.sent.holds ? answer.version : null;
+      watch.sent = null;
+    }
     if (!mail.page) {
       // The host released the page (an Open whose read failed holds
       // nothing): a failed Open keeps the text and shows the refusal.
@@ -743,7 +836,7 @@ export class HostClient {
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
         baseline: null, observed: null, notice: null, held: null, needed: null, pending: new PendingBases(), reviewBase: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
-        kinds: [], timer: null, burst: null, waiters: [], answered: [] };
+        kinds: [], timer: null, burst: null, waiters: [], answered: [], watches: [] };
       this.pages.set(name, page);
     }
     return page;
@@ -877,13 +970,15 @@ export class HostClient {
     const kinds = page.kinds.length ? page.kinds : ["replace-page" as const];
     page.kinds = [];
     void this.request(page, "submit", (id) => this.host.submit(this.session, id, page.key!, dto,
-      page.version ?? STALE_VERSION, null, [kinds[0], ...kinds.slice(1)]), kinds);
+      page.version ?? STALE_VERSION, null, [kinds[0], ...kinds.slice(1)]), kinds, dto);
   }
 
-  /** Capture synchronously and send; resolves with the request's answer. */
+  /** Capture synchronously and send; resolves with the request's answer. `dto` is
+   * the page text this request hands to the host, when it hands one. */
   private request(page: Page, request: Request, call: (id: number) => Promise<PageRefusal | null>,
-    kinds: readonly EditKind[] = []): Promise<Answered> {
+    kinds: readonly EditKind[] = [], dto?: PageDto): Promise<Answered> {
     const id = this.nextId++;
+    if (dto) this.sent(page, id, dto);
     page.phase = { kind: "sending", id, request, editSeq: page.editSeq, instance: this.instanceOf(page) };
     const answered = new Promise<Answered>((resolve) => page.answered.push(resolve));
     void call(id).then((refusal) => {
@@ -903,6 +998,7 @@ export class HostClient {
     if (refusal) {
       page.phase = { kind: "idle" };
       page.refusal = refusal;
+      for (const watch of page.watches) if (watch.sent?.id === id) watch.sent = null;
       const stash = page.stash;
       page.stash = [];
       this.settled(page, { took: false, refusal });
@@ -933,6 +1029,7 @@ export class HostClient {
 
   /** The page is no longer this window's view of a host page. */
   private unbind(page: Page): void {
+    this.unwatch(page);
     if (page.on) this.doc.released(page.name);
     page.on = false;
     if (page.key) this.byKey.delete(page.key);
@@ -1026,6 +1123,7 @@ export class HostClient {
   }
 
   private drop(page: Page): void {
+    this.unwatch(page);
     if (page.timer) clearTimeout(page.timer);
     if (page.retry) clearTimeout(page.retry);
     if (page.key) this.byKey.delete(page.key);

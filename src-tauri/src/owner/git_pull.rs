@@ -211,8 +211,10 @@ fn pending_upstream(repo: &Repo) -> Option<(Oid, Oid)> {
 /// The resume test (s3.7 P3), run before every autocommit: `true` when a
 /// fetched `U` is a strict descendant of `H` and every path under the graph
 /// root that differs from `H` holds its `U` blob or is a path this process's
-/// pull applied (P4). Then the half-applied tree is the pull's, not a local
-/// change, and committing it on `H` would make the next cycle diverge. Costs
+/// pull applied (P4); a Tine temp is never a local change, and counts only
+/// when it holds the pull's own change. Then the half-applied tree is the
+/// pull's, not a local change, and committing it on `H` would make the next
+/// cycle diverge. Costs
 /// one status scan, and only while such a `U` exists. A scan that fails defers
 /// too (REG-SB1-GIT-RESUME-STATUS-ERROR).
 pub(super) fn defers_autocommit(repo: &Repo) -> bool {
@@ -279,12 +281,26 @@ pub(super) fn defers_autocommit(repo: &Repo) -> bool {
         // not the pull's paths: the pull leaves them out of `H` and `U`.
         if path.ends_with('/')
             || git_autocommit::tine_own(path.as_bytes())
-            || git_autocommit::tine_temp(path)
             || git_autocommit::syncthing_temp(path.as_bytes())
         {
             continue;
         }
         if entry.status().is_empty() || entry.status() == git2::Status::IGNORED {
+            continue;
+        }
+        // A Tine temp is never a local change. One the pull itself changed
+        // (a tracked temp `U` deletes, already gone from disk, or one this
+        // process's pull applied) is the pull's progress: without it, an
+        // interrupted pull whose only change was that deletion would be
+        // committed locally and then diverge (model check of c897398d8).
+        if git_autocommit::tine_temp(path) {
+            let at_u = blob_at(&u_tree, path);
+            if applied.contains(path)
+                || (at_u != blob_at(&h_tree, path)
+                    && hash_on_disk(&key.join(path)).is_ok_and(|disk| disk == at_u))
+            {
+                differs = true;
+            }
             continue;
         }
         differs = true;
@@ -534,27 +550,6 @@ fn check_sync(repo: &Repo) -> Result<(), PullOutcome> {
     Ok(())
 }
 
-/// A changed path git would convert on checkout (`text`, `eol`, `crlf`), or
-/// whose raw bytes must not be written (`filter`, `ident`,
-/// `working-tree-encoding`).
-fn conversion(repo: &Repo, path: &str) -> Result<Option<&'static str>, git2::Error> {
-    if let Some(attr) = super::git_run::raw_content_conversion(&repo.repo, Path::new(path))? {
-        return Ok(Some(attr));
-    }
-    for attr in ["text", "eol", "crlf"] {
-        let value =
-            repo.repo
-                .get_attr(Path::new(path), attr, git2::AttrCheckFlags::FILE_THEN_INDEX)?;
-        if !matches!(
-            git2::AttrValue::from_string(value),
-            git2::AttrValue::Unspecified | git2::AttrValue::False
-        ) {
-            return Ok(Some(attr));
-        }
-    }
-    Ok(None)
-}
-
 fn regular(mode: FileMode) -> Option<u32> {
     match mode {
         FileMode::Blob | FileMode::BlobGroupWritable => Some(0o100644),
@@ -700,7 +695,9 @@ fn pre_check(
     for change in changes {
         let mut pending: Vec<&str> = Vec::new();
         for path in change.paths() {
-            if let Some(attr) = conversion(repo, path).map_err(git)? {
+            if let Some(attr) =
+                super::git_run::checkout_conversion(&repo.repo, Path::new(path)).map_err(git)?
+            {
                 return Err(refused(
                     path,
                     format!("git converts it on checkout ({attr})"),

@@ -34,10 +34,10 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
   // GH #805 (0.10 lane brief): Quit Tine must be remappable in Shortcuts.
-  "commands.registry": { env: "desktop", budget: 158, // +2 open-comments review (this page / the graph), margin DESIGN §12 (D-20261108-MC4 family); +2 sidebar commands, GH #928; +1 review kept originals, GH #540
+  "commands.registry": { env: "desktop", budget: 157, // +2 open-comments review (this page / the graph), margin DESIGN §12 (D-20261108-MC4 family); +2 sidebar commands, GH #928
     what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 27, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 96, // +2 open-comments review commands, margin DESIGN §12; +1 open today in sidebar, GH #928
+  "commands.palette": { env: "desktop", budget: 97, // +2 open-comments review commands, margin DESIGN §12; +1 open today in sidebar, GH #928; +1 Remove author listed without a block in play, GH #918
     what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },

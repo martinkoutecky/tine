@@ -182,6 +182,10 @@ fn gh839_existing_page_header_shape_refusal_gives_recovery() {
     .unwrap_err();
     assert!(error.message.contains("page propert"), "{}", error.message);
     assert!(error.message.contains("tine prop set --page"));
+    // GH #1011: the hint names the command this install has, not a literal.
+    let named = super::super::write::page_properties_refusal("tine-beta");
+    assert!(named.contains("use tine-beta prop set --page PAGE KEY VALUE"));
+    assert!(!named.contains("use tine prop"));
     assert_eq!(
         std::fs::read_to_string(graph.root.join("pages/Empty.md")).unwrap(),
         ""

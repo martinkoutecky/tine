@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
@@ -22,7 +23,7 @@ describe("themed readiness before the app mounts (GH #299, GH #401)", () => {
     expect(index).toContain('<link rel="stylesheet" href="/src/styles/startup.css" />');
     // Under assets/ so every app-bundle consumer (live export, CLI, demo) ships it.
     expect(index).toContain('<script src="/assets/startup-theme.js"></script>');
-    expect(index.indexOf("/assets/startup-theme.js")).toBeLessThan(module);
+    expectOrderedIn(index, "/assets/startup-theme.js", 'type="module"');
     expect(startupCss).toContain(".startup-shell {");
     expect(startupTheme).toContain('localStorage.getItem("logseq-claude.theme")');
     expect(startupTheme).toContain('matchMedia("(prefers-color-scheme: dark)")');
@@ -30,7 +31,7 @@ describe("themed readiness before the app mounts (GH #299, GH #401)", () => {
     expect(shell).toBeGreaterThanOrEqual(0);
     expect(module).toBeGreaterThan(shell);
     expect(main).toContain("root.replaceChildren();");
-    expect(main.indexOf("root.replaceChildren();")).toBeLessThan(main.indexOf("render(() => <App />"));
+    expectOrderedIn(main, "root.replaceChildren();", "render(() => <App />");
   });
 
   it("lets the built-in palette tokens win over the pre-CSS fallbacks (GH #401)", () => {

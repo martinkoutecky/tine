@@ -189,8 +189,42 @@ pub(super) struct Pair {
     pub image: Text,
     /// The source's admitted text (its record's base).
     pub preimage: Text,
+    /// The source record's persisted write sequence: with `source`, the
+    /// identity of a kept original (`Order::kept_at`). A settlement rewrite
+    /// copies the record, so it survives one.
+    pub origin: u64,
     pub phase: PairPhase,
     pub choice: PairChoice,
+}
+
+impl Pair {
+    /// A kept original: a decided pair whose source's admitted text a Use
+    /// Disk left only in the operation draft (Restore or Retained), so it
+    /// may be restored. A superseded pair (newer source text) is never one.
+    pub fn kept(&self) -> bool {
+        matches!(self.phase, PairPhase::Restore | PairPhase::Retained)
+            && matches!(self.choice, PairChoice::SourceDisk | PairChoice::ReceiverDisk)
+            && self.preimage.is_some()
+    }
+}
+
+/// Where a kept original's pair is: its operation vehicle and its index
+/// there (`Order::kept_at`), so the steps after a search need no other.
+/// Valid within the driver step that found it (a rewrite moves pairs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Locator {
+    pub name: String,
+    pub index: usize,
+}
+
+/// A decided pair launch judges (`Order::launch_judged`): its place
+/// (operation name, pair index) and both endpoints' read results.
+pub(super) struct Judged<'a> {
+    pub name: &'a str,
+    pub index: usize,
+    pub pair: &'a Pair,
+    pub source: &'a Text,
+    pub receiver: &'a Text,
 }
 
 /// A paired operation whose durable draft is on disk: its pairs, every
@@ -225,6 +259,7 @@ impl PairedOp {
                         Base::Known(text) => text.clone(),
                         Base::Unknown => None,
                     },
+                    origin: records[source as usize].wseq,
                     phase: PairPhase::Armed,
                     choice: PairChoice::None,
                 })
@@ -253,12 +288,6 @@ pub(super) enum Removal {
     Refused,
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Pairs `Order::pairs` visited on this thread (PC-1 pins).
-    pub(super) static PAIR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 #[derive(Clone, Debug, Default)]
 pub(super) struct Order {
     replies: BTreeMap<ReplyId, Slot>,
@@ -272,15 +301,6 @@ pub(super) struct Order {
     release_receivers: BTreeMap<PageKey, PageKey>,
     publication_pending: BTreeMap<ReplyId, PublicationWatch>,
     publication_versions: BTreeMap<PageKey, (u64, Arc<PublicationWatch>)>,
-    /// Moves whenever the restorable list may have changed: a pair joined
-    /// or left `paired`, a pair's phase or choice changed, or a restore
-    /// record changed. The window's freshness check compares it, so a
-    /// collect with no such change visits no pair (PC-1).
-    restorable_generation: u64,
-    /// The host's record of each restore the window asked for, by source,
-    /// with the vehicle whose pair it restores (a record of an older
-    /// operation says nothing about a newer pair).
-    restores: BTreeMap<PageKey, (String, io::RestoreState)>,
 }
 
 #[derive(Clone, Debug)]
@@ -433,10 +453,6 @@ impl Order {
         self.paired
             .iter()
             .flat_map(|(name, op)| op.pairs.iter().map(move |p| (name, p)))
-            .inspect(|_| {
-                #[cfg(test)]
-                PAIR_VISITS.with(|visits| visits.set(visits.get() + 1));
-            })
     }
 
     fn active(&self, source: &str) -> Option<(&String, &Pair)> {
@@ -454,75 +470,6 @@ impl Order {
     /// Adopt a durable paired operation (admission's terminal, or launch).
     pub fn adopt(&mut self, name: String, op: PairedOp) {
         self.paired.insert(name, op);
-        self.pairs_changed();
-    }
-
-    /// The restorable list may have changed (`restorable_generation`).
-    fn pairs_changed(&mut self) {
-        self.restorable_generation = self.restorable_generation.wrapping_add(1);
-    }
-
-    /// Whether the restorable list may have changed since a reader saw
-    /// `generation`: a comparison, no pair visited.
-    pub fn restorable_generation(&self) -> u64 {
-        self.restorable_generation
-    }
-
-    /// The host's record of `key`'s latest restore of the pair in `vehicle`.
-    pub fn restore_record(&self, key: &str, vehicle: &str) -> Option<&io::RestoreState> {
-        (self.restores.get(key))
-            .filter(|(of, _)| of == vehicle)
-            .map(|(_, state)| state)
-    }
-
-    /// The restores this host finished (`Restored`), by source.
-    pub fn restored_sources(&self) -> impl Iterator<Item = &PageKey> {
-        (self.restores.iter())
-            .filter(|(_, (_, state))| *state == io::RestoreState::Restored)
-            .map(|(key, _)| key)
-    }
-
-    /// Record what happened to `key`'s restore of the pair in `vehicle`.
-    pub fn record_restore(&mut self, key: &str, vehicle: &str, state: io::RestoreState) {
-        let record = (vehicle.to_owned(), state);
-        if self.restores.get(key) != Some(&record) {
-            self.restores.insert(key.to_owned(), record);
-            self.pairs_changed();
-        }
-    }
-
-    /// Whether `key`'s restore is running (admitted, not yet published).
-    pub fn restoring(&self, key: &str) -> bool {
-        (self.restores.get(key))
-            .is_some_and(|(_, state)| matches!(state, io::RestoreState::Restoring { .. }))
-    }
-
-    /// `key`'s running restore did not publish this attempt (`problem`):
-    /// a slot taken before the create ends it (`Occupied`), anything else
-    /// is the latest problem of a create that keeps retrying. No running
-    /// restore: nothing to record.
-    pub fn restore_failed(&mut self, key: &str, problem: io::RestoreRefusal) {
-        if !self.restoring(key) {
-            return;
-        }
-        let vehicle = self.restores[key].0.clone();
-        let state = match problem {
-            io::RestoreRefusal::Occupied => io::RestoreState::Refused(problem),
-            problem => io::RestoreState::Restoring {
-                problem: Some(problem),
-            },
-        };
-        self.record_restore(key, &vehicle, state);
-    }
-
-    /// A new window session (`window_reloaded`) starts with no finished
-    /// restores to tell.
-    pub fn forget_restored(&mut self) {
-        let before = self.restores.len();
-        (self.restores).retain(|_, (_, state)| *state != io::RestoreState::Restored);
-        if self.restores.len() != before {
-            self.pairs_changed();
-        }
     }
 
     /// A settlement rewrite of `old` made its new draft `new` (with
@@ -552,24 +499,12 @@ impl Order {
             }
         }
         op.decisions = decisions;
-        self.paired.insert(new.clone(), op);
-        // A record follows its pair to the rewritten vehicle.
-        for (vehicle, _) in self.restores.values_mut() {
-            if vehicle == old {
-                *vehicle = new.clone();
-            }
-        }
-        self.pairs_changed();
+        self.paired.insert(new, op);
     }
 
     /// Its operation vehicle is durably gone: nothing more is owed.
     pub fn forget(&mut self, name: &str) {
-        if self.paired.remove(name).is_some() {
-            (self.restores).retain(|_, (vehicle, state)| {
-                vehicle != name || *state == io::RestoreState::Restored
-            });
-            self.pairs_changed();
-        }
+        self.paired.remove(name);
     }
 
     pub fn paired(&self, name: &str) -> Option<&PairedOp> {
@@ -676,7 +611,6 @@ impl Order {
                 };
                 pair.choice = choice;
                 pair.phase = phase.unwrap_or(PairPhase::Cancelled);
-                self.restorable_generation = self.restorable_generation.wrapping_add(1);
             }
             op.decisions
                 .extend(decision.map(|(name, d)| (name, Some(d))));
@@ -728,7 +662,6 @@ impl Order {
                 for pair in op.pairs.iter_mut().filter(|p| p.source_member == member) {
                     if pair.choice == PairChoice::None {
                         pair.choice = PairChoice::Superseded;
-                        self.restorable_generation = self.restorable_generation.wrapping_add(1);
                     }
                 }
             }
@@ -736,28 +669,56 @@ impl Order {
         }
     }
 
-    /// Launch: each decided pair's phase from its endpoints' disk bytes
-    /// (`reads`), the receiver's judged by `certified` (receiver, bytes,
-    /// image: `Host::receiver_certified`). A failed read keeps custody.
+    /// Launch: each decided pair's phase. A pair `launch_judged` lists is
+    /// judged by `judge` (the pair, the source's and the receiver's bytes):
+    /// whether the source durably holds the original
+    /// (`Host::source_original`) and whether the receiver is certified
+    /// (`Host::receiver_certified`). Any other decided pair (a read failed)
+    /// keeps custody.
     pub fn decided_phases(
         &mut self,
         reads: &BTreeMap<PageKey, Option<Text>>,
-        mut certified: impl FnMut(&PageKey, &Text, &Text) -> bool,
+        mut judge: impl FnMut(&Pair, &Text, &Text) -> (Original, bool),
     ) {
+        let judged: Vec<(String, usize, PairPhase)> = (self.launch_judged(reads))
+            .map(|j| {
+                let (original, certified) = judge(j.pair, j.source, j.receiver);
+                let phase = cancel_phase(original, j.source, certified, true);
+                (j.name.to_owned(), j.index, phase)
+            })
+            .collect();
         for op in self.paired.values_mut() {
             for pair in op.pairs.iter_mut().filter(|p| p.choice != PairChoice::None) {
-                let read = |key: &PageKey| reads.get(key).cloned().flatten();
-                let phase = match (read(&pair.source), read(&pair.receiver)) {
-                    (Some(source), Some(receiver)) => {
-                        let certified = certified(&pair.receiver, &receiver, &pair.image);
-                        cancel_phase(&pair.preimage, &source, certified, true)
-                    }
-                    _ => PairPhase::Retained,
-                };
-                pair.phase = phase;
-                self.restorable_generation = self.restorable_generation.wrapping_add(1);
+                pair.phase = PairPhase::Retained;
             }
         }
+        for (name, index, phase) in judged {
+            self.paired.get_mut(&name).unwrap().pairs[index].phase = phase;
+        }
+    }
+
+    /// Launch: the decided pairs E1 judges, with their two read results:
+    /// those whose source and receiver reads (`reads`, one per
+    /// `decided_pages` key) both succeeded, an absent file included. The
+    /// one answer for launch's witness schedule (`launch_witnesses`) and
+    /// its phases (`decided_phases`).
+    pub fn launch_judged<'a>(
+        &'a self,
+        reads: &'a BTreeMap<PageKey, Option<Text>>,
+    ) -> impl Iterator<Item = Judged<'a>> + 'a {
+        self.paired.iter().flat_map(move |(name, op)| {
+            (op.pairs.iter().enumerate())
+                .filter(|(_, p)| p.choice != PairChoice::None)
+                .filter_map(move |(index, pair)| {
+                    Some(Judged {
+                        name,
+                        index,
+                        pair,
+                        source: reads.get(&pair.source)?.as_ref()?,
+                        receiver: reads.get(&pair.receiver)?.as_ref()?,
+                    })
+                })
+        })
     }
 
     /// Both endpoints of every decided pair (launch reads them once).
@@ -765,6 +726,22 @@ impl Order {
         self.pairs()
             .filter(|(_, p)| p.choice != PairChoice::None)
             .flat_map(|(_, p)| [p.receiver.clone(), p.source.clone()])
+            .collect()
+    }
+
+    /// The sources launch witnesses, each once with its read bytes: those
+    /// of a pair `launch_judged` lists whose bytes are its preimage, the
+    /// only pairs whose phase the witness can change. Launch witnesses them
+    /// in its one directory pass (`HostIo::graph_launch`).
+    pub fn launch_witnesses(
+        &self,
+        reads: &BTreeMap<PageKey, Option<Text>>,
+    ) -> Vec<(PageKey, Text)> {
+        let mut seen = BTreeSet::new();
+        (self.launch_judged(reads))
+            .filter(|j| source_present(&j.pair.preimage, j.source))
+            .filter(|j| seen.insert(&j.pair.source))
+            .map(|j| (j.pair.source.clone(), j.source.clone()))
             .collect()
     }
 
@@ -780,7 +757,6 @@ impl Order {
             }
             op.decisions.insert(decision, None);
             op.unreadable = true;
-            self.restorable_generation = self.restorable_generation.wrapping_add(1);
         }
     }
 
@@ -790,7 +766,6 @@ impl Order {
             for pair in &mut op.pairs {
                 if pair.phase.gated() {
                     pair.phase = PairPhase::Blocked;
-                    self.restorable_generation = self.restorable_generation.wrapping_add(1);
                 }
             }
         }
@@ -812,9 +787,6 @@ impl Order {
             }
         }
         changed.dedup();
-        if !changed.is_empty() {
-            self.pairs_changed();
-        }
         changed
     }
 
@@ -844,6 +816,14 @@ impl Order {
             .collect()
     }
 
+    /// The phase and choice of the (first) pair whose source is `source`.
+    #[cfg(test)]
+    pub fn source_state(&self, source: &str) -> Option<(PairPhase, PairChoice)> {
+        (self.pairs())
+            .find(|(_, p)| p.source == source)
+            .map(|(_, p)| (p.phase, p.choice))
+    }
+
     /// What `source`'s removal may do now.
     pub fn removal(&self, source: &str) -> Removal {
         match self.active(source) {
@@ -865,7 +845,6 @@ impl Order {
         let pair = self.pair_mut(source)?;
         if matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. }) {
             pair.phase = PairPhase::Held { removed };
-            self.pairs_changed();
         }
         Some(name)
     }
@@ -895,10 +874,9 @@ impl Order {
     /// the removal. When the original text is anchored (`anchored`, the
     /// module's `anchored` over the published text) the pair is
     /// disarmed; else it is retained, and the operation draft keeps the
-    /// admitted preimage as the only copy of that text. Only an Armed pair,
-    /// or a Held one whose source has not moved, is superseded; a pair
-    /// whose source already moved is left as it is (None). Nothing here,
-    /// nor a later exact receiver, ends a Retained pair.
+    /// admitted preimage as the only copy of that text. A source already
+    /// moved keeps its custody: its original text stays in the draft until
+    /// the receiver is exact again.
     pub fn disarm(&mut self, source: &str, anchored: bool) -> Option<String> {
         self.superseded(source)?;
         let phase = if anchored {
@@ -913,7 +891,6 @@ impl Order {
             for pair in op.pairs.iter_mut().filter(|p| p.source == source) {
                 if pair.phase == phase && pair.choice == PairChoice::None {
                     pair.choice = PairChoice::Superseded;
-                    self.restorable_generation = self.restorable_generation.wrapping_add(1);
                 }
             }
         }
@@ -925,7 +902,6 @@ impl Order {
         let pair = self.pair_mut(source)?;
         if matches!(pair.phase, PairPhase::Armed | PairPhase::Held { .. }) {
             pair.phase = phase;
-            self.pairs_changed();
             return Some(name);
         }
         None
@@ -952,7 +928,6 @@ impl Order {
                     } else {
                         PairPhase::Armed
                     };
-                    self.restorable_generation = self.restorable_generation.wrapping_add(1);
                     changed.push(name.clone());
                 }
             }
@@ -960,67 +935,72 @@ impl Order {
         changed
     }
 
-    /// The source's own save published `bytes`: a pair awaiting its
-    /// guarded restoration settles as cancelled once the preimage is back.
-    /// Returns the operations that changed.
-    pub fn restored(&mut self, source: &str, bytes: &Text) -> Vec<String> {
+    /// The source's own save published: a pair awaiting its guarded
+    /// restoration settles as cancelled once the source holds the preimage
+    /// again (`original`, given the preimage: `Host::source_original`, with
+    /// a durable or weak witness). A failed witness leaves the pair awaiting
+    /// its restoration, as other bytes do. Returns the operations that
+    /// changed.
+    pub fn restored(
+        &mut self,
+        source: &str,
+        mut original: impl FnMut(&Text) -> Original,
+    ) -> Vec<String> {
         let mut changed = vec![];
         for (name, op) in &mut self.paired {
             for pair in &mut op.pairs {
                 if pair.source == source
                     && pair.phase == PairPhase::Restore
-                    && source_present(&pair.preimage, bytes)
+                    && original(&pair.preimage).holds()
                 {
                     pair.phase = PairPhase::Cancelled;
                     changed.push(name.clone());
                 }
             }
         }
-        if !changed.is_empty() {
-            // The window's restore, when one ran, ended as asked.
-            if self.restores.contains_key(source) {
-                let vehicle = changed[0].clone();
-                self.record_restore(source, &vehicle, io::RestoreState::Restored);
-            }
-            self.pairs_changed();
-        }
         changed
     }
 
-    /// Every decided pair whose source may be restored from its admitted
-    /// preimage, as (source, vehicle name, preimage), in vehicle order: a
-    /// Use Disk left the pair in Restore or Retained with the original text
-    /// only in the operation draft. A superseded pair (newer source text)
-    /// is never one. The one answer to "which source is restorable":
-    /// `restorable` asks it for one key, and the window's recovery panel
-    /// lists it (`Host::restorable_sources`).
-    pub fn restorable_sources(&self) -> impl Iterator<Item = (&PageKey, &String, &Text)> {
-        self.pairs()
-            .filter(|(_, p)| {
-                matches!(p.phase, PairPhase::Restore | PairPhase::Retained)
-                    && matches!(p.choice, PairChoice::SourceDisk | PairChoice::ReceiverDisk)
-                    && p.preimage.is_some()
+    /// Every kept original (`Pair::kept`), with where it is. One walk over
+    /// the durable pairs: `kept_at`, the window's list and its count read
+    /// it.
+    pub fn kept(&self) -> impl Iterator<Item = (&String, usize, &Pair)> {
+        (self.paired.iter())
+            .flat_map(|(name, op)| (op.pairs.iter().enumerate()).map(move |(i, p)| (name, i, p)))
+            .filter(|(.., p)| p.kept())
+    }
+
+    /// The kept original of source `key` whose source record is `origin`
+    /// (`Pair::origin`); a receiver key, or an original no longer kept,
+    /// answers None.
+    pub fn kept_at(&self, key: &str, origin: u64) -> Option<Locator> {
+        (self.kept())
+            .find(|(.., p)| p.source == key && p.origin == origin)
+            .map(|(name, index, _)| Locator {
+                name: name.clone(),
+                index,
             })
-            .map(|(name, p)| (&p.source, name, &p.preimage))
     }
 
-    /// The decided pair whose source `key` may be restored from its
-    /// admitted preimage (`restorable_sources`), as (vehicle name,
-    /// preimage).
-    pub fn restorable(&self, key: &str) -> Option<(String, Text)> {
-        self.restorable_sources()
-            .find(|(source, ..)| *source == key)
-            .map(|(_, name, preimage)| (name.clone(), preimage.clone()))
+    /// The first kept original of source `key`, whatever its origin.
+    #[cfg(test)]
+    pub fn kept_of(&self, key: &str) -> Option<Locator> {
+        let origin = self.kept().find(|(.., p)| p.source == key)?.2.origin;
+        self.kept_at(key, origin)
     }
 
-    /// A restoration of `key` was selected: its pair awaits the guarded
-    /// create (the model's `selectPair(.., "restore")`).
-    pub fn select_restore(&mut self, key: &str) -> Option<String> {
-        let name = self.restorable(key)?.0;
-        let pair = self.pair_mut(key)?;
-        pair.phase = PairPhase::Restore;
-        self.pairs_changed();
-        Some(name)
+    /// The pair `at` names while it is still kept: no search.
+    pub fn kept_pair(&self, at: &Locator) -> Option<&Pair> {
+        let pair = self.paired.get(&at.name)?.pairs.get(at.index)?;
+        pair.kept().then_some(pair)
+    }
+
+    /// A restoration of the kept original `at` was selected: its pair
+    /// awaits the guarded create (the model's `selectPair(.., "restore")`).
+    pub fn select_restore(&mut self, at: &Locator) {
+        if let Some(pair) = (self.paired.get_mut(&at.name)).and_then(|op| op.pairs.get_mut(at.index)) {
+            pair.phase = PairPhase::Restore;
+        }
     }
 
     /// The page whose disk bytes a Discard of `key` also reads: a running
@@ -1135,44 +1115,67 @@ impl Order {
     pub fn stop(&mut self) {
         self.gates.clear();
         // Launch reinstalls every durable pairing from the draft store.
-        if !self.paired.is_empty() || !self.restores.is_empty() {
-            self.pairs_changed();
-        }
         self.paired.clear();
-        self.restores.clear();
         self.release_receivers.clear();
         self.publication_pending.clear();
         self.publication_versions.clear();
     }
 }
 
-/// The source holds its admitted text, the pair's preimage (the model's
-/// `sourcePresent`, given the source's bytes): an absent source holds none.
+/// The source's bytes are its admitted text, the pair's preimage: an
+/// absent source holds none. Bytes alone anchor nothing; only
+/// `Host::source_original` asks this, with the source's durability witness.
 pub(super) fn source_present(preimage: &Text, source: &Text) -> bool {
     source.is_some() && source == preimage
 }
 
+/// Whether a source holds its pair's original text, as the one answerer
+/// `Host::source_original` judges it (the model's `sourcePresent`), from
+/// the source's bytes and its durability witness (`HostIo::source_witnessed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Original {
+    /// The preimage, and the witness flushed that very file and synced its
+    /// directory entries up to the graph root (D).
+    Durable,
+    /// The preimage on a filesystem that offers no directory sync, or a
+    /// Windows chain (W): the bytes rule every save there already gets.
+    Weak,
+    /// The preimage, but a witness step failed (U): a power cut may still
+    /// drop or revert the file, so it anchors nothing.
+    Failed,
+    /// Other bytes, or no file.
+    No,
+}
+
+impl Original {
+    /// The source anchors the original text (D or W; develop's byte match).
+    pub(super) fn holds(self) -> bool {
+        matches!(self, Self::Durable | Self::Weak)
+    }
+}
+
 /// The one answer to "is a pair's original text still anchored outside its
 /// operation draft" (the model's `sourcePresent or certified`): the source
-/// holds its preimage (`source_present`), or the receiver is certified
-/// (`certified`: `Host::receiver_certified`). Launch and Use Disk ask it
-/// through `cancel_phase`; a published newer source text asks it directly
+/// holds its preimage with a durable or weak witness (`original`:
+/// `Host::source_original`), or the receiver is certified (`certified`:
+/// `Host::receiver_certified`). Launch and Use Disk ask it through
+/// `cancel_phase`; a published newer source text asks it directly
 /// (`Order::disarm`'s `anchored`).
-pub(super) fn anchored(preimage: &Text, source: &Text, certified: bool) -> bool {
-    source_present(preimage, source) || certified
+pub(super) fn anchored(original: Original, certified: bool) -> bool {
+    original.holds() || certified
 }
 
 /// Where a decided pair's original text stands (the model's
 /// `cancelPhase`): anchored (`anchored`) cancels the pair; else it is
-/// restorable from its preimage when the source's slot is free after its
-/// removal (`removed`); else custody.
+/// restorable from its preimage when the source's slot (bytes `source`) is
+/// free after its removal (`removed`); else custody.
 pub(super) fn cancel_phase(
-    preimage: &Text,
+    original: Original,
     source: &Text,
     certified: bool,
     removed: bool,
 ) -> PairPhase {
-    if anchored(preimage, source, certified) {
+    if anchored(original, certified) {
         PairPhase::Cancelled
     } else if source.is_none() && removed {
         PairPhase::Restore
@@ -1225,23 +1228,40 @@ impl<F: HostIo> Host<F> {
         };
         if let Some(chosen) = &chosen {
             // Where the original text stands: the other endpoint's bytes.
-            let (source, receiver) = if chosen.on_receiver {
-                let source = match &src_bytes {
-                    Some(source) => Ok(source.clone()),
-                    None => self.fs.read_page(&chosen.source),
-                };
-                (source, Ok(bytes.clone()))
-            } else if source_present(&chosen.preimage, &bytes) {
-                (Ok(bytes.clone()), Ok(None))
-            } else {
-                (Ok(bytes.clone()), self.fs.read_page(&chosen.receiver))
+            let source = match (&src_bytes, chosen.on_receiver) {
+                (_, false) => Ok(bytes.clone()),
+                (Some(source), true) => Ok(source.clone()),
+                (None, true) => self.fs.read_page(&chosen.source),
             };
-            let (Ok(source), Ok(receiver)) = (source, receiver) else {
+            let Ok(source) = source else {
                 return self.refused(request, key, Refusal::ReadFailed);
             };
-            let certified =
-                Self::receiver_certified(&mut self.fs, &chosen.receiver, &receiver, &chosen.image);
-            let phase = cancel_phase(&chosen.preimage, &source, certified, chosen.removed);
+            let fs = &mut self.fs;
+            let original = Self::source_original(&chosen.preimage, &source, || {
+                fs.source_witnessed(&chosen.source, &source)
+            });
+            // Develop's receiver evidence: on the source, a held original
+            // (D or W) needs no receiver read; otherwise the receiver is
+            // read, and a certified one still cancels. Only a failed witness
+            // (U) tolerates an unreadable receiver: the choice is recorded
+            // as Retained, keeping the draft, instead of being refused.
+            let certified = if chosen.on_receiver {
+                Self::receiver_certified(&mut self.fs, &chosen.receiver, &bytes, &chosen.image)
+            } else if original.holds() {
+                false
+            } else {
+                match self.fs.read_page(&chosen.receiver) {
+                    Ok(receiver) => Self::receiver_certified(
+                        &mut self.fs,
+                        &chosen.receiver,
+                        &receiver,
+                        &chosen.image,
+                    ),
+                    Err(_) if original == Original::Failed => false,
+                    Err(_) => return self.refused(request, key, Refusal::ReadFailed),
+                }
+            };
+            let phase = cancel_phase(original, &source, certified, chosen.removed);
             let written = self.write_decision(key, chosen, phase);
             self.repair_op(&chosen.name);
             if !written {
@@ -1352,106 +1372,63 @@ impl<F: HostIo> Host<F> {
         (vehicle.stage, (file, decision))
     }
 
-    /// The window's restorable sources (`Order::restorable_sources`), one
-    /// per key: the pair `restore_source` would take, with the key's
-    /// current spelling, the kept text and the record of its latest
-    /// restore; then each restore this host finished since the window's
-    /// session began (`Restored`, no text). At the order's current
-    /// generation. One pass over the durable pairs and the records; no I/O.
-    pub(super) fn restorable_list(&self) -> io::RestorableList {
-        let mut seen = BTreeSet::new();
-        let mut sources: Vec<_> = (self.order.restorable_sources())
-            .filter(|(key, ..)| seen.insert(*key))
-            .map(|(key, vehicle, text)| io::RestorableSource {
-                key: key.clone(),
-                path: self.fs.spelling(key),
-                text: String::from_utf8_lossy(text.as_deref().unwrap_or_default()).into_owned(),
-                state: (self.order.restore_record(key, vehicle))
-                    .filter(|state| **state != io::RestoreState::Restored)
-                    .cloned(),
-            })
-            .collect();
-        let restored = self
-            .order
-            .restored_sources()
-            .filter(|key| !seen.contains(key));
-        sources.extend(restored.map(|key| io::RestorableSource {
-            key: key.clone(),
-            path: self.fs.spelling(key),
-            text: String::new(),
-            state: Some(io::RestoreState::Restored),
-        }));
-        io::RestorableList {
-            generation: self.order.restorable_generation(),
-            sources,
-        }
-    }
-
-    /// Restore `key`'s admitted preimage after its pair's Use Disk left the
-    /// text only in the operation draft (the model's `restoreSource`): the
-    /// page takes the preimage at risk over an absent base, so its own draft
-    /// and its guarded create publish it, and that publication cancels the
-    /// pair. Refused unless the slot is free on disk (an occupied slot keeps
-    /// the preimage as custody) and the page holds no unsaved text; a
-    /// claimant or twin fails the create, as for any creation.
-    pub(super) fn restore_source(&mut self, key: &str) -> Disposition {
+    /// Restore the kept original `at` (source `key`) after its pair's Use
+    /// Disk left the text only in the operation draft (the model's
+    /// `restoreSource`): the page takes the preimage at risk over an absent
+    /// base, so its own draft and its guarded create publish it, and that
+    /// publication cancels the pair. Waits while the page or the allocator
+    /// is busy, or for `key`'s lock. Refused while the page holds unsaved
+    /// text, and unless, under the lock, the slot is free on disk (an
+    /// occupied slot keeps the preimage as custody) and no other spelling
+    /// claims the page; a claimant or twin that appears later fails the
+    /// create, as for any creation. A refusal changes nothing.
+    pub(super) fn restore_source(
+        &mut self,
+        key: &str,
+        at: &Locator,
+    ) -> Result<Disposition, io::RestoreRefusal> {
         if !self.alive {
-            return Disposition::Disabled;
+            return Ok(Disposition::Disabled);
         }
-        let Some((name, preimage)) = self.order.restorable(key) else {
-            return Disposition::Refused;
+        let Some(pair) = self.order.kept_pair(at).filter(|p| p.source == key) else {
+            return Err(io::RestoreRefusal::NotKept);
         };
+        let preimage = pair.preimage.clone();
         if self.busy(key) || self.allocator_busy() {
-            return Disposition::Waiting;
+            return Ok(Disposition::Waiting);
         }
-        // Each answer below is also the host's record of this restore,
-        // which the window's list shows (`restorable_list`).
-        let refuse = |host: &mut Self, reason| {
-            let state = io::RestoreState::Refused(reason);
-            host.order.record_restore(key, &name, state);
-            Disposition::Refused
-        };
         if self.pages.get(key).is_some_and(|p| !p.clean()) {
-            // A running restore's own text: its record already says how
-            // it stands.
-            if self.order.restoring(key) {
-                return Disposition::Refused;
-            }
-            return refuse(self, io::RestoreRefusal::Unsaved);
+            return Err(io::RestoreRefusal::Unsaved);
         }
         let keys = BTreeSet::from([key.to_owned()]);
         if self.lacks_locks(&keys) {
-            return Disposition::Waiting;
+            return Ok(Disposition::Waiting);
         }
         self.with_locks(&keys, |host| {
             // The slot is absent and no other spelling claims the page
             // (the creation guard's twin check); its save re-checks both.
-            let slot = host.fs.read_page(key).and_then(|bytes| match bytes {
-                Some(_) => Ok(Some(io::RestoreRefusal::Occupied)),
-                None => {
-                    Ok((host.fs.page_twin(key)?).map(|file| io::RestoreRefusal::Claimed { file }))
-                }
-            });
-            match slot {
+            let failed = |step, failure: io::IoFailure| io::RestoreRefusal::Failed {
+                step,
+                operation: failure.operation,
+                os_error: failure.os_error,
+            };
+            match host.fs.read_page(key) {
                 Ok(None) => {}
-                Ok(Some(reason)) => return refuse(host, reason),
-                Err(e) => {
-                    let reason = io::RestoreRefusal::Failed {
-                        operation: e.operation,
-                        os_error: e.os_error,
-                    };
-                    return refuse(host, reason);
-                }
+                Ok(Some(_)) => return Err(io::RestoreRefusal::Occupied),
+                Err(failure) => return Err(failed(io::RestoreStep::SlotRead, failure)),
+            }
+            match host.fs.page_twin(key) {
+                Ok(None) => {}
+                Ok(Some(file)) => return Err(io::RestoreRefusal::Twin { file }),
+                Err(failure) => return Err(failed(io::RestoreStep::TwinProbe, failure)),
             }
             #[cfg(test)]
             host.events.push(Event::OperationRead {
                 page: key.to_owned(),
                 base: Base::Known(None),
             });
-            host.order.select_restore(key);
-            let running = io::RestoreState::Restoring { problem: None };
-            host.order.record_restore(key, &name, running);
-            host.repair_op(&name);
+            host.order.select_restore(at);
+            host.repair_op(&at.name);
             host.version = host.next_version();
             let page = Page {
                 buf: preimage,
@@ -1464,7 +1441,7 @@ impl<F: HostIo> Host<F> {
                 obs: Some(None),
             };
             host.set_page(key, Some(page));
-            Disposition::Applied
+            Ok(Disposition::Applied)
         })
     }
 
@@ -1625,5 +1602,49 @@ mod tests {
         assert!(o.touches(&BTreeSet::from(["s1".to_string()])));
         o.discarded("d2");
         assert!(o.gates.is_empty(), "no move left: the order ends");
+    }
+
+    /// Two decided pairs on one source whose bytes hold the preimage, one
+    /// receiver unreadable and one readable: launch schedules the source's
+    /// witness once (eligibility per pair, then once per source), as with
+    /// both pairs judged; with both receivers unreadable, not at all.
+    #[test]
+    fn a_source_with_one_unreadable_and_one_readable_receiver_is_witnessed_once() {
+        let text: Text = Some(Arc::from(&b"- a"[..]));
+        let mut order = Order::default();
+        for (name, receiver) in [("op1", "r1"), ("op2", "r2")] {
+            let pair = Pair {
+                member: 0,
+                source_member: 1,
+                receiver: receiver.into(),
+                source: "s".into(),
+                image: text.clone(),
+                preimage: text.clone(),
+                origin: 1,
+                phase: PairPhase::Retained,
+                choice: PairChoice::SourceDisk,
+            };
+            let op = PairedOp {
+                id: [0; 16],
+                pairs: vec![pair],
+                pages: BTreeSet::from([receiver.into(), "s".into()]),
+                decisions: BTreeMap::new(),
+                unreadable: false,
+            };
+            order.adopt(name.into(), op);
+        }
+        let mut reads = BTreeMap::from([
+            ("s".to_string(), Some(text.clone())),
+            ("r1".to_string(), None),
+            ("r2".to_string(), Some(text.clone())),
+        ]);
+        let once = vec![("s".to_string(), text)];
+        assert_eq!(order.launch_witnesses(&reads), once);
+        // Both pairs judged (an absent receiver reads): still once.
+        reads.insert("r1".into(), Some(None));
+        assert_eq!(order.launch_witnesses(&reads), once);
+        reads.insert("r1".into(), None);
+        reads.insert("r2".into(), None);
+        assert!(order.launch_witnesses(&reads).is_empty());
     }
 }

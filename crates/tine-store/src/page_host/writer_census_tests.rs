@@ -53,8 +53,7 @@ fn scan(file: &str, source: &str, out: &mut BTreeMap<String, Function>) {
 const OPERATION_KINDS: &[(&str, &str)] = &[
     ("delete", "DeletePage"),
     ("delete_checked", "DeletePage"),
-    // The window's restoration of a source a cancelled rename kept writes
-    // the page's file again (`PageHost::restore_source`).
+    // A kept original's restore creates its absent file (GH #540).
     ("restore_source", "CreatePage"),
     // RenamePage is supplied by the feature's HostOp; the model-only
     // rename_with adapter is excluded by cfg(test).

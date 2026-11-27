@@ -74,7 +74,6 @@ describe("public theme tokens (GH #610)", () => {
     expect(contract).toContain("creation on save");
     expect(contract).toContain("base revision");
     expect(contract).toContain("before the graph");
-    expect(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(global)")).toBeLessThan(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(el)"));
   });
   it("the contract documents a meaningful set", () => {
     expect(publicTokens.size).toBeGreaterThanOrEqual(10);

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const script = fs.readFileSync(process.env.P1_BENCH_SOURCE ?? "scripts/bench-og-parity.mjs", "utf8");
 
@@ -23,8 +24,7 @@ it("rename completion verifies every one of the 200 fixture references", () => {
   expect(reads).toBe(200);
   missing = 199;
   expect(() => verify("fixture")).toThrow("reference 199");
-  expect(script.indexOf("verifyRenameReferences(graph);", script.indexOf("const completed =")))
-    .toBeLessThan(script.indexOf("result.metrics.rename200Ms = completed.elapsedMs"));
+  expectOrderedIn(script, "const completed =", "verifyRenameReferences(graph);", "result.metrics.rename200Ms = completed.elapsedMs");
   expect(script).toContain("result.metrics.renameFilenameVisibleMs = performance.now() - started");
 });
 

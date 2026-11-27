@@ -65,8 +65,6 @@ import { stepPageComment } from "./commentReview";
 import { openCommentReviewForFocusedPage, openCommentReviewInSidebar } from "./commentReviewQuery";
 import { toggleAuthorMarks } from "./authorMarksPref";
 import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
-import { keptSources } from "./restorableSources";
-import { openUnsavedRecovery } from "./unsavedRecovery";
 import { cellBlockId, cellSel, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { enterGridEdit, openGridTarget } from "./sheet/gridEditMove";
 import { containingGridCell } from "./sheet/gridNeighbour";
@@ -101,11 +99,12 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
-import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed, removeAuthor, removeAuthorTarget } from "./blockRefActions";
+import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed, removeAuthor } from "./blockRefActions";
 import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
 import { installPlainPasteMenu } from "./editor/plainPasteMenu";
 import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
+import { keptOriginalCount, openUnsavedRecovery } from "./unsavedRecovery";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
 /** Open the adjacent journal route (+1 next, -1 previous) from the current
@@ -168,10 +167,10 @@ interface CommandDef {
   run?: () => void;
   /** Offered in the palette only while this holds (e.g. a desktop-only command). */
   available?: () => boolean;
-  /** A SECOND default chord that runs the same command: a platform convention a
-   *  user will certainly try and that Logseq does not bind, so the key reaches
-   *  the command it obviously means without displacing Logseq's own binding or
-   *  taking a second row in Settings. An alias is a default, not an override: the
+  /** A SECOND default chord that runs the same command (Logseq's second key, or a
+   *  platform convention a user will certainly try), so the key reaches the
+   *  command it obviously means without taking a second row in Settings. An
+   *  alias is a default, not an override: the
    *  moment the user binds the command themselves, their chord is the only one,
    *  because an alias they can neither see in the recorder nor reset must not
    *  outlive their choice. Global scope only; it loses every collision with a
@@ -386,9 +385,8 @@ const COMMANDS: CommandDef[] = [
   { id: "seen/next-change", binding: "", label: msg("command-seen-next-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), 1) },
   { id: "seen/previous-change", binding: "", label: msg("command-seen-previous-change"), scope: "global", available: () => seenStepAvailable(seenRoutedPage()), run: () => stepSeenChange(seenRoutedPage(), -1) },
   { id: "seen/mark-graph", binding: "", label: msg("command-seen-mark-graph"), scope: "global", available: () => { ensureSeenAvailability(); return seenAvailable() === true; }, run: () => void markGraphSeenNow() },
-  // The standing way back to a source a cancelled rename kept (GH #540): the
-  // recovery panel lists it while the graph's restorable list does.
-  { id: "recovery/review-kept-originals", binding: "", label: msg("command-recovery-review-kept-originals"), scope: "global", available: () => keptSources().length > 0, run: () => { if (keptSources().length) openUnsavedRecovery(); }, global: true },
+  // The standing way back to originals a cancelled rename kept (GH #540).
+  { id: "recovery/review-kept-originals", binding: "", label: msg("command-recovery-review-kept-originals"), scope: "global", available: () => (keptOriginalCount() ?? 0) > 0, run: openUnsavedRecovery, global: true },
   { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
   { id: "go/all-graphs", binding: "g shift+g", label: msg("command-go-all-graphs"), scope: "global", run: openAllGraphs },
   { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },
@@ -502,12 +500,10 @@ const COMMANDS: CommandDef[] = [
   // Carry the Settings-configured number of days.
   { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
-  // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
-  // shows and remaps. Ctrl+Y is the Windows/Linux convention for redo and Logseq
-  // leaves it unbound, so pressing it was silence (GH #491, master 2721c0126). It
-  // rides along as an alias so the shortcuts list keeps one Redo row. Not on
-  // macOS: there Ctrl+Y is the system's Emacs-style yank inside every text field.
-  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
+  // Logseq binds redo to mod+shift+z and mod+y (GH #491, #1044). The first is the binding Settings shows and
+  // remaps; the second rides along as an alias, so the shortcuts list keeps one Redo row: Ctrl+Y on Windows
+  // and Linux, Cmd+Y on macOS (physical Ctrl+Y there stays the system's Emacs-style yank in every text field).
+  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "mod+y" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
   // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
@@ -527,8 +523,8 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
   // GH #764 (D-20261101-L5): palette and keymap only, no default key. Acts on a block selection.
   { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
-  // GH #918: the block context menu's Remove author, offered only where that menu offers it.
-  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", available: () => removeAuthorTarget() !== null, run: () => removeAuthor(), global: true },
+  // GH #918: the block context menu's Remove author. Always listed; with no authored block it says so.
+  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", run: () => removeAuthor(), global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
@@ -594,14 +590,16 @@ const COMMANDS: CommandDef[] = [
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
   { id: "editor/copy-embed", binding: "mod+shift+c", label: msg("command-editor-copy-embed"), scope: "editor" },
-  { id: "editor/clear-block", binding: "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
-  // Emacs-style cursor/kill motions.
-  { id: "editor/kill-line-before", binding: "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
-  { id: "editor/kill-line-after", binding: "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
-  { id: "editor/backward-word", binding: "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
-  { id: "editor/forward-word", binding: "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
-  { id: "editor/backward-kill-word", binding: "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
-  { id: "editor/forward-kill-word", binding: "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
+  // Clear block and the Emacs-style cursor/kill motions, with OG's chords (config.cljs). On macOS
+  // Option+letter types a symbol (¬, ∑, ∂ …) and Control+K already kills to the
+  // line's end, so the Mac keys are OG's Control chords or none (GH #1040).
+  { id: "editor/clear-block", binding: isMac ? "ctrl+l" : "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
+  { id: "editor/kill-line-before", binding: isMac ? "ctrl+u" : "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
+  { id: "editor/kill-line-after", binding: isMac ? "" : "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
+  { id: "editor/backward-word", binding: isMac ? "ctrl+shift+b" : "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
+  { id: "editor/forward-word", binding: isMac ? "ctrl+shift+f" : "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
+  { id: "editor/backward-kill-word", binding: isMac ? "" : "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
+  { id: "editor/forward-kill-word", binding: isMac ? "ctrl+w" : "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
 ];
 
 export interface BuiltinKeyDef {
@@ -986,6 +984,22 @@ function isEditableTarget(t: EventTarget | null): boolean {
     || !!el.closest?.('[data-block-editor="cm6"]');
 }
 
+const CARET_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "password", "number"]);
+
+/** A field with a text caret: a textarea, a text-like input, or editable content
+ *  (CodeMirror's). The target itself, not its editor wrapper: a button inside an
+ *  editor has no caret. */
+const HISTORY_COMMANDS = ["go/backward", "go/forward"];
+
+function isTextCaretTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el?.tagName) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName === "INPUT") return CARET_INPUT_TYPES.has((el as HTMLInputElement).type);
+  // isContentEditable, with the nearest contenteditable attribute where it is missing.
+  return el.isContentEditable ?? (el.closest?.("[contenteditable]")?.getAttribute("contenteditable") ?? "false") !== "false";
+}
+
 function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true
@@ -1211,6 +1225,18 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     // field has focus. Escape itself was handled after transient/drawer.
     if (paneSel() && !editing && handlePaneSelectKey(e)) {
       e.preventDefault();
+      resetSeq();
+      return;
+    }
+
+    // GH #1040: on macOS Option+Left/Right is a text field's word motion. Back
+    // and Forward's default keys leave a field with a text caret alone, before
+    // either dispatch path below (this test, the global list) can take them. A
+    // chord the user saved for Back or Forward still navigates, also when it is
+    // the other one's default key. The Cmd+[ / ] aliases are not touched here.
+    if (isMac && isTextCaretTarget(e.target)
+        && HISTORY_COMMANDS.some((id) => matchesCommand(e, id))
+        && !HISTORY_COMMANDS.some((id) => id in overrides && matchesCommand(e, id))) {
       resetSeq();
       return;
     }

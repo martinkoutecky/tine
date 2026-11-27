@@ -25,6 +25,10 @@ see the project `CLAUDE.md`.
 
 ## Index
 
+Which module owns each question today (editing, acceptance, publication, page
+identity, graph lifetime, disposal) is in [`../OWNERSHIP.md`](../OWNERSHIP.md);
+where an ADR below names an older owner, that page wins.
+
 | # | Decision | Status |
 |---|----------|--------|
 | [0001](0001-tauri-webkitgtk-over-electron.md) | Tauri + the OS webview (WebKitGTK) instead of Electron | Accepted |

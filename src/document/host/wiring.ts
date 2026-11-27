@@ -24,7 +24,6 @@ import { dismissToast, pushToast } from "../../toasts";
 import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
-import { setRestorableSources } from "../../restorableSources";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
 import { aliasDraftBlocks, appendAliasDraft, emptyPage, pageToDto, replaceLandedAliasDraft } from "../convert";
 import { isBlockMoving } from "../edits/moves";
@@ -36,11 +35,11 @@ import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
-import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
+import { HostClient, reviewedDiskToken, type BaselineRev, type BlockWatch, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
 import { planSteps } from "./transferPlan";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
-import { settle, unpublishedAfterDrain } from "./settle";
+import { settle, UNBOUND, unpublishedAfterDrain, unsettled, type Unsettled } from "./settle";
 import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
 import { refreshReadsIdle, resetRefreshReads } from "../../refreshReads";
 
@@ -85,6 +84,19 @@ function host(): HostClient | null {
   return bound ? client : null;
 }
 
+/** Moves at every start and end of a (re)bind: a reply that carries a host
+ * session's answer (the recovery panel's kept originals) applies only while it
+ * is unchanged. */
+const [hostScope, setHostScope] = createSignal(0);
+let rebinding = false;
+export { hostScope };
+
+/** The window's current host session; null while unbound or rebinding. */
+export function hostSession(): number | null {
+  const c = host();
+  return c && !rebinding ? c.session : null;
+}
+
 // ------------------------------------------------------------------ ports
 
 const failed = (error: unknown): PageRefusal => ({ reason: "failed", message: String(error) });
@@ -117,7 +129,7 @@ function hostPort(): HostPort {
     close: (session, id, key) => b.pageClose(session, id, key).catch(failed),
     saveNow: (session, keys) => b.pageSaveNow(session, keys).catch(ignoreSaveHintFailure),
     // One bounded wait (F1); a failed call is a failed barrier, never success.
-    waitPublished: (session, needs) => b.pageWait(session, needs, 5000).catch(() => false),
+    waitPublished: (session, needs, departure) => b.pageWait(session, needs, 5000, departure).catch(() => false),
     // No answer (another session, a failed read) is unknown debt, never "none".
     owed: (session, paths) => b.pageOwed(session, paths).then((owed) => owed ?? false).catch(() => false as const),
   };
@@ -193,7 +205,14 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
   listen();
   watch();
   if (client && bound) {
-    await client.rebind();
+    rebinding = true;
+    setHostScope((n) => n + 1);
+    try {
+      await client.rebind();
+    } finally {
+      rebinding = false;
+      setHostScope((n) => n + 1);
+    }
     if (options.refreshLoaded) await refreshLoadedHostPages(client);
     hostChanged();
     return;
@@ -201,7 +220,6 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
   const next: HostClient = new HostClient(hostPort(), portFor(() => client === next),
     { pending: pendingAssetWrites, started: assetWritesStarted });
   next.onChange = hostChanged;
-  next.onRestorable = setRestorableSources;
   client = next;
   bound = false;
   try {
@@ -212,6 +230,7 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
   }
   if (client !== next) return;
   bound = true;
+  setHostScope((n) => n + 1);
   for (const [name, kinds] of early) if (pageByName(name) && kinds.length) next.noteEdit(name, [kinds[0], ...kinds.slice(1)]);
   early.clear();
   if (options.refreshLoaded) await refreshLoadedHostPages(next);
@@ -503,8 +522,9 @@ function refusalMessage(name: string, refusal: PageRefusal | string): import("..
 
 /** ` (<platform step>, os error <n>)` for a failed save's toast, when the
  * host named them (GH #538, #590: `io:InvalidInput` alone could not tell an
- * Android no-replace-rename refusal from a failed temporary-file write). */
-function saveStep(notice: MailNotice): string {
+ * Android no-replace-rename refusal from a failed temporary-file write); also a
+ * refused restore's failed check. */
+export function saveStep(notice: Pick<MailNotice, "operation" | "osError">): string {
   const parts = [notice.operation, notice.osError === null ? null : `os error ${notice.osError}`]
     .filter((part): part is string => !!part);
   return parts.length ? ` (${parts.join(", ")})` : "";
@@ -678,6 +698,12 @@ export function refuseConflictedMove(pages: Iterable<string>): boolean {
 
 // ------------------------------------------------------------------ barriers
 
+/** Watch whether Tine's own save writes a version of `name` that held the blocks
+ * `ids` (`HostClient.watchBlocks`). Null when no client is bound. */
+export function watchCapture(name: string, ids: readonly string[]): BlockWatch | null {
+  return host()?.watchBlocks(name, ids) ?? null;
+}
+
 /** Send the page's input and wait until the host published it (`settle`). */
 export async function flushPage(name: string): Promise<boolean> {
   const c = host();
@@ -685,11 +711,29 @@ export async function flushPage(name: string): Promise<boolean> {
   return settle(c, [name], { noConflict: true });
 }
 
+const FLUSH_ALL = { assets: true, noConflict: true } as const;
+
+/** With no client bound, why the window's edits cannot all settle: edits
+ * typed before any client bound wait for one (unbound); none means settled.
+ * The one answer `flushAll` and `flushAllUnsettled` both read (tine#1041). */
+function unboundUnsettled(): Unsettled | null {
+  return early.size === 0 ? null : UNBOUND;
+}
+
 /** Every page's input and the tracked asset writes, published (switch, restore, print). */
 export async function flushAll(): Promise<boolean> {
   const c = host();
-  if (!c) return early.size === 0;
-  return settle(c, "all", { assets: true, noConflict: true });
+  if (!c) return unboundUnsettled() === null;
+  return settle(c, "all", FLUSH_ALL);
+}
+
+/** `flushAll`'s barrier with its reason (a graph switch names what it refused
+ * for): null when everything published, else why not. `departure`: the caller
+ * is leaving this graph for another (`SettleOptions.departure`). */
+export function flushAllUnsettled(departure: boolean): Promise<Unsettled | null> {
+  const c = host();
+  if (!c) return Promise.resolve(unboundUnsettled());
+  return unsettled(c, "all", departure ? { ...FLUSH_ALL, departure } : FLUSH_ALL);
 }
 
 /** A block reference's target (§8, Q2): published bytes that contain `witness`. */
@@ -726,18 +770,6 @@ export function cutSourcePagesRetired(sources: readonly ClipboardSourcePage[]): 
 }
 
 // ------------------------------------------------------------------ conflicts (§9)
-
-/** The recovery panel's Restore: put back the original text a cancelled rename
- * kept of `key` (`page_restore_source`). The host's answer says only whether it
- * recorded the restore ("pending": the restorable list's entry says how it
- * stands, a refusal included); "refused" with no record, no bound host, or once
- * the graph binding changed. */
-export async function restoreSource(key: string): Promise<PageOperation> {
-  const c = host();
-  if (!c) return "refused";
-  const done = await writeOwned(bindingOwner(), backend().pageRestoreSource(c.session, key));
-  return done.kind === "current" ? done.value : "refused";
-}
 
 /** Keep mine: send the text on the disk state the conflict showed. Take disk:
  * consume the unsent input and install the host's text. */

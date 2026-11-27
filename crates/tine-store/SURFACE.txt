@@ -181,7 +181,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 23)
+## Reads (ceiling: 26)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
@@ -225,6 +225,13 @@ fn store::Store::page_of
 # test-oracle: tests hold a page as a page host does, with no host running (A-V4b).
 fn store::Store::hold_page
 fn store::Store::read
+# The one answer to "may this path be opened as a regular file" (23 -> 26): Store::read and
+# Store::open_read take a FileId and validate graph paths, so they cannot open a device-picked
+# file or an external PDF; the app's own opener was a second copy of the check. The policy
+# enum states each caller's final-symlink rule; the error says why a path was refused.
+fn regular_file::open_regular_file
+enum regular_file::FinalSymlink
+enum regular_file::OpenRegularError
 fn store::Store::whole_graph
 # GH #181: a one-shot lookup (a cold-start link) that misses in a served launch
 # checkpoint asks again after the launch diff, which may have added its target.
@@ -595,15 +602,32 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 65)
-# rcd-restore-entry, option B (64 -> 65): `restore_source`, the window's
-# Restore of a source a cancelled rename kept (src-tauri page_commands.rs
-# page_restore_source, the unsaved-changes recovery panel). No existing verb
-# answers it with a parameter: `discard` is Use Disk on an open page and takes
-# the disk; `delete` and `submit` write a page's own input, while a
-# restoration writes the admitted preimage only the operation draft holds,
-# over an absent slot, and selects the pair's restore. The list it acts on
-# rides the existing `draft_status` and `PageMail` (no new read item).
+## Page host (ceiling: 72)
+# GH #540 (65 -> 72): the recovery window's way back to an original a
+# cancelled rename kept (src-tauri page_commands.rs page_kept_originals,
+# page_kept_text, page_restore_kept; one command per verb). `kept_originals`
+# lists them for a window session, `kept_text` is Copy original, and
+# `restore_kept` puts one back as its file through the page's own guarded
+# save, waiting as `apply` does. `KeptOriginal` is the row (fields
+# crate-private, serialized only), `RestoreOutcome`/`RestoreRefusal` the
+# typed answer and `RestoreStep` the check a `Failed` names. No existing
+# item answers them: `draft_status` counts the originals but carries no
+# text, `read` refuses an absent page, and `open` + `submit` would write as
+# a window edit (a page save, not a creation) and cannot see the pair.
+fn page_host::PageHost::kept_originals
+fn page_host::PageHost::kept_text
+fn page_host::PageHost::restore_kept
+struct page_host::KeptOriginal
+enum page_host::RestoreOutcome
+enum page_host::RestoreRefusal
+enum page_host::RestoreStep
+# GH #1041 (64 -> 65): `wait_departure`, the barrier a window waits at when it
+# leaves this graph for another (src-tauri page_commands.rs). `wait_published`
+# cannot answer it with a parameter and keep its own promise: its `Applied`
+# means every need is published, at every caller, while a departure's
+# `Applied` holds also for a need left to its draft, which is not published
+# and gets no revision. A flag would make that promise depend on an argument
+# at each of its callers. Both verbs run one internal wait; no step is copied.
 # RCD slice 1 part 3, call 21 (63 -> 64): `DraftOwnership`, the owner claim's
 # answer `start` takes: a host whose claim holds no lock starts with drafts
 # unowned. `start` cannot answer it without a parameter, and `bool` would not
@@ -656,11 +680,11 @@ fn page_host::PageHost::discard
 fn page_host::PageHost::close
 fn page_host::PageHost::delete
 fn page_host::PageHost::wait_published
+fn page_host::PageHost::wait_departure
 fn page_host::PageHost::save_now
 fn page_host::PageHost::owed
 fn page_host::PageHost::draft_status
 fn page_host::PageHost::drafts_retry
-fn page_host::PageHost::restore_source
 fn page_host::PageHost::orphan_stop
 fn page_host::PageHost::retarget
 fn page_host::PageHost::stop_abort
@@ -728,17 +752,19 @@ field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
 # SB1-ACCEPT2 merge with SB2-DIAG: both branches added one re-export (13 -> 14).
-## Re-exports (ceiling: 17)
+## Re-exports (ceiling: 18)
 # SB1's existing app-facing directory identity/containment witness, above.
 use crate::root_binding::BoundDirectory
 use crate::storage_diag::DraftAdoptionReason
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftOwnership,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftOwnership,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,KeptOriginal,Opened,PageHost,PageMail,PageOperation,PageRefusal,PublishedRevision,Reloaded,RestoreOutcome,RestoreRefusal,RestoreStep,SavedasHostSaved,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
+# The regular-file opener above, for the app's device and external-PDF reads (17 -> 18).
+use crate::regular_file::{open_regular_file,FinalSymlink,OpenRegularError}
 use crate::transaction::{CheckPlan,Content,Guarantee,IoError,MoveRewrite,PagePlan,Refusal,RenameCheck,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 # CM step 2 P2/P3 (15 -> 16): the check's carriers live beside the check in
 # transaction/model_check.rs (size ratchet seam); the same items, re-exported by transaction.

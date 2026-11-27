@@ -283,36 +283,42 @@ unsaved-recovery-summary = { $count ->
    *[other] { NUMBER($count, useGrouping: 0) } 个页面受影响。关闭前请检查或复制草稿。复制不会保存图谱。
     }
 
-unsaved-recovery-kept-after-a-cancelled-rename = { $path } — 在取消重命名后保留
+unsaved-recovery-kept-heading = 取消重命名后保留的原文
 
-unsaved-recovery-kept-after-a-cancelled-rename-detail = 此页面的重命名在其文件被移除后被取消。Tine 保留了下方的原始文本；“恢复”会将其放回为 { $path }。
+unsaved-recovery-kept-detail = 一次重命名在这些文件被移除后被取消，Tine 保留了它们的原文。没有窗口打开该页面时，“恢复”会把文件放回原处；“复制原文”会复制其文本。
 
 unsaved-recovery-restore = 恢复
 
 unsaved-recovery-restoring = 正在恢复…
 
-unsaved-recovery-restore-waiting = { $path } 正忙。请稍后再次点击“恢复”。
+unsaved-recovery-copy-original = 复制原文
 
-unsaved-recovery-restore-refused = Tine 无法开始恢复 { $path }。此处的条目显示 Tine 所知的情况；原始文本仍保留在这里，可供复制。
+unsaved-recovery-original-copied = 已复制。请粘贴到单独的文件中保存一份副本。
 
-unsaved-recovery-restore-refused-occupied = 无法恢复 { $path }：同名文件已再次存在。原始文本仍保留在这里；可复制以保存。
+unsaved-recovery-original-copy-failed = 无法复制原文。Tine 仍在此处保留它。
 
-unsaved-recovery-restore-refused-claimed = 无法恢复 { $path }：{ $file } 占用了该页面。原始文本仍保留在这里；可复制以保存。
-
-unsaved-recovery-restore-refused-unsaved = 无法恢复 { $path }：该页面有未保存的编辑。原始文本仍保留在这里；可复制以保存。
-
-unsaved-recovery-restore-refused-failed = 无法恢复 { $path }：Tine 无法检查其所在文件夹{ $step }。请再次点击“恢复”；原始文本仍保留在这里。
-
-unsaved-recovery-restore-retrying-claimed = 尚未恢复：{ $file } 占用了页面 { $path }。Tine 会继续尝试；请重命名或移走该文件，或复制下面的文本。
-
-unsaved-recovery-restore-retrying-failed = 尚未恢复：写入 { $path } 失败{ $step }。Tine 会继续尝试；原始文本仍保留在这里。
+unsaved-recovery-open-file = 打开
 
 unsaved-recovery-restored = 已恢复 { $path }。
 
-unsaved-recovery-restore-uncertain = Tine 尚未确认 { $path } 已恢复；它会继续尝试。
+unsaved-recovery-restore-not-kept = 此原文已不再保留。
 
-unsaved-recovery-restore-failed = 无法恢复 { $path }：{ $error }
+unsaved-recovery-restore-ineligible = { $path } 现在不是此图谱的页面，Tine 无法恢复它。“复制原文”可复制其文本。
 
-unsaved-recovery-original-copied = 已复制。请粘贴到单独的文件中以保留副本。
+unsaved-recovery-restore-held = 请先关闭 { $name }，再恢复。
 
-unsaved-recovery-original-copy-failed = 无法复制。请手动选中下方文本并复制。它仍保留在这里。
+unsaved-recovery-restore-unsaved = { $path } 有未保存的更改；请先保存或放弃这些更改。
+
+unsaved-recovery-restore-occupied = { $path } 处已有文件。原文仍会保留；“复制原文”可复制它。
+
+unsaved-recovery-restore-twin = 无法恢复 { $path }：{ $file } 已经是这个页面。原文仍会保留。
+
+unsaved-recovery-restore-failed = 无法恢复 { $path }：Tine 无法检查其所在文件夹{ $step }。原文仍会保留。
+
+unsaved-recovery-restore-unavailable = 现在无法恢复。
+
+unsaved-recovery-restore-superseded = { $path } 现在是其他内容。只要 Tine 还保留原文，它就会留在这里。
+
+unsaved-recovery-restore-unwritten = { $path } 尚未保存；原文仍会保留。
+
+unsaved-recovery-restore-uncertain = Tine 尚未确认 { $path } 已恢复。原文会一直保留，直到它写入磁盘。

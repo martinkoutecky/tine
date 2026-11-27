@@ -101,6 +101,38 @@ Stamp-invisible in-place writes and changes after this final observation can
 still race the move. Only set-aside files are read and parsed again; they are
 not added to backlinks or query indexes.
 
+Which files a note keeps alive combines two answers, and neither removes a
+name the other gives. The first is the collector's own
+(`crates/tine-core/src/asset_refs.rs`, `collect_asset_refs`): parser-accepted
+link targets split after `assets/` under raw and percent-decoded spellings,
+plus the deliberately loose plaintext mentions of `assets/` (property values,
+raw HTML and Hiccup, code), which may keep extra files but never drop one.
+The second is the one link-target owner
+(`crates/tine-core/src/local_target.rs`), asked for every Markdown link and
+image embed, Org link and `img` macro URL the parser reports; its attachment
+is added (a folder literally written `assets`, in any case, the name after it
+decoded once), with its first folder. The third is one generous widening
+rule (`widen_one`) over every destination the parser reports (links, macro
+arguments split at both Rust's and ECMAScript's whitespace), every
+`file-path` property the parser reads (Markdown properties, Org drawers and
+directives, any key case), and every `assets` mention in the text, in its
+percent-decoded views, in the attribute values the HTML sanitizer keeps and in
+Hiccup strings: the text after the first `assets/`, after the first and the
+last `assets` folder and after the `assets` folder of the path with `..`
+applied (any case, `/`, `\` or `%5C`), raw, decoded once and decoded
+leniently, with and without a `?`/`#` suffix, normalized, with its first
+folder, and for a parsed destination or pointer its basename, dotted or not (a
+bare `x.pdf`, a relative image, an extensionless file). The orphan list and
+the trash recheck call a directory entry live when the set holds it as
+written or holds its non-empty live key (`is_live`; `live_key` is the
+file-name fold the store's leaf identity uses, coarser than any volume's
+equivalence), so membership is a superset of the exact match and the added
+names can only keep a file off the unused list. Until the reader asks the same owner, the collector's own
+answer stays the base, so no change to the owner can make a shown file unused.
+Export does not ask the owner yet: it copies the collector's own answer (the
+decoded spelling, without folder markers), until a later step makes export
+and the reader ask the owner together.
+
 The guard and the inventory answer parsed pages from an in-memory
 asset-reference index of the published view (per page, the names the same
 collector finds, with a per-name page count), never persisted or checkpointed.
@@ -1387,21 +1419,86 @@ from the scanned drafts before any recovered save or choice.
   (custody only). The host's guarded restoration puts that text back into
   the source page at risk over an absent base; its own draft and guarded
   create publish it, refused over an occupied slot, a claimant or twin, or
-  unsaved text, and that publication cancels the pair. The window offers it
-  from the unsaved-changes recovery panel: the `load_graph` draft status, each
-  window session's `page_window_reloaded` reply, and page mail (whenever the
-  list differs from the one the session was last told of) name each source
-  `Order::restorable_sources` lists (a pair in restore or retained after a
-  Use Disk; never a superseded one), with its kept text and the host's
-  record of its latest restore (`io::RestoreState`: restoring, with the
-  latest attempt's problem while the create retries; refused and why;
-  restored, which stays listed without text until the next window session).
-  Each list carries the order's restorable generation, which moves on any
-  pair or record change: a collect at an unchanged generation visits no
-  pair, and the window keeps the newest mailed list (a replayed older one
-  changes nothing). `page_restore_source` runs the guarded restoration and
-  says only whether the host recorded it. A refusal leaves the pair and its
-  draft as they were.
+  unsaved text, and that publication cancels the pair. The draft keeps
+  custody until then. The recovery window lists every kept original (both
+  phases: `Order::kept`, one answerer for the list, its count and Restore),
+  addressed by its source and its record's write sequence, for the window
+  session that listed it (GH #540). Copy original copies the kept text.
+  Restore admits under the page's path lock, and re-checks the session,
+  the original and that no window holds the page (or the page its text
+  names); it waits there behind a busy page, at most the operation bound.
+  Then the host's guarded restoration runs, recorded as a page creation.
+  Restore reports Restored only once the host's own save published those
+  bytes and the index has them. A Use Disk first is Superseded (the window
+  says the file holds other content and offers Open). A save that cannot
+  finish is Unwritten, reported once: by the editor when a window holds
+  the page, else by the panel. Past the bound it is Uncertain. A creating
+  save with no admitted operation's create behind it (a restored original)
+  has its guard look up a readable claimant of the name its bytes give (a
+  `title::`), not only the filename stem. An operation's create keeps the
+  claim its transaction planned.
+- A source anchors its original text only while a **source witness** of that
+  very file succeeds (`HostIo::source_witnessed`; `Host::source_original` is
+  the one answerer; REG-LAUNCH-CUSTODY-SECOND-CUT). Recipe: on one handle,
+  read the file and stat it, fsync it, reread it and stat it again (on
+  Windows the handle opens for read and write, which its flush needs). Both
+  reads must equal the admitted text and both stamps must agree. Then sync
+  each directory of the file's chain once, from the graph root down,
+  recording each directory's identity first. Finally check that the path
+  still names that same unchanged file and that every directory is still the
+  one recorded (the watcher's directory identity; a lookup that fails, or
+  finds no directory, fails the witness). The answer is **durable** (D), **weak** (W: a directory sync
+  reports the save path's tolerated "unsupported" set, as on NFS, FUSE or
+  Android shared storage, or the platform is Windows, whose graph-folder
+  sync is no flush) or **failed** (U, naming its step: containment, open,
+  read, file sync, reread, changed, directory sync or replaced). Each failed
+  witness adds one `storage_diag` count under `custodySourceWitnessFailed`,
+  keyed by step. D and W anchor exactly where matching bytes did before (W
+  is today's weak-filesystem behaviour). Other bytes, an absent slot and an
+  unreadable source keep their earlier rules. A failed witness anchors
+  nothing; the next decision witnesses again:
+
+  | Decision | D or W | U (failed witness) |
+  |---|---|---|
+  | Launch, a decided pair | cancelled once the receiver reads (an unreadable receiver keeps it retained, as before) | retained |
+  | Use Disk on the source | cancelled, receiver not read | reads the receiver: certified → cancelled; readable but not certified, or unreadable → retained (the choice is recorded, not refused) |
+  | Use Disk on the receiver | cancelled | certified receiver → cancelled, else retained |
+  | Newer text published on the source | disarmed | certified receiver → disarmed, else retained |
+  | A restoration's publication | cancelled | stays restore |
+
+  A publication runs the full witness on its slot, never its own published
+  bytes plus a stamp. At the receiver's pre-check a read error fails the
+  save and leaves the pair's phase as it was; a readable receiver without
+  its certified image holds the pair. A witness that keeps failing leaves
+  the pair where the table puts a failed witness (retained; a restoration stays restore), its draft kept and its pages editable, until a witness
+  succeeds or the receiver certifies (accepted: no other exit).
+  Launch witnesses only where the result can change the pair: a source whose
+  bytes match, of a decided pair whose two reads both succeeded (an absent
+  receiver counts as read; an unreadable one keeps the pair retained with no
+  witness), each source once. It shares one directory pass: those sources'
+  file steps, then the launch's own directory pass extended with
+  those sources' chains, then the final checks. So a launch syncs the same
+  directories as before plus one fsync per witnessed file. Measured for
+  1,000 decided pairs under 4 shared page directories (Linux ext4, release
+  build, `launch_witness_cost_for_1000_pairs_under_4_directories`): before,
+  5 directory syncs, 0 file fsyncs, 1,000 reads, 45 ms; now, 5 directory
+  syncs, 1,000 file fsyncs, 3,000 reads, 82 ms; a separate witness per
+  source would take 2,005 directory syncs (102 ms). Outside launch a custody
+  decision on a matching source costs one fsync, two reads and one sync per
+  chain directory.
+
+  Accepted limits. The trust model covers crashes, torn writes, disk errors,
+  sync delivery, external editors and honest concurrent instances. It does
+  not cover a program that rearranges the namespace, or swaps a file, inside
+  the witness's own window. So nothing is designed against these three,
+  like the same-tick limit M3-1:
+
+  | Limit | What gets past the witness | Why it is accepted |
+  |---|---|---|
+  | L1, same-tick write and restore | Another program persists other bytes and puts the admitted text back in the cache within one timestamp tick, before the reread: both reads and both stamps agree. | A rewrite inside one stamp tick, timed to the witness, is outside the trust model (as M3-1). |
+  | L2, directory swap across the parent sync | A page directory is moved out for its parent's sync and moved back before it is opened: every identity matches, but the sync covered a namespace without the entry. | Rearranging the namespace inside the witness's window is outside the trust model. |
+  | L3, publication with a replaced temp | After Tine's rename and before its read-back, the synced file is replaced by an identical unflushed one. This now affects only a receiver's certification: a source's publication runs the full witness. | Replacing a just-renamed file inside Tine's own window is outside the trust model. |
+
 - A decision this code does not act on (reviewed text `1`, or superseding
   input `2` on a receiver) or an unreadable or mismatched decision naming a
   readable paired operation blocks that operation's source removals and
@@ -1566,9 +1663,40 @@ while the host owes it a save: a failed attempt (the notice), a conflict, or
 any version the host took from this window that has not published. That last
 is the client's one publication-debt predicate (`HostClient.owes`): a taken
 version no true `page_wait` answer has discharged. Only true discharges it.
-A false answer under a terminal notice (conflict, failed save, failed index
-publication) keeps the page while the notice stands. Any other false (a failed
-call, a host that ended) keeps it and asks again after a pause. A new session
+A refusal under a terminal notice (conflict, failed save, failed index
+publication) answers `{refused: files}`: the current graph-relative files of
+the needed keys whose own state refused, and only those, as the host spells
+them now (a key is opaque and is never shown). A refused graph switch names
+them (tine#1041). It
+keeps the page while the notice stands.
+A wait asked with `departure` (the window is leaving this graph for another)
+first sets aside each need the host may leave to its draft: a settled
+conflicted page at or past the needed version, asked without a block witness,
+that no window is subscribed to, with nothing working on its key, no draft
+vehicle of it still owed to the launch census, no surfaced draft error naming
+it, and a durable draft that is exactly its text, base and version
+(`Host::exact_copy`, the answer the host's own stop gives for a page at risk).
+A window subscribes with `page_open`, which it sends when it first works on
+the page: a block of it enters editing, a command changes it without an
+editor (a task checkbox, a block id stamped for a copied reference, a move
+that names it as an endpoint), the page is created, or the pages a window
+has loaded are re-read after an explicit draft recovery. A page that is only
+displayed is not subscribed. The subscription outlives that work while the
+host owes the window a save (the window-close rule below), so a conflicted
+page holds the switch from the moment a window first works on it until the
+conflict is resolved. The
+returned revisions say nothing about a key set aside; its draft stays on disk
+and the next launch of the graph recovers and reports it. Only a switch to
+another graph asks with `departure`: a refresh of the same graph, restore,
+print, rename, window close and quit keep the full answer. What the departure
+check adds to a wait step, per need: one scan of the request queue for the
+key, one pass over the surfaced draft failures, and for an eligible key one
+comparison of the draft with the page; no file I/O and no IPC. The needs it
+does not set aside go through the publication and refusal checks as before.
+Proof:
+`page_host/binding_departure_tests.rs`, `scripts/e2e-gh1041-switch-draft.mjs`. Any other refusal answers false (a
+failed call, a stale session, a host that ended); it keeps the page and asks
+again after a pause. A new session
 or the client's retirement ends the debt with the page; retirement settles a
 pending wait false and asks no more. Every let-go path consults the predicate:
 the close, working-set eviction (`unsettledPages`), the recovery panel and
@@ -1899,10 +2027,15 @@ Proof `the_skip_compares_with_the_newest_snapshot_of_any_suffix`,
 `a_damaged_baseline_is_never_the_reason_to_skip`,
 `another_roots_identical_zip_is_never_the_baseline`,
 `an_unchanged_launch_applies_a_keep_count_a_busy_prune_left`,
-`a_failed_prune_delete_is_retried_by_the_next_unchanged_launch`.
+`a_failed_prune_delete_is_retried_by_the_next_unchanged_launch`,
+`an_unreadable_settings_file_never_prunes_a_backup`.
 
 **Retention.** Every locked path (a launch, an unchanged launch, a suffixed
-snapshot, a Settings prune) runs one retention pass (`maintain_locked`). The
+snapshot, a Settings prune) runs one retention pass (`maintain_locked`) with
+the keep count the device settings state when that path reads them (a launch
+reads them once, before its capture). While the settings file exists but
+cannot be read or decoded, the count is unknown and the pass does not run:
+nothing is retired, healthy or damaged, and nothing is verified. The
 keep-count N keeps the last N successive distinct states among the counted
 snapshots: legacy directories and zips written by og, neither `pre-restore`
 nor another writer's (a schema-3 directory another writer made, or one of an

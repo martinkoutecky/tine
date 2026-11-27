@@ -48,7 +48,7 @@ import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
 import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
-import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision } from "./document";
+import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublicationRefused, PublishedNeed, PublishedRevision } from "./document";
 
 /** What a native confirmation shows: the action it offers and the way back. */
 export interface ConfirmOptions {
@@ -143,7 +143,7 @@ export interface Backend {
    * through the ordered lane (src/orderedWrites.ts); a resolved refusal means
    * "not admitted". Answers and pushes arrive as `onPageMail`. The mock is a
    * single-window in-memory host that takes every request. */
-  pageWindowReloaded(): Promise<{ session: number; nextId: number; restorable?: import("./document").RestorableList }>;
+  pageWindowReloaded(): Promise<{ session: number; nextId: number }>;
   /** A null `path` (no file yet) is resolved with `resolve_page` inside the
    * ordered lane, so the open keeps its place among the window's requests; an
    * alias name is refused client side (`alias`) without a command. */
@@ -165,18 +165,17 @@ export interface Backend {
    * are not written. */
   pageDeleteFile(session: number, path: string, baseRev: string): Promise<PageOperation>;
   /** One bounded wait (≤ 5 s) for these needs to publish; null at the bound. */
-  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number): Promise<PublishedRevision[] | false | null>;
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number, departure: boolean): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   pageSaveNow(session: number, keys: readonly string[]): Promise<void>;
   pageOwed(session: number, paths: readonly string[] | null): Promise<OwedPage[] | null>;
+  /** The originals a cancelled rename kept; null for another session. */
+  pageKeptOriginals(session: number): Promise<import("./document").KeptOriginal[] | null>;
+  /** One kept original's text (Copy original); null once it is no longer kept. */
+  pageKeptText(session: number, key: string, origin: number): Promise<string | null>;
+  /** Restore one kept original as its file, while no window holds the page. */
+  pageRestoreKept(session: number, key: string, origin: number): Promise<import("./document").RestoreOutcome>;
   /** Retry crash-draft storage after the host reported it unavailable. */
   pageDraftsRetry(): Promise<void>;
-  /** Restore the original text a cancelled rename kept of `key`
-   * (`DraftStatus.restorable`). How it stands is the host's record, which the
-   * list's entry carries (`RestoreState`); this reply says only whether the host
-   * recorded it: "pending" (a recorded refusal included), "waiting" while the
-   * page or a rename is busy, "refused" with no record (not restorable, another
-   * session, a restore already running), "uncertain" past the bound. */
-  pageRestoreSource(session: number, key: string): Promise<PageOperation>;
   /** Desktop semantic lease recovery; absent in browser/mobile backends. */
   ownerProtectionStatus?(): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;
   retryOwnerProtection?(repair: boolean): Promise<import("./ownerProtection").OwnerProtectionIssue | null>;

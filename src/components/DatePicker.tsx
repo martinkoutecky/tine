@@ -12,6 +12,7 @@ import { captureBinding, bindingCurrent, refuseStaleWrite } from "../binding";
 import { parseRepeater, type RepMode } from "../editor/repeat";
 import { appNow, journalTitle, localCalendarDate } from "../journal";
 import { ctrlArrowAlias } from "../ctrlArrowAlias";
+import { keepCaretThroughRewrite } from "../editor/restoreMovedSelection";
 import { isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -130,7 +131,12 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     if (!bid) return false;
     const picked = fieldDate(y, m, d);
     if (isScheduleTarget(props.which)) {
-      setSchedule(bid, props.which, { y, m, d }, repeater(), time());
+      const which = props.which;
+      // The opener's textarea is re-assigned by this write; keep its caret on the
+      // text it was on (a block without a title gets the date after an empty first
+      // line, and the next character goes into that title line).
+      const editor = opener?.tagName === "TEXTAREA" ? opener as HTMLTextAreaElement : undefined;
+      keepCaretThroughRewrite(editor, true, () => setSchedule(bid, which, { y, m, d }, repeater(), time()));
       return true;
     }
     if ("insertJournal" in props.which) {

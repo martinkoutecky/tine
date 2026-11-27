@@ -22,14 +22,14 @@ fn read_pdf(url: &str) -> Result<Vec<u8>, String> {
             .to_file_path()
             .map_err(|()| "external-pdf-unsupported-url")?;
         let path = path.canonicalize().map_err(|error| error.to_string())?;
-        let mut file = crate::device_io::open_regular_file(&path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidInput {
-                "external-pdf-not-regular".into()
-            } else {
-                error.to_string()
-            }
-        })?;
-        if file.metadata().map_err(|error| error.to_string())?.len() > MAX_PDF_BYTES {
+        let (mut file, meta) =
+            tine_store::open_regular_file(&path, tine_store::FinalSymlink::Follow).map_err(
+                |error| match error {
+                    tine_store::OpenRegularError::Io(error) => error.to_string(),
+                    _ => "external-pdf-not-regular".into(),
+                },
+            )?;
+        if meta.len() > MAX_PDF_BYTES {
             return Err("external-pdf-too-large".into());
         }
         let mut header = [0; 5];

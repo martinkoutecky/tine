@@ -69,22 +69,38 @@ impl AssetScope {
     }
 }
 
-/// Tine's atomic publishers leave hidden numeric temp names
-/// (`.{name}.{pid}.{seq}[.tag].tmp`), and restore/transactions leave
-/// `.tine-*` litter. Only the final rename is a logical asset change.
-fn is_tine_bookkeeping(path: &Path, root: &Path) -> bool {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    let hidden_tine = relative.components().any(|part| {
-        part.as_os_str()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".tine-"))
-    });
+/// Whether the file at `path` (under the assets directory `root`) is one of
+/// Tine's own writes: a temp of any of its atomic publishers
+/// ([`crate::atomic_file::is_temp_name`], the one temp-name answer), or a file
+/// in restore recovery ([`in_restore_recovery`]). Only the final rename is a
+/// logical asset change. The temp rule is for files only: a folder with a
+/// temp-shaped name is the user's and is walked (model check of c897398d8).
+fn is_tine_file(path: &Path, root: &Path) -> bool {
     let atomic_temp = path
         .file_name()
         .and_then(|name| name.to_str())
-        .and_then(crate::atomic_file::parse_temp_name)
-        .is_some();
-    hidden_tine || atomic_temp
+        .is_some_and(crate::atomic_file::is_temp_name);
+    atomic_temp || in_restore_recovery(path.strip_prefix(root).unwrap_or(path))
+}
+
+/// Restore's recovery folder under the assets directory, the one `.tine-`
+/// entry Tine keeps there: restore makes it, and the asset watcher and
+/// restore's own walks leave it out ([`in_restore_recovery`]).
+pub(crate) const ASSET_RECOVERY: &str = ".tine-restore-recovery";
+
+/// The one answer to "is this asset path inside restore recovery": whether a
+/// component of `relative` (a path relative to the assets directory) is
+/// restore's recovery folder ([`ASSET_RECOVERY`]). Its callers are the asset
+/// watcher, asset admission during restore, restore's walk of the assets
+/// directory and the restore baseline (`watch/restore.rs`). A separate
+/// question from "is this a temp name": the folder is no temp, and every file
+/// inside it is Tine's whatever its name. Exactly that name: a user's
+/// `.tine-report.tmp` is the user's (review of 6fb074e9f). Costs one compare
+/// per component; no I/O.
+pub(crate) fn in_restore_recovery(relative: &Path) -> bool {
+    relative
+        .components()
+        .any(|part| part.as_os_str() == ASSET_RECOVERY)
 }
 
 /// Events queued between watcher cycles: exact ordinary-file paths and whether
@@ -195,12 +211,16 @@ fn collect(root: &Path) -> (HashMap<PathBuf, Stamp>, bool) {
                 continue;
             };
             // No-follow: a link inside the directory cannot widen the capability.
-            if is_tine_bookkeeping(&path, root) {
-                continue;
-            }
             if kind.is_dir() {
-                stack.push(path);
+                // Only restore recovery prunes a subtree; a temp-shaped
+                // folder name is no temp.
+                if !in_restore_recovery(path.strip_prefix(root).unwrap_or(&path)) {
+                    stack.push(path);
+                }
             } else if kind.is_file() {
+                if is_tine_file(&path, root) {
+                    continue;
+                }
                 #[cfg(feature = "test-faults")]
                 crate::cost_counters::asset_listing_stamp();
                 // The listing's own metadata (no-follow; on Windows from
@@ -288,7 +308,7 @@ impl AssetObserver {
         } else {
             for path in exact
                 .iter()
-                .filter(|path| !is_tine_bookkeeping(path, &self.scope.root))
+                .filter(|path| !is_tine_file(path, &self.scope.root))
             {
                 let now = stamp_metadata(path);
                 match (snapshot.get(path), now) {
@@ -312,5 +332,55 @@ impl AssetObserver {
         changed.sort_by(|a, b| a.0.cmp(&b.0));
         changed.dedup_by(|a, b| a.0 == b.0);
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Review of 6fb074e9f: both asset-watcher paths (an exact event and a
+    /// full rescan) skip every name Tine writes under the assets directory and
+    /// nothing else: a user's file shaped like a temp, inside a `.tine-`
+    /// folder of the user's own, or inside a folder named like a temp, is an
+    /// asset change.
+    #[test]
+    fn the_asset_watcher_skips_exactly_the_names_tine_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let assets = root.join("assets");
+        fs::create_dir_all(assets.join(ASSET_RECOVERY).join("restore-1")).unwrap();
+        fs::create_dir_all(assets.join(".tine-mine")).unwrap();
+        // A folder with a temp-shaped name is the user's folder: the temp rule
+        // is for files (model check of c897398d8).
+        fs::create_dir_all(assets.join(".a.png.4242.21.capture.tmp")).unwrap();
+        let graph = Graph::open(&root);
+        let exact_observer = AssetObserver::new(AssetScope::new(&graph));
+        let full_observer = AssetObserver::new(AssetScope::new(&graph));
+
+        let mut tine: Vec<PathBuf> = crate::atomic_file::tine_temp_names("pic.png")
+            .iter()
+            .map(|name| assets.join(name))
+            .collect();
+        tine.push(assets.join(ASSET_RECOVERY).join("restore-1/pic.png"));
+        let mut user: Vec<PathBuf> = crate::atomic_file::TEMP_LOOK_ALIKES
+            .iter()
+            .map(|name| assets.join(name))
+            .collect();
+        user.push(assets.join(".tine-mine/pic.png"));
+        user.push(assets.join(".a.png.4242.21.capture.tmp/photo.png"));
+        user.push(assets.join("pic.png"));
+        for path in tine.iter().chain(&user) {
+            fs::write(path, b"x").unwrap();
+        }
+        let mut expected: Vec<_> = user
+            .iter()
+            .map(|path| (path.clone(), ChangeKind::Created))
+            .collect();
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let exact: HashSet<PathBuf> = tine.iter().chain(&user).cloned().collect();
+        assert_eq!(exact_observer.reconcile(&exact, false), expected);
+        assert_eq!(full_observer.reconcile(&HashSet::new(), true), expected);
     }
 }

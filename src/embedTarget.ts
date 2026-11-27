@@ -10,6 +10,8 @@ const inner = (arg: string, open: string, close: string): string | null => {
     : null;
 };
 
+/** The argument of an embed macro body (`embed ((uuid))` → `((uuid))`). */
+export const embedMacroArg = (body: string): string => body.replace(/^embed\s*/i, "").trim();
 /** The page of `[[name]]`, or null. */
 export const embedPageTarget = (arg: string): string | null => inner(arg, "[[", "]]");
 /** The block of `((uuid))`, or null. */

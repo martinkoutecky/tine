@@ -125,3 +125,199 @@ fn a_bounded_asset_read_refuses_an_oversized_file_and_accepts_the_limit() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Through the store: for a sole reference in each spelling the link-target
+/// owner reads, the orphan list leaves out exactly the file the reader shows
+/// and trash refuses it. Look-alikes the reader does not show stay unused.
+#[test]
+fn orphans_and_trash_see_the_file_the_reader_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for folder in ["pages", "journals", "assets/sub"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let page = [
+        "- ![x](../ASSETS/upper.png)",
+        "- ![x](../assets%5Cbackslash.png)",
+        "- ![x](../assets/sub%5Cnested.png)",
+        "- {{img ../assets/macro.png, 200}}",
+        "- [[../assets/org-bare.png]]",
+        "- <video poster=\"../assets/poster.png\"></video>",
+        "- [:img {:src \"../assets/hiccup.png\"}]",
+        "- ![x](../assets/photo%23v2.png)",
+        "- ![x](../assets/demo%2520v2.png)",
+    ];
+    std::fs::write(root.join("pages/a.md"), page.join("\n") + "\n").unwrap();
+    let shown = [
+        "upper.png",
+        "backslash.png",
+        "macro.png",
+        "org-bare.png",
+        "poster.png",
+        "hiccup.png",
+        "photo#v2.png",
+        "demo%20v2.png",
+    ];
+    // Look-alikes the reader does not show: the twice-decoded spelling, and
+    // a file nothing names.
+    let others = ["demo v2.png", "unused.png"];
+    for name in shown.iter().chain(&others).chain(&["sub/nested.png"]) {
+        std::fs::write(root.join("assets").join(name), name.as_bytes()).unwrap();
+    }
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
+
+    let orphans: Vec<String> = orphan_assets(&store)
+        .unwrap()
+        .into_iter()
+        .map(|asset| asset.name)
+        .collect();
+    for name in shown {
+        assert!(
+            !orphans.contains(&name.to_owned()),
+            "{name} listed as unused: {orphans:?}"
+        );
+    }
+    assert!(orphans.contains(&"unused.png".to_owned()), "{orphans:?}");
+    assert!(orphans.contains(&"demo v2.png".to_owned()), "{orphans:?}");
+
+    for name in shown {
+        assert_eq!(
+            trash_asset(&store, name).unwrap(),
+            TrashOutcome::Referenced,
+            "{name}"
+        );
+        assert!(root.join("assets").join(name).exists(), "{name}");
+    }
+    assert_eq!(
+        trash_asset(&store, "unused.png").unwrap(),
+        TrashOutcome::Trashed
+    );
+    store.close();
+}
+
+/// Through the store: an in-use attachment is never offered for trash when a
+/// surface opens it under another spelling than develop's liveness kept (a
+/// case-folding volume's other case, an uppercase folder with an escape and
+/// a query, a player macro, a bare PDF the reader opens in `assets/`, an
+/// `hls__` pointer, an entity-spelled HTML source). The orphan list leaves
+/// each out and the trash recheck refuses it; a file nothing names stays
+/// unused and trashable.
+#[test]
+fn an_in_use_attachment_is_never_offered_for_trash() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for folder in ["pages", "journals", "assets"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let page = [
+        "- ![x](../assets/Pic.png)",
+        "- ![x](../ASSETS/a%20b.png?rev=1)",
+        "- {{video ../assets/clip.mp4}}",
+        "- [g](guide.pdf)",
+        "- <img src=\"../assets/r&#101;al.png\">",
+    ];
+    std::fs::write(root.join("pages/a.md"), page.join("\n") + "\n").unwrap();
+    std::fs::write(
+        root.join("pages/hls__report.md"),
+        "file-path:: ../ASSETS/my report.pdf\n\n- highlight\n",
+    )
+    .unwrap();
+    let shown = [
+        "pic.png",
+        "a b.png",
+        "clip.mp4",
+        "guide.pdf",
+        "real.png",
+        "my report.pdf",
+    ];
+    for name in shown.iter().chain(&["unused.png"]) {
+        std::fs::write(root.join("assets").join(name), name.as_bytes()).unwrap();
+    }
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
+    let orphans: Vec<String> = orphan_assets(&store)
+        .unwrap()
+        .into_iter()
+        .map(|asset| asset.name)
+        .collect();
+    let listed: Vec<&str> = shown
+        .iter()
+        .copied()
+        .filter(|name| orphans.iter().any(|o| o == name))
+        .collect();
+    assert!(listed.is_empty(), "in use but listed as unused: {listed:?}");
+    assert_eq!(orphans, ["unused.png"]);
+    for name in shown {
+        assert_eq!(
+            trash_asset(&store, name).unwrap(),
+            TrashOutcome::Referenced,
+            "{name}"
+        );
+        assert!(root.join("assets").join(name).exists(), "{name}");
+    }
+    assert_eq!(
+        trash_asset(&store, "unused.png").unwrap(),
+        TrashOutcome::Trashed
+    );
+    store.close();
+}
+
+/// Through the store, the second review's traces: a whitespace-only name the
+/// fold empties, `hls__` pointers through the parser (mixed-case Markdown
+/// key, Org directive, Org drawer, an extensionless PDF outside `assets/`),
+/// an image macro split at U+FEFF, and a graph-file link through a second
+/// `assets` segment to an extensionless file. Each stays off the orphan list
+/// and the trash recheck refuses it.
+#[test]
+fn the_second_reviews_in_use_files_are_never_offered_for_trash() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for folder in ["pages", "journals", "assets"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    let page = [
+        "- [blank](../assets/%20)",
+        "- [tab](../assets/%09)",
+        "- [nbsp](../assets/%C2%A0)",
+        "- [wide](../assets/%E3%80%80)",
+        "- {{img ../assets/x.png\u{feff}100}}",
+        "- [x](%61ssets/../%61ssets/README)",
+    ];
+    std::fs::write(root.join("pages/a.md"), page.join("\n") + "\n").unwrap();
+    for (file, text) in [
+        ("pages/hls__m.md", "File-Path:: ../assets/m.pdf\n\n- h\n"),
+        ("pages/hls__r.md", "file-path:: /outside/report\n\n- h\n"),
+        ("pages/hls__o.org", "#+File-Path: o.pdf\n\n* h\n"),
+        (
+            "pages/hls__d.org",
+            ":PROPERTIES:\n:file-path: d.pdf\n:END:\n\n* h\n",
+        ),
+    ] {
+        std::fs::write(root.join(file), text).unwrap();
+    }
+    // Windows cannot hold a file named only a space or a tab, so those two links name no file there.
+    let shown: Vec<&str> = [
+        " ", "\t", "\u{a0}", "\u{3000}", "x.png", "README", "m.pdf", "report", "o.pdf", "d.pdf",
+    ]
+    .into_iter()
+    .filter(|name| !cfg!(windows) || !matches!(*name, " " | "\t"))
+    .collect();
+    for name in shown.iter().chain(&["unused.png"]) {
+        std::fs::write(root.join("assets").join(name), b"x").unwrap();
+    }
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
+    let orphans: Vec<String> = orphan_assets(&store)
+        .unwrap()
+        .into_iter()
+        .map(|asset| asset.name)
+        .collect();
+    assert_eq!(orphans, ["unused.png"], "in use but listed as unused");
+    for name in shown {
+        assert_eq!(
+            trash_asset(&store, name).unwrap(),
+            TrashOutcome::Referenced,
+            "{name:?}"
+        );
+        assert!(root.join("assets").join(name).exists(), "{name:?}");
+    }
+    store.close();
+}

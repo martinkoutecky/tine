@@ -35,6 +35,7 @@ binding-some-state-of-the-previous-graph-could-not = 无法清除上一图谱的
 
 binding-was-not-saved-it-was-opened-in-a = { $what } 未保存：其所在图谱已关闭。
 
+block-ref-actions-select-an-authored-block-to-remove = 请选择带有作者的块（或编辑一个）以移除其作者
 block-ref-actions-select-blocks-or-edit-one-to-copy-their = 请选择块（或编辑一个块）以复制块引用
 block-ref-actions-select-blocks-or-edit-one-to-set-depth = 请选择块（或编辑一个块）以设置展开深度
 
@@ -383,6 +384,8 @@ ui-failure-unreadable-files = { $more ->
 ui-failure-asset-inventory = 无法检查未引用附件，保留上次成功扫描的结果。
 
 ui-failure-trash-inventory = 无法检查可恢复的回收站，保留上次成功获取的计数。
+
+ui-failure-kept-originals = 无法列出取消重命名后保留的原文，保留上次的列表。
 
 ui-failure-backup-read = 无法完成启动备份。图谱仍保持打开。
 

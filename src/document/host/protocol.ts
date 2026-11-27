@@ -71,11 +71,6 @@ export interface PageMail {
   page: MailPage | null;
   answer: MailAnswer | null;
   notice: MailNotice;
-  /** The restorable sources (`DraftStatus.restorable`), on the first mail
-   * after the list differs from the one the session was last told of (its
-   * `windowReloaded` reply, or mail). A mail with an empty key carries only
-   * this. */
-  restorable?: RestorableList;
 }
 
 /** A command the host did not admit: nothing was sent (`binding.rs` `PageRefusal`). */
@@ -108,45 +103,42 @@ export interface DraftStatus {
   unavailable?: string | null;
   unreadable: string[];
   unsaved?: UnsavedPage[];
-  /** Sources whose original text a cancelled rename kept (`io.rs` `RestorableList`). */
-  restorable?: RestorableList;
+  /** How many originals a cancelled rename kept (`KeptOriginal`). */
+  kept?: number;
 }
 
-/** The host's restorable sources at one generation of its rename pairs
- * (`io.rs` `RestorableList`): a window keeps the newest list it was given, so
- * a list replayed late never replaces a newer one. */
-export interface RestorableList {
-  generation: number;
-  sources: RestorableSource[];
-}
-
-/** A rename's source whose pair a Use Disk cancelled after the source was
- * removed: its original text is only in the rename's recovery draft, and
- * `page_restore_source` restores it. `text` is that original, for Copy.
- * `state` is the host's record of its latest restore (`io.rs` `RestoreState`);
- * a finished one stays listed as "restored" (no text) for the session. */
-export interface RestorableSource {
+/** An original a cancelled rename kept (`io.rs` `KeptOriginal`), addressed by
+ * (`key`, `origin`). `name` is the page its restored file would be; null when
+ * the graph's settings no longer make the file a page. */
+export interface KeptOriginal {
   key: string;
+  origin: number;
   path: string;
-  text: string;
-  state?: RestoreState | null;
+  name: string | null;
+  kind: "page" | "journal";
+  len: number;
 }
 
-/** Why a restore was refused, or why its latest attempt did not publish
- * (`io.rs` `RestoreRefusal`). `operation`/`osError` name a failed platform
- * step, never a path (I-5). */
+/** Why a kept original was not restored (`io.rs` `RestoreRefusal`); each one
+ * changed nothing. */
 export type RestoreRefusal =
-  | { reason: "occupied" }
-  | { reason: "claimed"; file: string }
+  | { reason: "notKept" }
+  | { reason: "ineligible" }
+  | { reason: "held"; name: string }
   | { reason: "unsaved" }
-  | { reason: "failed"; operation: string | null; osError: number | null };
+  | { reason: "occupied" }
+  | { reason: "twin"; file: string }
+  | { reason: "failed"; step: "slotRead" | "twinProbe"; operation: string | null; osError: number | null }
+  | { reason: "unavailable" };
 
-/** The host's record of a restore (`io.rs` `RestoreState`): running (with the
- * latest attempt's problem while its create retries), restored, or refused. */
-export type RestoreState =
-  | { kind: "restoring"; problem: RestoreRefusal | null }
+/** What became of a restore (`io.rs` `RestoreOutcome`). `unwritten.held`: a
+ * window holds the page now, and its editor reports the save. */
+export type RestoreOutcome =
   | { kind: "restored" }
-  | ({ kind: "refused" } & RestoreRefusal);
+  | ({ kind: "refused" } & RestoreRefusal)
+  | { kind: "superseded" }
+  | { kind: "unwritten"; held: boolean }
+  | { kind: "uncertain" };
 
 /** A page whose text is not on disk yet (`io.rs` `UnsavedPage`). `recovered`:
  * launch recovered it from a crash-recovery copy and Tine is saving it. */
@@ -165,6 +157,10 @@ export interface OwedPage {
 
 /** The host's newest indexed own save for a requested key; null rev is deletion. */
 export interface PublishedRevision { key: string; version: number; rev: string | null }
+/** A publication wait refused for these files: the current graph-relative
+ * path of each needed page that is conflicted, or whose save or index
+ * publication keeps failing. The host names them; a key is never a path. */
+export interface PublicationRefused { refused: string[] }
 
 /** One `pages_published` entry: the key, the version needed, and optionally a
  * block id the published bytes must contain (the block-ref witness, Q2). */
@@ -180,7 +176,7 @@ export interface PublishedNeed {
  * `page_*` promise also means not admitted (no slot, no host), or the host
  * panicked; a request id is never reused. */
 export interface HostPort {
-  windowReloaded(): Promise<{ session: number; nextId: number; restorable?: RestorableList }>;
+  windowReloaded(): Promise<{ session: number; nextId: number }>;
   /** `path` is the file the window's text was installed from, or, for a page
    * with no file yet, null: the port resolves the file it will be created as
    * (`resolve_page`) and sends that, never null (REVIEW-3b-P1). The reply says
@@ -199,10 +195,14 @@ export interface HostPort {
   /** Make these keys' saves due now (a scheduling hint; no answer). */
   saveNow(session: number, keys: readonly string[]): Promise<void>;
   /** Actual own-publication evidence once every entry is indexed at ≥ its version;
-   * a clean read or released key may have no own-publication evidence. False on
-   * a terminal notice for a needed key or once the session is not current; null
+   * a clean read or released key may have no own-publication evidence. The
+   * refused files on a terminal notice for needed keys; false, a refusal naming none,
+   * once the session is not current, the host is down, or the call failed; null
    * when one bounded wait (≤ 5 s) passed first: the client asks again. */
-  waitPublished(session: number, needs: readonly PublishedNeed[]): Promise<PublishedRevision[] | false | null>;
+  /** `departure`: the window is leaving this graph for another (tine#1041). The
+   * host then sets aside each need whose page no window has worked on and whose exact
+   * draft the next launch recovers; the revisions say nothing about those. */
+  waitPublished(session: number, needs: readonly PublishedNeed[], departure: boolean): Promise<PublishedRevision[] | PublicationRefused | false | null>;
   /** Publication debt; `paths` (graph-relative files) filters through the host's
    * page identity, null lists all. Bounded by held pages; no filesystem scan.
    * False when there is no answer (the session is not current, or the read

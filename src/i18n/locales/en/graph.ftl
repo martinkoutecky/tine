@@ -6,6 +6,11 @@ graph-this-graph-s-assets-folder-points-outside-the = This graph's assets folder
 graph-allow-external-assets-directory = Allow external assets directory?
 graph-graph-not-opened-its-external-assets-directory = Graph not opened: its external assets directory was not approved ({ $assetsDirectory }).
 graph-some-pages-couldn-t-be-saved-resolve = Some pages couldn't be saved — resolve conflicts before switching graphs.
+# A refused graph switch names the pages whose changes are not saved. $pages is a comma-separated list of untranslated file paths; $more counts the ones not listed.
+graph-switch-refused-pages = { $more ->
+    [0] Changes to these pages aren't saved, so the graph was not switched: { $pages }.
+   *[other] Changes to these pages aren't saved, so the graph was not switched: { $pages }, and { $more } more.
+    }
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-couldn-t-prepare-the-icloud-graph = Couldn't prepare the iCloud graph. ({ $error })
 graph-tineoutline-can-only-open-folders-inside-on = { $app } can only open folders inside On My iPhone → { $app } or iCloud Drive → { $app }.
@@ -88,9 +93,8 @@ root-recovery-moved-durability-unwitnessed = The unsaved edits were moved into t
 graph-open-other-app = The graph is open in another Tine window.
 root-moved-draft-error = The graph folder was moved, replaced or disconnected, and its recovery copy could not be written. Keep this window open and copy your unsaved text until device storage is working again.
 graph-merge-unites-tags = Both pages have tags. Before the merge, the remaining page's tags become: { $tags }
-# English retains the existing "(s)" wording; translations may inflect by count.
-graph-kept-original-text-of-cancelled-renames = { $count ->
-    [one] Tine kept the original text of { $count } page(s) whose rename was cancelled: { $pages }. Review to restore it.
-   *[other] Tine kept the original text of { $count } page(s) whose rename was cancelled: { $pages }. Review to restore it.
+graph-kept-originals = { $count ->
+    [one] Tine kept the original text of a page whose rename was cancelled.
+   *[other] Tine kept the original text of { $count } pages whose rename was cancelled.
     }
-graph-review-kept-pages = Review
+graph-review-kept-originals = Review

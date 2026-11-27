@@ -348,6 +348,14 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    /// `key`'s durable draft is exactly `page`: its buffer, base and version.
+    /// The one answer to "does the next launch recover this page as it is",
+    /// for the host's stop (`can_switch`) and for a window leaving the graph
+    /// (`wait_departure`, tine#1041).
+    pub(super) fn exact_copy(&self, key: &str, page: &Page) -> bool {
+        self.draft_of(key).is_some_and(|r| r.holds(page))
+    }
+
     /// A key's logical state, the one source of every barrier query
     /// (`owed`, `pages_published`, `pages_recoverable`, `wait_published`,
     /// `unsaved`; STEP3-DESIGN "Manager decisions on the P2b checkpoint
@@ -460,12 +468,31 @@ impl<F: HostIo> Host<F> {
                 (key, bytes)
             })
             .collect();
+        // The launch's one directory pass (the graph's keys) also witnesses
+        // each source launch judges that holds its preimage: the sources'
+        // file steps, then each shared directory synced once, then their
+        // final checks. Launch's best-effort syncs of other directories
+        // prove nothing about a source on their own.
+        let sources = self.order.launch_witnesses(&reads);
+        let pages = self.keys.iter().cloned().collect();
+        let witnessed: BTreeMap<PageKey, SourceWitness> = sources
+            .iter()
+            .map(|(page, _)| page.clone())
+            .zip(self.fs.graph_launch(&pages, &sources))
+            .collect();
         // No durability witness survives a relaunch, so a receiver whose
         // bytes match certifies nothing here: the pair restores or retains,
         // and its operation draft keeps the source's admitted text.
         let fs = &mut self.fs;
-        (self.order).decided_phases(&reads, |receiver, bytes, image| {
-            Self::receiver_certified(fs, receiver, bytes, image)
+        (self.order).decided_phases(&reads, |pair, source, receiver| {
+            let witness = || {
+                (witnessed.get(&pair.source).copied())
+                    .unwrap_or(SourceWitness::Failed(WitnessStep::Changed))
+            };
+            (
+                Self::source_original(&pair.preimage, source, witness),
+                Self::receiver_certified(fs, &pair.receiver, receiver, &pair.image),
+            )
         });
         for (decision, name) in &scan.blocking {
             self.order.block(name, decision.clone());

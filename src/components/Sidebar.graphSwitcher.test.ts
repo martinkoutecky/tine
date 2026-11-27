@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { openKnownGraph, openSidebarPageTarget, type KnownGraphOpenDeps, type SidebarPageOpenDeps } from "./Sidebar";
-import { favorites, isFavorite, pageIdentityKey, setFavorites, toggleFavorite } from "../ui";
+import { favorites, isFavorite, setFavorites, toggleFavorite } from "../ui";
+import { pageIdentityKey } from "../pageIdentity";
 import { backend } from "../backend";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import type { PageInventoryEntry, ResolvedPage } from "../types";

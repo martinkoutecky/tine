@@ -14,6 +14,8 @@ import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 import { watchErrorToasts } from "./lib/e2e-toasts.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { withEditor, withEditors } from "./lib/e2e-block-editor.mjs";
+import { installAccountHome } from "./lib/e2e-account-home.mjs";
 
 ensurePrivateSessionBus();
 
@@ -53,8 +55,15 @@ const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "
 const journalPath = `${GRAPH}/journals/${journal}.md`;
 fs.writeFileSync(journalPath, "- open [[Home]]\n");
 
+// Run on its own (a gate, by hand) as under the suite runner: the app needs its
+// owner lease, and app data that is not under the temp directory. Without
+// either, a sticky notice in the main window's bottom-right corner covers the
+// Settings controls below. The suite runner's fixture is reused when present.
+installAccountHome(TMP, ARTIFACT_DIR);
+fs.mkdirSync(`${TMP}/app-tmp`, { recursive: true });
 const env = {
   ...process.env,
+  TMPDIR: `${TMP}/app-tmp`,
   TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
@@ -236,18 +245,18 @@ try {
   if (!matchesWindowName(afterContextSwitch.focus.name, "Quick Capture")) {
     throw new Error(`WebDriver context inspection disturbed native focus: ${JSON.stringify(afterContextSwitch)}`);
   }
-  const readDomFocus = () => browser.execute(() => {
-    const editor = document.querySelector(".capture-shell textarea");
-    return {
-      documentHasFocus: document.hasFocus(),
-      editorExists: Boolean(editor),
-      editorIsActive: document.activeElement === editor,
-      activeTag: document.activeElement?.tagName ?? "",
-      activeClass: document.activeElement?.getAttribute("class") ?? "",
-      textareas: document.querySelectorAll("textarea").length,
-      shellExists: Boolean(document.querySelector(".capture-shell")),
-    };
-  });
+  // The capture bullet is the shared block editor (textarea or CodeMirror,
+  // whichever the editor setting mounts); its driver reads focus, text and caret.
+  const CAPTURE = ".capture-shell";
+  const readDomFocus = () => withEditor(browser, CAPTURE, editor => ({
+    documentHasFocus: document.hasFocus(),
+    editorExists: Boolean(editor),
+    editorKind: editor?.kind ?? "",
+    editorIsActive: Boolean(editor?.focused),
+    activeTag: document.activeElement?.tagName ?? "",
+    activeClass: document.activeElement?.getAttribute("class") ?? "",
+    shellExists: Boolean(document.querySelector(".capture-shell")),
+  }));
   const domFocus = await readDomFocus();
   if (!domFocus.documentHasFocus || !domFocus.editorExists || !domFocus.editorIsActive) {
     throw new Error(`Quick Capture bullet lacked first-show DOM focus: ${JSON.stringify({ webviews, captureWindows, domFocus })}`);
@@ -259,12 +268,14 @@ try {
   if (!settledDomFocus.documentHasFocus || !settledDomFocus.editorIsActive) {
     throw new Error(`Quick Capture bullet did not retain focus after first paint: ${JSON.stringify(settledDomFocus)}`);
   }
-  const activeAutocomplete = () => browser.execute(() => ({
+  // Value and caret are read only from the focused capture editor: an
+  // unfocused one reports null, as the active-element read always did.
+  const activeAutocomplete = () => withEditor(browser, CAPTURE, editor => ({
     active: document.querySelector(".autocomplete .ac-item.active .ac-label")?.textContent?.trim() ?? "",
     labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
-    value: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null,
-    selectionStart: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.selectionStart : null,
-    selectionEnd: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.selectionEnd : null,
+    value: editor?.focused ? editor.value : null,
+    selectionStart: editor?.focused ? editor.start : null,
+    selectionEnd: editor?.focused ? editor.end : null,
   }));
   const expectActiveAutocomplete = async (expected, message) => {
     let last = null;
@@ -331,9 +342,8 @@ try {
     for (const marker of [...markers, "DONE", ""]) {
       await browser.keys(["Control", "Enter"]);
       const expected = `${marker ? `${marker} ` : ""}buy milk`;
-      await browser.waitUntil(() => browser.execute(wanted =>
-        document.activeElement instanceof HTMLTextAreaElement &&
-        document.activeElement.value.split("\n")[0] === wanted, expected), {
+      await browser.waitUntil(() => withEditor(browser, CAPTURE, (editor, wanted) =>
+        Boolean(editor?.focused) && editor.value.split("\n")[0] === wanted, expected), {
         timeout: 5_000, timeoutMsg: `Quick Capture workflow did not reach ${expected}`,
       });
     }
@@ -367,6 +377,8 @@ try {
   // UI-CAPTURE-NO-PAGE-INVENTORY: completing page references in the capture
   // window must not raise an error (it once asked for the page inventory the
   // capture WebView is refused, and showed "Couldn't refresh the page list").
+  // UI-CAPTURE-NO-GRAPH-READ-TOASTS: nor for the page icons of the references
+  // the editor renders ("Could not load page icons").
   const captureErrors = await watchErrorToasts(browser, 1_000);
   if (captureErrors.length) throw new Error(`Quick Capture showed error toasts: ${JSON.stringify(captureErrors)}`);
   if (process.env.E2E_CAPTURE_REFUSAL === "1") {
@@ -395,7 +407,7 @@ try {
     reopen.unref();
     await waitForWindow("Quick Capture", 10_000);
     await browser.switchToWindow(captureHandle);
-    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".capture-shell textarea")].some(editor => editor.value.includes("capture-focus-ok"))), {
+    await browser.waitUntil(() => withEditors(browser, CAPTURE, editors => editors.some(editor => editor.value.includes("capture-focus-ok"))), {
       timeout: 10_000, timeoutMsg: "Escape discarded refused capture text",
     });
     await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-refused-kept.png"));
@@ -559,9 +571,8 @@ try {
   await browser.$("//div[contains(@class, 'block-content') and normalize-space(.)='capture focus fixture']").click();
   for (const marker of ["TODO", "DOING", "DONE"]) {
     await browser.keys(["Control", "Enter"]);
-    await browser.waitUntil(() => browser.execute(wanted =>
-      document.activeElement instanceof HTMLTextAreaElement &&
-      document.activeElement.value.split("\n")[0] === `${wanted} capture focus fixture`, marker), {
+    await browser.waitUntil(() => withEditor(browser, "", (editor, wanted) =>
+      Boolean(editor?.focused) && editor.value.split("\n")[0] === `${wanted} capture focus fixture`, marker), {
       timeout: 5_000, timeoutMsg: `routed Home page did not cycle to ${marker}`,
     });
   }
@@ -574,8 +585,7 @@ try {
   await browser.switchToWindow(restartedCapture);
   // The prior page-completion probe left an unfiled query. Select its text
   // before replacing it, rather than letting it contaminate the marker check.
-  await browser.waitUntil(() => browser.execute(() =>
-    document.activeElement instanceof HTMLTextAreaElement), {
+  await browser.waitUntil(() => withEditor(browser, CAPTURE, editor => Boolean(editor?.focused)), {
     timeout: 5_000, timeoutMsg: "reopened capture did not focus its editor",
   });
   await browser.keys(["Control", "a"]);
@@ -664,6 +674,124 @@ try {
   });
   if (filed.split(CANCELLED).length !== 2) throw new Error("the capture after a cancelled composition was filed more than once");
   console.log("PASS: Quick Capture filed its text after a composition cancelled by losing native focus (synthetic composition events, real focus loss)");
+
+  // UI-CAPTURE-TYPED-SPELLING: a title typed in another spelling of an
+  // existing page's name (`home` for pages/Home.md) files into that page's
+  // file, as a link with that text opens it, and creates no second file.
+  const SPELLED = "spelled-title-ok";
+  const homePath = `${GRAPH}/pages/Home.md`;
+  const spelledReopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(spelledReopen, 5_000);
+  spelledReopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(restartedCapture);
+  await expectAutocompleteValue("", "the capture editor was not empty after the last filing");
+  await browser.$(".capture-title").click();
+  for (const key of "home") await browser.keys([key]);
+  await browser.waitUntil(() => browser.execute(() => document.querySelector(".capture-title")?.value === "home"), {
+    timeout: 5_000, timeoutMsg: "the capture title did not take the typed spelling",
+  });
+  await browser.keys(["Enter"]);
+  for (const key of SPELLED) await browser.keys([key]);
+  await expectAutocompleteValue(SPELLED, "the capture editor did not take the text after the title");
+  await browser.keys(["Control", "Shift", "Enter"]);
+  const home = await waitForFileText(homePath, text => text.includes(SPELLED)).catch(async (error) => {
+    const page = await browser.execute(() => document.body.innerText).catch(() => "?");
+    throw new Error(`${error.message}; capture window text: ${JSON.stringify(page)}`);
+  });
+  if (home.split(SPELLED).length !== 2) throw new Error("the capture to another spelling of Home was filed more than once");
+  if (!home.includes("DONE capture focus fixture")) throw new Error("the capture to another spelling of Home lost the page's earlier text");
+  const strays = fs.readdirSync(`${GRAPH}/pages`).filter(name => name !== "Home.md" && name.toLowerCase() === "home.md");
+  if (strays.length) throw new Error(`the capture to another spelling created a second file: ${JSON.stringify(strays)}`);
+  console.log("PASS: a capture titled with another spelling of an existing page filed into that page's file");
+
+  // UI-CAPTURE-UNPROVED-RETRY: a capture lands in a
+  // page whose file changed outside, so its save is refused and the text stays
+  // in the capture window. The user takes the disk version, which drops the
+  // captured block. Filing the same capture again must not report it saved:
+  // the window keeps the text, says it cannot confirm, and offers a new
+  // capture, which then files the text exactly once.
+  {
+    const UNPROVED = "unproved-capture-ok";
+    const OUTSIDE = "written outside the app";
+    const captureText = () => browser.execute(() => document.querySelector(".capture-shell")?.textContent ?? "");
+    const showCapture = async () => {
+      const again = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+      await waitForForwarderExit(again, 5_000);
+      again.unref();
+      await waitForWindow("Quick Capture", 10_000);
+      await browser.switchToWindow(restartedCapture);
+    };
+    await browser.switchToWindow(restartedMain);
+    await openPageByName(browser, "Home");
+    const outside = `${fs.readFileSync(homePath, "utf8").trimEnd()}\n- ${OUTSIDE}\n`;
+    await browser.$(".main-content .ls-block .block-content-wrapper").click();
+    await browser.keys(["End"]);
+    for (const key of " typed") await browser.keys([key]);
+    fs.writeFileSync(homePath, outside);
+    await browser.$(".conflict-banner").waitForExist({ timeout: 15_000, timeoutMsg: "the outside write under typing did not conflict" });
+    await browser.keys(["Escape"]);
+
+    await showCapture();
+    await browser.$(".capture-title").click();
+    await browser.keys(["Control", "a"]);
+    for (const key of "Home") await browser.keys([key]);
+    await browser.waitUntil(() => browser.execute(() => document.querySelector(".capture-title")?.value === "Home"), {
+      timeout: 5_000, timeoutMsg: "the capture title did not take the page name",
+    });
+    await browser.keys(["Enter"]);
+    for (const key of UNPROVED) await browser.keys([key]);
+    await expectAutocompleteValue(UNPROVED, "the capture editor did not take the text");
+    await browser.keys(["Control", "Shift", "Enter"]);
+    await browser.waitUntil(async () => (await captureText()).includes("text kept"), {
+      timeout: 15_000, timeoutMsg: "a capture into a conflicted page did not report its text kept",
+    });
+    if (fs.readFileSync(homePath, "utf8") !== outside) throw new Error("a capture into a conflicted page changed its file");
+
+    await browser.switchToWindow(restartedMain);
+    // A page with a file is resolved in its in-page review: keep the disk side everywhere, then apply.
+    const review = '.main-content .page-conflict[data-source="live-save"]';
+    if (!(await browser.$(review).isExisting())) await browser.$(".conflict-banner button").click();
+    // The review may have been read before the capture reached the page's draft: then the first Apply only
+    // refreshes the comparison, and the choice is made again.
+    let applies = 0;
+    for (; applies < 3 && await browser.$(".conflict-banner").isExisting(); applies++) {
+      await browser.$(`${review} .sync-merge-toolbar-actions`).waitForExist({ timeout: 15_000, timeoutMsg: "the conflict review offered no choices" });
+      await browser.$(`${review} .page-conflict-foot .settings-btn-primary`).waitForEnabled({ timeout: 15_000, timeoutMsg: "the conflict review never became ready" });
+      const sides = await browser.$$(`${review} .sync-merge-toolbar-actions button`);
+      if (sides.length !== 4) throw new Error(`the conflict review offers ${sides.length} whole-page choices, expected 4`);
+      await sides[3].click();
+      await browser.$(`${review} .page-conflict-foot .settings-btn-primary`).click();
+      try { await browser.$(".conflict-banner").waitForExist({ timeout: 8_000, reverse: true }); } catch {}
+    }
+    if (await browser.$(".conflict-banner").isExisting()) throw new Error(`taking the disk version left the conflict after ${applies} applies`);
+    console.log(`UNPROVED: the disk version was taken after ${applies} apply(s)`);
+    await browser.waitUntil(() => browser.execute((gone, kept) => {
+      const text = document.querySelector(".main-content .page-blocks")?.textContent ?? "";
+      return !text.includes(gone) && text.includes(kept);
+    }, UNPROVED, OUTSIDE), { timeout: 10_000, timeoutMsg: "the page did not show the disk version" });
+
+    await showCapture();
+    await browser.$(".capture-title").click();
+    await browser.keys(["Control", "Shift", "Enter"]);
+    await browser.waitUntil(async () => (await captureText()).includes("can't confirm this capture was saved"), {
+      timeout: 15_000, timeoutMsg: `the retried capture did not say it is unconfirmed; window=${JSON.stringify(await captureText())} file=${JSON.stringify(fs.readFileSync(homePath, "utf8"))}`,
+    });
+    if (!(await withEditors(browser, CAPTURE, (editors, wanted) => editors.some(editor => editor.value.includes(wanted)), UNPROVED))
+      && !(await captureText()).includes(UNPROVED)) throw new Error("the unconfirmed capture lost its text");
+    if (fs.readFileSync(homePath, "utf8") !== outside) throw new Error("the unconfirmed retry changed the file");
+    await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-unproved.png"));
+    await browser.$("[data-testid=capture-start-new]").click();
+    await browser.waitUntil(async () => (await captureText()).includes("Text kept for a new capture"), {
+      timeout: 5_000, timeoutMsg: "Start a new capture did not explain itself",
+    });
+    await browser.$(".capture-title").click();
+    await browser.keys(["Control", "Shift", "Enter"]);
+    const refiled = await waitForFileText(homePath, text => text.includes(UNPROVED));
+    if (refiled.split(UNPROVED).length !== 2) throw new Error("the new capture was filed more than once");
+    if (!refiled.includes(OUTSIDE)) throw new Error("the new capture lost the text written outside");
+    console.log("PASS: a capture dropped by taking the disk version stayed in the capture window, said it is unconfirmed, and a new capture filed it once");
+  }
   console.log("PASS: a window-manager close request hid Quick Capture with its draft and the next --capture showed it again");
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
 } catch (error) {

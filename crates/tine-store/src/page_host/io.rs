@@ -41,6 +41,55 @@ pub(super) enum Witness {
     Unsupported,
 }
 
+/// A paired source's durability witness (`HostIo::source_witnessed`): the
+/// one producer of source evidence, mapped to D/W/U by
+/// `Host::source_original`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SourceWitness {
+    /// One handle read, flushed and reread the file unchanged, every
+    /// directory from its own up to the graph root synced, and the path
+    /// still names that file afterwards.
+    Durable,
+    /// As `Durable`, but a directory sync reported `Unsupported` (NFS,
+    /// FUSE, Android shared storage), or the chain is a Windows one, where a
+    /// graph directory sync is no flush: the save path's weak witness.
+    Weak,
+    /// A step failed: custody is kept.
+    Failed(WitnessStep),
+}
+
+/// The witness step that failed (one `storage_diag` record each).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum WitnessStep {
+    /// The file or a directory of its chain failed the graph containment
+    /// check.
+    Containment,
+    /// The file could not be opened (Windows: for writing, which its flush
+    /// needs: a read-only attribute, an ACL or a sharing denial).
+    Open,
+    /// The first read or its metadata call failed.
+    Read,
+    /// The file's own flush failed.
+    FileSync,
+    /// The reread or its metadata call failed.
+    Reread,
+    /// The bytes were not the expected ones, or the file changed between
+    /// the read and the reread.
+    Changed,
+    /// A directory sync of the chain failed.
+    DirectorySync,
+    /// After the chain sync the path no longer names the same unchanged
+    /// file.
+    Replaced,
+}
+
+impl WitnessStep {
+    /// The step's `storage_diag` counter (`SOURCE_WITNESS_STEPS` names it).
+    pub(super) fn index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ErrorKind {
     Io,
@@ -71,84 +120,107 @@ pub(super) struct MoveResult {
 /// every draft effect fails without touching the filesystem. `unreadable`
 /// names vehicles launch could not quarantine; they stay in place untouched.
 /// `unsaved` is the persistent indicator at an open (SPEC-s2 §4.11, S9):
-/// the pages the host holds whose text is not on disk yet.
+/// the pages the host holds whose text is not on disk yet. `kept` counts the
+/// originals a cancelled rename kept (`Order::kept`), which the window's
+/// recovery panel lists and restores.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftStatus {
     pub(crate) unavailable: Option<String>,
     pub(crate) unreadable: Vec<String>,
     pub(crate) unsaved: Vec<UnsavedPage>,
-    /// The sources a cancelled rename kept the original text of, which the
-    /// window may restore (`Host::restorable_list`). Page mail carries the
-    /// same list whenever it changes in the session.
-    pub(crate) restorable: RestorableList,
+    pub(crate) kept: usize,
 }
 
-/// The host's restorable sources at one `generation` of the order's pairs
-/// (`Order::restorable_generation`): a window keeps the newest list it was
-/// given, so a list replayed late never replaces a newer one.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestorableList {
-    pub(crate) generation: u64,
-    pub(crate) sources: Vec<RestorableSource>,
-}
-
-/// A rename's source whose pair a Use Disk cancelled after the source was
-/// removed: its original text is only in the rename's recovery draft
-/// (`Order::restorable_sources`), and `page_restore_source` restores it.
-/// A restore this host finished stays listed as `Restored` (no text) until
-/// the window reloads, so the window always learns how it ended.
+/// One original a cancelled rename kept (`PageHost::kept_originals`): the
+/// row the recovery panel shows, addressed by (`key`, `origin`).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RestorableSource {
-    /// The host's key, which `page_restore_source` names.
+pub struct KeptOriginal {
+    /// The source page's host key (opaque to the window).
     pub(crate) key: String,
-    /// Its file, relative to the graph root.
+    /// The source record's write sequence (`Pair::origin`).
+    pub(crate) origin: u64,
+    /// The source's file, relative to the graph root.
     pub(crate) path: String,
-    /// The kept original text (lossy UTF-8), for the panel's Copy draft.
-    pub(crate) text: String,
-    /// The host's record of the latest restore of this source, if any.
-    pub(crate) state: Option<RestoreState>,
+    /// The page the restored file would be, as its creating save names it;
+    /// None when the graph's settings no longer make the file a page.
+    pub(crate) name: Option<String>,
+    /// Whether it would be a page or a journal day.
+    pub(crate) kind: tine_core::model::PageKind,
+    /// The kept text's length in bytes.
+    pub(crate) len: usize,
 }
 
-/// What happened to a restore the window asked for (`Order::restores`), the
-/// one answer the recovery panel shows.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum RestoreState {
-    /// Admitted: the page holds the original text and its guarded create
-    /// runs, retrying as any failed save does. `problem` is why its latest
-    /// attempt did not publish (another file claims the page, or a failed
-    /// step), until one publishes.
-    Restoring { problem: Option<RestoreRefusal> },
-    /// Its create published the original text and ended the pair.
-    Restored,
-    /// Not restored, and nothing runs: refused at admission, or the slot
-    /// was taken before the create (the page then shows that file's text).
-    /// The original text stays kept; Restore may be asked again.
-    Refused(RestoreRefusal),
+/// The check a restore's locked step could not make (`RestoreRefusal`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RestoreStep {
+    /// Reading the page's slot.
+    SlotRead,
+    /// Looking for another spelling of the page.
+    TwinProbe,
 }
 
-/// Why a restore was refused, or why its latest attempt did not publish
-/// (flattened into its state: `{kind, reason, file?, operation?, osError?}`).
+/// Why a kept original was not restored (`PageHost::restore_kept`). Each one
+/// changes nothing: the original stays kept.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "reason", rename_all = "camelCase")]
 pub enum RestoreRefusal {
-    /// A file exists again at the source's path.
-    Occupied,
-    /// Another file claims the page (a twin spelling or extension, or a
-    /// file whose title names it).
-    Claimed { file: String },
-    /// The page holds unsaved text.
+    /// It is no longer kept (restored, released, or another original now).
+    NotKept,
+    /// The graph's settings no longer make its file a page.
+    Ineligible,
+    /// A window holds the page, or the page its text names.
+    Held {
+        /// The page's name.
+        name: String,
+    },
+    /// The page has unsaved input (a recovered draft, admitted input).
     Unsaved,
-    /// A filesystem step failed: its platform step and OS error (I-5:
-    /// never a path).
+    /// A file is at its slot.
+    Occupied,
+    /// Another file is already this page.
+    Twin {
+        /// That file, relative to the graph root.
+        file: String,
+    },
+    /// A check could not be made.
     Failed {
+        /// Which check.
+        step: RestoreStep,
+        /// The file operation that failed, when known.
         operation: Option<&'static str>,
+        /// The OS error code, when there is one.
         #[serde(rename = "osError")]
         os_error: Option<i32>,
     },
+    /// Another window session, or a host that is down or stopping.
+    Unavailable,
+}
+
+/// What became of a restore (`PageHost::restore_kept`), as develop's host
+/// operation waiter answers an admitted operation.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RestoreOutcome {
+    /// The host's own save published the original, and the index has it.
+    Restored,
+    /// Refused before anything was written.
+    Refused(RestoreRefusal),
+    /// Other content reached the page before that publication (a Use Disk
+    /// took the file's bytes): the original stays kept while its pair
+    /// holds it.
+    Superseded,
+    /// The page cannot be saved yet (a conflict, or saves that keep
+    /// failing). `held`: a window holds the page now, and its editor says
+    /// so.
+    Unwritten {
+        /// A window holds the page now.
+        held: bool,
+    },
+    /// Not known within the wait.
+    Uncertain,
 }
 
 /// A page whose text is not on disk yet, and why (STEP3 §9, B-QA).
@@ -180,8 +252,21 @@ pub(super) trait HostIo {
     fn folded_keys(&self, _key: &str) -> Vec<String> {
         Vec::new()
     }
-    /// Best effort only; it is not a publication or promise.
-    fn graph_launch(&mut self, _pages: &std::collections::BTreeSet<String>) {}
+    /// Best effort only; it is not a publication or promise. Launch's one
+    /// directory pass also witnesses the decided `sources` (page, the bytes
+    /// launch read, each its pair's preimage): every source's file steps
+    /// first, one handle at a time, then one sync of each directory of
+    /// `pages` and `sources` up to the graph root, then each source's final
+    /// metadata check. The answer per source is `source_witnessed`'s.
+    fn graph_launch(
+        &mut self,
+        _pages: &std::collections::BTreeSet<String>,
+        sources: &[(String, Text)],
+    ) -> Vec<SourceWitness> {
+        (sources.iter())
+            .map(|(page, bytes)| self.source_witnessed(page, bytes))
+            .collect()
+    }
     /// Release only this save's unpublished temporary vehicle at completion.
     fn page_finish(&mut self, _page: &str) {}
     fn read_page(&mut self, page: &str) -> IoResult<Text>;
@@ -199,12 +284,23 @@ pub(super) trait HostIo {
     /// receiver's check, which compares its bytes): it is still the file
     /// this host's own save published and directory-synced, unchanged
     /// since. Another program's bytes carry no witness, and a launch has
-    /// none. Adapter memory only. Production (`ProductionIo::durable_page`)
-    /// reads no bytes and has no weak-graph case: true only while the
-    /// file's metadata still matches the stamp its own publication took,
-    /// on every graph. The model's weak profile certifies on bytes
-    /// instead; only the conformance ledger implements that.
+    /// none. Adapter memory only. Production has no weak-graph exemption:
+    /// on a graph that reports no durability it still answers only from
+    /// its own publication, which is stricter than the model's weak
+    /// profile (the model certifies on bytes there), never weaker; only
+    /// the conformance ledger implements the model's exemption.
     fn durable_page(&mut self, page: &str) -> bool;
+    /// A durability witness for a paired source's current file, expected
+    /// to hold `bytes` (`Host::source_original` asks only when those are its
+    /// pair's preimage): one handle reads the file, takes its metadata,
+    /// flushes it, rereads it and takes its metadata again (equal bytes and
+    /// stamps); then every directory from the file's own up to the graph
+    /// root is synced, root first; then the path must still name that
+    /// unchanged file. Asked anew at every custody decision, so a failed
+    /// step is never forgotten and an own save that synced only the page's
+    /// own directory pays no ancestor's debt. Every failure gets one
+    /// `storage_diag` record naming its step.
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> SourceWitness;
     /// The host no longer needs `page`'s durability witness (it is no
     /// receiver of an unresolved pair): drop it, so the adapter's witnesses
     /// stay bounded by the unresolved pairs and are not one per page ever

@@ -384,16 +384,26 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-title);
 }
 .workspace-switcher-btn:disabled { opacity: .55; cursor: default; }
+/* The toolbar's workspace glyph (ToolbarActionIcon), grey like the other toolbar icons (GH #1024); the
+   sidebar's labelled switcher fills it with the link colour. */
 .workspace-switcher-mark {
   display: grid;
   place-items: center;
-  width: 17px;
-  height: 17px;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 1.7px solid currentColor;
   border-radius: 4px;
-  background: var(--link-color);
-  color: var(--bg-primary);
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 700;
+}
+.workspace-switcher-btn .workspace-switcher-mark {
+  width: 17px;
+  height: 17px;
+  border: 0;
+  background: var(--link-color);
+  color: var(--bg-primary);
 }
 .workspace-switcher-name {
   overflow: hidden;
@@ -402,10 +412,6 @@ html[data-system-insets="native-viewport"] {
   font-size: 12px;
 }
 .workspace-switcher-caret { opacity: .7; }
-.workspace-switcher-compact .workspace-switcher-btn {
-  gap: 3px;
-  padding-inline: 5px;
-}
 .workspace-quick-menu,
 .workspace-menu {
   position: absolute;
@@ -1458,6 +1464,31 @@ html[data-system-insets="native-viewport"] {
   initial-value: 0;
 }
 
+/* The title's actions are one group: on the title's row when all of it fits there (its gap is the row's, so it
+   fits exactly when its buttons would), else as one group on the next row (GH #1025). A group wider than a row
+   wraps inside itself. One rule says when they show: on a device with hover, while the pointer or focus is in the title row; without
+   hover, always. Each action takes that answer as its --reveal (which does not inherit); a state that must stay
+   in view (a starred page, a shown table, an open menu) sets --reveal: 1 below. */
+.page-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: inherit;
+}
+/* A journal's group (it holds the carry buttons) ends a row it shares and starts a row of its own: the row's free
+   space goes after the item before the group (the title, or Today's task summary), which stays where it was. */
+.page-title-row:has(> .page-title-actions > .page-carry-actions) > .page-title-main > :last-child { margin-inline-end: auto; }
+.page-title-actions > :is(.page-carry-actions, .tag-table-toggle, .page-actions-trigger, .page-share-btn, .fav-star) {
+  --reveal: var(--title-actions-shown, 0);
+}
+.page-title-row:hover .page-title-actions,
+.page-title-row:focus-within .page-title-actions {
+  --title-actions-shown: 1;
+}
+@media (hover: none), (pointer: coarse) {
+  .page-title-actions { --title-actions-shown: 1; }
+}
+
 .fav-star {
   background: none;
   border: none;
@@ -1474,12 +1505,8 @@ html[data-system-insets="native-viewport"] {
   height: 18px;
 }
 
-.page-title-row:hover .fav-star,
-.fav-star.active {
-  --reveal: 1;
-}
 
-/* The title's Share button: the star's hover pair, visible without hover on coarse pointers. */
+/* The title's Share button: the star's hover pair. */
 .page-share-btn {
   background: none;
   border: none;
@@ -1495,10 +1522,6 @@ html[data-system-insets="native-viewport"] {
   width: 18px;
   height: 18px;
 }
-.page-title-row:hover .page-share-btn,
-.page-share-btn:focus-visible {
-  --reveal: 1;
-}
 .page-share-btn:hover,
 .page-share-btn:focus-visible {
   color: var(--text-primary);
@@ -1508,7 +1531,6 @@ html[data-system-insets="native-viewport"] {
     min-width: 36px;
     min-height: 36px;
     justify-content: center;
-    --reveal: 1;
   }
 }
 
@@ -1531,11 +1553,6 @@ html[data-system-insets="native-viewport"] {
   -webkit-user-select: none;
   user-select: none;
 }
-.page-title-row:hover .page-actions-trigger,
-.page-actions-trigger:focus-visible,
-.page-actions-trigger[aria-expanded="true"] {
-  --reveal: 1;
-}
 .page-actions-trigger:hover,
 .page-actions-trigger:focus-visible {
   color: var(--text-primary);
@@ -1544,7 +1561,6 @@ html[data-system-insets="native-viewport"] {
   .page-actions-trigger {
     min-width: 36px;
     min-height: 36px;
-    --reveal: 1;
   }
 }
 .tag-table-toggle {
@@ -1560,8 +1576,9 @@ html[data-system-insets="native-viewport"] {
   -webkit-user-select: none;
   user-select: none;
 }
-.page-title-row:hover .tag-table-toggle,
-.tag-table-toggle.active {
+.fav-star.active,
+.tag-table-toggle.active,
+.page-actions-trigger[aria-expanded="true"] {
   --reveal: 1;
 }
 .tag-table-toggle:hover,
@@ -2592,7 +2609,7 @@ html[data-system-insets="native-viewport"] {
 .sync-merge-preblock select {
   margin: 0 4px;
 }
-/* Carry-over action buttons, right-aligned next to a journal title. Like the other
+/* Carry-over action buttons next to a journal title (their group is right-aligned). Like the other
    title-row hover reveals (star, share, actions, tag table) they fade in 0.1s through
    --reveal (see @property --reveal above), never through a transition on `opacity`. */
 .page-carry-actions {
@@ -2601,7 +2618,6 @@ html[data-system-insets="native-viewport"] {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-inline-start: auto;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -2615,15 +2631,6 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   opacity: 1;
   transition: opacity 0.12s, color 0.12s, border-color 0.12s;
-}
-.page-title-row:hover .page-carry-actions,
-.page-title-row:focus-within .page-carry-actions {
-  --reveal: 1;
-}
-@media (hover: none) {
-  .page-carry-actions {
-    --reveal: 1;
-  }
 }
 .carry-btn:hover {
   color: var(--link-color, var(--text-primary));
@@ -3352,6 +3359,8 @@ html[data-system-insets="native-viewport"] {
 .page-section {
   padding-bottom: 18px;
 }
+/* A CommentSurface (embed, query or reference group, sidebar item) has no page spacing (GH #992). */
+.comment-surface > .page-section { padding-bottom: 0; }
 
 .page-section + .page-section {
   margin-top: 6px;
@@ -3605,12 +3614,18 @@ html[data-system-insets="native-viewport"] {
      made a blank block jump +4px on click (issue #12 residual). Match 30px so the
      rendered box == the editor box whether or not the block has content. */
   min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
-  /* calt OFF. Inter's contextual alternates (calt) drew `->` as an arrow, but the
-     SAME feature contextually re-positions the asterisk (`*(` centered vs `)*`
-     raised — a visible glitch while editing `*(…)*`). Arrows now come from an
-     explicit render-time replacement (render/typography.ts), which also works in
-     export, so we don't need the font feature. `no-contextual` disables calt while
-     keeping normal (fi/fl) ligatures. */
+}
+
+/* calt OFF wherever a block's text is shown or edited, in this one rule (GH #1019: the
+   CodeMirror editor host sits outside `.block-content` and was left out, so its `**`
+   markers sat at different heights). Inter's contextual alternates (calt) drew `->`
+   as an arrow, but the SAME feature contextually re-positions the asterisk (`*(`
+   centered vs `)*` raised). Arrows come from the Typographic replacements setting
+   (render/typography.ts), which also works in export, never from the font.
+   `no-contextual` disables calt while keeping normal (fi/fl) ligatures. */
+.block-content,
+.block-editor,
+.cm6-block-editor {
   font-variant-ligatures: no-contextual;
 }
 
@@ -4201,9 +4216,6 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
   color: var(--text-primary);
   padding: var(--ls-block-content-pad-y) 0;
   margin: 0;
-  /* calt OFF while editing too (see .block-content): consistent asterisk heights,
-     and the raw `->` stays raw in the textarea (the arrow glyph appears on render). */
-  font-variant-ligatures: no-contextual;
   overflow: hidden;
   display: block;
 }
@@ -7678,9 +7690,6 @@ img.emoji {
 .query-group.query-group-no-page {
   margin-bottom: 0;
 }
-.query-group-no-page > .live-ref-group > .comment-surface > .page-section {
-  padding-bottom: 0;
-}
 .link-depth-warning {
   margin: 2px 0;
   font-size: 13px;
@@ -7808,7 +7817,8 @@ html.tine-embed-shading-accent .embed-block {
    bullet (standing for the host), collapse toggle, zoom/sidebar actions, and
    editor surface. Removing the wrapper inset puts that surviving bullet on the
    ordinary outline column. Its descendant guide is slightly heavier to identify
-   the embedded boundary without a box. */
+   the embedded boundary without a box. Only the host's own embed roots (GH #1002),
+   weighing one class so Document mode and Bullet Threading still win. */
 .block-embed-host > .block-main > .block-content-wrapper > .macro-host {
   padding: 0;
 }
@@ -7817,10 +7827,10 @@ html.tine-embed-shading-accent .embed-block {
   padding-inline-start: 0;
   margin: 0;
 }
-.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-main > .block-controls .bullet {
+:where(.block-embed-host > .block-main > .block-content-wrapper > .macro-host > .embed-block > .live-ref-group > .comment-surface > .page-section > .page-blocks > .ls-block > .block-main > .block-controls) .bullet {
   background: var(--tine-embed-accent, var(--block-embed-accent));
 }
-.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
+:where(.block-embed-host > .block-main > .block-content-wrapper > .macro-host > .embed-block > .live-ref-group > .comment-surface > .page-section > .page-blocks > .ls-block > .block-children-container) > .block-children {
   border-inline-start-width: 2px;
   border-inline-start-color: var(--tine-embed-accent, var(--block-embed-accent));
 }

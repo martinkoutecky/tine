@@ -12,7 +12,8 @@ type Rule = { selectors: string[]; body: string };
 function rulesOf(src: string): Rule[] {
   const out: Rule[] = [];
   for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    out.push({ selectors: m[1].split(",").map((s) => s.trim().replace(/\s+/g, " ")), body: m[2] });
+    // Split the list at top-level commas only, so `a > :is(b, c)` stays one selector.
+    out.push({ selectors: m[1].split(/,(?![^(]*\))/).map((s) => s.trim().replace(/\s+/g, " ")), body: m[2] });
   }
   return out;
 }
@@ -32,6 +33,11 @@ function baseRule(cls: string): string {
   return r?.body ?? "";
 }
 
+const KEPT: Array<[string, string]> = [
+  [".fav-star.active", "starred page"],
+  [`.page-actions-trigger[aria-expanded="true"]`, "menu open"],
+  [".tag-table-toggle.active", "table shown"],
+];
 const FADING = [".page-carry-actions", ".fav-star", ".page-share-btn", ".page-actions-trigger", ".tag-table-toggle"];
 
 // Martin's recording (2026-10-29, development on Linux; the flicker is gone with TINE_GPU=0): moving
@@ -71,34 +77,77 @@ describe("title-row hover reveals fade through --reveal, not a transition on opa
     }
   });
 
-  // Every way these controls are revealed still reveals them (end states unchanged).
-  const REVEALS: Array<[string, string]> = [
-    [".page-title-row:hover .page-carry-actions", "pointer over the title row"],
-    [".page-title-row:focus-within .page-carry-actions", "keyboard focus in the title row"],
-    [".page-carry-actions", "touch (hover: none)"],
-    [".page-title-row:hover .fav-star", "pointer over the title row"],
-    [".fav-star.active", "starred page"],
-    [".page-title-row:hover .page-share-btn", "pointer over the title row"],
-    [".page-share-btn:focus-visible", "keyboard focus"],
-    [".page-share-btn", "coarse pointer"],
-    [".page-title-row:hover .page-actions-trigger", "pointer over the title row"],
-    [".page-actions-trigger:focus-visible", "keyboard focus"],
-    [`.page-actions-trigger[aria-expanded="true"]`, "menu open"],
-    [".page-actions-trigger", "coarse pointer"],
-    [".page-title-row:hover .tag-table-toggle", "pointer over the title row"],
-    [".tag-table-toggle.active", "table shown"],
-  ];
-  it.each(REVEALS)("%s sets --reveal: 1 (%s)", (selector) => {
+  // Every way these controls are revealed still reveals them (end states unchanged): the group's one rule
+  // (below) for pointer, focus and touch, and the states that keep one action in view.
+  it.each(KEPT)("%s sets --reveal: 1 (%s)", (selector) => {
     const shown = RULES.filter((r) => r.selectors.includes(selector) && declaration(r.body, "--reveal") === "1");
     expect(shown.length).toBeGreaterThan(0);
   });
+});
 
-  it("the touch cases live inside the matching media queries", () => {
-    expect(css).toMatch(/@media \(hover: none\)\s*\{\s*\.page-carry-actions\s*\{\s*--reveal:\s*1;/);
-    expect(css).toMatch(/@media \(pointer: coarse\)\s*\{\s*\.page-share-btn\s*\{[^}]*--reveal:\s*1;/);
-    expect(css).toMatch(/@media \(pointer: coarse\)\s*\{\s*\.page-actions-trigger\s*\{[^}]*--reveal:\s*1;/);
+// GH #1025: on a phone the star and the Tables chip appeared only after a tap synthesized hover, while Share and
+// the menu showed, because each action decided alone when to show (five rules, two touch conditions).
+describe("one rule decides when the page title's actions show (GH #1025)", () => {
+  const SHOWN = "--title-actions-shown";
+  it("the group shows its actions while the pointer or focus is in the title row, and always without hover", () => {
+    const deciders = RULES.filter((r) => declaration(r.body, SHOWN) !== null);
+    expect(deciders.flatMap((r) => r.selectors).sort()).toEqual([
+      ".page-title-actions",
+      ".page-title-row:focus-within .page-title-actions",
+      ".page-title-row:hover .page-title-actions",
+    ]);
+    expect(deciders.every((r) => declaration(r.body, SHOWN) === "1")).toBe(true);
+    expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\)\s*\{\s*\.page-title-actions\s*\{\s*--title-actions-shown:\s*1;\s*\}\s*\}/);
   });
 
+  it("every action takes the group's answer, and no action reveals itself on hover, focus or touch", () => {
+    const take = RULES.filter((r) => declaration(r.body, "--reveal") === `var(${SHOWN}, 0)`);
+    expect(take).toHaveLength(1);
+    const selector = take[0].selectors.join(", ");
+    expect(take[0].selectors).toHaveLength(1);
+    for (const action of FADING) expect(selector, action).toContain(action);
+    expect(selector.startsWith(".page-title-actions > :is(")).toBe(true);
+    const kept = new Set(KEPT.map(([selector]) => selector));
+    for (const rule of RULES) {
+      if (declaration(rule.body, "--reveal") !== "1") continue;
+      for (const sel of rule.selectors) {
+        if (FADING.some((f) => subject(sel).includes(f))) expect(kept.has(sel), sel).toBe(true);
+      }
+    }
+  });
+
+  it("the actions are one wrapping flex group, not layout-neutral", () => {
+    expect(declaration(baseRule(".page-title-actions"), "display")).toBe("flex");
+    expect(declaration(baseRule(".page-title-actions"), "flex-wrap")).toBe("wrap");
+    // The group is exactly as wide as its buttons would be as items of the row, so it leaves the title's row at
+    // the width where the first of them would have.
+    for (const rule of RULES.filter((r) => r.selectors.some((sel) => subject(sel) === ".page-title-actions")))
+      expect(declaration(rule.body, "gap") ?? "inherit").toBe("inherit");
+    for (const rule of RULES.filter((r) => r.selectors.some((sel) => subject(sel) === ".page-title-actions")))
+      expect(declaration(rule.body, "display") ?? "flex").toBe("flex");
+  });
+
+  // One rule places a journal's group: the row's free space goes after the item before the group (the title, or
+  // Today's task summary). So the group ends a row it shares and starts a row of its own, and the summary stays
+  // beside the title. A margin of `auto` on the group would push it to the end of its own row too, and spreading
+  // the row's items would move the summary to the middle of a wide row.
+  it("the group of a journal with carry buttons ends a row it shares and starts a row of its own", () => {
+    const journalRow = ".page-title-row:has(> .page-title-actions > .page-carry-actions)";
+    const freeSpace = RULES.filter((r) => declaration(r.body, "margin-inline-end") === "auto" && r.selectors.some((s) => s.includes(".page-title-main")));
+    expect(freeSpace.map((r) => r.selectors)).toEqual([[`${journalRow} > .page-title-main > :last-child`]]);
+    // The editorial Today header is a centred column, not a row: it takes no part in that.
+    const editorial = 'html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-main > :last-child';
+    expect(RULES.filter((r) => r.selectors.includes(editorial)).map((r) => declaration(r.body, "margin-inline-end"))).toEqual(["0"]);
+    for (const r of RULES) {
+      if (r.selectors.some((s) => /^\.page-title-row\b/.test(s) && !s.includes(" "))) expect(declaration(r.body, "justify-content"), r.selectors.join(", ")).toBeNull();
+      if (!r.selectors.some((s) => /^\.page-(title|carry)-actions\b/.test(subject(s)))) continue;
+      expect(declaration(r.body, "margin-inline-start"), r.selectors.join(", ")).not.toBe("auto");
+      expect(declaration(r.body, "margin-left"), r.selectors.join(", ")).not.toBe("auto");
+    }
+  });
+});
+
+describe("title-row layers", () => {
   it.each([".page-title-row", ".page-title-main", ".page-title-actions", ".page-section", ".page-title"])(
     "%s is not promoted to a layer",
     (selector) => {

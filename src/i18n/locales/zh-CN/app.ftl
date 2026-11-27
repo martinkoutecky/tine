@@ -82,3 +82,5 @@ capture-retry-unconfirmed = 尚未确认保存 — 已保留文字。请重试�
 capture-previous-graph = 速记可能已进入上一个图谱；尚未确认保存 — 已保留文字。再次速记前，请先检查该图谱。
 capture-start-new = 开始新的速记
 capture-new-request = 已为新的速记保留文字。再次归档前，请移除已保存在上一个图谱中的内容。
+capture-unproved = Tine 无法确认这次速记已保存 — 已保留文字。请检查该页面；如果速记不在其中，请开始新的速记。
+capture-new-request-unproved = 已为新的速记保留文字。如果其中一部分已在页面上，请在再次归档前在此处移除。

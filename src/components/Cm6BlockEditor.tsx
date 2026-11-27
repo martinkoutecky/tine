@@ -1,7 +1,7 @@
 // Experimental editor. lsdoc owns structural spans; highlight.js supplies code tokens.
 import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
+import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField, type Transaction } from "@codemirror/state";
+import { Decoration, EditorView, ViewPlugin, keymap, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { cursorLineDown, cursorLineUp, defaultKeymap } from "@codemirror/commands";
 import { ctrlArrowAlias } from "../ctrlArrowAlias";
 import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, rawToWrite, setRaw, type OutlineScope, type PendingEdit } from "../document";
@@ -17,9 +17,9 @@ import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExi
 import { editorWindowFocus } from "../editor/windowFocus";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { annotationInfo } from "../editor/annotation";
-import { inPageFindPreservesEditorBlur } from "../inpageFind";
-import { concealedSpans, previewSpans } from "../editor/cm6Preview";
-import { PreviewWidget } from "../editor/cm6PreviewWidget";
+import { glyphsShown, inPageFindPreservesEditorBlur } from "../inpageFind";
+import { concealedSpans, glyphDecorations, glyphRevealChanges, previewGlyphs, previewSpans, type PreviewSpan } from "../editor/cm6Preview";
+import { GlyphWidget, PreviewWidget } from "../editor/cm6PreviewWidget";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { cm6Formatting } from "../editor/cm6Formatting";
 import { cm6Structure } from "../editor/cm6Structure";
@@ -284,24 +284,56 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   // and entering or leaving edit does not move anything (CM6-HEADING). Level 1..6 from the block's own facets
   // (the `heading::` property is not in the editor text), the depth for `heading:: true`.
   const headingLevel = createMemo(() => effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id)));
-  const buildDecorations = (state: EditorState): DecorationSet => {
-    if (!parserReady() || literal()) return Decoration.none;
-    const raw = state.doc.toString();
-    const spans = previewSpans(raw, format);
-    // Explicit source mode keeps the entire fenced block raw, wherever the caret is.
-    if (spans.some(span => span.kind === "src" || span.kind === "example")) return Decoration.none;
-    const ranges = concealedSpans(spans, state.selection.ranges).map(span =>
-      Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
-    const level = headingLevel();
+  // The layout-changing previews (constructs, block widgets) are this field's; glyphs come from `glyphLayer`, built
+  // only for what is in view. `concealed` is null when nothing is drawn (literal, parser not ready).
+  type Preview = { decorations: DecorationSet; raw: string; spans: readonly PreviewSpan[]; glyphs: readonly PreviewSpan[]; concealed: readonly PreviewSpan[] | null };
+  const NOTHING_CONCEALED: readonly PreviewSpan[] = [];
+  const NO_PREVIEW: Preview = { decorations: Decoration.none, raw: "", spans: [], glyphs: [], concealed: null };
+  /** `prev` is passed on a selection-only change: the document (and so its parse) is the same, and when the same
+   *  constructs stay concealed the previous decorations are kept as they are. */
+  const buildPreview = (state: EditorState, prev?: Preview): Preview => {
+    if (!parserReady() || literal()) return NO_PREVIEW;
+    const same = prev?.concealed ? prev : undefined;
+    const raw = same ? same.raw : state.doc.toString();
+    const spans = same ? same.spans : previewSpans(raw, format);
+    // Explicit source mode keeps every construct of a fenced block raw, wherever the caret is. Plain runs keep their
+    // glyphs, as the view draws them per run (render/plainText.tsx).
+    const sourceMode = spans.some(span => span.kind === "src" || span.kind === "example");
+    const concealed = sourceMode ? NOTHING_CONCEALED : concealedSpans(spans, state.selection.ranges);
+    if (same && same.concealed!.length === concealed.length && concealed.every((span, i) => span === same.concealed![i])) return same;
+    const ranges = concealed.map(span => Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
+    const level = sourceMode ? null : headingLevel();
     const headerEnd = state.doc.line(1).to;
     if (level !== null && headerEnd > 0) ranges.push(Decoration.mark({ class: `heading-text h${level}` }).range(0, headerEnd));
-    return Decoration.set(ranges, true);
+    return { decorations: Decoration.set(ranges, true), raw, spans, glyphs: same ? same.glyphs : previewGlyphs(raw, format), concealed };
   };
-  const decorations = StateField.define<DecorationSet>({
-    create: buildDecorations,
-    update: (value, tr) => tr.docChanged || tr.selection || tr.effects.some(effect => effect.is(refreshPreview)) ? buildDecorations(tr.state) : value,
-    provide: field => EditorView.decorations.from(field),
+  const refreshes = (tr: Transaction) => tr.effects.some(effect => effect.is(refreshPreview));
+  const decorations = StateField.define<Preview>({
+    create: state => buildPreview(state),
+    update: (value, tr) => tr.docChanged || refreshes(tr) ? buildPreview(tr.state) : tr.selection ? buildPreview(tr.state, value) : value,
+    provide: field => EditorView.decorations.from(field, value => value.decorations),
   });
+  // The glyphs the view substitutes in plain text (render/plainText.tsx), drawn over the ASCII the file keeps, only
+  // while the view draws them (glyphsShown) and only in view. A caret move that reveals or hides no glyph and changes
+  // no concealed construct does no glyph work.
+  const glyphLayer = ViewPlugin.fromClass(class {
+    decorations: DecorationSet;
+    constructor(v: EditorView) { this.decorations = this.build(v); }
+    update(u: ViewUpdate) {
+      // Turning glyphs on again (Find closing, the setting) arrives as a refresh.
+      if (!glyphsShown()) { this.decorations = Decoration.none; return; }
+      const now = u.state.field(decorations);
+      if (u.docChanged || u.viewportChanged || now !== u.startState.field(decorations) || u.transactions.some(refreshes)
+        || (u.selectionSet && glyphRevealChanges(now.glyphs, u.startState.selection.ranges, u.state.selection.ranges, u.view.visibleRanges)))
+        this.decorations = this.build(u.view);
+    }
+    build(v: EditorView): DecorationSet {
+      const { glyphs, concealed } = v.state.field(decorations);
+      if (!concealed || !glyphs.length || !glyphsShown()) return Decoration.none;
+      return Decoration.set(glyphDecorations(glyphs, v.visibleRanges, concealed, v.state.selection.ranges,
+        glyph => Decoration.replace({ widget: new GlyphWidget(glyph.glyph!) }).range(glyph.from, glyph.to)));
+    }
+  }, { decorations: plugin => plugin.decorations });
   onMount(() => {
     view = new EditorView({
       parent: editorHost,
@@ -318,7 +350,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           return codeFences(state.doc.toString(), format).filter(f => f.lang !== "calc" && f.openEnd < f.closeStart)
             .map(f => ({ from: f.openEnd, to: Math.min(f.closeStart, state.doc.length), lang: f.kind === "example" ? "" : f.lang }));
         }),
-        decorations, wrapping.of(!isCalc() && (!codeEditing() || codeWrapping()) ? EditorView.lineWrapping : []),
+        decorations, glyphLayer, wrapping.of(!isCalc() && (!codeEditing() || codeWrapping()) ? EditorView.lineWrapping : []),
         editability.of([EditorState.readOnly.of(!current()), EditorView.editable.of(current())]), completion.inputSelection, typing.filter,
         spellcheck.of(EditorView.contentAttributes.of({ spellcheck: String(spellcheckEnabled()) })),
         EditorView.editorAttributes.of({ "data-block-editor": "cm6" }),
@@ -462,9 +494,15 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     };
     host.ownerDocument.defaultView!.addEventListener("keydown", compositionKeys, true);
     host.addEventListener("keydown", structuralKeys, true);
+    // Android's EditContext takes the composition events the element would otherwise get (GH #767).
+    const context = (view.contentDOM as HTMLElement & { editContext?: EventTarget | null }).editContext;
+    context?.addEventListener("compositionstart", typing.begin);
+    context?.addEventListener("compositionend", typing.end);
     removeKeys = () => {
       host.ownerDocument.defaultView!.removeEventListener("keydown", compositionKeys, true);
       host.removeEventListener("keydown", structuralKeys, true);
+      context?.removeEventListener("compositionstart", typing.begin);
+      context?.removeEventListener("compositionend", typing.end);
     };
     /** `again`: a later request to this mounted view (see focusMountedEditor), applied, not taken. */
     const focusNow = (again?: { offset: CaretPos }) => {
@@ -546,12 +584,14 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   createEffect(() => {
     headingLevel();
+    glyphsShown();
     untrack(() => view?.dispatch({ effects: refreshPreview.of(null) }));
   });
   onCleanup(() => {
+    typing.dispose(); // first: it may still save a held composition, which needs the live editor
     pendingScrollAnchor?.cancel();
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
-    alive = false; typing.dispose(); clipboard.dispose(); removeCommandBridge?.(); removeKeys?.();
+    alive = false; clipboard.dispose(); removeCommandBridge?.(); removeKeys?.();
     // Detaching Android's EditContext during blur blocks typing in the next
     // input. Let native focus finish moving before CM clears that context.
     if (view && "editContext" in view.contentDOM && view.contentDOM.editContext) queueMicrotask(() => view?.destroy());

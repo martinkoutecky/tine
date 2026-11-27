@@ -14,6 +14,9 @@
 .unsaved-recovery-panel h3 { margin: 0.9rem 0 0.4rem; font-size: 0.95rem; }
 .unsaved-recovery-panel button { margin-block: 0 0.4rem; margin-inline: 0 0.5rem; }
 .unsaved-recovery-entry { border-top: 1px solid var(--border-color); margin-top: 0.75rem; }
+.recovery-kept-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem; }
+.recovery-kept-row > span { flex: 1 1 12rem; overflow-wrap: anywhere; }
+.recovery-kept-row > p { flex-basis: 100%; margin: 0; }
 .recovery-draft pre {
   max-height: 12rem;
   overflow: auto;

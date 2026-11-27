@@ -8,7 +8,7 @@ import { msg } from "./i18n";
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
 import { allPages, linkTarget, resolvedTarget } from "./pageIndex";
-import { pageIdentityKey } from "./ui";
+import { pageIdentityKey } from "./pageIdentity";
 import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { focusedRouter } from "./panes";

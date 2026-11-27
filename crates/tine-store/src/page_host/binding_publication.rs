@@ -41,11 +41,37 @@ fn published(state: &State<ProductionIo, SystemClock>, pages: &Needs) -> Option<
     Some(witnesses)
 }
 
+/// Whether a window leaving the graph may leave this need behind (tine#1041):
+/// a conflicted page no window is subscribed to, settled at or past the
+/// needed version, whose exact durable draft the next launch recovers, with
+/// nothing working on its key. Every part is the host's state in this step;
+/// the draft part is `Host::exact_copy`, the answer the host's own stop gives
+/// for a page at risk. A need with a block witness is never left behind.
+fn left_to_its_draft(
+    state: &State<ProductionIo, SystemClock>,
+    (key, version, witness): &(String, u64, Option<String>),
+) -> bool {
+    let host = &state.progress.host;
+    let Logical::Settled(page) = host.logical(key) else {
+        return false;
+    };
+    page.conflict
+        && page.version >= *version
+        && witness.is_none()
+        && !host.subscriptions.contains(key)
+        && !host.busy(key)
+        && !host.vehicle_debt.contains(key)
+        && !state.progress.draft_error_names(key)
+        && host.exact_copy(key, page)
+}
+
 /// What a barrier wait's step found (§4.4).
 enum Barrier {
     /// Published, once these witnesses hold.
     Check(Witnesses, Vec<PublishedRevision>),
-    Refused,
+    /// The files of the needed keys that cannot publish without the user;
+    /// none when the session is not current or the host is down.
+    Refused(Vec<String>),
     Pending,
 }
 
@@ -121,14 +147,45 @@ impl PageHost {
     /// with a new `bound` of its own. No test holds that second wait, so the
     /// call's whole length is not promised to be `bound`.
     /// On success, also returns the actual indexed own revision/version for each
-    /// need that has one, captured with the publication check. O(needs) retained
-    /// output; no filesystem reads beyond an explicitly requested block witness.
+    /// need that has one, captured with the publication check. On `Refused`,
+    /// also returns the files of the needed keys whose own state refused
+    /// (the third part): each key's current spelling, read from the host's
+    /// table in the step that refused, sorted and without duplicates (a key
+    /// is opaque and need not be its file's path). None for a session that
+    /// is not current, a host that is down or a driver that ended. O(needs)
+    /// retained output; no filesystem reads beyond an explicitly requested
+    /// block witness.
     pub fn wait_published(
         &self,
         session: u64,
         needs: &Needs,
         bound: std::time::Duration,
-    ) -> (PageOperation, Vec<PublishedRevision>) {
+    ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
+        self.wait(session, needs, bound, false)
+    }
+
+    /// `wait_published` for a window that is leaving this graph for another
+    /// (tine#1041): each step first sets aside the needs `left_to_its_draft`
+    /// holds for, then is `wait_published`'s step on the rest. A need set
+    /// aside is not published and gets no revision: the caller must not read
+    /// `Applied` as publication of it. One that stops qualifying is waited on
+    /// again from that step.
+    pub fn wait_departure(
+        &self,
+        session: u64,
+        needs: &Needs,
+        bound: std::time::Duration,
+    ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
+        self.wait(session, needs, bound, true)
+    }
+
+    fn wait(
+        &self,
+        session: u64,
+        needs: &Needs,
+        bound: std::time::Duration,
+        departure: bool,
+    ) -> (PageOperation, Vec<PublishedRevision>, Vec<String>) {
         let deadline = tine_core::clock::Instant::now() + bound;
         // After a witness that did not hold, the next ask waits for a step.
         let mut again = false;
@@ -137,11 +194,21 @@ impl PageHost {
             let mut first = std::mem::take(&mut again);
             let step = move |state: &mut State<ProductionIo, SystemClock>| {
                 if state.book.session != session || !state.progress.host.alive {
-                    return Wait::Ready(Barrier::Refused);
+                    return Wait::Ready(Barrier::Refused(Vec::new()));
                 }
                 let now = tine_core::clock::Instant::now();
                 if !std::mem::take(&mut first) {
-                    if let Some(witnesses) = published(state, &needs) {
+                    let rest: Vec<_>;
+                    let needs = if departure {
+                        rest = (needs.iter())
+                            .filter(|need| !left_to_its_draft(state, need))
+                            .cloned()
+                            .collect();
+                        &rest
+                    } else {
+                        &needs
+                    };
+                    if let Some(witnesses) = published(state, needs) {
                         let revisions = needs
                             .iter()
                             .filter_map(|(key, ..)| {
@@ -156,13 +223,16 @@ impl PageHost {
                         return Wait::Ready(Barrier::Check(witnesses, revisions));
                     }
                     let progress = &state.progress;
-                    let stuck = needs.iter().any(|(key, ..)| {
-                        progress.host.logical(key).conflict()
-                            || progress.notice(key).save_error
-                            || state.book.index_error(key)
-                    });
-                    if stuck {
-                        return Wait::Ready(Barrier::Refused);
+                    let stuck: BTreeSet<String> = (needs.iter())
+                        .filter(|(key, ..)| {
+                            progress.host.logical(key).conflict()
+                                || progress.notice(key).save_error
+                                || state.book.index_error(key)
+                        })
+                        .map(|(key, ..)| progress.host.fs.spelling(key))
+                        .collect();
+                    if !stuck.is_empty() {
+                        return Wait::Ready(Barrier::Refused(stuck.into_iter().collect()));
                     }
                 }
                 if now >= deadline {
@@ -184,15 +254,18 @@ impl PageHost {
                     // the driver does not answer within it is pending.
                     let by = Deadline::At(tine_core::clock::Instant::now() + bound);
                     return match self.driver.shared.read_by(by, live) {
-                        Ok(true) => (PageOperation::Applied, revisions),
-                        Ok(false) | Err(Unanswered::Ended) => (PageOperation::Refused, Vec::new()),
-                        Err(_) => (PageOperation::Pending, Vec::new()),
+                        Ok(true) => (PageOperation::Applied, revisions, Vec::new()),
+                        Ok(false) | Err(Unanswered::Ended) => {
+                            (PageOperation::Refused, Vec::new(), Vec::new())
+                        }
+                        Err(_) => (PageOperation::Pending, Vec::new(), Vec::new()),
                     };
                 }
-                Ok(Barrier::Refused) | Err(Unanswered::Ended) => {
-                    return (PageOperation::Refused, Vec::new())
+                Ok(Barrier::Refused(stuck)) => return (PageOperation::Refused, Vec::new(), stuck),
+                Err(Unanswered::Ended) => return (PageOperation::Refused, Vec::new(), Vec::new()),
+                Ok(Barrier::Pending) | Err(_) => {
+                    return (PageOperation::Pending, Vec::new(), Vec::new())
                 }
-                Ok(Barrier::Pending) | Err(_) => return (PageOperation::Pending, Vec::new()),
             }
         }
     }

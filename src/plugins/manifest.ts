@@ -95,8 +95,11 @@ export interface PluginManifest {
   aiDevelopment?: "none" | "assisted" | "primary";
 }
 
+/** A refused manifest. `field` is the path of the refused value (`id`,
+ * `contributions.commands[0].title`, `capabilities.settings.read` for a missing
+ * capability); with `unknownField`, the object holding a key the schema lacks. */
 export class PluginManifestError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly field: string, readonly unknownField = false) {
     super(message);
     this.name = "PluginManifestError";
   }
@@ -115,20 +118,20 @@ function stringArray<T extends string>(
   fallback?: T[]
 ): T[] {
   if (value === undefined && fallback) return fallback;
-  if (!Array.isArray(value)) throw new PluginManifestError(`${where} must be an array`);
+  if (!Array.isArray(value)) throw new PluginManifestError(`${where} must be an array`, where);
   const result = value.map((item) => {
     if (typeof item !== "string" || !allowed.includes(item as T)) {
-      throw new PluginManifestError(`${where} contains unsupported value ${JSON.stringify(item)}`);
+      throw new PluginManifestError(`${where} contains unsupported value ${JSON.stringify(item)}`, where);
     }
     return item as T;
   });
-  if (new Set(result).size !== result.length) throw new PluginManifestError(`${where} contains duplicates`);
+  if (new Set(result).size !== result.length) throw new PluginManifestError(`${where} contains duplicates`, where);
   return result;
 }
 
 function platforms(value: unknown, where: string, fallback?: PluginPlatform[]): PluginPlatform[] {
   const parsed = stringArray(value, where, PLUGIN_PLATFORMS, fallback);
-  if (parsed.length === 0) throw new PluginManifestError(`${where} must not be empty`);
+  if (parsed.length === 0) throw new PluginManifestError(`${where} must not be empty`, where);
   return parsed;
 }
 
@@ -138,13 +141,13 @@ function optionalPlatforms(value: unknown, where: string): PluginPlatform[] | un
 
 function contributionId(value: unknown, where: string): string {
   const id = stringField(value, where, 64);
-  if (parsePluginGrammar(id, "contributionId") === null) throw new PluginManifestError(`${where} has an invalid id`);
+  if (parsePluginGrammar(id, "contributionId") === null) throw new PluginManifestError(`${where} has an invalid id`, where);
   return id;
 }
 
 function parseCommands(value: unknown): PluginCommandContribution[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new PluginManifestError("contributions.commands must be an array");
+  if (!Array.isArray(value)) throw new PluginManifestError("contributions.commands must be an array", "contributions.commands");
   return value.map((item, index) => {
     const obj = record(item, `contributions.commands[${index}]`);
     knownKeys(obj, `contributions.commands[${index}]`, ["id", "title", "description", "defaultBinding", "platforms"]);
@@ -166,7 +169,7 @@ function parseCommands(value: unknown): PluginCommandContribution[] | undefined 
 
 function parseSlashCommands(value: unknown): PluginSlashCommandContribution[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new PluginManifestError("contributions.slashCommands must be an array");
+  if (!Array.isArray(value)) throw new PluginManifestError("contributions.slashCommands must be an array", "contributions.slashCommands");
   return value.map((item, index) => {
     const obj = record(item, `contributions.slashCommands[${index}]`);
     knownKeys(obj, `contributions.slashCommands[${index}]`, ["id", "title", "insertText", "platforms"]);
@@ -185,12 +188,12 @@ function parseSlashCommands(value: unknown): PluginSlashCommandContribution[] | 
 
 function parseDecorations(value: unknown): PluginBlockDecorationContribution[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new PluginManifestError("contributions.blockDecorations must be an array");
+  if (!Array.isArray(value)) throw new PluginManifestError("contributions.blockDecorations must be an array", "contributions.blockDecorations");
   return value.map((item, index) => {
     const obj = record(item, `contributions.blockDecorations[${index}]`);
     knownKeys(obj, `contributions.blockDecorations[${index}]`, ["id", "kind", "platforms"]);
     if (obj.kind !== "thread-lines" && obj.kind !== "badge") {
-      throw new PluginManifestError(`contributions.blockDecorations[${index}].kind is unsupported`);
+      throw new PluginManifestError(`contributions.blockDecorations[${index}].kind is unsupported`, `contributions.blockDecorations[${index}].kind`);
     }
     return {
       id: contributionId(obj.id, `contributions.blockDecorations[${index}].id`),
@@ -205,9 +208,9 @@ function parseDecorations(value: unknown): PluginBlockDecorationContribution[] |
 function assertUniqueContributions(manifest: PluginManifest) {
   const seen = new Set<string>();
   for (const [kind, entries] of Object.entries(manifest.contributions ?? {})) {
-    for (const entry of entries ?? []) {
+    for (const [index, entry] of (entries ?? []).entries()) {
       const key = `${kind}:${entry.id}`;
-      if (seen.has(key)) throw new PluginManifestError(`duplicate contribution ${key}`);
+      if (seen.has(key)) throw new PluginManifestError(`duplicate contribution ${key}`, `contributions.${kind}[${index}].id`);
       seen.add(key);
     }
   }
@@ -222,7 +225,7 @@ function assertContributionCapabilities(manifest: PluginManifest) {
   ];
   for (const [used, capability] of required) {
     if (used && !manifest.capabilities.includes(capability)) {
-      throw new PluginManifestError(`contribution requires capability ${capability}`);
+      throw new PluginManifestError(`contribution requires capability ${capability}`, `capabilities.${capability}`);
     }
   }
 }
@@ -232,13 +235,13 @@ function parsePortedFrom(value: unknown): PluginPortProvenance | undefined {
   const obj = record(value, "portedFrom");
   knownKeys(obj, "portedFrom", ["ecosystem", "name", "source", "revision", "license", "authors", "relationship"]);
   if (obj.ecosystem !== "logseq" && obj.ecosystem !== "obsidian" && obj.ecosystem !== "other") {
-    throw new PluginManifestError("portedFrom.ecosystem is unsupported");
+    throw new PluginManifestError("portedFrom.ecosystem is unsupported", "portedFrom.ecosystem");
   }
   if (obj.relationship !== "behavioral-port" && obj.relationship !== "source-derived") {
-    throw new PluginManifestError("portedFrom.relationship is unsupported");
+    throw new PluginManifestError("portedFrom.relationship is unsupported", "portedFrom.relationship");
   }
   if (!Array.isArray(obj.authors) || obj.authors.length === 0 || obj.authors.length > 32) {
-    throw new PluginManifestError("portedFrom.authors must contain 1 to 32 entries");
+    throw new PluginManifestError("portedFrom.authors must contain 1 to 32 entries", "portedFrom.authors");
   }
   return {
     ecosystem: obj.ecosystem,
@@ -258,24 +261,24 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
     "source", "entry", "platforms", "capabilities", "contributions", "settings", "portedFrom", "aiDevelopment",
   ]);
-  if (obj.schemaVersion !== 1) throw new PluginManifestError("schemaVersion must be 1");
+  if (obj.schemaVersion !== 1) throw new PluginManifestError("schemaVersion must be 1", "schemaVersion");
   const apiVersion = obj.apiVersion;
   if (!isSupportedPluginApiVersion(apiVersion)) {
-    throw new PluginManifestError(`apiVersion must be one of ${SUPPORTED_PLUGIN_API_VERSIONS.join(", ")}`);
+    throw new PluginManifestError(`apiVersion must be one of ${SUPPORTED_PLUGIN_API_VERSIONS.join(", ")}`, "apiVersion");
   }
   const id = stringField(obj.id, "id", 64);
-  if (!isPackageId(id)) throw new PluginManifestError("id must be a lowercase dotted identifier");
+  if (!isPackageId(id)) throw new PluginManifestError("id must be a lowercase dotted identifier", "id");
   const version = stringField(obj.version, "version", 64);
-  if (!isPackageVersion(version)) throw new PluginManifestError("version must be SemVer");
+  if (!isPackageVersion(version)) throw new PluginManifestError("version must be SemVer", "version");
   const entry = stringField(obj.entry, "entry", 160);
   if (parsePluginGrammar(entry, "entry") === null) {
-    throw new PluginManifestError("entry must be a relative .wasm path without traversal");
+    throw new PluginManifestError("entry must be a relative .wasm path without traversal", "entry");
   }
   const contributionsObj = obj.contributions === undefined ? undefined : record(obj.contributions, "contributions");
   if (contributionsObj) knownKeys(contributionsObj, "contributions", ["commands", "slashCommands", "blockDecorations"]);
   const aiDevelopment = obj.aiDevelopment;
   if (aiDevelopment !== undefined && aiDevelopment !== "none" && aiDevelopment !== "assisted" && aiDevelopment !== "primary") {
-    throw new PluginManifestError("aiDevelopment is unsupported");
+    throw new PluginManifestError("aiDevelopment is unsupported", "aiDevelopment");
   }
   const manifest: PluginManifest = {
     schemaVersion: 1,

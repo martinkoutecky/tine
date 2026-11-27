@@ -937,6 +937,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "validated file path to OS",
         ),
         (
+            "regular_file::open_regular_file",
+            "user-picked device file or external PDF, or a validated graph path, handed to the OS open",
+        ),
+        (
             "root_binding::BoundDirectory::new",
             "host-selected graph or Git metadata directory input for an OS identity witness",
         ),

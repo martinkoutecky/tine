@@ -3,26 +3,25 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { acceptsPluginColor } from "../src/plugins/color.mjs";
-import { parsePluginGrammar } from "../src/plugins/grammar.mjs";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 
-const CAPABILITIES = new Set([
-  "commands.register",
-  "slash-commands.register",
-  "block-decorations.register",
-  "graph.read.visible",
-  "graph.write.block",
-  "settings.read",
-  "settings.write",
-]);
-const PLATFORMS = new Set(["desktop", "android", "ios"]);
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// The host's own manifest parser and byte ceilings, bundled from source so the
+// checker and the app give one answer to "is this manifest valid".
+const host = await (async () => {
+  const bundle = await build({
+    entryPoints: [path.join(REPO, "src/plugins/manifest.ts")],
+    bundle: true, write: false, format: "esm", platform: "neutral", logLevel: "silent",
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+})();
+const { parsePluginManifest, PLUGIN_MANIFEST_MAX_BYTES: MAX_MANIFEST, PLUGIN_WASM_MAX_BYTES: MAX_WASM } = host;
 const LICENSES = new Set([
   "0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT",
   "MPL-2.0", "LGPL-2.1-only", "LGPL-3.0-only", "GPL-2.0-only",
   "GPL-3.0-only", "AGPL-3.0-only", "Unlicense",
 ]);
-const MAX_MANIFEST = 64 * 1024;
-const MAX_WASM = 8 * 1024 * 1024;
 const PORT_GAP_OPERATIONS = /^[a-z][a-z0-9.-]{2,100}$/;
 const PORT_GAP_RECOMMENDATIONS = new Set([
   "ship-reduced-port", "request-api-change", "core-feature", "privileged-integration", "do-not-port",
@@ -46,10 +45,12 @@ function boundedText(value, max) {
   return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f]/.test(value);
 }
 
-function rejectUnknownFields(value, allowed, report, code, where) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
-  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
-  if (unknown) add(report, "errors", code, `${where} contains unknown field ${unknown}`);
+function isHttpsUrl(value) {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function checkPortGap(root, report) {
@@ -111,169 +112,69 @@ function checkPortGap(root, report) {
   report.portGap.status = report.errors.some((item) => item.code.startsWith("port-gap.")) ? "failed" : "passed";
 }
 
-function checkSettings(settings, capabilities, apiVersion, report) {
-  if (settings === undefined) return;
-  if (!Array.isArray(settings) || settings.length > 64) {
-    add(report, "errors", "manifest.settings", "settings must be an array of at most 64 definitions");
-    return;
-  }
-  if (!capabilities.includes("settings.read")) {
-    add(report, "errors", "manifest.settings-capability", "settings require settings.read");
-  }
-  const seen = new Set();
-  for (const [index, setting] of settings.entries()) {
-    const where = `settings[${index}]`;
-    if (!setting || typeof setting !== "object" || Array.isArray(setting)) {
-      add(report, "errors", "manifest.settings", `${where} must be an object`);
-      continue;
-    }
-    const common = ["key", "label", "description", "type", "default"];
-    const perType = setting.type === "enum" ? ["choices"] : setting.type === "number" ? ["min", "max", "step"] :
-      setting.type === "string" ? ["maxLength"] : [];
-    rejectUnknownFields(setting, [...common, ...perType], report, "manifest.settings-field", where);
-    if (typeof setting.key !== "string" || !/^[a-z][a-z0-9._-]{0,79}$/.test(setting.key) || seen.has(setting.key)) {
-      add(report, "errors", "manifest.settings-key", `${where}.key is invalid or duplicated`);
-    }
-    seen.add(setting.key);
-    if (typeof setting.label !== "string" || !setting.label || setting.label.length > 80 ||
-        typeof setting.description !== "string" || !setting.description || setting.description.length > 300 || /[\u0000-\u001f]/.test(setting.description)) {
-      add(report, "errors", "manifest.settings-text", `${where} needs bounded plain-text label and description`);
-    }
-    if (setting.type === "boolean") {
-      if (typeof setting.default !== "boolean") add(report, "errors", "manifest.settings-default", `${where}.default must be boolean`);
-    } else if (setting.type === "enum") {
-      const choices = setting.choices;
-      if (!Array.isArray(choices) || choices.length < 2 || choices.length > 32 ||
-          !choices.some((choice) => choice?.value === setting.default)) {
-        add(report, "errors", "manifest.settings-choices", `${where} needs 2 to 32 choices including its default`);
-      }
-    } else if (setting.type === "number") {
-      if (![setting.default, setting.min, setting.max].every(Number.isFinite) || setting.min > setting.max ||
-          setting.default < setting.min || setting.default > setting.max ||
-          (setting.step !== undefined && (!Number.isFinite(setting.step) || setting.step <= 0))) {
-        add(report, "errors", "manifest.settings-bounds", `${where} has invalid numeric bounds`);
-      }
-    } else if (setting.type === "color") {
-      if (apiVersion === "0.2") add(report, "errors", "manifest.settings-color-api", `${where}.type color needs apiVersion 0.3`);
-      if (!acceptsPluginColor(setting.default)) {
-        add(report, "errors", "manifest.settings-color", `${where}.default must be a literal color or empty`);
-      }
-    } else if (setting.type === "string") {
-      if (!Number.isInteger(setting.maxLength) || setting.maxLength < 1 || setting.maxLength > 4096 ||
-          typeof setting.default !== "string" || setting.default.length > setting.maxLength) {
-        add(report, "errors", "manifest.settings-length", `${where} has an invalid string bound`);
-      }
-    } else {
-      add(report, "errors", "manifest.settings-type", `${where}.type is unsupported`);
-    }
-  }
+// A refusal's report code names the field the host's parser refused (its
+// `field`, indices dropped): the per-field codes of tine-plugin-check/v1, and
+// `manifest.invalid` for a field that has none. Codes only; the reason is the
+// parser's message.
+const FIELD_CODES = new Map([
+  ["manifest", "manifest.type"], ["schemaVersion", "manifest.schema"], ["apiVersion", "manifest.api"],
+  ...["id", "version", "name", "description", "author", "license", "source", "platforms", "capabilities"]
+    .map((field) => [field, `manifest.${field}`]),
+  ["entry", "manifest.entry-path"], ["aiDevelopment", "manifest.ai"],
+  ["contributions.commands[].defaultBinding", "manifest.command-binding"],
+  ["capabilities.settings.read", "manifest.settings-capability"],
+  ["settings", "manifest.settings"], ["settings[]", "manifest.settings"],
+  ["settings[].key", "manifest.settings-key"], ["settings[].label", "manifest.settings-text"],
+  ["settings[].description", "manifest.settings-text"], ["settings[].type", "manifest.settings-type"],
+  ["settings[].default", "manifest.settings-default"], ["settings[].min", "manifest.settings-bounds"],
+  ["settings[].max", "manifest.settings-bounds"], ["settings[].step", "manifest.settings-bounds"],
+  ["settings[].maxLength", "manifest.settings-length"],
+]);
+const FIELD_PATTERNS = [
+  [/^contributions\.\w+\[\]\.id$/, "manifest.contribution-id"],
+  [/^capabilities\./, "manifest.contribution-capability"],
+  [/^settings\[\]\.choices/, "manifest.settings-choices"],
+  [/^portedFrom(\.|$)/, "manifest.provenance"],
+];
+const UNKNOWN_FIELD_CODES = new Map([
+  ["manifest", "manifest.field"], ["contributions", "manifest.contributions-field"],
+  ["contributions.commands[]", "manifest.command-field"], ["portedFrom", "manifest.provenance-field"],
+  ["settings[]", "manifest.settings-field"],
+]);
+
+function refusalCode({ field, unknownField }) {
+  const path = field.replace(/\[\d+\]/g, "[]");
+  if (unknownField) return UNKNOWN_FIELD_CODES.get(path) ?? "manifest.invalid";
+  return FIELD_CODES.get(path) ?? FIELD_PATTERNS.find(([pattern]) => pattern.test(path))?.[1] ?? "manifest.invalid";
 }
 
-function checkPortedFrom(portedFrom, report) {
-  if (portedFrom === undefined) return;
-  if (!portedFrom || typeof portedFrom !== "object" || Array.isArray(portedFrom) ||
-      !["logseq", "obsidian", "other"].includes(portedFrom.ecosystem) ||
-      !["behavioral-port", "source-derived"].includes(portedFrom.relationship) ||
-      !Array.isArray(portedFrom.authors) || portedFrom.authors.length === 0) {
-    add(report, "errors", "manifest.provenance", "portedFrom is incomplete or invalid");
-    return;
-  }
-  rejectUnknownFields(
-    portedFrom, ["ecosystem", "name", "source", "revision", "license", "authors", "relationship"],
-    report, "manifest.provenance-field", "portedFrom",
-  );
-  for (const field of ["name", "source", "revision", "license"]) {
-    if (typeof portedFrom[field] !== "string" || !portedFrom[field]) {
-      add(report, "errors", "manifest.provenance", `portedFrom.${field} is required`);
-    }
-  }
+// Validity is the host's answer: the checker runs the parser Tine itself runs
+// on install (src/plugins/manifest.ts), so a package the checker passes is one
+// the app accepts. The checks below are registry policy on top of it and may
+// only be stricter. The parser stops at the first refusal, so one is reported.
+function checkManifest(manifest, report) {
+  let parsed;
   try {
-    if (new URL(portedFrom.source).protocol !== "https:") throw new Error();
-  } catch {
+    parsed = parsePluginManifest(manifest);
+  } catch (error) {
+    if (typeof error?.field !== "string") throw error;
+    add(report, "errors", refusalCode(error), error.message);
+    return null;
+  }
+  if (!LICENSES.has(parsed.license)) {
+    add(report, "errors", "manifest.license", "license must be a recognized registry SPDX identifier");
+  }
+  if (!isHttpsUrl(parsed.source)) add(report, "errors", "manifest.source", "source must be a public https URL");
+  if (parsed.portedFrom && !isHttpsUrl(parsed.portedFrom.source)) {
     add(report, "errors", "manifest.provenance", "portedFrom.source must use https");
   }
-}
-
-function checkManifest(manifest, report) {
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
-    add(report, "errors", "manifest.type", "manifest.json must contain an object");
-    return;
-  }
-  rejectUnknownFields(manifest, [
-    "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
-    "source", "entry", "platforms", "capabilities", "contributions", "settings", "portedFrom", "aiDevelopment",
-  ], report, "manifest.field", "manifest");
-  rejectUnknownFields(
-    manifest.contributions, ["commands", "slashCommands", "blockDecorations"],
-    report, "manifest.contributions-field", "contributions",
-  );
-  for (const [index, command] of (manifest.contributions?.commands ?? []).entries()) {
-    rejectUnknownFields(
-      command, ["id", "title", "description", "defaultBinding", "platforms"],
-      report, "manifest.command-field", `contributions.commands[${index}]`,
-    );
-    if (command.defaultBinding !== undefined && !boundedText(command.defaultBinding, 80)) {
+  for (const [index, command] of (parsed.contributions?.commands ?? []).entries()) {
+    if (command.defaultBinding !== undefined && /[\u0000-\u001f]/.test(command.defaultBinding)) {
       add(report, "errors", "manifest.command-binding", `contributions.commands[${index}].defaultBinding is invalid`);
     }
   }
-  if (manifest.schemaVersion !== 1) add(report, "errors", "manifest.schema", "schemaVersion must be 1");
-  // Mirrors SUPPORTED_PLUGIN_API_VERSIONS in src/plugins/manifest.ts (pinned by its test).
-  if (manifest.apiVersion !== "0.2" && manifest.apiVersion !== "0.3") add(report, "errors", "manifest.api", "apiVersion must be 0.2 or 0.3");
-  if (parsePluginGrammar(manifest.id, "packageId") === null) {
-    add(report, "errors", "manifest.id", "id must be a lowercase dotted identifier");
-  }
-  if (typeof manifest.version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version)) {
-    add(report, "errors", "manifest.version", "version must be SemVer");
-  }
-  for (const field of ["name", "description", "author", "license", "source", "entry"]) {
-    if (typeof manifest[field] !== "string" || !manifest[field]) add(report, "errors", `manifest.${field}`, `${field} is required`);
-  }
-  if (typeof manifest.source === "string") {
-    try {
-      const source = new URL(manifest.source);
-      if (source.protocol !== "https:") throw new Error();
-    } catch {
-      add(report, "errors", "manifest.source", "source must be a public https URL");
-    }
-  }
-  if (typeof manifest.license === "string" && !LICENSES.has(manifest.license)) {
-    add(report, "errors", "manifest.license", "license must be a recognized registry SPDX identifier");
-  }
-  const platforms = manifest.platforms ?? ["desktop"];
-  if (!Array.isArray(platforms) || platforms.length === 0 || platforms.some((item) => !PLATFORMS.has(item))) {
-    add(report, "errors", "manifest.platforms", "platforms contains an unsupported target");
-  }
-  if (!Array.isArray(manifest.capabilities) || manifest.capabilities.some((item) => !CAPABILITIES.has(item))) {
-    add(report, "errors", "manifest.capabilities", "capabilities contains an unsupported authority");
-  }
-  const capabilities = Array.isArray(manifest.capabilities) ? manifest.capabilities : [];
-  checkSettings(manifest.settings, capabilities, manifest.apiVersion, report);
-  checkPortedFrom(manifest.portedFrom, report);
-  if (!manifest.aiDevelopment) {
-    add(report, "warnings", "manifest.ai", "declare aiDevelopment as none, assisted, or primary");
-  } else if (!["none", "assisted", "primary"].includes(manifest.aiDevelopment)) {
-    add(report, "errors", "manifest.ai", "aiDevelopment is invalid");
-  }
-  const required = [
-    [manifest.contributions?.commands, "commands.register"],
-    [manifest.contributions?.slashCommands, "slash-commands.register"],
-    [manifest.contributions?.blockDecorations, "block-decorations.register"],
-  ];
-  if (parsePluginGrammar(manifest.entry, "entry") === null) {
-    add(report, "errors", "manifest.entry-path", "entry must be a relative .wasm path of at most 160 characters without traversal");
-  }
-  for (const [entries, capability] of required) {
-    if (Array.isArray(entries)) {
-      for (const contribution of entries) {
-        if (parsePluginGrammar(contribution?.id, "contributionId") === null) {
-          add(report, "errors", "manifest.contribution-id", "contribution id must match [a-z0-9][a-z0-9._-]{0,63}");
-        }
-      }
-    }
-    if (Array.isArray(entries) && entries.length > 0 && !manifest.capabilities?.includes(capability)) {
-      add(report, "errors", "manifest.contribution-capability", `contribution requires ${capability}`);
-    }
-  }
+  if (!parsed.aiDevelopment) add(report, "warnings", "manifest.ai", "declare aiDevelopment as none, assisted, or primary");
+  return parsed;
 }
 
 function checkWasm(bytes, report) {
@@ -339,11 +240,11 @@ function checkPlugin(directory) {
     add(report, "errors", "manifest.json", "manifest.json is invalid JSON");
     return report;
   }
-  report.plugin = { id: manifest.id ?? null, version: manifest.version ?? null, name: manifest.name ?? null };
-  checkManifest(manifest, report);
+  report.plugin = { id: manifest?.id ?? null, version: manifest?.version ?? null, name: manifest?.name ?? null };
+  const parsed = checkManifest(manifest, report);
   checkPortGap(root, report);
-  if (parsePluginGrammar(manifest.entry, "entry") !== null) {
-    const unresolved = path.resolve(root, manifest.entry);
+  if (parsed) {
+    const unresolved = path.resolve(root, parsed.entry);
     const relative = path.relative(root, unresolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
       add(report, "errors", "entry.traversal", "entry escapes the plugin directory");
@@ -361,8 +262,7 @@ function checkPlugin(directory) {
       }
     }
   }
-  const capabilities = Array.isArray(manifest.capabilities) ? manifest.capabilities : [];
-  report.risk = capabilities.includes("graph.write.block") ? "review" : "low";
+  report.risk = parsed?.capabilities.includes("graph.write.block") ? "review" : parsed ? "low" : "unknown";
   report.status = report.errors.length === 0 ? "passed" : "failed";
   return report;
 }

@@ -67,6 +67,24 @@ publication. The s3.5 files, invariants, bounds, mutants, full-state replay and
 Lean theorem retain their original hashes and scope; no s3.6 Lean proof is
 claimed.
 
+s3.6 also takes a pair source's **witness result** as an input to the paired
+phase rules (Use Disk's choice, launch's decided pairs, a source's newer-text
+or restoring publication). `witnessFault(p, on)` is an environment action: a
+faulted path's witness fails whatever its bytes, so its source anchors
+nothing. A strong witness of the admitted text makes those bytes durable
+(`stable`) before the phase is read; a weak one proves the bytes only. Two
+scenarios pin the traces: `ownFailedWitnessRetains` (a durable matching
+source, a failing witness and a divergent receiver stay retained at the
+choice and at every launch, then cancel once the fault clears) and
+`ownUnstableWitnessCancels` (a matching source not yet durable is made
+durable by the witness and cancels). Mutants `MTrustFailedWitness` (trust the
+bytes of a failed witness) and `MSkipWitnessDurability` (no durability
+transition) are caught by their scenarios, not by the invariants: the model's
+`stable` map is ground truth that the host itself cannot see.
+`native_conformance_tests.rs::s36_source_witness_traces_native_and_ledger`
+replays both traces on real files against the physical ledger. The Rust
+oracle `page_state` remains the s3.5 transcription and does not model it.
+
 `replay/replay36.py` exports 36 semantic endpoints from actual Quint ITF tests
 (nine scenarios in four profiles). It hash-links both the model and scenarios
 to `s36-policy.json`. The new native binding tests use its base-profile

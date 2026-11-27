@@ -83,7 +83,7 @@ import type { Backend, ConfirmOptions, FacetScope } from "./backendInterface";
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, GitAutocommitStatus, GitPolicy, GitSyncStatus, GitRemote } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
-import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed, PublishedRevision, RestorableList } from "./document";
+import type { DiskToken, KeptOriginal, OwedPage, PageMail, PageOperation, PageRefusal, PublicationRefused, PublishedNeed, PublishedRevision, RestoreOutcome } from "./document";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -342,7 +342,7 @@ class TauriBackend implements Backend {
     return this.call<import("./types").AliasGroup>("page_alias_group", { name });
   }
   pageWindowReloaded() {
-    return this.call<{ session: number; nextId: number; restorable?: RestorableList }>("page_window_reloaded");
+    return this.call<{ session: number; nextId: number }>("page_window_reloaded");
   }
   pageOpen(session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }) {
     const generation = this.bindingGeneration;
@@ -384,8 +384,8 @@ class TauriBackend implements Backend {
     dropDisplayedFor({ path }); // the name lives on in its other files
     return this.call<PageOperation>("page_delete_file", { session, path, baseRev });
   }
-  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number) {
-    return this.call<PublishedRevision[] | false | null>("page_wait", { session, needs, boundMs });
+  pageWait(session: number, needs: readonly PublishedNeed[], boundMs: number, departure: boolean) {
+    return this.call<PublishedRevision[] | PublicationRefused | false | null>("page_wait", { session, needs, boundMs, departure });
   }
   pageSaveNow(session: number, keys: readonly string[]) {
     return this.call<void>("page_save_now", { session, keys });
@@ -393,11 +393,17 @@ class TauriBackend implements Backend {
   pageOwed(session: number, paths: readonly string[] | null) {
     return this.call<OwedPage[] | null>("page_owed", { session, paths });
   }
+  pageKeptOriginals(session: number) {
+    return this.call<KeptOriginal[] | null>("page_kept_originals", { session });
+  }
+  pageKeptText(session: number, key: string, origin: number) {
+    return this.call<string | null>("page_kept_text", { session, key, origin });
+  }
+  pageRestoreKept(session: number, key: string, origin: number) {
+    return this.call<RestoreOutcome>("page_restore_kept", { session, key, origin });
+  }
   pageDraftsRetry() {
     return this.call<void>("page_drafts_retry");
-  }
-  pageRestoreSource(session: number, key: string) {
-    return this.call<PageOperation>("page_restore_source", { session, key });
   }
   onPageMail(cb: (mail: PageMail) => void) { return this.on("page-mail", cb); }
   onGraphOpenWaiting(cb: (saving: string) => void) { return this.on("graph-open-waiting", cb); }

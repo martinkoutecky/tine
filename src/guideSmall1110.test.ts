@@ -7,6 +7,10 @@ it("the Guide explains one history step for each repeated mouse press (GH #948)"
   expect(template("tips")).toContain("Each press steps once, including repeated presses before the page finishes displaying, just like **Alt+Left** and **Alt+Right**");
 });
 
+it("the Guide says where Option+Left and Option+Right go back and forward on macOS (GH #1040)", () => {
+  expect(template("tips")).toContain("On macOS, **Cmd+[** and **Cmd+]** also work, and **Option+Left** and **Option+Right** go back and forward except while you type in a text field, where they move the caret by a word.");
+});
+
 it("the Guide explains link completion inside a complete link (GH #888)", () => {
   expect(template("pages-links-references-search")).toContain("Inside a closed page link with plain text after the caret, such as `[[Sat, 07.11.2026]]`, the list searches the whole title");
 });
@@ -21,4 +25,5 @@ it("the Guide names the Remove author command and how to run it (GH #918)", () =
   expect(tips).toContain("with the block selected, or assign it a key under **Settings → Shortcuts**");
   expect(tips).toContain("With several blocks selected, it removes authors from the whole selection, including folded descendants, in one undo step");
   expect(tips).toContain("Blocks without an author and read-only pages are skipped");
+  expect(tips).toContain("With no authored block selected or being edited, the command changes nothing and says so");
 });

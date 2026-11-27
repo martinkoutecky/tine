@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -33,7 +34,7 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
   it("constructs n-ary SQL booleans before visits and bounds actual nesting (I-22)", () => {
     const source = read("crates/tine-core/src/query/tql.rs");
     expect(source, "I-22: imitate tql/boolean.rs; flat chains are not recursive binary trees").toContain("boolean::BooleanDialect");
-    expect(source.indexOf("boolean::admit_tokens")).toBeLessThan(source.indexOf("parser.parse_expr()"));
+    expectOrderedIn(source, "boolean::admit_tokens", "parser.parse_expr()");
     expect(source).toContain("boolean::admit_ast(&expr)");
     expect(source).not.toMatch(/fn (?:and|or)_items/);
     expect(read("crates/tine-core/src/query/tql/boolean.rs")).toContain("parser.parse_subexpr(precedence)");

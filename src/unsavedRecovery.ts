@@ -3,7 +3,7 @@
 // import the document store. The panel belongs to the graph it was opened for; a
 // graph switch closes it by retiring that binding.
 import { createSignal } from "solid-js";
-import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "./binding";
+import { captureBinding, clearOnBindingInvalidated, bindingCurrent, graphScopedSignal, type Binding } from "./binding";
 
 const [openFor, setOpenFor] = createSignal<Binding | null>(null);
 export const unsavedRecoveryOpen = (): boolean => {
@@ -13,3 +13,8 @@ export const unsavedRecoveryOpen = (): boolean => {
 export const openUnsavedRecovery = (): void => { setOpenFor(captureBinding()); };
 export const closeUnsavedRecovery = (): void => { setOpenFor(null); };
 clearOnBindingInvalidated(closeUnsavedRecovery);
+
+/** How many originals a cancelled rename kept in this graph (GH #540): told at
+ * graph open (`DraftStatus.kept`) and by each list the panel takes. The palette
+ * command that reopens the panel is offered while it is not zero. */
+export const [keptOriginalCount, setKeptOriginalCount] = graphScopedSignal<number>("binding");

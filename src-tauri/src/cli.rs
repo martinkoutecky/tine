@@ -430,7 +430,10 @@ enum ExportFormat {
 #[derive(Debug, Args)]
 #[command(group(clap::ArgGroup::new("source").required(true).args(["uuid", "query", "page"])))]
 #[command(
-    override_usage = "tine export query [OPTIONS] <GRAPH> <((UUID))|--query <TEXT>|--page <PAGE>>"
+    override_usage = format!(
+        "{} export query [OPTIONS] <GRAPH> <((UUID))|--query <TEXT>|--page <PAGE>>",
+        crate::owner::command_name()
+    )
 )]
 struct QueryExportArgs {
     /// Graph directory (relative or absolute path).
@@ -731,8 +734,10 @@ where
 /// the ordinary GUI; `Some(code)` exits after printing the result or error.
 pub(crate) fn dispatch() -> Option<i32> {
     let argv = std::env::args_os().collect::<Vec<_>>();
+    // Before the parse: clap's usage lines and every later hint print one name.
+    crate::owner::set_command_name(argv.first().map(std::ffi::OsString::as_os_str));
     prepare_console_if_needed(&argv);
-    let cli = match Cli::try_parse_from(&argv) {
+    let cli = match parse_as(crate::owner::command_name(), &argv) {
         Ok(cli) => cli,
         Err(error) => {
             let code = if error.use_stderr() { 2 } else { 0 };
@@ -941,6 +946,16 @@ fn read_command(command: Command) -> i32 {
         },
         _ => 2,
     }
+}
+
+/// Parse `argv` with `name` as the program's name in everything clap prints.
+/// clap would otherwise take the file name of `argv[0]` itself: a second
+/// answer to what `owner::command_name` answers (GH #1011).
+fn parse_as(name: &str, argv: &[std::ffi::OsString]) -> Result<Cli, clap::Error> {
+    use clap::{CommandFactory, FromArgMatches};
+    let command = || Cli::command().bin_name(name.to_owned());
+    let matches = command().try_get_matches_from(argv)?;
+    Cli::from_arg_matches(&matches).map_err(|error| error.format(&mut command()))
 }
 
 /// The GUI request in `argv`, with a relative graph resolved against `cwd`

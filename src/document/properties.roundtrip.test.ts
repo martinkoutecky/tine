@@ -63,7 +63,8 @@ describe("property mutation across page formats", () => {
     resetStore();
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "lb", raw: logbook, collapsed: false, children: [] }], format: "md" });
     setSchedule("lb", "scheduled", { y: 2026, m: 9, d: 3 }); // m is 0-based
-    expect(doc.byId.lb.raw).toBe(`SCHEDULED: <2026-10-03 Sat>\n${logbook}`);
+    // After an empty first line: Logseq takes no date from a block's first line (GH #1012).
+    expect(doc.byId.lb.raw).toBe(`\nSCHEDULED: <2026-10-03 Sat>\n${logbook}`);
   });
   it("replaces and removes a Unicode Markdown block key in place", () => {
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw: "Body\nklíč:: old\ntags:: x", collapsed: false, children: [] }], format: "md" });

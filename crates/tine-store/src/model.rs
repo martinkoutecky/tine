@@ -164,6 +164,14 @@ pub(crate) type ConfigRead = (Config, Option<crate::IoError>, Option<Arc<str>>);
 /// The config an open reads at `path` through `source`: the parsed text; a
 /// missing file is the defaults with [`missing_config_problem`]; another
 /// read error is the defaults with that error.
+/// The text a creating save names its page by: its bytes as UTF-8. Opaque
+/// bytes (a retained raw create, a binary rescue) give none, so the
+/// filename names the page. The page host's create guard and its kept
+/// originals both read a created page's name through this.
+pub(crate) fn created_text(bytes: Option<&[u8]>) -> &str {
+    std::str::from_utf8(bytes.unwrap_or_default()).unwrap_or("")
+}
+
 pub(crate) fn read_config_in(source: &FileSource, path: &Path) -> ConfigRead {
     match read_parse_input_in(source, path) {
         Ok(text) => (Config::parse(&text), None, Some(Arc::from(text.as_ref()))),
@@ -510,12 +518,12 @@ pub(crate) fn parse_doc(path: &Path, content: &str) -> Document {
 
 /// Asset safety also includes physical files omitted from the query snapshot.
 /// Use the normal bounded input and format parser, isolating parser failures.
-/// [`tine_core::asset_refs::collect_document_asset_refs`], counted for cost
+/// [`tine_core::asset_refs::collect_document_live_asset_refs`], counted for cost
 /// tests: the one entry the store uses to scan a document for asset names.
 pub(crate) fn collect_document_asset_refs(doc: &Document, names: &mut HashSet<String>) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::asset_ref_document();
-    tine_core::asset_refs::collect_document_asset_refs(doc, names);
+    tine_core::asset_refs::collect_document_live_asset_refs(doc, names);
 }
 
 pub(crate) fn collect_file_asset_refs(path: &Path, names: &mut HashSet<String>) -> io::Result<()> {
@@ -1068,6 +1076,12 @@ impl ReadSnapshot {
             &|doc: &Document| collect_document_referenced_names(doc, &config),
         );
         let asset_refs = std::sync::OnceLock::new();
+        // Only the native store reads the asset index (orphan listing, the
+        // trash recheck); the browser core never builds one, so it has none
+        // to carry. Carrying there would only link the liveness rule and
+        // the HTML sanitizer it reads into the Wasm module. A browser reader
+        // added later still gets a correct index: built on first read.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(carried) = old.and_then(|old| {
             asset_ref_index::AssetRefIndex::carry(
                 old.asset_refs.get()?,
@@ -3763,7 +3777,7 @@ impl Graph {
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
         self.with_pages(|pages| {
             for (_e, doc) in pages {
-                tine_core::asset_refs::collect_document_asset_refs(doc, &mut referenced);
+                tine_core::asset_refs::collect_document_live_asset_refs(doc, &mut referenced);
             }
         });
         let mut out = Vec::new();
@@ -3783,7 +3797,7 @@ impl Graph {
             if name.starts_with('.') || name.ends_with(".edn") {
                 continue;
             }
-            if referenced.contains(name) {
+            if tine_core::asset_refs::is_live(name, |name| referenced.contains(name)) {
                 continue;
             }
             let meta = entry.metadata().ok();
@@ -3815,6 +3829,12 @@ impl Graph {
         let entry = self.page_entry_in(path, text)?;
         self.observe_name_entry(&entry, text != Some(""));
         Some(entry)
+    }
+
+    /// The page entry a creating save of `bytes` at `path` makes
+    /// ([`created_text`]); no name memo is touched.
+    pub(crate) fn created_entry(&self, path: &Path, bytes: Option<&[u8]>) -> Option<PageEntry> {
+        self.page_entry_in(path, Some(created_text(bytes)))
     }
 
     /// The page entry `path` names, its page name from `text` when given.
@@ -4848,13 +4868,13 @@ pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
         dst,
         Source::File(&input, u64::MAX),
         Mode::Default,
-        ".restore",
+        crate::atomic_file::TempTag::Restore,
     )?
     .publish_and_sync(true)
 }
 
 /// Copy from an already-open source capability into a new destination while
-/// enforcing a byte ceiling during the stream (temp tag `.capture`). This is
+/// enforcing a byte ceiling during the stream (temp tag `.capture`, [`crate::atomic_file::TempTag::Capture`]). This is
 /// the native-capture path: it avoids reopening an attacker-replaceable
 /// pathname and avoids whole-value Android/IPC/base64 amplification.
 pub(crate) fn atomic_copy_file_new(
@@ -4869,7 +4889,7 @@ pub(crate) fn atomic_copy_file_new(
         dst,
         Source::File(input, max_bytes),
         Mode::Default,
-        ".capture",
+        crate::atomic_file::TempTag::Capture,
     )?
     .publish_and_sync(true)
 }

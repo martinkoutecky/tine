@@ -418,6 +418,15 @@ export function publishedBackend(load: () => Promise<{ name: string; read: Graph
     async pageOwed() {
       return [];
     },
+    async pageKeptOriginals() {
+      return [];
+    },
+    async pageKeptText() {
+      return null;
+    },
+    async pageRestoreKept() {
+      return { kind: "refused" as const, reason: "notKept" as const };
+    },
     onPageMail: unsubscribed,
     onGraphOpenWaiting: unsubscribed,
     onGraphOpenOwnerWaiting: unsubscribed,

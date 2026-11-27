@@ -36,7 +36,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   the selection is itself a URL — then a normal replace happens.)
 - Inline formatting (`Mod+B/I`, strike, `==highlight==`, link) via a floating
   selection toolbar, including page-link and inline-code wrapping/unwrapping,
-  plus Emacs-style word/line kill motions.
+  plus Emacs-style word/line kill motions (on macOS, Logseq's Control chords).
 - **Select then wrap** (always on, Logseq parity) — with text selected, typing a
   wrap character surrounds it: `[` twice → `[[selection]]` (opens the page search
   seeded with the words — Enter links or creates), `(` twice → `((selection))`
@@ -48,9 +48,10 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   default** (turn it on if you like it); page-ref `[[…]]` always auto-closes.
 - ⊕ **Typographic replacements** (Settings → Appearance) — show `->` → `→`,
   `-->` → `⟶`, `--` → `–` (en), `---` → `—` (em) and friends as real glyphs,
-  either *while reading* (your Markdown stays ASCII, only the rendered view
-  changes — like `\Delta` → Δ) or *while typing* (rewrites the source itself). A
-  Tine touch, not Logseq; **off by default** (text shows as typed, as in Logseq), GH #583.
+  either *display only* (your Markdown stays ASCII; the view and the editor show the
+  glyphs in text, the editor the typed characters at the caret; as typed while Find in page is open — like `\Delta` → Δ) or *while
+  typing* (rewrites the source itself). A Tine touch, not Logseq; **on (display only) by
+  default** (**Off** shows text as typed, as in Logseq).
 - **In-block lists & checklists** — a `+`/`*`/ordered list *inside one bullet's
   content* renders as a styled list (distinct from outline bullets), with tickable
   `[ ]`/`[x]` checkboxes that are *not* TODO/agenda tasks. Uses `+` (OG's in-content
@@ -492,8 +493,8 @@ within a column; merged cells are still v2+.
   to close. Plain navigation to a route already open in another tab focuses that
   tab instead of duplicating it; Settings → Editor can turn this off. (Logseq core
   has no tabs.)
-- ⊕ **Browser-style back/forward** (`Alt+Left` / `Alt+Right`, per-tab history, works
-  mid-edit).
+- ⊕ **Browser-style back/forward** (`Alt+Left` / `Alt+Right`, `Cmd+[` / `Cmd+]` on macOS,
+  per-tab history, works mid-edit).
 - ⊕ **Focus mode + dim-inactive-blocks** (`t f` / `t b`): hide the chrome and fade
   everything but the block you're working on, with Logseq-style layered `Esc`.
 - ⊕ **Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small

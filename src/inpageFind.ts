@@ -10,7 +10,7 @@ import { focusedPaneId, layoutPaneIds, visibleLayoutNode, paneRouter } from "./p
 import { sameRoute } from "./router";
 import { captureBinding, stillBound } from "./binding";
 import { searchSubstringSpans } from "./editor/searchQuery";
-import { rightSidebar, rightSidebarOpen, sidebarItemKey, searchRemoveAccents } from "./ui";
+import { rightSidebar, rightSidebarOpen, sidebarItemKey, searchRemoveAccents, typographyMode } from "./ui";
 import { activeDocument, activeElement, activeWindow, bodyOf, createRangeIn, isElementNode, isElementTag, selectionOf, queryAllWindows, queryAllWindowsAll, registeredWindows, requestFrame, viewportOf, windowOf } from "./windowRealm";
 
 export interface InPageFindMatch {
@@ -259,6 +259,10 @@ let surfaceObserver: MutationObserver | null = null;
 let surfaceObserverFrame: (() => void) | undefined;
 
 export const inPageFindOpen = state.open;
+/** Whether typographic glyphs are drawn now, in the reading view and the editor. While Find is open they are not:
+ * its index and its highlighter both count source text, and with a glyph drawn they would name different
+ * occurrences, so Replace could write one that is not highlighted. Read it inside tracked drawing. */
+export const glyphsShown = () => typographyMode() === "render" && !state.open();
 export const inPageFindQuery = state.query;
 export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;

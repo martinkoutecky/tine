@@ -2,10 +2,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectOrderedIn } from "./testOrder.test.support";
 
 const native = vi.hoisted(() => ({
   setSystemBarAppearance: vi.fn(async (_dark: boolean, _background?: string) => {}),
   appPlatform: vi.fn(async () => "desktop"),
+  warmDone: vi.fn(async () => true),
 }));
 
 vi.mock("./backend", () => ({
@@ -91,7 +93,7 @@ describe("Android system-bar theme synchronization", () => {
     expect(plugin).toContain("isAppearanceLightNavigationBars = !lightIcons");
     expect(plugin).toContain("getSharedPreferences");
     expect(activity.match(/SystemBarAppearance\.restore\(this\)/g)).toHaveLength(2);
-    expect(activity.indexOf("SystemBarAppearance.restore(this)")).toBeGreaterThan(activity.indexOf("super.onCreate"));
+    expectOrderedIn(activity, "super.onCreate", "SystemBarAppearance.restore(this)");
   });
   // GH #205 (master 945337d03): WebView reports env(safe-area-inset-*) as zero
   // on API 35, so the Activity content root is the one inset owner. The IME is
@@ -110,7 +112,7 @@ describe("Android system-bar theme synchronization", () => {
     // Not consumed: the listener hands the original insets back to descendants.
     expect(activity).toMatch(/maxOf\(safe\.bottom, ime\.bottom\)\)\s*\n\s*insets\s*\n\s*\}/);
     expect(activity).toContain("ViewCompat.requestApplyInsets(content)");
-    expect(activity.indexOf("setOnApplyWindowInsetsListener")).toBeGreaterThan(activity.indexOf("super.onCreate"));
+    expectOrderedIn(activity, "super.onCreate", "setOnApplyWindowInsetsListener");
   });
 
   // GH #716. The padded WebView sees the IME only as a smaller window, so the

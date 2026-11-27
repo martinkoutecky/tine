@@ -4,7 +4,10 @@
 //! The two physical censuses retain observed bytes and successful metadata
 //! witnesses, not logical drafts. Only drafts::scan selects logical records.
 //! Reconstruct this adapter after a process crash to enumerate actual survivors.
-use super::io::{DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, Witness};
+use super::io::{
+    DraftStatus, ErrorKind, HostIo, IoFailure, IoResult, MoveResult, Phase, SourceWitness, Witness,
+    WitnessStep,
+};
 use super::Text;
 #[path = "production_guard.rs"]
 mod guard;
@@ -90,6 +93,13 @@ pub(super) struct ProductionIo {
     /// keeps making progress.
     #[cfg(test)]
     pub delays: BTreeMap<super::io::Phase, std::time::Duration>,
+    /// Graph directories whose every sync fails with this error until
+    /// removed (launch, page and source-witness syncs alike).
+    #[cfg(test)]
+    pub(super) sync_faults: BTreeMap<PathBuf, io::ErrorKind>,
+    /// Per page, errors its next reads (`read_page`) fail with, in order.
+    #[cfg(test)]
+    pub(super) read_faults: BTreeMap<String, std::collections::VecDeque<io::ErrorKind>>,
     /// Abort the process just before the phase's call number `n` (0-based).
     #[cfg(any(test, feature = "test-faults"))]
     abort: Option<(super::io::Phase, usize)>,
@@ -158,6 +168,10 @@ impl ProductionIo {
             untouchable: Default::default(),
             trash_chain: None,
             marker_files: cfg!(test) || !cfg!(windows),
+            #[cfg(test)]
+            sync_faults: BTreeMap::new(),
+            #[cfg(test)]
+            read_faults: BTreeMap::new(),
             unwritten: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
@@ -230,9 +244,117 @@ impl ProductionIo {
         self.check_path(dir)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::fsync();
-        durability::sync_directory_witness(dir)
+        self.sync_graph_directory(dir)
             .map(witness)
             .map_err(sync_failure)
+    }
+
+    /// A graph directory's sync (`sync_directory_witness`), or its planted
+    /// test fault (`sync_faults`), classified as the real one is.
+    fn sync_graph_directory(&self, dir: &Path) -> io::Result<DirectoryWitness> {
+        #[cfg(test)]
+        DIR_SYNCS.with(|syncs| syncs.set(syncs.get() + 1));
+        #[cfg(test)]
+        if let Some(kind) = self.sync_faults.get(dir) {
+            let error = io::Error::new(*kind, "injected directory sync failure");
+            return if durability::dir_sync_is_unsupported(&error) {
+                Ok(DirectoryWitness::Unsupported)
+            } else {
+                Err(error)
+            };
+        }
+        durability::sync_directory_witness(dir)
+    }
+
+    /// Sync each of `dirs` once (root first: a `BTreeSet` orders a parent
+    /// before its children), with its evidence (`chain_evidence`). Each sync
+    /// counts as a host fsync (`cost_counters`).
+    fn sync_chain(
+        &self,
+        dirs: std::collections::BTreeSet<PathBuf>,
+    ) -> BTreeMap<PathBuf, ChainSync> {
+        (dirs.into_iter())
+            .map(|dir| {
+                let evidence = self.chain_evidence(&dir, true);
+                (dir, evidence)
+            })
+            .collect()
+    }
+
+    /// One witness-chain directory's evidence, the only place it is
+    /// computed: a directory that fails the containment check is not synced
+    /// (`None` result); otherwise its identity, then its sync. `count`: the
+    /// sync counts as a host fsync (`cost_counters`; the launch pass, which
+    /// the counters never included, passes false).
+    fn chain_evidence(&self, dir: &Path, count: bool) -> ChainSync {
+        if self.check_path(dir).is_err() {
+            return (None, None);
+        }
+        let id = crate::watch::directory_identity(dir);
+        #[cfg(feature = "test-faults")]
+        if count {
+            crate::cost_counters::fsync();
+        }
+        let _ = count;
+        (Some(self.sync_graph_directory(dir)), id)
+    }
+
+    /// The source witness's end (`HostIo::source_witnessed`), after its
+    /// file steps (`read`: the stamp after the reread) and its chain's syncs
+    /// (`synced`, with `now`: each directory's identity after them): every
+    /// directory of the file's chain synced (`Unsupported` gives the weak
+    /// witness), still the same directory, and the path still names the
+    /// same unchanged file. One `storage_diag` record per failure.
+    fn witness_end(
+        &self,
+        path: &Path,
+        read: Result<crate::watch::Stamp, WitnessStep>,
+        synced: &BTreeMap<PathBuf, ChainSync>,
+        now: &mut BTreeMap<PathBuf, Option<u128>>,
+    ) -> SourceWitness {
+        let result = read.and_then(|read| {
+            let mut weak = cfg!(windows);
+            for dir in chain(&self.graph, path.parent().unwrap()) {
+                match synced.get(dir) {
+                    Some((Some(Ok(DirectoryWitness::Durable)), _)) => {}
+                    Some((Some(Ok(DirectoryWitness::Unsupported)), _)) => weak = true,
+                    Some((Some(Err(_)), _)) => return Err(WitnessStep::DirectorySync),
+                    Some((None, _)) | None => return Err(WitnessStep::Containment),
+                }
+                // An identity is evidence only when both lookups answered
+                // and agree: a failed lookup or a non-directory fails.
+                let id = synced[dir].1;
+                let after = *now
+                    .entry(dir.to_path_buf())
+                    .or_insert_with(|| crate::watch::directory_identity(dir));
+                if id.is_none() || id != after {
+                    return Err(WitnessStep::Replaced);
+                }
+            }
+            #[cfg(test)]
+            witness_hook(WitnessStep::Replaced);
+            let same =
+                crate::watch::stamp_metadata(path).is_some_and(|now| read.same_metadata(&now));
+            if !same {
+                return Err(WitnessStep::Replaced);
+            }
+            Ok(if weak {
+                SourceWitness::Weak
+            } else {
+                SourceWitness::Durable
+            })
+        });
+        result.unwrap_or_else(|step| {
+            self.storage_diag.source_witness_failed(step.index());
+            SourceWitness::Failed(step)
+        })
+    }
+
+    /// A source witness's file steps, after its containment check.
+    fn witness_start(&self, path: &Path, bytes: &Text) -> Result<crate::watch::Stamp, WitnessStep> {
+        self.check_path(path)
+            .map_err(|_| WitnessStep::Containment)?;
+        witness_file(path, bytes.as_deref().ok_or(WitnessStep::Changed)?)
     }
 
     /// The page's file, through its key's current spelling.
@@ -484,6 +606,86 @@ fn read_published(path: &Path) -> io::Result<Option<(crate::watch::Stamp, crate:
     Ok(before.zip(after))
 }
 
+/// A source witness's file steps (`HostIo::source_witnessed`), on one
+/// handle: read and `fstat`, flush, reread and `fstat`. The bytes must be
+/// `bytes` both times and the two stamps equal (an in-place overwrite
+/// between them is detected; one in the same clock tick that restores the
+/// size is the accepted limit L1). Windows opens the handle for writing,
+/// which its flush needs. The reads compare bytes and stamps only: they
+/// use the bounded reader and compute no revision. Returns the stamp after
+/// the reread.
+fn witness_file(path: &Path, bytes: &[u8]) -> Result<crate::watch::Stamp, WitnessStep> {
+    use std::io::Seek;
+    #[cfg(windows)]
+    let file = fs::OpenOptions::new().read(true).write(true).open(path);
+    #[cfg(not(windows))]
+    let file = fs::File::open(path);
+    let mut file = file.map_err(|_| WitnessStep::Open)?;
+    #[cfg(test)]
+    WITNESS_READS.with(|reads| reads.set(reads.get() + 1));
+    let (first, _) =
+        crate::model::read_parse_open_file(&mut file).map_err(|_| WitnessStep::Read)?;
+    let read = (file.metadata().ok())
+        .and_then(|meta| crate::watch::stamp_from_metadata(&meta))
+        .ok_or(WitnessStep::Read)?;
+    if first != bytes {
+        return Err(WitnessStep::Changed);
+    }
+    #[cfg(test)]
+    witness_hook(WitnessStep::FileSync);
+    crate::atomic_file::sync_file_handle(&file).map_err(|_| WitnessStep::FileSync)?;
+    file.rewind().map_err(|_| WitnessStep::Reread)?;
+    #[cfg(test)]
+    WITNESS_READS.with(|reads| reads.set(reads.get() + 1));
+    let (second, _) =
+        crate::model::read_parse_open_file(&mut file).map_err(|_| WitnessStep::Reread)?;
+    let reread = (file.metadata().ok())
+        .and_then(|meta| crate::watch::stamp_from_metadata(&meta))
+        .ok_or(WitnessStep::Reread)?;
+    if second != bytes || !read.same_metadata(&reread) {
+        return Err(WitnessStep::Changed);
+    }
+    Ok(reread)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The source witness's file reads (two per witnessed file), for cost
+    /// tests.
+    pub(super) static WITNESS_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Graph directory syncs asked for (`sync_graph_directory`), for cost
+    /// tests.
+    pub(super) static DIR_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Run once just before the witness's step (another program acting
+    /// between two of its steps).
+    pub(super) static WITNESS_HOOK: std::cell::RefCell<Option<WitnessHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Another program's act, and the witness step it runs just before.
+#[cfg(test)]
+pub(super) type WitnessHook = (WitnessStep, Box<dyn FnOnce()>);
+
+#[cfg(test)]
+fn witness_hook(step: WitnessStep) {
+    let hook = WITNESS_HOOK.with(|hook| {
+        let mut hook = hook.borrow_mut();
+        if hook.as_ref().is_some_and(|(at, _)| *at == step) {
+            hook.take()
+        } else {
+            None
+        }
+    });
+    if let Some((_, run)) = hook {
+        run();
+    }
+}
+
+/// One directory's sync in a witness chain: its result and its identity
+/// when synced (`watch::directory_identity`). `None` result: the directory
+/// failed the containment check.
+type ChainSync = (Option<io::Result<DirectoryWitness>>, Option<u128>);
+
 /// A synced temporary file for `path`. The host's writes and syncs are
 /// counted where the transaction's are (`cost_counters`, I-25, Q-P2b-2), by
 /// the shared recipe itself.
@@ -492,7 +694,7 @@ fn temp(path: &Path, bytes: &[u8]) -> io::Result<PreparedWrite> {
         path,
         crate::atomic_file::Source::Bytes(bytes),
         crate::atomic_file::Mode::Default,
-        "",
+        crate::atomic_file::TempTag::Replace,
     )
 }
 
@@ -611,13 +813,29 @@ impl HostIo for ProductionIo {
             .collect()
     }
 
-    fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {
+    fn graph_launch(
+        &mut self,
+        pages: &std::collections::BTreeSet<String>,
+        sources: &[(String, Text)],
+    ) -> Vec<SourceWitness> {
         // Every existing ancestor up to the graph root: an interrupted nested
         // page-directory creation leaves entries no later leaf sync covers.
         // The same holds for the trash chain: a crash between a deletion's
         // mkdirs and their parent syncs loses the retained obligation, and the
         // next deletion's creation sees the entries and owes nothing
         // (REVIEW-2b-r2 R1). A trash directory that does not exist is skipped.
+        // The decided sources' witnesses share this pass: their file steps
+        // first, one handle at a time, then each directory synced once, then
+        // their final checks; the directory syncs stay the launch's own. Only
+        // the directories of those sources' chains keep evidence (identity and
+        // result): with no decided source the pass is the plain one above.
+        let reads: Vec<_> = (sources.iter())
+            .map(|(page, bytes)| {
+                let path = self.page_path(page);
+                let read = self.witness_start(&path, bytes);
+                (path, read)
+            })
+            .collect();
         let mut directories = std::collections::BTreeSet::from([self.graph.clone()]);
         for page in pages {
             let path = self.page_path(page);
@@ -631,15 +849,35 @@ impl HostIo for ProductionIo {
                 .filter(|dir| dir.try_exists().unwrap_or(true))
                 .map(Path::to_path_buf),
         );
+        let mut witnessed = std::collections::BTreeSet::new();
+        for (path, _) in reads.iter().filter(|(_, read)| read.is_ok()) {
+            if self.check_path(path).is_ok() {
+                witnessed.extend(chain(&self.graph, path.parent().unwrap()).map(Path::to_path_buf));
+            }
+        }
+        directories.extend(witnessed.iter().cloned());
         self.launch_warnings.clear();
+        let mut synced: BTreeMap<PathBuf, ChainSync> = BTreeMap::new();
         for directory in directories {
+            if witnessed.contains(&directory) {
+                let evidence = self.chain_evidence(&directory, false);
+                if let (Some(Err(error)), _) = &evidence {
+                    self.launch_warnings.push((directory.clone(), error.kind()));
+                }
+                synced.insert(directory, evidence);
+                continue;
+            }
             if self.check_path(&directory).is_err() {
                 continue;
             }
-            if let Err(error) = durability::sync_directory_witness(&directory) {
+            if let Err(error) = self.sync_graph_directory(&directory) {
                 self.launch_warnings.push((directory, error.kind()));
             }
         }
+        let mut now = BTreeMap::new();
+        (reads.into_iter())
+            .map(|(path, read)| self.witness_end(&path, read, &synced, &mut now))
+            .collect()
     }
 
     fn page_finish(&mut self, page: &str) {
@@ -650,6 +888,10 @@ impl HostIo for ProductionIo {
 
     fn read_page(&mut self, page: &str) -> IoResult<Text> {
         self.before(super::io::Phase::Read)?;
+        #[cfg(test)]
+        if let Some(kind) = (self.read_faults.get_mut(page)).and_then(|queue| queue.pop_front()) {
+            return Err(failure(io::Error::new(kind, "injected page read failure")));
+        }
         self.check_path(&self.page_path(page))?;
         match read_observed(&self.page_path(page)) {
             Ok((bytes, stamp)) => {
@@ -799,6 +1041,26 @@ impl HostIo for ProductionIo {
         };
         let current = crate::watch::stamp_metadata(&self.page_path(page));
         current.is_some_and(|now| stamp.same_metadata(&now))
+    }
+
+    fn source_witnessed(&mut self, page: &str, bytes: &Text) -> SourceWitness {
+        // One handle's read, flush and reread, then every directory from
+        // the page's up to the graph root synced now (a launch whose sync
+        // failed, or a nested directory newly visible after an interrupted
+        // publication, leaves an ancestor entry no later page save syncs),
+        // then the path checked to name the same file. A failed step keeps
+        // custody, so it is never dropped: the next decision witnesses again.
+        let path = self.page_path(page);
+        let read = self.witness_start(&path, bytes);
+        let synced = match read {
+            Ok(_) => self.sync_chain(
+                chain(&self.graph, path.parent().unwrap())
+                    .map(Path::to_path_buf)
+                    .collect(),
+            ),
+            Err(_) => BTreeMap::new(),
+        };
+        self.witness_end(&path, read, &synced, &mut BTreeMap::new())
     }
 
     fn release_durable(&mut self, page: &str) {
@@ -1122,7 +1384,7 @@ impl HostIo for ProductionIo {
             }),
             unreadable: self.untouchable.iter().cloned().collect(),
             unsaved: vec![],
-            restorable: Default::default(),
+            kept: 0,
         }
     }
 

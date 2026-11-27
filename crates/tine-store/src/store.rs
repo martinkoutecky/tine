@@ -394,6 +394,9 @@ struct Snapshot {
 
 mod answer_changes;
 mod asset_inventory;
+// Unix only: the fixture is a FIFO.
+#[cfg(all(test, unix))]
+mod asset_read_tests;
 pub(crate) mod change_summary;
 pub(crate) mod checkpoint;
 mod diagnostics;
@@ -413,7 +416,7 @@ mod memory_replace_tests;
 mod query_request;
 #[cfg(test)]
 mod subgraph_tests;
-pub(crate) use inventory::InventoryDelta;
+pub(crate) use inventory::{proposed_page_id, InventoryDelta};
 pub use inventory::{Inventory, InventoryEntry, InventoryScope, LinkTarget};
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
@@ -1629,7 +1632,10 @@ impl Store {
                 );
             }
         }
-        let asset_recovery = self.graph.assets_path().join(".tine-restore-recovery");
+        let asset_recovery = self
+            .graph
+            .assets_path()
+            .join(crate::asset_watch::ASSET_RECOVERY);
         match fs::read_dir(asset_recovery) {
             Ok(entries) => {
                 for entry in entries {
@@ -1745,11 +1751,8 @@ impl Store {
         let path = self.path_for_os_handoff(file, false)?;
         #[cfg(feature = "test-faults")]
         crate::cost_counters::store_read();
-        let mut input = File::open(path).map_err(StoreError::from_io)?;
-        let meta = input.metadata().map_err(StoreError::from_io)?;
-        if !meta.is_file() {
-            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-        }
+        let (mut input, meta) = crate::open_regular_file(&path, crate::FinalSymlink::Follow)
+            .map_err(|error| StoreError::from_open(error, file))?;
         let len = meta.len();
         if let Some(limit) = max_bytes {
             if len > limit {
@@ -1784,24 +1787,16 @@ impl Store {
             return Err(StoreError::Closed);
         }
         self.validate_file(file)?;
-        let path = self.path_for_os_handoff(file, false)?;
+        // Validates the path's ancestors inside the area; the open below is
+        // of the lexical path, so its final component can be refused as a link.
+        self.path_for_os_handoff(file, false)?;
         let raw = if let Some(rel) = file.as_str().strip_prefix("assets/") {
             self.graph.assets_path().join(rel)
         } else {
             self.graph.root.join(file.as_str())
         };
-        if fs::symlink_metadata(&raw)
-            .map_err(StoreError::from_io)?
-            .file_type()
-            .is_symlink()
-        {
-            return Err(StoreError::StreamSymlink(file.clone()));
-        }
-        let input = File::open(path).map_err(StoreError::from_io)?;
-        let meta = input.metadata().map_err(StoreError::from_io)?;
-        if !meta.is_file() {
-            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-        }
+        let (input, meta) = crate::open_regular_file(&raw, crate::FinalSymlink::Refuse)
+            .map_err(|error| StoreError::from_open(error, file))?;
         Ok((input, meta.len()))
     }
 
@@ -2348,6 +2343,16 @@ impl StoreError {
         match error.kind() {
             std::io::ErrorKind::NotFound => Self::NotFound(PageReadSource::Disk),
             _ => Self::Io(error.into()),
+        }
+    }
+
+    /// A refused [`crate::open_regular_file`]: a non-regular file is an
+    /// invalid target, a refused final symlink a stream-symlink refusal.
+    pub(crate) fn from_open(error: crate::OpenRegularError, file: &FileId) -> Self {
+        match error {
+            crate::OpenRegularError::Io(error) => Self::from_io(error),
+            crate::OpenRegularError::NotRegular => Self::InvalidTarget(file.as_str().to_owned()),
+            crate::OpenRegularError::FinalSymlink => Self::StreamSymlink(file.clone()),
         }
     }
 }

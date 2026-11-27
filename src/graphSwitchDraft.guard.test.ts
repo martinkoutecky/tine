@@ -14,14 +14,14 @@ const RULE = "a graph switch resets the old working set only after an awaited pu
   + "the old host has not taken (storage.qnt mutant MX; STEP3-DESIGN §6 step 5)";
 
 describe("graph switch keeps the old graph's late edits", () => {
-  it("loadGraphPath awaits the last flushAll barrier, aborting on failure, before load_graph and resetStore", () => {
-    const flush = graph.indexOf("if (hadGraph && !(await flushAll())) {");
-    const abort = graph.indexOf("return { kind: \"aborted\" };", flush);
+  it("loadGraphPath awaits the last flushAll barrier (flushAllUnsettled), aborting on failure, before load_graph and resetStore", () => {
+    const flush = graph.indexOf("const lateUnflushed = hadGraph ? await flushAllUnsettled(switching) : null;");
+    const abort = graph.indexOf("return { kind: \"aborted\" };", graph.indexOf("if (lateUnflushed) {", flush));
     const load = graph.indexOf("await backend().loadGraph(", flush);
     const reset = graph.indexOf("resetStore();", load);
     expect(flush, RULE).toBeGreaterThan(0);
     expect(abort > flush && abort < load && load < reset, RULE).toBe(true);
-    expect(graph, RULE).not.toMatch(/void flushAll\(\)/);
+    expect(graph, RULE).not.toMatch(/void flushAll(Unsettled)?\(\)/);
   });
 
   it("loadGraphPath does not reset the working set over input its old host never answered", () => {

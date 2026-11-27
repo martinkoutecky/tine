@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { setToasts, toasts } from "./toasts";
+import { mountCapture } from "./tests/captureApp";
 
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload?: unknown }) => void>(),
@@ -48,10 +49,7 @@ describe("capture preference request ownership", () => {
     const read = vi.spyOn(backend(), "getCaptureEnterFiles")
       .mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { second = resolve; }));
-    const root = document.createElement("div");
-    root.id = "capture-root";
-    document.body.append(root);
-    await import("./capture");
+    await mountCapture();
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(h.listeners.has("capture-shown")).toBe(true));
     h.listeners.get("capture-shown")!({});

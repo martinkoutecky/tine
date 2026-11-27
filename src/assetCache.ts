@@ -5,6 +5,7 @@ import { dbg } from "./debug";
 import { errorFamily, type ErrorFamily } from "./errorFamily";
 import { graphOwner } from "./owned";
 import { clearOnBindingInvalidated } from "./binding";
+import { isQuickCaptureWindow } from "./windowRole";
 import { reportUiFailure } from "./uiFailure";
 import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 import { isStaticIconImage } from "./staticImage";
@@ -122,10 +123,13 @@ function prune(protectedKey: string) {
  * missing file is a normal state (the broken-image placeholder is its visible
  * form) but any other failure is reported. `device` reads are opt-in files
  * outside the graph whose refusal (setting off, moved file) is an expected state
- * that the placeholder already shows, so they are logged only. */
+ * that the placeholder already shows, so they are logged only. A window
+ * granted no graph read (Quick Capture) does not ask: its graph assets answer
+ * as unreadable (the "preview unavailable" placeholder), unreported. */
 type ReadKind = "graph" | "device";
 
 function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string, kind: ReadKind, maxBytes = MAX_IMAGE_BYTES): CacheEntry {
+  if (kind === "graph" && isQuickCaptureWindow()) return { key, promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false, maxBytes, failure: "unknown" };
   const hit = cache.get(key);
   if (hit) {
     touch(key, hit);

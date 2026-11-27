@@ -89,7 +89,8 @@ warn the first time — here's how to get past it:
 
 **Test the Betas.** Beta testers are welcome and genuinely help: Betas get the fixes first, and what
 you notice shapes the next stable release. *Tine Beta* is a separate app that installs next to Tine,
-so you can keep both.
+so you can keep both. From a Linux `.deb` or `.rpm`, its command is `tine-beta`: type
+`tine-beta` wherever this README says `tine`.
 - **iPhone and iPad** — install Apple's TestFlight app, then open
   **[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)**.
 - **Desktop and Android** — take the newest pre-release from
@@ -157,7 +158,7 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
   builder, and name it only when it deserves to become an ordinary query page.
 - **🪟 Split view.** Panes have their own tabs/history, keyboard pane/seam navigation, `Ctrl+click`
   open-to-side, and tab drag to pane or seam.
-- **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right`, per-tab history, works mid-edit.
+- **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right` (`Cmd+[` / `Cmd+]` on macOS), per-tab history, works mid-edit.
 - **🎯 Focus mode + dim-inactive-blocks** (`t f` / `t b`) — fade everything but the block you're on.
 - **⚡ Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small always-on-top
   box pops from *any* app with the full editor, filing a bullet to today's journal.

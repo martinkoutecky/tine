@@ -3,6 +3,7 @@ DiskToken  # why: backend wire type of the page host protocol; batch-og-s3b
 DraftStatus  # why: graph open reports crash-draft storage status; batch-og-s3b
 FeedPage
 HistoryRouteContext
+KeptOriginal  # why: backend wire type: an original a cancelled rename kept, which the recovery panel lists (GH #540); batch-rcd-restore-entry
 Node
 OutlineScope
 OutlineSelectionTarget  # why: hand the keyboard dispatcher a rendered outline and selection lifetime; batch-fix-793-selall
@@ -12,12 +13,13 @@ PageMail  # why: backend wire type of the page host protocol; batch-og-s3b
 PageOperation  # why: backend wire type of the page host protocol; batch-og-s3b
 PageRefusal  # why: backend wire type of the page host protocol; batch-og-s3b
 PendingEdit  # why: a text edit staged by an editor and written only once the kernel answers; batch-og-wasm-enter-trap
+PublicationRefused  # why: backend wire type: a refused publication wait names the files that refused (tine#1041); batch-fix-1041
 PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 PublishedRevision  # why: actual host publication evidence returned by the existing wait; batch-fix-964-dev-r3
-RestorableList  # why: backend wire type of the page host protocol (the kept-source list at one generation of the host's pairs); batch-rcd-restore-entry
-RestorableSource  # why: backend wire type of the page host protocol (the kept sources the unsaved-changes panel lists); batch-rcd-restore-entry
-RestoreState  # why: backend wire type of the page host protocol (the host's record of a kept source's restore); batch-rcd-restore-entry
+RestoreOutcome  # why: backend wire type: what became of restoring a kept original (GH #540); batch-rcd-restore-entry
+RestoreRefusal  # why: backend wire type: why a kept original was not restored (GH #540); batch-rcd-restore-entry
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
+Unsettled  # why: a refused graph switch names what it refused for, stuck pages or develop's reasons (tine#1041); batch-fix-1041
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 admitRead  # why: all asynchronous working-set admissions compare captured local generations; each retry requires a newer relevant generation; batch-feed-admission-1114
 appendFeed
@@ -91,6 +93,7 @@ favoritesArrangementPage  # why: favorites arrangement page written whole throug
 feedNames
 finishPageHeaderEdit
 flushAll
+flushAllUnsettled  # why: the graph switch reads why the barrier refused, to name the stuck pages (tine#1041); batch-fix-1041
 flushPage
 followPageIdentity  # why: a title:: name change moves home and favorites through the rename's Rust config step (FAV-RETITLE, I-12); batch-cm-favorites
 formatForBlock
@@ -99,6 +102,9 @@ formatOfFile  # why: the day move holds a new destination in its file's format, 
 graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
 hasMessageDate  # why: dated margin replies are messages with outline bodies (MC5/MC6, #891); batch-mc-messages-1111
 hasSelection
+historyReplaying  # why: an editor that undo or redo closes during a composition saves nothing, so history keeps its stacks (GH #767); batch-fix-767-composition
+hostScope  # why: the recovery panel drops a kept-original reply from a session a rebind replaced (GH #540); batch-rcd-restore-entry
+hostSession  # why: the recovery panel's kept-original commands carry the window's host session (GH #540); batch-rcd-restore-entry
 indentBlock
 indentSelection
 insertEditorOutline  # why: a template completion and a multi-line paste in either editor choose where their outline goes and say why it was refused in one place; batch-og-enter-family-1109
@@ -123,6 +129,7 @@ isSelected
 journalSectionsPage  # why: seeded sections page DTO uses the canonical guarded-create boundary (GH #605); batchSections
 journalTemplatePage
 liveConflictDraft  # why: the in-page resolver reviews a disk-changed editor draft with the revision it was edited from (og 8e); batch21a
+liveDtoBlock  # why: an embed row and the fold commands share one source identity check (GH #1032); batch-fix-1032-embed-fold
 loadFeed
 loadGuidePages
 loadRoutedPage  # why: route can be first graph load; arm saves without enabling capture scratch persistence; batch06d
@@ -187,12 +194,12 @@ resolveBlockRef
 resolveConflict  # why: one conflict resolution intent; batch03
 resolveGuideBlockRef
 resolveGuidePageDto
-restoreSource  # why: the unsaved-changes panel restores a source a cancelled rename kept through the page host; batch-rcd-restore-entry
 restoreTodayJournalInFeed
 retireFeedPages  # why: releases measured offscreen journal documents through the shared safety gate; batch-og-l10-03
 revealNode
 sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
+saveStep  # why: a refused restore names its failed check as a failed save's toast does (GH #540); batch-rcd-restore-entry
 seenPageSnapshot  # why: "changed since you last looked" sends the page's unsaved-inclusive text to the git read and maps block paths back to runtime ids (ADR 0079); batch-og-seen-ui
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
@@ -237,6 +244,7 @@ unsavedDrafts  # why: the unsaved-changes recovery panel and close prompt list e
 unsavedPageCount  # why: a close that discards drafts records how many pages it dropped, as a count only; batch18a
 visibleNeighbor  # why: leaving a dated thread drawn inline skips the thread in one scoped pass (MC5/MC6, #891); batch-mc-messages-1111
 visibleOrder
+watchCapture  # why: a retried Quick Capture acknowledges only what a save of Tine's own is known to have written; batch-fix-capture-landed-witness
 whenPageReplaceable  # why: a refused load retries once the holder is replaceable; batchJ1
 withBlockMoving
 withToday

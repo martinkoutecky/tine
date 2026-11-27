@@ -4,7 +4,10 @@ Date: 2026-07-02
 
 ## Status
 
-Accepted
+Accepted; the owners named in its first three points are superseded in part by
+the page host ([storage contract](../storage-contract.md), "Page host binding";
+who owns what today: [OWNERSHIP.md](../OWNERSHIP.md)). The rule itself, one
+protocol and no second write or reload path, stands.
 
 ## Context
 
@@ -35,6 +38,14 @@ The protocol, and who owns each piece:
   writes, …) must go through these primitives — `save_page`/`commit_write`/
   `atomic_write` on the Rust side, the persistence chain on the frontend side —
   or explicitly document why not.
+  *(Superseded in part by the page host: `src/persistence.ts`, `src/store.ts`
+  and `Graph::save_page` → `commit_write` no longer exist. The native page host
+  (`crates/tine-store/src/page_host/`) is the only writer of page edits and owns
+  the base revisions, conflicts and drafts; the frontend reaches it only through
+  `src/document/host/wiring.ts`. Writes use `PreparedWrite`
+  (`crates/tine-store/src/atomic_file.rs`), self-writes are still recorded by
+  `note_self_write`, and `reloadDisposition` now lives in
+  `src/document/workingSet.ts`.)*
 - **Graph transitions are quiescent and leased.** Switch, restore, and close first
   block interaction and commit the active editor, then flush. Every graph-scoped
   IPC carries the generation of the window→graph binding; Rust rejects a stale

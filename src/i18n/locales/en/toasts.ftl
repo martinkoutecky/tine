@@ -32,6 +32,7 @@ binding-some-state-of-the-previous-graph-could-not = Some state of the previous 
 
 binding-was-not-saved-it-was-opened-in-a = { $what } was not saved: it was opened in a graph that is no longer open.
 
+block-ref-actions-select-an-authored-block-to-remove = Select a block with an author (or edit one) to remove its author
 block-ref-actions-select-blocks-or-edit-one-to-copy-their = Select blocks (or edit one) to copy their block refs
 block-ref-actions-select-blocks-or-edit-one-to-set-depth = Select blocks (or edit one) to set their depth
 
@@ -416,6 +417,8 @@ ui-failure-unreadable-files =
 ui-failure-asset-inventory = Couldn't inspect orphan assets. The last successful scan is kept.
 
 ui-failure-trash-inventory = Couldn't inspect recoverable trash. The last successful count is kept.
+
+ui-failure-kept-originals = Couldn't list the originals kept after a cancelled rename. The last list is kept.
 
 ui-failure-backup-read = Couldn't complete the launch backup. Your graph is still open.
 

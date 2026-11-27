@@ -260,7 +260,7 @@ pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
             if name.contains('/')
                 || name.starts_with('.')
                 || name.ends_with(".edn")
-                || referenced.contains(&name)
+                || tine_core::asset_refs::is_live(&name, |name| referenced.contains(name))
             {
                 return None;
             }

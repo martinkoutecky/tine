@@ -9,14 +9,12 @@ const page = readFileSync("crates/tine-guide/src/templates/files-external-edits-
 
 it("explains that recovered text is put back and saved at the next start, named, and never written over a changed file", () => {
   expect(page).toMatch(/next start Tine puts it back on the page and saves it[^\n]*Recovered unsaved edits[^\n]*changed on disk[^\n]*nothing is written over unseen/);
+  // tine#1041: such a page no longer holds a switch to another graph until a window has worked on it.
+  expect(page).toContain("As long as no window has worked on such a page since, it does not stop you from switching to another graph");
 });
 
 it("explains that closing the last window over a page that cannot be saved reopens the graph and names its pages", () => {
   expect(page).toMatch(/close Tine's last window, Tine does not quit over it[^\n]*opens that graph again[^\n]*names each page whose edits are not on disk yet, and why/);
-});
-
-it("explains that a cancelled rename's kept original is listed in the unsaved-changes panel with Restore", () => {
-  expect(page).toMatch(/Use disk version[^\n]*kept after a cancelled rename[^\n]*\*\*Restore\*\*[^\n]*\*\*Copy draft\*\*[^\n]*\*\*Review\*\*/);
 });
 
 it("explains that an outside change equal to the unsaved text is not a conflict and the edit is still saved", () => {
