@@ -395,3 +395,37 @@ fn manual_tree_serialization() {
     let out = doc::serialize(&doc);
     assert_eq!(out, "- parent\n\t- child one\n\t- child two\n\t\t- deep\n");
 }
+
+/// Pasted bullet bodies (GH #1051) as the paste conversion builds them, saved
+/// after an existing block: the existing block's bytes stay as they were, and
+/// reopening the file gives the pasted blocks back with their blank lines,
+/// table and emoji-led paragraph. The reader's flat answer the paste uses
+/// (`markdown_blocks_by_line`) agrees, LF and CRLF.
+#[test]
+fn pasted_bullet_bodies_survive_save_and_reopen() {
+    let existing = "- keep  \n  body\n";
+    let mut page = doc::parse(existing);
+    let pasted = [
+        "A\nB",
+        "C\n\nD\n\nE",
+        "T\n| 1 | 2 |\n| --- | --- |\n| ![x](https://example.org/a.png) | B |",
+        "F\n\n🏁 G",
+    ];
+    page.roots.extend(pasted.iter().map(|raw| DocBlock::new(*raw)));
+    let mut child = DocBlock::new("H\n\nbody");
+    child.children.push(DocBlock::new("child\n\nchild body"));
+    page.roots.push(child);
+    let out = doc::serialize(&page);
+    assert!(out.starts_with(existing), "existing block bytes changed: {out:?}");
+
+    let reopened = doc::parse(&out);
+    let raws: Vec<&str> = reopened.roots.iter().map(DocBlock::raw).collect();
+    assert_eq!(&raws[1..5], &pasted[..]);
+    assert_eq!(reopened.roots[5].raw(), "H\n\nbody");
+    assert_eq!(reopened.roots[5].children[0].raw(), "child\n\nchild body");
+
+    let reduced = "- A\n  B\n- C\n  \n  D\n  \n  E";
+    let want = vec![(0, true, "A\nB".to_string()), (2, true, "C\n\nD\n\nE".to_string())];
+    assert_eq!(doc::markdown_blocks_by_line(reduced), want);
+    assert_eq!(doc::markdown_blocks_by_line(&reduced.replace('\n', "\r\n")), want);
+}

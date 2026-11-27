@@ -18,7 +18,7 @@ import type { BlockDto, Format, PageDto } from "./types";
 import { graphEpoch, setGraphEpoch, setGraphMeta } from "./graphSession";
 import { setGraphTransitioning } from "./ui";
 import { setToasts, toasts } from "./toasts";
-import { parseOutline } from "./editor/outline";
+import { parseOutline, pastedPlainBlocks } from "./editor/outline";
 import { bindTestHost } from "./document/host/wiring.test.support";
 import { installDiskHost } from "./diskHost.test.support";
 
@@ -765,6 +765,20 @@ describe("identity-tagged redo", () => {
   });
 });
 
+
+// GH #1051: a pasted bullet keeps its blank-line paragraphs through save and reopen.
+it.each(["\n", "\r\n"])("keeps pasted bullet bodies with their blank lines after save and reopen (%j)", async (eol) => {
+  const host = "keep  \n\nbody";
+  await seed([page("Target", [block(HOST, host)])]);
+  const text = ["- A", "  B", "- C", "  ", "  D", "  ", "  🏁 E", "  - child", "  ", "    F"].join(eol);
+  insertOutlineAfter(HOST, pastedPlainBlocks(text, "md")!);
+  expect(await flushPage("Target")).toBe(true);
+  forgetPage("Target");
+  ensurePageLoaded(files.get("Target")!);
+  const [kept, a, c] = roots("Target").map((id) => doc.byId[id]);
+  expect([kept.raw, a.raw, c.raw]).toEqual([host, "A\nB", "C\n\nD\n\n🏁 E"]);
+  expect(c.children.map((id) => doc.byId[id].raw)).toEqual(["child\n\nF"]);
+});
 
 describe("OG-P11B literal outline insertion", () => {
   it.each([

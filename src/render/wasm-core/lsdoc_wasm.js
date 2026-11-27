@@ -1681,6 +1681,27 @@ function __tine_raw_lsdoc_tag() {
 }
 
 /**
+ * `tine_core::doc::markdown_blocks_by_line` as JSON `[[line, dash, raw], …]`:
+ * the blocks the page reader reads from Markdown `text`, for paste.
+ * @param {string} text
+ * @returns {string}
+ */
+function __tine_raw_markdown_blocks_by_line_json(text) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.markdown_blocks_by_line_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
  * Unknown extensions return application/octet-stream. Shared with native media.
  * @param {string} path
@@ -3032,6 +3053,7 @@ export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbo
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
 export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_logbook_info_json);
 export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
+export const markdown_blocks_by_line_json = __tineGuard("markdown_blocks_by_line_json", __tine_raw_markdown_blocks_by_line_json);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
 export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);

@@ -335,6 +335,14 @@ pub fn parse_document_json(text: &str, is_org: bool) -> String {
         .unwrap_or_else(|| "{}".to_string())
 }
 
+/// `tine_core::doc::markdown_blocks_by_line` as JSON `[[line, dash, raw], …]`:
+/// the blocks the page reader reads from Markdown `text`, for paste.
+#[wasm_bindgen]
+pub fn markdown_blocks_by_line_json(text: &str) -> String {
+    serde_json::to_string(&tine_core::doc::markdown_blocks_by_line(text))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
 /// contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
 /// ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the

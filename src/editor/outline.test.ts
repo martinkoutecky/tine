@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseOutline, pastedPlainBlocks } from "./outline";
+import { markdownBlocksByLine } from "../render/parse";
 
 describe("parseOutline", () => {
   it("flat multiline text -> sibling blocks", () => {
@@ -124,6 +125,46 @@ it("uses parser byte ranges after Unicode text and normalizes CRLF once", () => 
   expect(parseOutline(`- ž😀\r\n${literal.replaceAll("\n", "\r\n")}\r\n2) second`)).toEqual([
     { raw: `ž😀\n${literal}`, children: [] }, { raw: "second", children: [] },
   ]);
+});
+
+// GH #1051: an already-bulleted paste keeps each dash bullet's body as reading
+// the same text from a file would (blank lines, tables, any paragraph).
+describe("dash bullet bodies are the page reader's", () => {
+  const reduced = "- A\n  B\n- C\n  \n  D\n  \n  E";
+  const reader = (text: string) => markdownBlocksByLine(text).map(([, , raw]) => raw);
+
+  it("keeps blank-line-separated paragraphs and their blank lines in the bullet, LF and CRLF", () => {
+    const want = [{ raw: "A\nB", children: [] }, { raw: "C\n\nD\n\nE", children: [] }];
+    expect(pastedPlainBlocks(reduced, "md")).toEqual(want);
+    expect(pastedPlainBlocks(reduced.replaceAll("\n", "\r\n"), "md")).toEqual(want);
+    expect(want.map((n) => n.raw)).toEqual(reader(reduced));
+  });
+
+  it("keeps a table under a bullet in its body, with or without a blank line before it", () => {
+    const table = "| 1 | 2 |\n| --- | --- |\n| ![x](https://example.org/a.png) | B |";
+    const indented = table.replaceAll("\n", "\n  ");
+    expect(pastedPlainBlocks(`- A\n  ${indented}\n- Z`, "md")).toEqual([
+      { raw: `A\n${table}`, children: [] }, { raw: "Z", children: [] },
+    ]);
+    expect(pastedPlainBlocks(`- A\n  \n  ${indented}`, "md")).toEqual([{ raw: `A\n\n${table}`, children: [] }]);
+  });
+
+  it("keeps an emoji-led paragraph after a blank line", () => {
+    expect(pastedPlainBlocks("- A\n  \n  🏁 B", "md")).toEqual([{ raw: "A\n\n🏁 B", children: [] }]);
+  });
+
+  it("still makes an indented bullet a child, with its own body", () => {
+    expect(pastedPlainBlocks("- A\n\n  para\n  - child\n\n    child para\n- B", "md")).toEqual([
+      { raw: "A\n\npara", children: [{ raw: "child\n\nchild para", children: [] }] },
+      { raw: "B", children: [] },
+    ]);
+  });
+
+  it("leaves text outside the bullet's content column, other markers and trailing blanks as before", () => {
+    expect(parseOutline("- A\n\nloose\n  + plus\n\n- B\n\n")).toEqual([
+      { raw: "A", children: [] }, { raw: "loose", children: [{ raw: "plus", children: [] }] }, { raw: "B", children: [] },
+    ]);
+  });
 });
 
 // L3-08: OG nests an Org outline paste by its star levels.

@@ -274,8 +274,18 @@ pub(crate) fn blocks(
     lines: &[&str],
     headers: &[Header],
     is_org: bool,
-    mut removed: Option<&mut [usize]>,
+    removed: Option<&mut [usize]>,
 ) -> Vec<DocBlock> {
+    build_tree(flat_blocks(lines, headers, is_org, removed))
+}
+
+/// [`blocks`] before nesting: one `(level, block)` per header, in source order.
+pub(crate) fn flat_blocks(
+    lines: &[&str],
+    headers: &[Header],
+    is_org: bool,
+    mut removed: Option<&mut [usize]>,
+) -> Vec<(u32, DocBlock)> {
     let mut flat = Vec::with_capacity(headers.len());
     for (n, header) in headers.iter().enumerate() {
         let end = headers.get(n + 1).map_or(lines.len(), |next| next.line);
@@ -295,7 +305,7 @@ pub(crate) fn blocks(
         block.is_org = is_org;
         flat.push((header.level, block));
     }
-    build_tree(flat)
+    flat
 }
 
 /// Remove up to `n` leading tabs, spaces or form feeds (mldoc's layout

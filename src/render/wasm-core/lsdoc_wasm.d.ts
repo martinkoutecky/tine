@@ -341,6 +341,12 @@ export function logbook_info_json(raw: string, is_org: boolean): string;
 export function lsdoc_tag(): string;
 
 /**
+ * `tine_core::doc::markdown_blocks_by_line` as JSON `[[line, dash, raw], …]`:
+ * the blocks the page reader reads from Markdown `text`, for paste.
+ */
+export function markdown_blocks_by_line_json(text: string): string;
+
+/**
  * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
  * Unknown extensions return application/octet-stream. Shared with native media.
  */
@@ -654,6 +660,7 @@ export interface InitOutput {
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
+    readonly markdown_blocks_by_line_json: (a: number, b: number) => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];

@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, markdown_blocks_by_line_json, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 import { ParseRetention } from "./parseRetention";
@@ -258,6 +258,14 @@ export function outlineApply(request: string): string {
 export function outlineReads(verb: string): string {
   if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
   return outline_reads_json(verb);
+}
+/** The blocks the page reader reads from Markdown `text` (tine-core
+ *  `doc::markdown_blocks_by_line`), in source order: each header's line index in
+ *  the line-ending-normalized text, whether it is a dash bullet, and the block's
+ *  raw, one line per physical line from the header. One outline parse, O(bytes). */
+export function markdownBlocksByLine(text: string): [line: number, dash: boolean, raw: string][] {
+  if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
+  return JSON.parse(markdown_blocks_by_line_json(text));
 }
 /** The kernel's outline depth cap (twin 4); null before the parser is ready. */
 export function outlineMaxDepth(): number | null {

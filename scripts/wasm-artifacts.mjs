@@ -18,8 +18,13 @@ export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // (crates/tine-core/src/local_target.rs, about 12k of code). Both modules must
 // export it (src/browserCoreParser.test.ts); trimming its code saved 1.1k of the
 // 2.3k overshoot, and no further trim fits without dropping a rule.
+// 2026-11-27, paste bullet bodies (GH #1051): the parser ceiling moved to
+// 1,573,100 (about 0.5% above the measured 1,565,282) for the page reader's
+// outline (`markdown_blocks_by_line_json`), which the parser module did not
+// link before (+8.6k). Dropping the reader's refusal diagnostic saved 1.9k;
+// any further trim would split blocks a second way.
 export const wasmArtifacts = [
-  { dir: "src/render/wasm", feature: null, maxBytes: 1_560_000 },
+  { dir: "src/render/wasm", feature: null, maxBytes: 1_573_100 },
   { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_794_000 },
 ];
 
