@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, markdown_blocks_by_line_json, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, pasted_outline_json, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 import { ParseRetention } from "./parseRetention";
@@ -259,13 +259,13 @@ export function outlineReads(verb: string): string {
   if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
   return outline_reads_json(verb);
 }
-/** The blocks the page reader reads from Markdown `text` (tine-core
- *  `doc::markdown_blocks_by_line`), in source order: each header's line index in
- *  the line-ending-normalized text, whether it is a dash bullet, and the block's
- *  raw, one line per physical line from the header. One outline parse, O(bytes). */
-export function markdownBlocksByLine(text: string): [line: number, dash: boolean, raw: string][] {
+/** What the page reader reads from `text` (tine-core `doc::read_pasted`): the
+ *  page text before the first block (or null), then every block in preorder
+ *  with its depth in the reader's tree (0 for a root) and its raw. One outline
+ *  parse, O(bytes). */
+export function pastedOutline(text: string, format: "md" | "org"): [pre: string | null, blocks: [depth: number, raw: string][]] {
   if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
-  return JSON.parse(markdown_blocks_by_line_json(text));
+  return JSON.parse(pasted_outline_json(text, format === "org"));
 }
 /** The kernel's outline depth cap (twin 4); null before the parser is ready. */
 export function outlineMaxDepth(): number | null {

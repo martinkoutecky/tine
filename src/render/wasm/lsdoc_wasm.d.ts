@@ -191,12 +191,6 @@ export function logbook_info_json(raw: string, is_org: boolean): string;
 export function lsdoc_tag(): string;
 
 /**
- * `tine_core::doc::markdown_blocks_by_line` as JSON `[[line, dash, raw], …]`:
- * the blocks the page reader reads from Markdown `text`, for paste.
- */
-export function markdown_blocks_by_line_json(text: string): string;
-
-/**
  * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
  * Unknown extensions return application/octet-stream. Shared with native media.
  */
@@ -313,6 +307,14 @@ export function parse_inline_json(raw: string, is_org: boolean): string;
  * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
  */
 export function parse_journal_format_json(text: string, pattern: string): string;
+
+/**
+ * `tine_core::doc::read_pasted` as JSON `[pre_block, [[depth, raw], …]]`: the
+ * page text before the first block (or null) and the blocks in preorder, each
+ * with its depth in the reader's tree (0 for a root), for paste. Iterative,
+ * O(bytes).
+ */
+export function pasted_outline_json(text: string, is_org: boolean): string;
 
 /**
  * PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
@@ -472,7 +474,6 @@ export interface InitOutput {
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
-    readonly markdown_blocks_by_line_json: (a: number, b: number) => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];
@@ -492,6 +493,7 @@ export interface InitOutput {
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly pasted_outline_json: (a: number, b: number, c: number) => [number, number];
     readonly pdf_asset_file: (a: number, b: number) => [number, number];
     readonly pdf_asset_key: (a: number, b: number, c: number) => [number, number];
     readonly property_line_json: (a: number, b: number) => [number, number];

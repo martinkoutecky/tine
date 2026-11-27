@@ -22,7 +22,6 @@ function productionSources(dir: string): string[] {
 // Exact `.raw` assignment counts outside the funnel, each with its reason.
 const RAW_ASSIGNMENTS: Record<string, { count: number; why: string }> = {
   "src/document/model.ts": { count: 1, why: "writeRaw itself: the funnel's in-place assignment" },
-  "src/editor/outline.ts": { count: 1, why: "local paste-parse OutlineNode objects, never store nodes" },
 };
 
 const isRawName = (name: ts.Node) =>

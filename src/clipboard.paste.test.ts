@@ -793,12 +793,12 @@ describe("OG-P11B literal outline insertion", () => {
     expect(inserted.map(id => doc.byId[id].raw)).toEqual([source]);
     expect(inserted.map(id => doc.byId[id].children)).toEqual([[]]);
   });
-  it("keeps a bullet's literal continuation and following ordered item", async () => {
+  it("keeps a bullet's literal continuation and the following ordered item in that bullet, as the page reader does", async () => {
     await seed([page("Target", [block(HOST, "host")])]);
     const literal = "  ```js\n  - literal\n\n    kept spaces\n  ```";
     insertOutlineAfter(HOST, parseOutline(`- parent\n${literal}\n2) second`));
     const inserted = roots("Target").slice(1);
-    expect(inserted.map(id => doc.byId[id].raw)).toEqual([`parent\n${literal}`, "second"]);
-    expect(inserted.map(id => doc.byId[id].children)).toEqual([[], []]);
+    expect(inserted.map(id => doc.byId[id].raw)).toEqual(["parent\n```js\n- literal\n\n  kept spaces\n```\n2) second"]);
+    expect(inserted.map(id => doc.byId[id].children)).toEqual([[]]);
   });
 });

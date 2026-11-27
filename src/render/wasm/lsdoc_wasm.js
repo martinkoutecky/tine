@@ -707,27 +707,6 @@ function __tine_raw_lsdoc_tag() {
 }
 
 /**
- * `tine_core::doc::markdown_blocks_by_line` as JSON `[[line, dash, raw], …]`:
- * the blocks the page reader reads from Markdown `text`, for paste.
- * @param {string} text
- * @returns {string}
- */
-function __tine_raw_markdown_blocks_by_line_json(text) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.markdown_blocks_by_line_json(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
  * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
  * Unknown extensions return application/octet-stream. Shared with native media.
  * @param {string} path
@@ -1145,6 +1124,30 @@ function __tine_raw_parse_journal_format_json(text, pattern) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * `tine_core::doc::read_pasted` as JSON `[pre_block, [[depth, raw], …]]`: the
+ * page text before the first block (or null) and the blocks in preorder, each
+ * with its depth in the reader's tree (0 for a root), for paste. Iterative,
+ * O(bytes).
+ * @param {string} text
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+function __tine_raw_pasted_outline_json(text, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.pasted_outline_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
 
@@ -2013,7 +2016,6 @@ export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbo
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
 export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_logbook_info_json);
 export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
-export const markdown_blocks_by_line_json = __tineGuard("markdown_blocks_by_line_json", __tine_raw_markdown_blocks_by_line_json);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
 export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
@@ -2033,6 +2035,7 @@ export const parse_block_json = __tineGuard("parse_block_json", __tine_raw_parse
 export const parse_document_json = __tineGuard("parse_document_json", __tine_raw_parse_document_json);
 export const parse_inline_json = __tineGuard("parse_inline_json", __tine_raw_parse_inline_json);
 export const parse_journal_format_json = __tineGuard("parse_journal_format_json", __tine_raw_parse_journal_format_json);
+export const pasted_outline_json = __tineGuard("pasted_outline_json", __tine_raw_pasted_outline_json);
 export const pdf_asset_file = __tineGuard("pdf_asset_file", __tine_raw_pdf_asset_file);
 export const pdf_asset_key = __tineGuard("pdf_asset_key", __tine_raw_pdf_asset_key);
 export const property_line_json = __tineGuard("property_line_json", __tine_raw_property_line_json);

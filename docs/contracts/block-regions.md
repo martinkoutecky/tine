@@ -169,10 +169,11 @@ reads cache nothing. Intentional difference from OG `6e7afa8eb`
 name. Org drawers retain OG's absence of a value trigger.
 Retained outside this door, pending native doors: the Org drawer extents used when a page-property
 removal empties a drawer (`editor/properties.ts` `pagePartsWithProperty`), the outline/bullet grammar of
-pasted and copied outlines (`outline.ts`, `clipboard.ts` `outlineToHtml` cannot see a fence that
-follows a bullet marker), and the leading-ATX/list-marker grammar of a bare list-prefix line
+copied outlines (`clipboard.ts` `outlineToHtml` cannot see a fence that follows a bullet marker), and the leading-ATX/list-marker grammar of a bare list-prefix line
 (`format.ts` `trimBlockTrailingSpace`). The empty-card separator fix is included. Copy projection
-preserves a final raw newline, including the seven manager-approved corpus exceptions.
+preserves a final raw newline, including the seven manager-approved corpus exceptions. A pasted
+outline's blocks are the page reader's (`outline.ts` `parseOutline` through tine-core
+`doc::read_pasted`), so lsdoc decides its headers, literal source included.
 
 Display-math Enter state excludes parser-owned trailing whitespace when deciding
 whether a closing delimiter is interior to a literal range (#862). Completed

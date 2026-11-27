@@ -96,6 +96,9 @@ mod page_header_panic;
 #[path = "page_title_preamble.rs"]
 mod page_title_preamble;
 
+#[path = "paste_reader.rs"]
+mod paste_reader;
+
 #[path = "query_edn_spans.rs"]
 mod query_edn_spans;
 

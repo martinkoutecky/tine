@@ -767,22 +767,19 @@ pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
     )
 }
 
-/// The blocks [`parse`] reads from Markdown `content`, flat in source order:
-/// each block's header line (an index into the lines of `content` with its
-/// line endings normalized), whether that header is a dash bullet (not an
-/// unbulleted heading), and the block's `raw`, whose lines are the header's
-/// and every following physical line up to the next header. For a paste that
-/// takes its block bodies from the page reader. One lsdoc outline parse,
-/// O(bytes); no blocks when the reader keeps the whole text as page text.
-pub fn markdown_blocks_by_line(content: &str) -> Vec<(usize, bool, String)> {
+/// The document [`parse`] (or, `is_org`, [`crate::org::parse_org`]) reads
+/// from `content`, without the reader's refusal diagnostic: for a paste,
+/// which imports text as reading it from a file would. One lsdoc outline
+/// parse, O(bytes).
+pub fn read_pasted(content: &str, is_org: bool) -> Document {
     let content = normalize_line_endings(content);
-    let headers = outline::headers(&content, OutlineFormat::Markdown).unwrap_or_default();
-    let flat = outline::flat_blocks(&reader_lines(&content, false), &headers, false, None);
-    headers
-        .iter()
-        .zip(flat)
-        .map(|(header, (_, block))| (header.line, header.content_indent > 0, block.raw.into()))
-        .collect()
+    let format = if is_org {
+        OutlineFormat::Org
+    } else {
+        OutlineFormat::Markdown
+    };
+    let headers = outline::headers(&content, format).unwrap_or_default();
+    document_of(&content, &headers, is_org, None).0
 }
 
 pub use crate::outline::SourceMap;
@@ -830,7 +827,16 @@ pub(crate) fn document_of<'a>(
     is_org: bool,
     removed: Option<&mut Vec<usize>>,
 ) -> (Document, Vec<&'a str>, usize) {
-    let lines = reader_lines(content, is_org);
+    let body = if is_org {
+        content.trim_end_matches('\n')
+    } else {
+        content.strip_suffix('\n').unwrap_or(content)
+    };
+    let lines: Vec<&str> = if body.is_empty() {
+        Vec::new()
+    } else {
+        body.split('\n').collect()
+    };
     let mut pre = headers.first().map_or(lines.len(), |header| header.line);
     while !is_org && pre > 0 && lines[pre - 1].trim().is_empty() {
         pre -= 1;
@@ -845,20 +851,6 @@ pub(crate) fn document_of<'a>(
         org: is_org,
     };
     (document, lines, pre)
-}
-
-/// The lines [`document_of`] reads from LF `content`.
-fn reader_lines(content: &str, is_org: bool) -> Vec<&str> {
-    let body = if is_org {
-        content.trim_end_matches('\n')
-    } else {
-        content.strip_suffix('\n').unwrap_or(content)
-    };
-    if body.is_empty() {
-        Vec::new()
-    } else {
-        body.split('\n').collect()
-    }
 }
 
 /// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading
