@@ -104,3 +104,21 @@ it("maps Unicode source coordinates and reads accepted property values", () => {
   expect(nearestLink(raw, 10, { format: "md" })).toMatchObject({ start: raw.indexOf("[["), end: raw.length, value: "Page" });
   expect(nearestLink("body\ncustom:: [[Property Page]]", 15, { format: "md" })).toMatchObject({ value: "Property Page" });
 });
+
+// GH #1052: each part of a nested reference follows the page that part names,
+// as a click on the rendered link does (Logseq `nested-link`).
+it("follows the part of a nested reference the caret is in", () => {
+  const md = (text: string, caret: number) => nearestLink(text, caret, { format: "md" });
+  const text = "é see [[Lorem [[Impsum]]]] after";
+  const outer = { kind: "page", value: "Lorem [[Impsum]]", start: text.indexOf("[["), end: text.indexOf(" after") };
+  const inner = { kind: "page", value: "Impsum", start: text.indexOf("[[Impsum"), end: text.indexOf("]]]]") + 2 };
+  expect(md(text, text.indexOf("Lorem") + 2)).toEqual(outer);
+  expect(md(text, text.indexOf("Impsum") + 2)).toEqual(inner);
+  expect(md(text, text.indexOf("]]]]") + 3)).toEqual(outer);
+  expect(md(text, text.length)).toEqual(outer);
+  const deep = "[[a [[b [[c]] d]] e]]";
+  expect(md(deep, deep.indexOf("a"))).toMatchObject({ value: "a [[b [[c]] d]] e" });
+  expect(md(deep, deep.indexOf("d"))).toMatchObject({ value: "b [[c]] d" });
+  expect(md(deep, deep.indexOf("c"))).toMatchObject({ value: "c" });
+  expect(md("x:: [[Lorem [[Impsum]]]]", 18)).toMatchObject({ value: "Impsum" });
+});

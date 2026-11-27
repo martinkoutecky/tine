@@ -24,14 +24,15 @@ export interface NearestLink {
 }
 
 import { parseBlock, blockRegions } from "../render/parse";
-import { nested_reference_names } from "../render/wasm/lsdoc_wasm.js";
-import { fileNameFormat, linkTargetName } from "../render/pageRefs";
+import { fileNameFormat, linkTargetName, nestedReference, type NestedReferencePart } from "../render/pageRefs";
 import { inlineText } from "../render/facets";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 import type { Block, Inline, ListItem, Format } from "../render/ast";
 
 const rank: Record<NearestLinkKind, number> = { page: 0, block: 1, tag: 2, url: 3 };
 const candidatesByAst = new WeakMap<Block[], { codec: ReturnType<typeof fileNameFormat>; links: NearestLink[] }>();
+/** Names nested inside another reference: a caret on one follows it, not the name around it. */
+const nestedParts = new WeakSet<NearestLink>();
 
 /** Nearest accepted link, using OG's whole-block distance and kind tie policy.
  * No incomplete-token fallback: unaccepted syntax has no navigation target.
@@ -51,7 +52,8 @@ export function nearestLink(text: string, caret: number, options: { includeUrls?
     if (candidate.kind === "url" && !options.includeUrls) continue;
     const { start, end, kind } = candidate;
     const score = caret < start ? caret - start : caret > end ? end - caret : 0;
-    if (score > bestScore || (score === bestScore && best && rank[kind] < rank[best.kind])) {
+    if (score > bestScore || (score === bestScore && best && (rank[kind] < rank[best.kind]
+      || (nestedParts.has(candidate) && start >= best.start && end <= best.end)))) {
       best = candidate; bestScore = score;
     }
   }
@@ -69,6 +71,17 @@ function collectCandidates(text: string, blocks: Block[], format: Format): Neare
     const end = lead + cursor(span[1] - 2);
     candidates.push({ kind, value: value.trim(), start, end });
   };
+  // Each part of a nested reference spans its own `[[…]]` (UTF-16 in the token).
+  const considerParts = (part: NestedReferencePart, token: number) => {
+    for (const inner of part.parts) {
+      if (inner.name.trim()) {
+        const link = { kind: "page" as const, value: inner.name.trim(), start: token + inner.start - 2, end: token + inner.end + 2 };
+        nestedParts.add(link);
+        candidates.push(link);
+      }
+      considerParts(inner, token);
+    }
+  };
   const inlines = (nodes: readonly Inline[]) => {
     for (const inline of nodes) {
       if (inline.k === "tag") consider(inline, "tag", inlineText(inline.children));
@@ -84,7 +97,10 @@ function collectCandidates(text: string, blocks: Block[], format: Format): Neare
         }
         if (inline.label) inlines(inline.label);
       } else if (inline.k === "nested_link") {
-        for (const name of nested_reference_names(inline.content)) consider(inline, "page", name);
+        const outer = nestedReference(inline.content);
+        const count = candidates.length;
+        consider(inline, "page", outer.name);
+        if (candidates.length > count) considerParts(outer, candidates[count].start);
       } else if (inline.k === "emphasis" || inline.k === "subscript" || inline.k === "superscript") inlines(inline.children);
     }
   };
@@ -113,7 +129,9 @@ function collectCandidates(text: string, blocks: Block[], format: Format): Neare
     const value = text.slice(offset, end);
     const valueBlocks = parseBlock(value, format === "org");
     for (const candidate of collectCandidates(value, valueBlocks, format)) {
-      candidates.push({ ...candidate, start: offset + candidate.start, end: offset + candidate.end });
+      const link = { ...candidate, start: offset + candidate.start, end: offset + candidate.end };
+      if (nestedParts.has(candidate)) nestedParts.add(link);
+      candidates.push(link);
     }
   }
   candidates.sort((a, b) => a.start - b.start);

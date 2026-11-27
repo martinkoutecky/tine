@@ -102,21 +102,11 @@ pub fn unbracket(value: &str) -> &str {
         .unwrap_or(value)
 }
 
-pub fn nested_reference_names(content: &str) -> Vec<String> {
-    let mut out: Vec<String> = nested_reference_ranges(content)
-        .into_iter()
-        .map(|range| content[range].to_string())
-        .collect();
-    if out.is_empty() && !content.trim().is_empty() {
-        out.push(unbracket(content).to_string());
-    }
-    out
-}
-
 /// The byte range of each name a nested link's source `content` holds (each
-/// balanced `[[…]]` body, inner first), in closing order: the one scan behind
-/// [`nested_reference_names`], kept with offsets for a rename that respells a
-/// name in place.
+/// balanced `[[…]]` body, inner first), in closing order, so the outer name is
+/// last: the one answer to which page each part of a nested reference names,
+/// asked by indexing and rename evidence and (through the Wasm module) by the
+/// rendered link and the editor's link follow. O(content bytes).
 pub fn nested_reference_ranges(content: &str) -> Vec<std::ops::Range<usize>> {
     let mut starts = Vec::new();
     let mut out = Vec::new();

@@ -1702,15 +1702,17 @@ function __tine_raw_mime_from_path(path) {
 }
 
 /**
- * Names inside an accepted NestedLink node; O(node bytes).
+ * The names inside an accepted NestedLink node's `content`, as flat UTF-8
+ * byte `[start, end, …]` pairs in closing order, the outer name last
+ * (`block_regions::nested_reference_ranges`). O(node bytes).
  * @param {string} content
- * @returns {string[]}
+ * @returns {Uint32Array}
  */
-function __tine_raw_nested_reference_names(content) {
+function __tine_raw_nested_reference_ranges(content) {
     const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.nested_reference_names(ptr0, len0);
-    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    const ret = wasm.nested_reference_ranges(ptr0, len0);
+    var v2 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
 }
@@ -2690,6 +2692,11 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -3033,7 +3040,7 @@ export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_log
 export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_logbook_info_json);
 export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
-export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
+export const nested_reference_ranges = __tineGuard("nested_reference_ranges", __tine_raw_nested_reference_ranges);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);

@@ -3,8 +3,9 @@
 // the reference evidence's walk (`reference_evidence/walk.rs`), which the window
 // asks through wasm (`block_reference_names`) and a rename asks natively
 // (`rename_would_change`), conceptual model step 2 batch 6.
-import { reference_target_name } from "./wasm/lsdoc_wasm.js";
+import { nested_reference_ranges, reference_target_name } from "./wasm/lsdoc_wasm.js";
 import { parseBody } from "./facets";
+import { utf8ToUtf16Cursor } from "./utf16Cursor";
 import type { Block, Format, Inline, ListItem } from "./ast";
 
 /** The graph's `:file/name-format` is legacy (the default). Set only by
@@ -26,6 +27,30 @@ export function fileNameFormat(): "legacy" | "triple-lowbar" {
  *  file-name format as the store names that file. O(target). */
 export function linkTargetName(kind: string, value: string, label: string, org: boolean): string | undefined {
   return reference_target_name(kind, value, label, org, true, legacyFileNames);
+}
+
+/** One name of a nested page reference: the page it opens, its body's UTF-16
+ *  range in the token (without its `[[`/`]]`) and the references nested in it,
+ *  in source order. */
+export interface NestedReferencePart { name: string; start: number; end: number; parts: NestedReferencePart[] }
+
+/** The outer reference of a parser-accepted nested link `content`
+ *  (`[[Lorem [[Impsum]]]]` opens `Lorem [[Impsum]]`, its part `Impsum`), as
+ *  Logseq's `nested-link` names them. The native answer
+ *  (`block_regions::nested_reference_ranges`, which indexing and rename read)
+ *  gives the ranges in closing order, so each part precedes the name holding
+ *  it and the outer name comes last. O(token bytes × names). */
+export function nestedReference(content: string): NestedReferencePart {
+  const ranges = nested_reference_ranges(content);
+  const utf16 = utf8ToUtf16Cursor(content);
+  const done: NestedReferencePart[] = [];
+  for (let i = 0; i < ranges.length; i += 2) {
+    const start = utf16(ranges[i]), end = utf16(ranges[i + 1]);
+    let first = done.length;
+    while (first > 0 && done[first - 1].start >= start) first--;
+    done.push({ name: content.slice(start, end), start, end, parts: done.splice(first) });
+  }
+  return done[done.length - 1];
 }
 
 /** Every block uuid `raw` references with `((uuid))`, in source order (may repeat), off

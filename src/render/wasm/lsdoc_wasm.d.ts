@@ -197,9 +197,11 @@ export function lsdoc_tag(): string;
 export function mime_from_path(path: string): string;
 
 /**
- * Names inside an accepted NestedLink node; O(node bytes).
+ * The names inside an accepted NestedLink node's `content`, as flat UTF-8
+ * byte `[start, end, …]` pairs in closing order, the outer name last
+ * (`block_regions::nested_reference_ranges`). O(node bytes).
  */
-export function nested_reference_names(content: string): string[];
+export function nested_reference_ranges(content: string): Uint32Array;
 
 /**
  * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
@@ -467,7 +469,7 @@ export interface InitOutput {
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
-    readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly nested_reference_ranges: (a: number, b: number) => [number, number];
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;

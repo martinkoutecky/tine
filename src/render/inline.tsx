@@ -20,6 +20,7 @@ import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer } from "../ui";
 import { PageReferenceLabel } from "./PageReferenceLabel";
+import { nestedReference, type NestedReferencePart } from "./pageRefs";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
@@ -221,9 +222,13 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       return <sup {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode, macroExpansion, format)}</sup>;
     case "link":
       return renderLink(s, blockId, spanMode, macroExpansion, format);
-    case "nested_link":
-      // Logseq `[[a [[b]] c]]` — best-effort: route the whole inner as a page ref.
-      return <PageRef name={s.content} blockId={blockId} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
+    case "nested_link": {
+      // Logseq `nested-link` (block.cljs): the outer pair follows the bracket
+      // setting; each nested reference is its own link and keeps its pair.
+      const outer = nestedReference(s.content);
+      return <PageRef name={outer.name} blockId={blockId} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined}
+        alias={<PageReferenceLabel>{nestedLabel(s.content, outer, blockId)}</PageReferenceLabel>} />;
+    }
     case "target":
       return <span class="org-target" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</span>;
     case "tag":
@@ -253,6 +258,23 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       if (html !== null) return renderSanitizedHtml(html, spanMode ? coarseSpanAttrs(s.span) : undefined);
       return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.v}</span> : <>{s.v}</>;
   }
+}
+
+/** A nested reference's label: its text, with each part it holds rendered as
+ *  that part's own link (a click there opens the part, not the outer page). */
+function nestedLabel(content: string, part: NestedReferencePart, blockId?: string): JSX.Element {
+  const out: JSX.Element[] = [];
+  let at = part.start;
+  for (const inner of part.parts) {
+    out.push(content.slice(at, inner.start - 2));
+    out.push(inner.name.trim()
+      ? <PageRef name={inner.name} blockId={blockId}
+          alias={<><span class="bracket">[[</span>{nestedLabel(content, inner, blockId)}<span class="bracket">]]</span></>} />
+      : content.slice(inner.start - 2, inner.end + 2));
+    at = inner.end + 2;
+  }
+  out.push(content.slice(at, part.end));
+  return <>{out}</>;
 }
 
 // Flatten an inline run to plain text (tag names, link/block-ref labels, and the
@@ -387,7 +409,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onClick={open}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
-        onPointerDown={longPress.onPointerDown}
+        // A hold on a reference nested inside this one is that reference's.
+        onPointerDown={(e) => { if ((e.target as Element).closest("a.page-ref, a.tag") === anchorEl) longPress.onPointerDown(e); }}
         onPointerMove={longPress.onPointerMove}
         onPointerUp={longPress.onPointerUp}
         onPointerCancel={longPress.onPointerCancel}

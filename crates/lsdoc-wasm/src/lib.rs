@@ -297,10 +297,15 @@ pub fn reference_target_name(
     )
 }
 
-/// Names inside an accepted NestedLink node; O(node bytes).
+/// The names inside an accepted NestedLink node's `content`, as flat UTF-8
+/// byte `[start, end, …]` pairs in closing order, the outer name last
+/// (`block_regions::nested_reference_ranges`). O(node bytes).
 #[wasm_bindgen]
-pub fn nested_reference_names(content: &str) -> Vec<String> {
-    block_regions::nested_reference_names(content)
+pub fn nested_reference_ranges(content: &str) -> Vec<u32> {
+    block_regions::nested_reference_ranges(content)
+        .into_iter()
+        .flat_map(|range| [range.start as u32, range.end as u32])
+        .collect()
 }
 
 /// MIME from the final case-insensitive path extension; O(path bytes), no I/O.
