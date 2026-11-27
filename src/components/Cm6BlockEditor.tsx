@@ -31,7 +31,7 @@ import { commentEditorHide, marginNavigation } from "./blockComments";
 import { SheetCellContext } from "../sheet/context";
 import { cellOwner } from "../sheet/selection";
 import { cm6SheetKeys } from "../editor/cm6SheetKeys";
-import { editsLikeOutline, gridNestedBlock, gridOutlineScope, runGridOutline } from "../sheet/gridEditMove";
+import { editsLikeOutline, gridNestedBlock, gridOutlineScope, runGridOutline, structuralWriters } from "../sheet/gridEditMove";
 import { cm6Clipboard } from "../editor/cm6Clipboard";
 import { editorAssets } from "../editor/editorAssets";
 import { cm6Completions } from "../editor/cm6Completions";
@@ -171,8 +171,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     view.focus();
   };
   const embedExit = useContext(EmbedNavExitContext);
-  const scope = cell && editsLikeOutline(cell) ? gridOutlineScope(cell) : props.scope;
+  const gridCell = !!cell && editsLikeOutline(cell);
+  const scope = gridCell ? gridOutlineScope(cell!) : props.scope;
   const structure = cm6Structure({ ...props, scope, cell, format, current, commit, stage, deleteSelection, embedExit, code: () => code()?.open.length ?? null, calc: isCalc,
+    writers: structuralWriters({ records: !!cell && !gridCell }),
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
     ...marginNavigation(props.id, scope, props.surface, () => format),

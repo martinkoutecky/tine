@@ -28,7 +28,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, indentBlock, outdentBlock, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -148,7 +148,7 @@ import { EditorGate } from "./EditorGate";
 import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
-import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline, structuralWriters } from "../sheet/gridEditMove";
 import { splitBlockInView } from "../editor/splitBlockInView";
 import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
@@ -499,7 +499,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // drives edit-focus arbitration when the same block renders in several surfaces.
   const surfaceKey = useContext(SurfaceContext);
   const inheritedScope = useContext(OutlineScopeContext);
-  const outlineScope = sheetCell && editsLikeOutline(sheetCell) ? gridOutlineScope(sheetCell) : inheritedScope;
+  const gridCell = !!sheetCell && editsLikeOutline(sheetCell);
+  const outlineScope = gridCell ? gridOutlineScope(sheetCell!) : inheritedScope;
+  const writers = structuralWriters({ records: !!sheetCell && !gridCell });
   const embedNavExit = useContext(EmbedNavExitContext);
   // Inside query results, the editor's pickers write only if no result changed meanwhile (GH #433 review).
   const inResults = useContext(ResultWriteTargetContext);
@@ -1847,17 +1849,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
           return;
         }
         commit(raw);
-        if (mergeWithPrev(props.id, structuralScope, editSurface())) {
+        if (writers.mergeWithPrev(props.id, structuralScope, editSurface())) {
           e.preventDefault();
           return;
         }
         const n = docNode(props.id);
         const next = bodyNeighbor(props.id, 1, structuralScope);
-        if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page) {
-          e.preventDefault();
-          deleteBlock(props.id);
-          startEditing(next, 0, null, editSurface());
-        }
+        if (n && isEditorEmpty(n.raw, hideFn(), pageFmt()) && n.children.length === 0 && next && docNode(next)?.page === n.page
+          && writers.deleteEmptyLeaf(props.id, next, editSurface())) e.preventDefault();
       }
     } else if (e.key === "Delete" && end === start && start === raw.length) {
       // Delete merges with the next body block (GH #213, #891); annotations,
@@ -1868,7 +1867,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         const nextRaw = docNode(next)?.raw ?? "";
         if (isAnnotationBlock(nextRaw, pageFmt()) || calcSource(nextRaw) !== null) return;
         commit(raw);
-        if (mergeWithNext(props.id, structuralScope, editSurface())) {
+        if (writers.mergeWithNext(props.id, structuralScope, editSurface())) {
           e.preventDefault();
           const caretAt = start; // join point = the block's pre-merge end
           queueMicrotask(() => {
