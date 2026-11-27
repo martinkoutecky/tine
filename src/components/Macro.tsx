@@ -52,6 +52,7 @@ import {
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
+import { recordsSheetId } from "../sheet/selection";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
@@ -370,6 +371,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const sheet = createMemo(() => sheetConfig(hostAllProperties()));
   const detachedOwnerId = createUniqueId();
   const sheetOwnerId = () => props.blockId ?? detachedOwnerId;
+  const recordsId = () => props.blockId ? recordsSheetId(props.blockId) : detachedOwnerId;
   const currentView = (): QueryView => reading()?.view.view ?? "list";
   const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
@@ -1276,7 +1278,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                             <Switch fallback={listResults()}>
                               <Match when={blockFace() === "table"}>
                                 <SheetContainer>
-                                  <SheetTable ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
+                                  <SheetTable ownerId={sheetOwnerId()} sheetId={recordsId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
                                     queryDisplay={{ view: displayView(),
                                       ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
                                       apply: props.blockId ? (next) => void applyDisplay(next) : undefined }} />
@@ -1284,7 +1286,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               </Match>
                               <Match when={blockFace() === "board"}>
                                 <SheetContainer>
-                                  <SheetBoard ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
+                                  <SheetBoard ownerId={sheetOwnerId()} sheetId={recordsId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
                                 </SheetContainer>
                               </Match>
                             </Switch>
@@ -1311,12 +1313,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                       <SheetContainer>
                         <Switch>
                           <Match when={blockFace() === "table"}>
-                            <SheetTable ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
+                            <SheetTable ownerId={sheetOwnerId()} sheetId={recordsId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
                               queryDisplay={{ view: displayView(), statistics: displayed()?.statistics, statisticsView: runnable()?.view,
                                 apply: props.blockId ? (next) => void applyDisplay(next) : undefined }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
-                            <SheetBoard ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
+                            <SheetBoard ownerId={sheetOwnerId()} sheetId={recordsId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
                           </Match>
                         </Switch>
                       </SheetContainer>

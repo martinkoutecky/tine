@@ -93,7 +93,11 @@ const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
  * on commit; supplied host properties also render a detached query's View.
  * Row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
+  /** The host block: its properties, schema, formulas, widths and children. */
   ownerId: string;
+  /** The sheet's identity (selection, adapter, DOM and surface keys); the host's
+   *  own children sheet when omitted. A query's records sheet passes its own. */
+  sheetId?: string;
   rowSource: "children" | "query";
   groups?: readonly RefGroup[];
   addRow?: () => void | Promise<void>;
@@ -104,7 +108,8 @@ export function SheetTable(props: {
   onDefaultColumns?: (columns: string[]) => void;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
-  ownSelectionSurface(cellSurfaceKey(props.ownerId, surfaceId), undefined, surfaceId);
+  const sheetId = () => props.sheetId ?? props.ownerId;
+  ownSelectionSurface(cellSurfaceKey(sheetId(), surfaceId), undefined, surfaceId);
   let tableRef: HTMLDivElement | undefined;
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
@@ -231,7 +236,7 @@ export function SheetTable(props: {
   const baseGridColumns = createMemo(() => [...columns().map((column, index) =>
     tableWidths.widths().has(column) ? `${tableWidths.widths().get(column)}px`
       : index === 0 ? "fit-content(420px)" : "fit-content(320px)"), actionColumn()].join(" "));
-  const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.ownerId}:`) ?? false;
+  const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${sheetId()}:`) ?? false;
   const gridColumns = createMemo(() => {
     const stable = stableColumns();
     if (!stable || tableWidths.resizing()) return baseGridColumns();
@@ -249,7 +254,7 @@ export function SheetTable(props: {
       : config().colAggregates.size > 0,
   );
   const { footerPinned, showFooter, showFooterToggle, footerToggle } = useSheetFooterCorner({
-    ownerId: () => props.ownerId,
+    ownerId: sheetId,
     hasAggregates,
     overlay: sheetOverlay,
     hovering: () => (!props.queryDisplay || !!props.queryDisplay.apply) && sheetHovering(),
@@ -263,7 +268,7 @@ export function SheetTable(props: {
 
   let wasEditing = false;
   createEffect(() => {
-    const sel = cellSel(props.ownerId);
+    const sel = cellSel(sheetId());
     baseGridColumns();
     const editing = editingInThisTable();
     if (wasEditing && !editing) {
@@ -273,7 +278,7 @@ export function SheetTable(props: {
     }
     wasEditing = editing;
     if (!tableRef || editing) return;
-    if (sel && sel.gridId === props.ownerId && sel.kind !== "row-seam" && sel.kind !== "col-seam") captureStableColumns();
+    if (sel && sel.gridId === sheetId() && sel.kind !== "row-seam" && sel.kind !== "col-seam") captureStableColumns();
     else setStableColumns(null);
   });
 
@@ -328,16 +333,16 @@ export function SheetTable(props: {
     if (row !== undefined) ensureDisplayedThrough(row);
   }));
   createEffect(() => {
-    const sel = cellSel(props.ownerId);
-    if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
+    const sel = cellSel(sheetId());
+    if (!sel || sel.gridId !== sheetId() || sel.surfaceId !== surfaceId) return;
     if (sel.kind === "cell" && sel.rowId) {
       const row = sortedRowIndex().get(sel.rowId);
       const col = sel.columnId ? columnIndex().get(sel.columnId as "title" | FieldId) : sel.col;
       if (row !== undefined && col !== undefined) {
         ensureDisplayedThrough(row);
-        rebaseSelectedCell(props.ownerId, surfaceId, sel.rowId, { row, col }, columns()[col]);
+        rebaseSelectedCell(sheetId(), surfaceId, sel.rowId, { row, col }, columns()[col]);
       }
-      else clearSelectedSheetInstance(props.ownerId, surfaceId);
+      else clearSelectedSheetInstance(sheetId(), surfaceId);
     } else if (sel.kind === "range" && sel.anchorRowId && sel.focusRowId) {
       const anchor = sortedRowIndex().get(sel.anchorRowId);
       const focus = sortedRowIndex().get(sel.focusRowId);
@@ -346,7 +351,7 @@ export function SheetTable(props: {
       if (anchor !== undefined && focus !== undefined && anchorCol !== undefined && focusCol !== undefined) {
         ensureDisplayedThrough(Math.max(anchor, focus));
         rebaseSelectedRange(
-          props.ownerId,
+          sheetId(),
           surfaceId,
           sel.anchorRowId,
           { row: anchor, col: anchorCol },
@@ -355,7 +360,7 @@ export function SheetTable(props: {
           columns()[anchorCol],
           columns()[focusCol]
         );
-      } else clearSelectedSheetInstance(props.ownerId, surfaceId);
+      } else clearSelectedSheetInstance(sheetId(), surfaceId);
     }
   });
 
@@ -694,7 +699,7 @@ export function SheetTable(props: {
     if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);
   };
 
-  const selected = (row: number, col: number) => cellIsSelected(props.ownerId, row, col, surfaceId);  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
+  const selected = (row: number, col: number) => cellIsSelected(sheetId(), row, col, surfaceId);  const inRange = (row: number, col: number) => cellIsInRange(sheetId(), row, col, surfaceId);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
     if (!prepareEditEntry()) return;
@@ -718,7 +723,7 @@ export function SheetTable(props: {
     if (!id) return;
     queueMicrotask(() => {
       const rowIndex = sortedRows().findIndex((row) => row.id === id && !!liveFormulaRowNode(row));
-      if (rowIndex !== undefined) startCellEditing({ gridId: props.ownerId, surfaceId, rowId: id, columnId: "title", row: rowIndex, col: 0 }, 0);
+      if (rowIndex !== undefined) startCellEditing({ gridId: sheetId(), surfaceId, rowId: id, columnId: "title", row: rowIndex, col: 0 }, 0);
     });
   };
   const runAddRow = () => {
@@ -761,7 +766,7 @@ export function SheetTable(props: {
   };
 
   onMount(() => {
-    const dispose = registerSheetViewAdapter(props.ownerId, {
+    const dispose = registerSheetViewAdapter(sheetId(), {
       bounds: () => ({ rows: displayedRows().length, cols: columns().length }),
       rowIdAt: (row) => {
         const candidate = displayedRows()[row];
@@ -784,7 +789,7 @@ export function SheetTable(props: {
         const row = match && match.row < displayedRows().length ? match.row : undefined;
         const col = columnIndex().get("title");
         return row !== undefined && col !== undefined
-          ? { kind: "cell", gridId: props.ownerId, surfaceId, rowId: match!.rowKey, columnId: "title", row, col }
+          ? { kind: "cell", gridId: sheetId(), surfaceId, rowId: match!.rowKey, columnId: "title", row, col }
           : null;
       },
       activate: activateCell,
@@ -812,8 +817,8 @@ export function SheetTable(props: {
     });
   };
   const onPointerDown = (e: PointerEvent) => {
-    if (sheetGridIdFromEventTarget(e.target) !== props.ownerId || isSheetPointerInteractive(e.target)) return;
-    beginCellPointerSelection(e, props.ownerId);
+    if (sheetGridIdFromEventTarget(e.target) !== sheetId() || isSheetPointerInteractive(e.target)) return;
+    beginCellPointerSelection(e, sheetId());
   };
   const stopSheetMouseDown = (e: MouseEvent) => {
     if (e.button === 0) e.stopPropagation();
@@ -843,7 +848,7 @@ export function SheetTable(props: {
         }}
         class="sheet-table"
         classList={{ "sheet-table-resizing": tableWidths.resizing() !== null }}
-        data-sheet-grid-id={props.ownerId}
+        data-sheet-grid-id={sheetId()}
         data-sheet-surface-id={surfaceId}
         style={{ "grid-template-columns": gridColumns() }}
         onPointerDown={onPointerDown}
@@ -1008,7 +1013,7 @@ export function SheetTable(props: {
               <>
                 <TitleCell
                   query={props.rowSource === "query"}
-                  ownerId={props.ownerId}
+                  sheetId={sheetId()}
                   surfaceId={surfaceId}
                   row={row}
                   rowIndex={rowIndex()}
@@ -1021,7 +1026,7 @@ export function SheetTable(props: {
                 <For each={fields()}>
                   {(field, fieldIndex) => (
                     <FieldCell
-                      ownerId={props.ownerId}
+                      sheetId={sheetId()}
                       surfaceId={surfaceId}
                       row={row}
                       field={field}
@@ -1105,7 +1110,7 @@ export function SheetTable(props: {
 }
 function TitleCell(props: {
   query: boolean;
-  ownerId: string;
+  sheetId: string;
   surfaceId: string;
   row: RowRecord;
   rowIndex: number;
@@ -1116,7 +1121,7 @@ function TitleCell(props: {
   freezeColumns: () => void;
 }): JSX.Element {
   const cell = (): SheetCellCtx => ({
-    gridId: props.ownerId,
+    gridId: props.sheetId,
     surfaceId: props.surfaceId,
     rowId: formulaRowKey(props.row),
     columnId: "title",
@@ -1160,7 +1165,7 @@ function TitleCell(props: {
         "sheet-cell-in-range": props.inRange,
         "sheet-sticky-left": true,
       }}
-      data-sheet-grid-id={props.ownerId}
+      data-sheet-grid-id={props.sheetId}
       data-sheet-surface-id={props.surfaceId}
       data-block-id={props.row.id}
       data-sheet-row-id={formulaRowKey(props.row)}
@@ -1224,7 +1229,7 @@ function TitleCell(props: {
           }
         >
           <SheetCellContext.Provider value={cell()}>
-            <SurfaceContext.Provider value={cellSurfaceKey(props.ownerId, props.surfaceId)}>
+            <SurfaceContext.Provider value={cellSurfaceKey(props.sheetId, props.surfaceId)}>
               <Editor id={props.row.id} />
             </SurfaceContext.Provider>
           </SheetCellContext.Provider>
@@ -1235,7 +1240,7 @@ function TitleCell(props: {
 }
 
 function FieldCell(props: {
-  ownerId: string;
+  sheetId: string;
   surfaceId: string;
   row: RowRecord;
   field: FieldId;
@@ -1258,7 +1263,7 @@ function FieldCell(props: {
   const displayValue = (): FieldValue | null => displayFieldValue(props.field, props.fieldType, value());
   const editable = () => !!liveFormulaRowNode(props.row) && !isFormulaField(props.field);
   const select = () => setCellSel({
-    gridId: props.ownerId,
+    gridId: props.sheetId,
     surfaceId: props.surfaceId,
     rowId: formulaRowKey(props.row),
     columnId: props.field,
@@ -1372,7 +1377,7 @@ function FieldCell(props: {
           (props.field.startsWith("prop:") && props.fieldType === "number") ||
           (isFormulaField(props.field) && props.formulaValue?.kind === "number"),
       }}
-      data-sheet-grid-id={props.ownerId}
+      data-sheet-grid-id={props.sheetId}
       data-sheet-surface-id={props.surfaceId}
       data-sheet-row-id={formulaRowKey(props.row)}
       data-sheet-column-id={props.field}

@@ -158,6 +158,23 @@ const adapters = new Map<string, SheetViewAdapter>();
 const visibilityHooks = new Map<string, (sel: SheetSel) => void>();
 const instanceKey = (gridId: string, surfaceId?: string) => `${surfaceId ?? ""}\0${gridId}`;
 
+/** Leads every records sheet id. A block id is a trimmed `id::` value, a
+ *  generated key (`b…`, a UUID, `new-…`, `dup~…`), or empty, so none starts with
+ *  whitespace; it holds neither `:` nor `\0`, the separators of the keys above. */
+const RECORDS_SHEET_TAG = " records ";
+
+/** The sheet id of the query records (table or board) a live block hosts. It
+ *  differs from the host's own sheet id (its grid or children sheet), so a
+ *  records selection never reads or writes the host's grid. */
+export function recordsSheetId(hostId: string): string {
+  return RECORDS_SHEET_TAG + hostId;
+}
+
+/** The block that hosts sheet `sheetId`: a records sheet's host, or the id itself. */
+export function sheetHost(sheetId: string): string {
+  return sheetId.startsWith(RECORDS_SHEET_TAG) ? sheetId.slice(RECORDS_SHEET_TAG.length) : sheetId;
+}
+
 let hooks: CellSelectionHooks = {
   clearOutlineSelection: clearSelection,
   endActiveEdit: () => endEdit("select-block"),
@@ -611,15 +628,20 @@ export function selectCellAfterEdit(sel: SheetCellCtx): void {
 type CellDirection = NavDirection;
 
 function flowOutVertical(sel: { gridId: string; surfaceId?: string }, dir: "up" | "down"): boolean {
+  const host = sheetHost(sel.gridId);
+  // A records sheet on a grid host keeps its selection at both vertical edges:
+  // the host's outline neighbour is not scoped to a zoom, so it can be a block
+  // the pane does not draw.
+  if (host !== sel.gridId && blockIsGridView(host)) return true;
   clearCellSelectionOnly();
-  const target = dir === "up" ? prevVisible(sel.gridId) : nextVisible(sel.gridId);
-  selectBlock(target ?? sel.gridId, null, sel.surfaceId);
+  const target = dir === "up" ? prevVisible(host) : nextVisible(host);
+  selectBlock(target ?? host, null, sel.surfaceId);
   return true;
 }
 
 function exitLeft(sel: { gridId: string; surfaceId?: string }): boolean {
   clearCellSelectionOnly();
-  selectBlock(sel.gridId, null, sel.surfaceId);
+  selectBlock(sheetHost(sel.gridId), null, sel.surfaceId);
   return true;
 }
 
@@ -1076,13 +1098,14 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
         ));
         return true;
       }
-      const outer = enclosingCellForGrid(sel.gridId, sel.surfaceId);
+      const host = sheetHost(sel.gridId);
+      const outer = enclosingCellForGrid(host, sel.surfaceId);
       if (outer) {
         setCellSel(outer);
         return true;
       }
       clearCellSelectionOnly();
-      selectBlock(sel.gridId, null, sel.surfaceId);
+      selectBlock(host, null, sel.surfaceId);
       return true;
     }
     case "extend":

@@ -81,7 +81,11 @@ export const __sheetBoardTestHooks: {
 } = {};
 
 export function SheetBoard(props: {
+  /** The host block: its properties, schema, formulas, children and grouping. */
   ownerId: string;
+  /** The sheet's identity (selection, adapter, DOM and surface keys); the host's
+   *  own children sheet when omitted. A query's records sheet passes its own. */
+  sheetId?: string;
   rowSource: "children" | "query";
   groupBy?: string | null;
   groups?: readonly RefGroup[];
@@ -89,7 +93,8 @@ export function SheetBoard(props: {
   hostProperties?: readonly [string, string][];
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
-  ownSelectionSurface(cellSurfaceKey(props.ownerId, surfaceId), undefined, surfaceId);
+  const sheetId = () => props.sheetId ?? props.ownerId;
+  ownSelectionSurface(cellSurfaceKey(sheetId(), surfaceId), undefined, surfaceId);
   const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
   /** A query's explicit "No grouping" (the engine's `Cleared`, `group_by === ""`):
    *  one column holding every result. An ordinary board has no such state. */
@@ -229,18 +234,18 @@ export function SheetBoard(props: {
     return pointIndex().first.get(rowId) ?? null;
   };
   createEffect(() => {
-    const sel = cellSel(props.ownerId);
-    if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
+    const sel = cellSel(sheetId());
+    if (!sel || sel.gridId !== sheetId() || sel.surfaceId !== surfaceId) return;
     if (sel.kind === "cell" && sel.rowId) {
       const point = pointForRowId(sel.rowId, sel.columnId);
-      if (point) rebaseSelectedCell(props.ownerId, surfaceId, sel.rowId, point, boardColumnId(columns()[point.col].key));
-      else clearSelectedSheetInstance(props.ownerId, surfaceId);
+      if (point) rebaseSelectedCell(sheetId(), surfaceId, sel.rowId, point, boardColumnId(columns()[point.col].key));
+      else clearSelectedSheetInstance(sheetId(), surfaceId);
     } else if (sel.kind === "range" && sel.anchorRowId && sel.focusRowId) {
       const anchor = pointForRowId(sel.anchorRowId, sel.anchorColumnId);
       const focus = pointForRowId(sel.focusRowId, sel.focusColumnId);
       if (anchor && focus) {
         rebaseSelectedRange(
-          props.ownerId,
+          sheetId(),
           surfaceId,
           sel.anchorRowId,
           anchor,
@@ -249,7 +254,7 @@ export function SheetBoard(props: {
           boardColumnId(columns()[anchor.col].key),
           boardColumnId(columns()[focus.col].key)
         );
-      } else clearSelectedSheetInstance(props.ownerId, surfaceId);
+      } else clearSelectedSheetInstance(sheetId(), surfaceId);
     }
   });
   const [renderLimit, setRenderLimit] = createSignal(SHEET_RENDER_PAGE);
@@ -268,8 +273,8 @@ export function SheetBoard(props: {
     if (limit !== null) setRenderLimit(limit);
   };
   createEffect(() => {
-    const sel = cellSel(props.ownerId);
-    if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
+    const sel = cellSel(sheetId());
+    if (!sel || sel.gridId !== sheetId() || sel.surfaceId !== surfaceId) return;
     if (sel.kind === "cell" && sel.rowId) {
       const row = pointIndex().rowOrder.get(sel.rowId);
       if (row !== undefined) ensureDisplayedThrough(row);
@@ -305,7 +310,7 @@ export function SheetBoard(props: {
   });
   const formulaEntries = () => [...formulas().entries()];
 
-  const selected = (col: number, row: number) => cellIsSelected(props.ownerId, row, col, surfaceId);
+  const selected = (col: number, row: number) => cellIsSelected(sheetId(), row, col, surfaceId);
 
   const noteQueryMove = (row: RowRecord) => {
     if (props.rowSource !== "query") return;
@@ -320,7 +325,7 @@ export function SheetBoard(props: {
     const from = cols[point.col];
     const row = sel.rowId ? from?.rows[point.row] : displayedColumns()[point.col]?.rows[point.row];
     if (!sel.rowId && !row) {
-      clearSelectedSheetInstance(props.ownerId, surfaceId);
+      clearSelectedSheetInstance(sheetId(), surfaceId);
       return true;
     }
     const targetCol = dir === "left" ? point.col - 1 : point.col + 1;
@@ -333,7 +338,7 @@ export function SheetBoard(props: {
       const nextCol = Math.max(0, nextCols.findIndex((c) => c.key === target.key));
       const nextRows = nextCols[nextCol]?.rows ?? [];
       setCellSel({
-        gridId: props.ownerId,
+        gridId: sheetId(),
         surfaceId,
         rowId: formulaRowKey(row),
         columnId: boardColumnId(nextCols[nextCol]?.key ?? null),
@@ -345,7 +350,7 @@ export function SheetBoard(props: {
   };
 
   onMount(() => {
-    const dispose = registerSheetViewAdapter(props.ownerId, {
+    const dispose = registerSheetViewAdapter(sheetId(), {
       bounds: () => ({ rows: maxRows(), cols: columns().length }),
       rowIdAt: (row, col = 0) => {
         const candidate = displayedColumns()[col]?.rows[row];
@@ -365,7 +370,7 @@ export function SheetBoard(props: {
       cellForBlock: (blockId) => {
         const match = pointIndex().byBlockId.get(blockId);
         return match && displayedIds().has(match.rowKey)
-          ? { kind: "cell", gridId: props.ownerId, surfaceId, rowId: match.rowKey, columnId: match.columnId, row: match.row, col: match.col }
+          ? { kind: "cell", gridId: sheetId(), surfaceId, rowId: match.rowKey, columnId: match.columnId, row: match.row, col: match.col }
           : null;
       },
       activate: (sel) => {
@@ -461,7 +466,7 @@ export function SheetBoard(props: {
           ref={boardElement}
           class="sheet-board"
           classList={{ "sheet-filter-broken": !!filterError() }}
-          data-sheet-grid-id={props.ownerId}
+          data-sheet-grid-id={sheetId()}
           data-sheet-surface-id={surfaceId}
           onContextMenu={openSheetMenu}
         >
@@ -488,7 +493,7 @@ export function SheetBoard(props: {
                     {(row, rowIndex) => (
                       <BoardCard
                         query={props.rowSource === "query"}
-                        ownerId={props.ownerId}
+                        sheetId={sheetId()}
                         surfaceId={surfaceId}
                         row={row}
                         groupBy={groupBy()}
@@ -601,7 +606,7 @@ export function resetBoardCardVirtualizationForTests() {
 
 function BoardCard(props: {
   query: boolean;
-  ownerId: string;
+  sheetId: string;
   surfaceId: string;
   row: RowRecord;
   groupBy: FieldId;
@@ -618,7 +623,7 @@ function BoardCard(props: {
   dropCard: (row: RowRecord, rowKey: string, sourceColumnId: string, targetColumnId: string | null, groupBy: FieldId) => void;
 }): JSX.Element {
   const cell = (): SheetCellCtx => ({
-    gridId: props.ownerId,
+    gridId: props.sheetId,
     surfaceId: props.surfaceId,
     rowId: formulaRowKey(props.row),
     columnId: props.columnId,
@@ -838,7 +843,7 @@ function BoardCard(props: {
         "sheet-board-card-dragging": props.dragging,
         "sheet-board-card-static": !props.canMove,
       }}
-      data-sheet-grid-id={props.ownerId}
+      data-sheet-grid-id={props.sheetId}
       data-sheet-surface-id={props.surfaceId}
       data-sheet-column-id={props.columnId}
       data-row={props.rowIndex}
@@ -894,7 +899,7 @@ function BoardCard(props: {
         }
       >
         <SheetCellContext.Provider value={cell()}>
-          <SurfaceContext.Provider value={cellSurfaceKey(props.ownerId, props.surfaceId)}>
+          <SurfaceContext.Provider value={cellSurfaceKey(props.sheetId, props.surfaceId)}>
             <Editor id={props.row.id} />
           </SurfaceContext.Provider>
         </SheetCellContext.Provider>
