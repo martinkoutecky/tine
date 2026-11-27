@@ -67,8 +67,13 @@ describe("CM6 concealed constructs keep the view's look", () => {
   it("does not hide the page-ref brackets the preference shows", () => {
     expect(cm6).not.toMatch(/\.bracket\s*\{[^}]*display\s*:\s*none/);
   });
-  it("keeps the task checkbox a plain box: text cursor, no hover tint (a pointer reveals the source)", () => {
-    expect(decl(ruleBody(cm6, ".cm6-preview .block-task-checkbox"), "cursor")).toBe("text");
+  // UI-CM6-LINK-CURSOR: one rule gives the preview, the link kinds it draws and the task checkbox the text cursor; every
+  // other element keeps its own rule. scripts/shot-cm6-link-cursor.mjs checks the computed cursors in WebKitGTK against
+  // the base stylesheet.
+  it("gives the link kinds and the task checkbox the text cursor, and no hover tint (a pointer reveals the source)", () => {
+    expect(decl(ruleBody(cm6, ".cm6-preview, .cm6-preview :is(.page-ref, .tag, .block-ref, a[href], .block-task-checkbox)"), "cursor")).toBe("text");
+    expect(decl(ruleBody(cm6, ".cm6-preview .block-task-checkbox:not(.checked):hover"), "background")).toBe("none");
+    expect(cm6.match(/\.cm6-preview[^{]*\{[^}]*cursor/g), "one rule decides the preview's cursor").toHaveLength(1);
   });
 });
 

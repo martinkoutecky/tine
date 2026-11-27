@@ -57,7 +57,7 @@ import { undo, redo, blankOutlineSelection, selectionClaim, hasSelection, moveSe
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
-import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
+import { openRenderedSelectionInEditor, releaseHeldHandoffKey, swallowHeldHandoffRepeat } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
 import { toggleCommentMargin } from "./commentMargin";
@@ -1128,6 +1128,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   };
 
   const handler = (e: KeyboardEvent) => {
+    if (swallowHeldHandoffRepeat(e)) return; // ahead of every editor
     // IME composition owns Escape.  It must not fall through to a transient,
     // shortcut recorder, editor, or pane handler.
     if (e.isComposing || e.keyCode === 229) return;
@@ -1308,11 +1309,11 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       }
     }
 
-    // OG contenteditable parity: Delete/Backspace over a RENDERED (not-editing)
-    // text selection deletes that text from the block's source; without this the
+    // Delete/Backspace over a RENDERED (not-editing) text selection opens the
+    // block's editor with that range selected; without this the
     // keypress reaches no editor and dies silently.
     if (!editing && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
-        && deleteRenderedTextSelection()) {
+        && openRenderedSelectionInEditor(e.key)) {
       e.preventDefault();
       resetSeq();
       return;
@@ -1459,6 +1460,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
+    win.addEventListener("keyup", releaseHeldHandoffKey, true);
+    win.addEventListener("blur", releaseHeldHandoffKey);
     // GTK consumes graph-webview presses before they can reach the DOM.
     // On Windows the native hook filters commands forwarded from WebView2.
     const gtkMainHistory = nativeMainHistory && !webview2MouseHistory && id === MAIN_WINDOW_ID;
@@ -1482,6 +1485,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
+      win.removeEventListener("keyup", releaseHeldHandoffKey, true);
+      win.removeEventListener("blur", releaseHeldHandoffKey);
       if (mainMouse === disposeMouse) mainMouse = undefined;
       disposeMouse();
     };

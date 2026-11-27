@@ -27,7 +27,7 @@ import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
 import { isRtlContext } from "../render/textDirection";
 import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
-import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
+import { FOREIGN_SOURCE_ATTR, clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
 import { rowHostOf, rowPositionOf, type RowHost } from "./block/embedRowHost";
 import { bodyScopeOf } from "../document";
@@ -307,6 +307,62 @@ export function beginEditGesture(
   doc.addEventListener("mouseup", onUp, true);
 }
 
+/** The code card (`pre.code-block`) in `contentRef` holding `node`, or null, and whether the block renders it from
+ *  its own source. A card an embed, a query's results, a block reference's target or a macro's expansion draws
+ *  inside the block (under a {@link FOREIGN_SOURCE_ATTR} element) is another source's, never one of this block's
+ *  fences. O(depth of `node`). */
+function codeCardOf(contentRef: Element, node: Node): { card: Element; own: boolean } | null {
+  const el = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  const card = el?.closest("pre.code-block");
+  if (!card || !contentRef.contains(card)) return null;
+  for (let up = card.parentElement; up && up !== contentRef; up = up.parentElement) {
+    if (up.hasAttribute(FOREIGN_SOURCE_ATTR)) return { card, own: false };
+  }
+  return { card, own: true };
+}
+
+/** The ordinal of `card` among the block's own code cards, in document order. Foreign subtrees and card interiors
+ *  are skipped whole, so the cost is the host's own elements before `card`, whatever the foreign sources draw. */
+function ownCodeCardIndex(contentRef: Element, card: Element): number {
+  let index = 0;
+  const walk = (parent: Element): boolean => {
+    for (let c = parent.firstElementChild; c; c = c.nextElementSibling) {
+      if (c === card) return true;
+      if (c.hasAttribute(FOREIGN_SOURCE_ATTR)) continue;
+      if (c.tagName === "PRE" && c.classList.contains("code-block")) { index++; continue; }
+      if (walk(c)) return true;
+    }
+    return false;
+  };
+  walk(contentRef);
+  return index;
+}
+
+/** The block's own code card holding `target`, with its parser-owned fence: the card's body start in visible
+ *  source, and `offset(point)`, a point in the card as a body click maps it (the body's end when the point cannot
+ *  be mapped). The card chooses body mode even then. null when `target` is in none of the block's own cards, or
+ *  the card has no parser-owned body (GH #489/#510).
+ *  Cost: O(visible text) + O(the block's own elements before the card); foreign subtrees are never walked. */
+export function codeCardBodyAt(
+  contentRef: Element,
+  visible: string,
+  fmt: "md" | "org",
+  target: Node,
+): { card: Element; bodyStart: number; offset: (point: Pick<Range, "startContainer" | "startOffset"> | null) => number } | null {
+  const hit = codeCardOf(contentRef, target);
+  if (!hit?.own) return null;
+  const card = hit.card;
+  const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[ownCodeCardIndex(contentRef, card)];
+  const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
+  if (!projection) return null;
+  const length = projection.body.length;
+  return {
+    card,
+    bodyStart: projection.open.length,
+    offset: point => Math.min((point && codeCardOffsetFromRange(card, point)) ?? length, length),
+  };
+}
+
 /** Click on rendered block content -> raw caret offset for the editor, placing
  *  the caret WHERE you clicked when lsdoc span data can map the rendered leaf
  *  back through source bytes and hidden props. Anything without trustworthy
@@ -318,18 +374,12 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   // parser-owned fence, then map its rendered body to visible-raw coordinates.
   const visible = splitProps(raw, BUILTIN_HIDE, fmt).visible;
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
-  const index = cards.findIndex(card => card.parentElement!.contains(e.target as Node));
-  if (index >= 0) {
-    const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[index];
-    const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
-    const offset = range && codeCardOffsetFromRange(cards[index].parentElement!, range);
-    // The card chooses body mode even when its caret cannot be mapped (or is
-    // empty). Coordinates choose only the body position, falling back to its end.
-    if (projection) return projection.open.length + Math.min(offset ?? projection.body.length, projection.body.length);
-  }
+  const card = codeCardBodyAt(contentRef, visible, fmt, e.target as Node);
+  if (card) return card.bodyStart + card.offset(range ?? null);
+  // Another source's code card names none of this block's text: the click opens the block at its end, in source.
+  if (codeCardOf(contentRef, e.target as Node)?.own === false) return visible.length;
   // An outside edge can resolve to a nearby code glyph; it still chooses source.
-  if (range && cards.some(card => card === range.startContainer || card.contains(range.startContainer))) return visible.length;
+  if (range && codeCardOf(contentRef, range.startContainer)?.card.querySelector(":scope > code")?.contains(range.startContainer)) return visible.length;
   // GH #465: a click in the empty run-out past the last glyph means "the end",
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click
