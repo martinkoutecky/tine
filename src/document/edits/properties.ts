@@ -5,6 +5,7 @@ import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, pageReadOnly, setDoc, freshId, writeRaw, type DocState, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
+import { existingBlockId } from "../../blockIdentity";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
@@ -94,6 +95,36 @@ export function setBlockProperty(target: string | readonly string[], key: string
   // rescan (merge review F1). One Solid batch keeps it one reactive publication.
   batch(() => { for (const change of changes) setDoc("byId", change.id, "raw", change.raw); });
   for (const page of pages) markDirty(page, "save-block");
+}
+
+/** The raw text of a new, empty block that holds each of `keys` set to `value`,
+ *  below an empty first line (where the title editor's caret opens), built in
+ *  one pass for every key. A key is kept only when the parser reads the text
+ *  back as that key with that value and nothing else: not the block's identity
+ *  (`id`), a tag, a marker or a heading, and a line the format's reader does not
+ *  take as a property (an Org `end`, a key with a colon or a space) is dropped.
+ *  Case-insensitive duplicates keep the first spelling. "" when no key is kept.
+ *  Cost O(text bytes): one parse of the result, which rendering the block then
+ *  reuses; only when some key does not read back, one more one-line parse per key. */
+export function newBlockRawWithProperties(keys: readonly string[], value: string, format: Format): string {
+  const seen = new Set<string>();
+  const unique = keys.filter((key) => !seen.has(key.toLowerCase()) && !!seen.add(key.toLowerCase()));
+  if (!unique.length) return "";
+  const all = propertiesOnlyRaw(unique, value, format);
+  if (readsBackAs(all, format, unique, value)) return all;
+  const kept = unique.filter((key) => readsBackAs(propertiesOnlyRaw([key], value, format), format, [key], value));
+  const raw = propertiesOnlyRaw(kept, value, format);
+  return kept.length && readsBackAs(raw, format, kept, value) ? raw : "";
+}
+function propertiesOnlyRaw(keys: readonly string[], value: string, format: Format): string {
+  if (format === "org") return ["", ":PROPERTIES:", ...keys.map((key) => `:${key}: ${value}`), ":END:"].join("\n");
+  return ["", ...keys.map((key) => `${key}:: ${value}`)].join("\n");
+}
+function readsBackAs(raw: string, format: Format, keys: readonly string[], value: string): boolean {
+  if (existingBlockId(raw, format) !== null) return false;
+  const f = facetsOf(raw, format);
+  return !f.marker && !f.priority && f.headingLevel === null && !f.scheduled && !f.deadline && f.tags.length === 0
+    && f.properties.length === keys.length && f.properties.every(([key, v], i) => key === keys[i] && v.trim() === value);
 }
 
 /** The first root of a Markdown page when it is the page header (a transient

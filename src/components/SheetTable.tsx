@@ -12,7 +12,7 @@ export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, newBlockRawWithProperties, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
@@ -720,9 +720,8 @@ export function SheetTable(props: {
     const checkboxKeys = schemaFields().flatMap((spec) => spec.type === "checkbox" ? [spec.field.slice("prop:".length)] : []);
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => {
       const row = insertEmptyChildBlock(props.ownerId, at);
-      if (!row || checkboxKeys.length === 0) return row;
-      setRaw(row, "\n");
-      for (const key of checkboxKeys) setBlockProperty(row, key, "false");
+      const raw = row ? newBlockRawWithProperties(checkboxKeys, "false", formatForBlock(row)) : "";
+      if (row && raw) setRaw(row, raw);
       return row;
     });
     if (!id) return;

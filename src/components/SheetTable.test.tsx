@@ -7,7 +7,7 @@ import { ContextMenu } from "./ContextMenu";
 import { __sheetTableTestHooks, SheetTable as ActualSheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
+import { blockProperty, ensureBlockId, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { setWorkflow } from "../ui";
@@ -27,6 +27,22 @@ import { setToasts, toasts } from "../toasts";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
 const draftHandoffDisposers: (() => void)[] = [];
+// Counts the parser and splice calls an Add row makes (tine#1047's count gate).
+const wasmCalls = vi.hoisted(() => ({ parses: [] as string[], edits: 0 }));
+vi.mock("../render/wasm/lsdoc_wasm.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../render/wasm/lsdoc_wasm.js")>();
+  return {
+    ...actual,
+    parse_block_bundle_json: (...args: Parameters<typeof actual.parse_block_bundle_json>) => {
+      wasmCalls.parses.push(args[0]);
+      return actual.parse_block_bundle_json(...args);
+    },
+    edit_block_regions_json: (...args: Parameters<typeof actual.edit_block_regions_json>) => {
+      wasmCalls.edits++;
+      return actual.edit_block_regions_json(...args);
+    },
+  };
+});
 vi.mock("../document/host/wiring", () => new Proxy({}, {
   get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
     : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
@@ -1845,6 +1861,61 @@ describe("SheetTable", () => {
     const { id, dispose } = await addRowUnderSchema("Table\ntine.fields:: name=text;n=number\ntine.view:: table", "md");
     expect(doc.byId[id].raw).toBe("");
     dispose();
+  });
+
+  it.each(["id", "Id", "ID"])("children add-row never writes an `%s` checkbox column, so a copied reference gets a UUID (tine#1047)", async (key) => {
+    const { id, dispose } = await addRowUnderSchema(`Table\ntine.fields:: ${key}=checkbox;prop=checkbox\ntine.view:: table`, "md");
+    expect(doc.byId[id].raw).toBe("\nprop:: false");
+    const real = saveFixture.actual;
+    saveFixture.actual = { ...real, settleWithWitness: async () => true };
+    try {
+      const uuid = await ensureBlockId(id);
+      expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(blockProperty(id, "id")).toBe(uuid);
+      expect(blockProperty(id, "prop")).toBe("false");
+    } finally {
+      saveFixture.actual = real;
+    }
+    dispose();
+  });
+
+  it("children add-row writes case-insensitive duplicate checkbox columns once, under the first spelling (tine#1047)", async () => {
+    const { id, dispose } = await addRowUnderSchema("Table\ntine.fields:: Done=checkbox;done=checkbox\ntine.view:: table", "md");
+    expect(doc.byId[id].raw).toBe("\nDone:: false");
+    dispose();
+  });
+
+  it.each([["end", "a", "b"], ["a", "end", "b"]])("children add-row keeps the Org drawer whole with an `end` checkbox column (%s first) (tine#1047)", async (...keys) => {
+    const fields = keys.map((key) => `${key}=checkbox`).join(";");
+    const ownerRaw = ["Demo", ":PROPERTIES:", `:tine.fields: ${fields}`, ":tine.view: table", ":END:"].join("\n");
+    const { id, dispose } = await addRowUnderSchema(ownerRaw, "org");
+    expect(doc.byId[id].raw).toBe("\n:PROPERTIES:\n:a: false\n:b: false\n:END:");
+    expect(blockProperty(id, "a")).toBe("false");
+    expect(blockProperty(id, "b")).toBe("false");
+    dispose();
+    undo();
+    expect(doc.byId[id]).toBeUndefined();
+  });
+
+  it("children add-row skips checkbox columns whose key has a colon or a space (tine#1047)", async () => {
+    const { id, dispose } = await addRowUnderSchema("Table\ntine.fields:: a:b=checkbox;ok=checkbox;c d=checkbox\ntine.view:: table", "md");
+    expect(doc.byId[id].raw).toBe("\nok:: false");
+    dispose();
+  });
+
+  it.each([1, 64, 512])("children add-row with %i checkbox columns parses the new row once and splices nothing (tine#1047)", async (k) => {
+    const keys = Array.from({ length: k }, (_, i) => `c${i}`);
+    const schema = `Table\ntine.fields:: ${keys.map((key) => `${key}=checkbox`).join(";")}\ntine.view:: table`;
+    wasmCalls.parses = [];
+    wasmCalls.edits = 0;
+    const { id, dispose } = await addRowUnderSchema(schema, "md");
+    const raw = doc.byId[id].raw;
+    expect(raw).toBe(["", ...keys.map((key) => `${key}:: false`)].join("\n"));
+    expect(wasmCalls.parses.filter((text) => text.includes("c0:: false"))).toHaveLength(1);
+    expect(wasmCalls.edits).toBe(0);
+    dispose();
+    undo();
+    expect(doc.byId[id]).toBeUndefined();
   });
 
   it("children add-column ghost adds an extra property column", () => {

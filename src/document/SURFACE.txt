@@ -142,6 +142,7 @@ moveDayBlocks  # why: the day move moves a day's blocks to a page in one two-pag
 moveItem
 moveSelection
 moveSelectionItems
+newBlockRawWithProperties  # why: a table's Add row writes its checkbox columns' `false` values in one pass (tine#1047); batch-fix-1047-add-row-checkbox-false
 nextVisible
 nextVisibleOrExtend
 node
