@@ -446,6 +446,13 @@
       "nonRequirements": ["Exact pixels or DOM nesting; native certification outside Linux WebKitGTK; orphan adoption as the way in; a return while the old graph's host is still stopping; closing the window or quitting over such a draft; the count after three keys, opaque keys and other refusal reasons are covered by unit and render tests."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh540-kept-original.mjs": {
+      "setup": "Synthetic graph holding pages/Draft.md (LF text with non-ASCII), pages/Index.md linking it and an untouched routed pages/Notes.md; scratch XDG profile, account-home shim, native Linux WebKitGTK at 1920x1080. A first app launch creates the graph's draft namespace; the store's ignored setup test (kept_original_journey_setup, the app host's production IO) then renames Draft to Final, publishes Final and Index and Draft's removal, writes Final on disk and cancels the rename with Use Disk on Final, which keeps Draft's original.",
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"Relaunched on the routed Notes page, the command palette's Review originals kept after a cancelled rename opens the recovery panel, which lists pages/Draft.md with Copy original text; pressing it puts Draft's original text on the native clipboard byte for byte and says Copied. No graph file changes, Draft's file stays absent and the row stays listed.","blocking":true,"authority":"GH #540; UI-GH540-KEPT-ORIGINAL-LIST"}],
+      "acceptableVariations": ["Panel layout and wording beyond the command name, the path and the button label; launch, list and copy latency."],
+      "nonRequirements": ["Reaching the cancelled rename through the UI (Final must change on disk inside a millisecond window of the rename), the launch notice's Review button, CRLF originals on the native clipboard, not-text and missing rows (covered by store and render tests), Restore, certification outside Linux."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-all-graphs.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
       "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],

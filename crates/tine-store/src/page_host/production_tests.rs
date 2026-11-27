@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 mod guard_tests;
 #[path = "production_crash_tests.rs"]
 mod production_crash_tests;
+#[path = "production_kept_original_journey_tests.rs"]
+mod production_kept_original_journey;
 #[path = "production_launch_custody_journey_tests.rs"]
 mod production_launch_custody_journey;
 #[path = "production_move_crash_tests.rs"]
