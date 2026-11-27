@@ -51,6 +51,10 @@ interface StructureContext {
   /** Visible-source body start, or null in source mode. O(1). */
   code(): number | null;
   calc(): boolean;
+  /** An "Edit clock entries" session: the buffer holds the LOGBOOK drawer that
+   *  outline verbs' offset maps hide, so Enter is a line break and the outline
+   *  verbs (indent, move, merge) do nothing. O(1). */
+  clockEntries(): boolean;
   annotation(): boolean;
   viewPrev(): string | null;
   viewNext(): string | null;
@@ -97,6 +101,7 @@ export function cm6Structure(ctx: StructureContext) {
     }
   };
   const nudge = (v: EditorView, out: boolean) => {
+    if (ctx.clockEntries()) return true;
     const s = selection(v), text = v.state.doc.toString();
     const ll = ctx.code() || ctx.calc() ? null : listLineAt(text, s.start, ctx.format);
     if (ll && (ctx.format === "org" || ll.lineStart > 0) && (!out || ll.indent.length > 0)) {
@@ -113,6 +118,7 @@ export function cm6Structure(ctx: StructureContext) {
     return true;
   };
   const move = (v: EditorView, dir: -1 | 1) => {
+    if (ctx.clockEntries()) return true;
     const s = selection(v);
     const { id, scope } = position();
     ctx.commit(v.state.doc.toString());
@@ -211,7 +217,7 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (properties && caretOnPropertyLine(raw, s.from)) return softNewline(v);
-    if (ctx.code() || ctx.calc() || fence || math || caretOnOpeningFence(raw, s.from, ctx.format)) return softNewline(v);
+    if (ctx.code() || ctx.calc() || ctx.clockEntries() || fence || math || caretOnOpeningFence(raw, s.from, ctx.format)) return softNewline(v);
     if (stopOwnNumberedListOnEmptyEnter(ctx.id, raw)) {
       v.dispatch({ selection: { anchor: 0 } });
       return true;
@@ -285,7 +291,7 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
-      if (ctx.code() || ctx.calc() || bodyScopeOf(ctx.id) === undefined) return true;
+      if (ctx.code() || ctx.calc() || ctx.clockEntries() || bodyScopeOf(ctx.id) === undefined) return true;
       if (calcSource(raw) !== null) return false;
       if (removeOwnNumberedList(ctx.id)) {
         v.dispatch({ selection: { anchor: 0 } });
@@ -298,7 +304,7 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
-      if (ctx.code() || ctx.calc() || bodyScopeOf(ctx.id) === undefined) return true;
+      if (ctx.code() || ctx.calc() || ctx.clockEntries() || bodyScopeOf(ctx.id) === undefined) return true;
       if (calcSource(raw) !== null) return false;
       const next = bodyNeighbor(ctx.id, 1, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
       if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {

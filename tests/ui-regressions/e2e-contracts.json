@@ -933,6 +933,12 @@
       "nonRequirements":["platforms other than Linux WebKitGTK"],
       "stability":"burn-in"
     },
+    "scripts/e2e-clock-entries-975.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed Markdown page, the task bullet's Edit clock entries opens the CodeMirror editor with the task's LOGBOOK in the text and the caret on its first CLOCK row; changing that row's end time and leaving saves exactly that change (id:: and collapsed:: keep their place); normal editing shows the task without the drawer; Undo restores the old row in the file.","blocking":false,"authority":"GH #975"}],
+      "acceptableVariations":["Menu placement, save latency and how many Undo steps the typed keystrokes form."],
+      "nonRequirements":["Org pages, the palette entry and the untouched-exit case, covered by component tests; platforms other than Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-template-collapse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Inserting a template hides children of blocks saved collapsed, shows children of expanded blocks, and preserves that state and all children after save and cold reopen.","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the saved collapse state controls child visibility."],

@@ -180,6 +180,7 @@ export interface MessageArgs {
   "command-editor-cycle-todo": {};
   "command-editor-duplicate-block": {};
   "command-editor-duplicate-block-above": {};
+  "command-editor-edit-clock-entries": {};
   "command-editor-edit-selected-block": {};
   "command-editor-expand": {};
   "command-editor-expand-all": {};

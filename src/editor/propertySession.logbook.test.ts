@@ -39,3 +39,37 @@ it("typing preserves metadata order around a hidden Markdown drawer", () => {
   const parts = session.split(old, BUILTIN_HIDE, "md");
   expect(session.join(parts.visible.replace("x", "é🙂"), parts.hidden, old, BUILTIN_HIDE, "md")).toBe(old.replace("x", "é🙂"));
 });
+
+// GH #975: a drawer in the buffer replacing the hidden history ("Edit clock
+// entries", or one typed by hand) keeps the history's place and every hidden
+// row's place; only the drawer's text changes.
+it.each([
+  ["md", "DOING x é🙂\nid:: 11111111-1111-4111-8111-111111111111\ncollapsed:: true\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]--[2026-10-21 Wed 09:00:00] =>  01:00:00\n:END:\nDEADLINE: <2026-10-22 Thu>\nnotes"],
+  ["org", "DOING x é🙂\n:PROPERTIES:\n:id: 11111111-1111-4111-8111-111111111111\n:END:\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]--[2026-10-21 Wed 09:00:00] =>  01:00:00\n:END:\nnotes"],
+] as const)("a drawer replacing the history keeps the hidden rows in place (%s)", (format, old) => {
+  const session = propertyEditorSession();
+  const parts = session.split(old, BUILTIN_HIDE, format);
+  const drawer = old.slice(old.indexOf(":LOGBOOK:"), old.indexOf(":END:", old.indexOf(":LOGBOOK:")) + 5);
+  const visible = parts.visible.replace("é🙂", `é🙂\n${drawer}`);
+  expect(session.join(visible, parts.hidden, old, BUILTIN_HIDE, format)).toBe(old);
+  const fixed = visible.replace("09:00:00] =>  01:00:00", "09:30:00] =>  01:30:00");
+  const joined = session.join(fixed, parts.hidden, old, BUILTIN_HIDE, format);
+  expect(joined).toBe(old.replace("09:00:00] =>  01:00:00", "09:30:00] =>  01:30:00"));
+  const next = session.split(joined, BUILTIN_HIDE, format);
+  expect(next.visible).toBe(fixed);
+  expect(session.join(fixed.replace("x é", "y é"), next.hidden, joined, BUILTIN_HIDE, format)).toBe(joined.replace("x é", "y é"));
+});
+
+it.each(["md", "org"] as const)("showLogbook opens the drawer at its place, the caret on its first CLOCK row (%s)", format => {
+  const props = format === "org" ? ":PROPERTIES:\n:collapsed: true\n:END:" : "collapsed:: true";
+  const raw = `TODO x\n${props}\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:\nnotes`;
+  const session = propertyEditorSession();
+  const caret = session.showLogbook(raw, BUILTIN_HIDE, format);
+  const parts = session.split(raw, BUILTIN_HIDE, format);
+  expect(parts.visible).toBe("TODO x\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:\nnotes");
+  expect(caret).toBe(parts.visible.indexOf("CLOCK:"));
+  expect(session.join(parts.visible, parts.hidden, raw, BUILTIN_HIDE, format)).toBe(raw);
+  session.begin();
+  expect(session.split(raw, BUILTIN_HIDE, format).visible).toBe("TODO x\nnotes");
+  expect(session.showLogbook("TODO x\nnotes", BUILTIN_HIDE, format)).toBeNull();
+});

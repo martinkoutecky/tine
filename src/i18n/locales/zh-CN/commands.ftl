@@ -215,6 +215,7 @@ command-editor-new-sibling-after-subtree = 在此块的子块之后新建块
 
 command-editor-select-embedding-block = 选择嵌入所在块
 command-editor-remove-author = 移除作者
+command-editor-edit-clock-entries = 编辑计时记录
 
 command-editor-collapse-children = 折叠（一层）
 

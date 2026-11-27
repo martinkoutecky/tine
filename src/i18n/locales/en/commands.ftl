@@ -117,6 +117,8 @@ command-editor-merge-selected-blocks = Merge selected blocks
 command-editor-new-sibling-after-subtree = New block after this block’s children
 command-editor-select-embedding-block = Select embedding block
 command-editor-remove-author = Remove author
+# GH #975: opens the block with its LOGBOOK (clock history) in the text.
+command-editor-edit-clock-entries = Edit clock entries
 command-editor-collapse-children = Collapse (one level)
 command-editor-expand-children = Expand (one level)
 # $depth (number): how many levels stay open, 0 to 9.

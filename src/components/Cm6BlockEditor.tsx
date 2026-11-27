@@ -12,6 +12,7 @@ import { cm6EmptyCaret } from "../editor/cm6EmptyCaret";
 import { cm6CodeHighlight, refreshCodeHighlight } from "../editor/cm6CodeHighlight";
 import { SHEET_CELL_HIDE } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
+import { clockEntriesRequested } from "../editor/clockEntries";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
@@ -77,6 +78,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const capture = useContext(CaptureCtx);
   const hiddenProperties = cell ? SHEET_CELL_HIDE
     : commentEditorHide(shownNode, propertySession.facets(shownNode.raw, format).properties, format, node);
+  // "Edit clock entries" opens with the LOGBOOK drawer in the text, the caret on its first CLOCK line.
+  const clockCaret = clockEntriesRequested(props.id) ? propertySession.showLogbook(shownNode.raw, hiddenProperties, format) : null;
+  let clockFocus = clockCaret;
   // A directly mounted editor can outlive its node during graph replacement.
   // Its projections remain readable until disposal; current() gates all writes.
   const source = () => node(props.id)?.raw ?? shownNode.raw;
@@ -173,6 +177,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const embedExit = useContext(EmbedNavExitContext);
   const scope = cell && editsLikeOutline(cell) ? gridOutlineScope(cell) : props.scope;
   const structure = cm6Structure({ ...props, scope, cell, format, current, commit, stage, deleteSelection, embedExit, code: () => code()?.open.length ?? null, calc: isCalc,
+    clockEntries: () => clockCaret !== null,
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
     ...marginNavigation(props.id, scope, props.surface, () => format),
@@ -512,7 +517,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       // After its block took a calculator's text (a template in the empty block) the view enters calc
       // mode, as a fresh mount would.
       if (!isCalc() && calcSource(visible()) !== null) setCalc(true);
-      const want = again ? again.offset : takeCaretFor(props.id);
+      const taken = again ? again.offset : takeCaretFor(props.id);
+      const want = again || clockFocus === null ? taken : clockFocus;
+      clockFocus = null;
       const historySelection = again ? null : takeHistoryEditorSelectionFor(props.id, props.surface);
       // Numeric and history targets use visible-source coordinates; structural
       // remounts carry their body start separately from editor coordinates.

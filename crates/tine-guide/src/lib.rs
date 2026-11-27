@@ -1235,6 +1235,22 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn clock_entries_can_be_corrected_in_tine() {
+        // GH #975: the logbook stays hidden while typing; one command opens it.
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for behavior in [
+            "**Edit clock entries**",
+            "only the rows you change are saved",
+            "it needs the CodeMirror editor",
+        ] {
+            assert!(
+                text.contains(behavior),
+                "missing clock-entry Guide text: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn referenced_fileless_journal_days_are_documented() {
         let text = include_str!("templates/journals-tasks-scheduling.md");
         for behavior in [

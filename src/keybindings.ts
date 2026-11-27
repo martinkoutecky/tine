@@ -42,7 +42,6 @@ import {
   openJournals,
   openAllGraphs,
   openQueryInNewTab,
-  openPage,
   pageTargetFromRoute,
   goBack,
   goForward,
@@ -52,7 +51,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
-import { journalTitle, parseJournalTitle, appNow } from "./journal";
+import { goAdjacentJournal } from "./journalNav";
 import { undo, redo, blankOutlineSelection, selectionClaim, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
@@ -99,6 +98,7 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
+import { clockEntriesInPlay, editClockEntriesInPlay } from "./editor/clockEntries";
 import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed, removeAuthor } from "./blockRefActions";
 import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
 import { installPlainPasteMenu } from "./editor/plainPasteMenu";
@@ -106,16 +106,6 @@ import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
-/** Open the adjacent journal route (+1 next, -1 previous) from the current
- * journal date, or today's local date on another route. O(1) before navigation;
- * the page loader owns any read error. No page is written here. */
-export function goAdjacentJournal(dir: 1 | -1): void {
-  const current = route();
-  const anchor = current.kind === "page" && current.pageKind === "journal"
-    ? parseJournalTitle(current.name) ?? appNow()
-    : appNow();
-  openPage(journalTitle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
-}
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owner = capturePluginGraphOwner();
   if (!owner) return undefined;
@@ -522,6 +512,7 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
   // GH #918: the block context menu's Remove author. Always listed; with no authored block it says so.
   { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", run: () => removeAuthor(), global: true },
+  { id: "editor/edit-clock-entries", binding: "", label: msg("command-editor-edit-clock-entries"), scope: "global", available: clockEntriesInPlay, run: editClockEntriesInPlay, global: true }, // GH #975
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },

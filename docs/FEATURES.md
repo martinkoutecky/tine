@@ -392,6 +392,8 @@ within a column; merged cells are still v2+.
   seconds are on by default, and closed rows keep the two spaces after `=>`.
   `DONE`/`TODO`/`LATER` blocks show an elapsed-time badge with a Type / Start /
   End / Span tooltip; the drawer itself stays hidden by default, like Logseq.
+  **Edit clock entries** (block menu, Commands) opens a task with its drawer in
+  the text to correct a CLOCK row (GH #975).
 - **Task checkbox** in front of every task block (Logseq parity): click it to mark
   the task `DONE`, click again to reopen it (to `TODO`, or `LATER` under the "now"
   workflow); a repeating task rolls its date forward instead of closing. `DONE`

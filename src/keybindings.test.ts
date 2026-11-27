@@ -21,7 +21,8 @@ vi.mock("./backend", async (importOriginal) => {
 });
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, runGlobalCommand } from "./keybindings";
+import { goAdjacentJournal } from "./journalNav";
 import { applySidebarSession, openPageInSidebar, rightSidebar, rightSidebarOpen, closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
