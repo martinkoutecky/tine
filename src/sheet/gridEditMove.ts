@@ -2,7 +2,7 @@
 // (CM6 and the textarea), so the two never drift. Table title cells and board cards keep
 // today's sheet keys; only cells of a `tine.view:: grid` edit like an outline.
 import { batch } from "solid-js";
-import { blockIsGridView, deleteBlock, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
+import { blockIsGridView, blockIsOpaqueSheetView, deleteBlock, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
 import { editingId, editingOwner, startEditing, takeCaretFor, type CaretPos } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import type { SheetCellCtx } from "./context";
@@ -92,8 +92,11 @@ export function gridNestedBlock(id: string, cell: SheetCellCtx | null | undefine
 
 /** Removes the cell block's first child when it is empty (whitespace-only text, no children),
  * then runs `after`, as one undo unit (as the grid Enter). `host`'s own text is never written.
+ * A cell that hosts a grid, table or board renders its children as that sheet's rows, not as
+ * its outline (the sheet-view answer the renderer uses), so none of them is removed.
  * Deciding reads `host` and its first child only. */
 function removeEmptyFirstChild(host: string, after?: () => void): void {
+  if (blockIsOpaqueSheetView(host)) return;
   const k = node(host).children[0];
   const child = k ? node(k) : undefined;
   if (!child || child.raw.trim() !== "" || child.children.length) return;

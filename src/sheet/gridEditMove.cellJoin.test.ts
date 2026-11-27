@@ -82,9 +82,10 @@ describe.each(["Backspace", "Delete"] as const)("GH874 count gate: %s", (key) =>
     load("", n);
     probe.visited.clear();
     const before = doc.byId.c1.children.length;
-    const { handled } = press(key);
+    const { handled, outline } = press(key);
     expect(handled).toBe(true);
     expect(probe.walks).toBe(0);
+    expect(outline).toEqual(["k"]);
     expect(doc.byId.k).toBeUndefined();
     expect(doc.byId.c1.children.length).toBe(before - 1);
     expect(doc.byId.c1.raw).toBe("Cell");

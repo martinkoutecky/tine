@@ -212,6 +212,23 @@ describe.each(keys)("GH874 %s refuses a first child that is not empty", (key) =>
   });
 });
 
+/** A cell that hosts a compact grid, table or board: its children are that sheet's rows or
+ * cards, not the cell's outline, so Delete at the cell text's end removes none of them
+ * (reviewer's 12 combinations: view x editor run x format). */
+const hostedViews = ["grid", "table", "board"] as const;
+describe.each(hostedViews.flatMap(view => formats.map(format => [view, format] as const)))("GH874 Delete on a cell hosting a %s (%s)", (view, format) => {
+  it.each([["a blank first row", ""], ["a whitespace-only first row", "  "]])("keeps %s and queues nothing", async (_, kRaw) => {
+    const root = load(format, `Cell\n${prop(format, "tine.view", view)}`, kRaw, { later: true });
+    const before = snapshot();
+    keydown(await editCellEnd(root), "Delete");
+    await tick();
+    expect(snapshot()).toBe(before);
+    expect(doc.byId.k).toBeDefined();
+    expect(isDirty("Sheet")).toBe(false);
+    expect(editingId()).toBe("c1");
+  });
+});
+
 describe("GH874 Delete on a folded cell", () => {
   it.each(formats)("leaves its hidden empty child alone (%s)", async (format) => {
     const root = load(format, `Cell\n${prop(format, "collapsed", "true")}`, "");
