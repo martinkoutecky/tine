@@ -118,6 +118,10 @@
       "is_journal": false,
       "key": "old/sub/child",
       "name": "old/sub/child",
+      "parent": {
+        "kind": "page",
+        "name": "old/sub"
+      },
       "target": {
         "id": "pages/old%2Fsub%2Fchild.md",
         "kind": "existing",
@@ -134,6 +138,10 @@
       },
       "name": "old/sub/ref",
       "namespace_excluded": true,
+      "parent": {
+        "kind": "page",
+        "name": "old/sub"
+      },
       "target": {
         "kind": "alias",
         "owners": [

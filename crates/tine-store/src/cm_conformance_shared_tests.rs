@@ -1156,6 +1156,9 @@ pub fn frontend_case(
             if let Some(parent) = &e.parent {
                 wire["parent"] = json!({ "name": parent.name, "kind": if parent.is_journal { "journal" } else { "page" } });
             }
+            if e.namespace_day {
+                wire["namespace_day"] = json!(true);
+            }
             if e.empty_alias {
                 wire["empty_alias"] = json!(true);
             }

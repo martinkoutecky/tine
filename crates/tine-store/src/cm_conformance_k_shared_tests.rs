@@ -428,10 +428,10 @@ fn tree_rows(rows: &Value) -> BTreeMap<Page, BTreeSet<Page>> {
 }
 
 /// The namespace tree as the inventory gives it: a row's parent is its typed
-/// `parent`, the store's one answer (none when absent; a parent outside the
-/// listed pages is a difference, not dropped). Against the model's `tree`
-/// (every page with its children) and `namespaceTree` (the rows with a parent
-/// or a child, and the rows the store marks `namespace_root`).
+/// `parent` candidate when that page is listed, else none (no prefix of its
+/// own). Against the model's `tree` (every page with its children) and
+/// `namespaceTree` (the rows with a parent or a child, and the days the store
+/// marks `namespace_day`).
 fn compare_trees(
     journal: &JournalFormat,
     real: &[&super::super::store_crate::InventoryEntry],
@@ -443,10 +443,15 @@ fn compare_trees(
     let mut roots = BTreeSet::new();
     for e in real {
         let page = entry_page(journal, e);
-        if e.namespace_root {
+        if e.namespace_day {
             roots.insert(page.clone());
         }
-        if let Some(parent) = e.parent.as_ref().map(|link| link_page(journal, link)) {
+        if let Some(parent) = e
+            .parent
+            .as_ref()
+            .map(|link| link_page(journal, link))
+            .filter(|parent| pages.contains(parent))
+        {
             tine.entry(parent).or_default().insert(page);
         }
     }

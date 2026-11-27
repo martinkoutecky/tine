@@ -195,36 +195,15 @@ impl Snapshot {
             resident(self, !days.is_empty()),
         ) {
             let mut delta = InventoryDelta::default();
-            // A namespace tree node that appears or goes moves the rows below
-            // it (`tree_place`), which this delta does not carry: refetch.
-            let mut moves_children = false;
-            let asked: Vec<_> = keys
-                .iter()
-                .map(|key| (key.clone(), days.get(key).copied()))
-                .collect();
-            let nows = self.name_entries(after, &asked);
-            let wases = old.name_entries(before, &asked);
-            for ((key, now), was) in keys.iter().zip(nows).zip(wases) {
-                if was != now {
-                    // (an alias row?, the tree node's kind)
-                    let node = |entry: &Option<InventoryEntry>| match entry {
-                        Some(entry) if matches!(entry.target, Resolved::Alias { .. }) => {
-                            (true, None)
-                        }
-                        entry => (false, entry.as_ref().map(|entry| entry.is_journal)),
-                    };
-                    let ((alias_was, node_was), (alias_now, node_now)) = (node(&was), node(&now));
-                    let alias = alias_was || alias_now;
-                    moves_children |= node_was != node_now
-                        && (old.tree_children_outside_delta(before, key, alias)
-                            || self.tree_children_outside_delta(after, key, alias));
-                    delta.keys.push(key.clone());
+            for key in keys {
+                let day = days.get(&key).copied();
+                let now = self.name_entry(after, &key, day);
+                if old.name_entry(before, &key, day) != now {
+                    delta.keys.push(key);
                     delta.entries.0.extend(now);
                 }
             }
-            if moves_children {
-                (true, None, keys.into_iter().collect())
-            } else if delta.keys.is_empty() {
+            if delta.keys.is_empty() {
                 (false, None, Vec::new())
             } else {
                 let moved = delta.keys.clone();

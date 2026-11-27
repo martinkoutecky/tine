@@ -482,11 +482,11 @@ field store::InventoryEntry.link
 # scope: every entry carries it and the namespace views nest by it. 22 -> 23.
 field store::InventoryEntry.namespace_parent
 field store::InventoryEntry.parent
-# Whether a parentless day is still a namespace tree top node depends on its
-# folded prefixes, which the views must not test themselves; `parent` (a page
-# or none) cannot carry it, so it is a flag on the same entry, sent only when
-# true. 40 -> 41.
-field store::InventoryEntry.namespace_root
+# Whether a day without a tree parent is still a namespace tree top node
+# depends on its folded prefixes, which the views must not test themselves;
+# `parent` (a candidate or none) cannot carry it, so it is a flag on the same
+# entry, sent only when true. 40 -> 41.
+field store::InventoryEntry.namespace_day
 # Retired EMPTY-ALIAS compatibility field: live entries always set false
 # under R13-C4. Frozen published v1 readers retain their stored answer.
 field store::InventoryEntry.empty_alias

@@ -1,10 +1,11 @@
 import { pageIdentityKey } from "./pageIdentity";
 import type { PageInventoryEntry } from "./types";
 
-/** The tree parent the store answers for an ordinary page name
- *  (`InventoryEntry::parent`): its immediate nonempty prefix, the only
- *  candidate with fewer parts. A name that is no namespace name (`./x`,
- *  `../x`, a URL with an origin) has none (`refs::namespace_refs`). */
+/** The tree parent candidate the store answers for an ordinary page name
+ *  (`InventoryEntry::parent`): the page its immediate nonempty prefix names,
+ *  for these test names (no boundary slash, no date prefix). A name that is
+ *  no namespace name (`./x`, `../x`, a URL with an origin) has none
+ *  (`refs::namespace_refs`). */
 export function ordinaryParent(name: string, notNamespace = false): PageInventoryEntry["parent"] {
   if (notNamespace || name.startsWith("./") || name.startsWith("../") || /^[a-z][a-z0-9+.-]*:\/\//i.test(name)) return undefined;
   const segs = name.split("/");

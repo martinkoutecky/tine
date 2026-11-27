@@ -75,6 +75,10 @@
       "is_journal": false,
       "key": "old/sub/child",
       "name": "old/sub/child",
+      "parent": {
+        "kind": "page",
+        "name": "old/sub"
+      },
       "target": {
         "id": "pages/old%2Fsub%2Fchild.md",
         "kind": "existing",

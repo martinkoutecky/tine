@@ -10,12 +10,12 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
-import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, isNamespaceRoot, linkTarget, namespaceTarget } from "../pageIndex";
+import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, linkTarget, namespaceRow, namespaceTarget } from "../pageIndex";
 import { isPublishedExport } from "../publishedBackend";
 import { EmojiText } from "../render/emoji";
 import { PageReferenceLabel } from "../render/PageReferenceLabel";
 import { SidebarTitle } from "./SidebarTitle";
-import type { PageKind } from "../types";
+import type { PageInventoryEntry, PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
@@ -54,8 +54,7 @@ export function NamespaceCrumb(props: { name: string }): JSX.Element {
         <For each={parts().slice(0, -1)}>
           {(_, i) => {
             const prefix = () => parts().slice(0, i() + 1).join("/");
-            const target = () => isPublishedExport() ? { name: prefix(), kind: "page" as const }
-              : namespaceTarget(parts().slice(0, i() + 2).join("/"), true) ?? linkTarget(prefix());
+            const target = () => isPublishedExport() ? { name: prefix(), kind: "page" as const } : linkTarget(prefix());
             return (
               <>
                 <span class="ns-crumb-item" {...nsLink(target().name, undefined, false, target().kind)}>
@@ -88,13 +87,13 @@ export function nsNodeTarget(node: NsNode): { name: string; kind: PageKind } {
 }
 
 /** The namespace tree of the inventory's names (CM step 2 batch 10, model rule 1):
- *  every node is a listed page, nested under the store's tree parent
- *  (`InventoryEntry::parent`, always a listed page). Rust excludes
- *  alias-only names from this universe.
+ *  every node is a listed page, nested under its row's parent candidate
+ *  (`InventoryEntry::parent`) exactly when that typed page is a node. Rust
+ *  excludes alias-only names from this universe.
  *  The backend lists every namespace parent
  *  (`InventoryEntry.namespace_parent`), so no level is synthesized here; a name
  *  without a parent is a top node, shown when something lies below it or
- *  when the store marks it a root (`InventoryEntry::namespace_root`). `seg` is
+ *  when its row is a day the store marks (`InventoryEntry::namespace_day`). `seg` is
  *  the part of the name below its parent. Names that are not
  *  namespace names (no `/`, or the store's `not_namespace`: `./x`, a URL; model
  *  round 10, S15) and have no listed name below them have no node.
@@ -109,7 +108,7 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
   // Every namespace name is a node. A name without `/` can only be a first
   // segment, so only first-segment keys are wanted from plain names.
   const nodes = new Map<string, NsNode>();
-  const slashed: [NsNode, string[]][] = [];
+  const slashed: [NsNode, string[], PageInventoryEntry | undefined][] = [];
   const wanted = new Set<string>();
   for (const name of names) {
     if (!name.includes("/")) continue;
@@ -120,8 +119,9 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
     const node: NsNode = { seg: name, full: name, children: [], ...(target.kind === "journal" ? { kind: target.kind } : {}) };
     nodes.set(key, node);
     const segs = name.split("/");
-    slashed.push([node, segs]);
-    const parent = legacy ? { name: segs[0], kind: "page" as const } : namespaceTarget(name, true);
+    const row = legacy ? undefined : namespaceRow(name);
+    slashed.push([node, segs, row]);
+    const parent = legacy ? { name: segs[0], kind: "page" as const } : row?.parent;
     if (parent) wanted.add(typedKey(parent.name, parent.kind));
   }
   // `allPageNames()` already holds every name's key (`allPageNameKeys`); any
@@ -131,21 +131,21 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
     if (name.includes("/")) return;
     const rawKey = known?.[at] ?? pageIdentityKey(name);
     if (!wanted.has(`page:${rawKey}`) && !wanted.has(`journal:${rawKey}`)) return;
-    const targets = legacy ? [identity(name)] : [namespaceTarget(name, false, "page"), namespaceTarget(name, false, "journal")];
+    const targets = legacy ? [identity(name)] : [namespaceTarget(name, "page"), namespaceTarget(name, "journal")];
     for (const target of targets) {
       if (!target) continue;
       const key = typedKey(target.name, target.kind);
       if (wanted.has(key) && !nodes.has(key) && isNamespacePage(name, rawKey)) nodes.set(key, { seg: name, full: name, children: [], ...(target.kind === "journal" ? { kind: target.kind } : {}) });
     }
   });
-  // The live tree attaches each node below exactly the store's parent
-  // (`namespaceTarget(_, true)`, always a listed page) and keeps a childless
-  // top node only when the store says it is a root (`isNamespaceRoot`); an
-  // absent parent is final, so no node gains a more distant ancestor.
+  // The live tree attaches each node below its row's parent candidate when
+  // that typed page is a node, and keeps a childless top node only when the
+  // row is a `namespace_day`; nothing else is checked, so no node gains a
+  // more distant ancestor.
   const roots: NsNode[] = [];
   const placed = new Set<NsNode>();
   const kept = new Set<NsNode>();
-  for (const [node, segs] of slashed) {
+  for (const [node, segs, row] of slashed) {
     let parent: NsNode | undefined;
     // The label is the part below the parent.
     let depth = segs.length - 1;
@@ -159,11 +159,11 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
           if (ancestor && ancestor !== node) { parent = ancestor; break; }
         }
       }
-    } else {
-      const target = namespaceTarget(node.full, true);
-      parent = target ? nodes.get(typedKey(target.name, target.kind)) : undefined;
+    } else if (row?.parent) {
+      parent = nodes.get(typedKey(row.parent.name, row.parent.kind));
     }
-    node.seg = parent ? segs.slice(depth).join("/") : node.full;
+    // A trailing `/` folds away (`a/b/` lies below `a`): label it `b/`.
+    node.seg = parent ? segs.slice(depth).join("/") || segs.slice(depth - 1).join("/") : node.full;
     if (parent) {
       parent.children.push(node);
       if (!placed.has(parent) && !parent.full.includes("/")) {
@@ -172,7 +172,7 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
       }
     } else {
       roots.push(node);
-      if (!legacy && isNamespaceRoot(node.full)) kept.add(node);
+      if (row?.namespace_day) kept.add(node);
     }
   }
   const pending = [roots];
@@ -424,12 +424,13 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                   <For each={segs}>
                     {(seg, i) => {
                       const full = () => segs.slice(0, i() + 1).join("/");
+                      // A prefix opens what its link opens; the last segment is
+                      // the row's own page (the page's tree parent, else itself).
                       const target = () => {
                         if (isPublishedExport()) return { name: full(), kind: "page" as const };
-                        const parent = namespaceTarget(props.name, true);
-                        return (i() < segs.length - 1 ? namespaceTarget(segs.slice(0, i() + 2).join("/"), true)
-                          : parent?.name === full() ? parent : namespaceTarget(full()))
-                          ?? linkTarget(full());
+                        if (i() < segs.length - 1) return linkTarget(full());
+                        const parent = namespaceRow(props.name)?.parent;
+                        return parent?.name === full() ? parent : namespaceTarget(full())!;
                       };
                       return (
                         <>

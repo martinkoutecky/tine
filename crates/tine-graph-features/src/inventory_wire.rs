@@ -60,14 +60,17 @@ pub struct PageInventoryEntryWire {
     /// prefixes.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub namespace_parent: bool,
-    /// The namespace tree parent (`InventoryEntry::parent`). Omitted means
-    /// the row has none: the views derive no parent from its prefix.
+    /// The namespace tree parent candidate (`InventoryEntry::parent`): the
+    /// tree attaches the row below it when that typed row is listed (no
+    /// alias). Omitted means no candidate: the views derive none from the
+    /// prefix.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<LinkWire>,
-    /// A top node of the namespace tree even with nothing below it
-    /// (`InventoryEntry::namespace_root`). Sent only when true.
+    /// A day shown at the top of the namespace tree when it has no parent,
+    /// even with nothing below it (`InventoryEntry::namespace_day`). Sent
+    /// only when true.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub namespace_root: bool,
+    pub namespace_day: bool,
     /// Retired live flag (always false). Frozen published v1 rows retain
     /// their stored content-dependent opening answer.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -107,7 +110,7 @@ pub fn entry_wire(entry: &InventoryEntry) -> PageInventoryEntryWire {
             name: parent.name.clone(),
             kind: if parent.is_journal { "journal" } else { "page" },
         }),
-        namespace_root: entry.namespace_root,
+        namespace_day: entry.namespace_day,
         empty_alias: entry.empty_alias,
         not_namespace: entry.name.contains('/') && !tine_core::refs::is_namespace_name(&entry.name),
         namespace_excluded: matches!(entry.target, Resolved::Alias { .. }),

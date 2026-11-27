@@ -162,12 +162,18 @@ describe("the Namespaces view", () => {
   });
 
   it("gives a journal row's menu (so its favorite) and opening the journal it is", async () => {
-    // A slash day whose month is only an alias: the store makes it a root.
+    // A slash day whose month is only an alias: no node for its candidate,
+    // so it is a top row.
     const day: PageInventoryEntry = {
-      key: "2026/11/02", name: "2026/11/02", is_journal: true, day: 20261102, namespace_root: true,
+      key: "2026/11/02", name: "2026/11/02", is_journal: true, day: 20261102, namespace_day: true,
+      parent: { name: "2026/11", kind: "page" },
       target: { kind: "existing", id: "journals/2026_11_02.md", others: [] },
     };
-    const { host, router, dispose } = await mountNamespaces([day, existing("Plain")]);
+    const alias: PageInventoryEntry = {
+      key: "2026/11", name: "2026/11", is_journal: false, day: null, namespace_excluded: true,
+      target: { kind: "alias", owners: ["pages/Plain.md"] },
+    };
+    const { host, router, dispose } = await mountNamespaces([day, alias, existing("Plain")]);
     try {
       const row = host.querySelector<HTMLElement>(".ns-view-row")!;
       row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 3, clientY: 4 }));

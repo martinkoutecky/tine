@@ -366,24 +366,18 @@ export function linkTarget(name: string): LinkDestination {
   return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, nameAnswer);
 }
 
-/** The inventory's typed namespace identity, or with `parent` its namespace
- *  tree parent: the store's one answer (`InventoryEntry::parent`), `null` when
- *  it gives none or does not list the name. Nothing is derived from the
- *  name's prefix here. */
-export function namespaceTarget(name: string, parent = false, kind?: PageKind): LinkDestination | null {
-  const entry = namespaceEntry(name, kind);
+/** The inventory's typed namespace identity of `name`; with `kind`, only that
+ *  kind's row, `null` when it is absent or alias-only. */
+export function namespaceTarget(name: string, kind?: PageKind): LinkDestination | null {
+  const entry = namespaceRow(name, kind);
   if (kind && (!entry || entry.namespace_excluded)) return null;
-  if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
-  return entry?.parent ?? null;
+  return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
 }
 
-/** Whether the store makes `name`'s row a namespace tree top node even with
- *  nothing below it (`InventoryEntry::namespace_root`). O(1). */
-export function isNamespaceRoot(name: string): boolean {
-  return namespaceEntry(name)?.namespace_root === true;
-}
-
-function namespaceEntry(name: string, kind?: PageKind): PageInventoryEntry | undefined {
+/** The row `namespaceTarget` reads for `name` (with `kind`, that kind's row):
+ *  the namespace tree reads the store's `parent` candidate and `namespace_day`
+ *  from it and derives nothing from the name. O(1). */
+export function namespaceRow(name: string, kind?: PageKind): PageInventoryEntry | undefined {
   ensureInstalled();
   const key = pageIdentityKey(name);
   const answer = nameAnswer(key);
