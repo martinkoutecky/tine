@@ -14,7 +14,7 @@ export function blurToOwnCodeLanguage(target: EventTarget | null, editor: Elemen
 export function CodeLanguage(props: { lang: string; onEdit?: () => void }): JSX.Element {
   const label = () => props.lang.toLowerCase() || t("render-code-plain");
   return <Show when={props.onEdit} fallback={<span class="code-language">{label()}</span>}>
-    <button type="button" class="code-language" data-own-mouse-press aria-label={t("render-edit-code-language")}
+    <button type="button" class="code-language" aria-label={t("render-edit-code-language")}
       title={t("render-edit-code-language")}
       onMouseDown={event => event.preventDefault()}
       onClick={event => { event.stopPropagation(); props.onEdit?.(); }}>{label()}</button>

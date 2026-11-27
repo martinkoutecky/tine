@@ -1,54 +1,66 @@
 // Cursor probe (UI-CM6-LINK-CURSOR): inside a block edited in CodeMirror, a pointer over a drawn link, tag or block ref only
-// reveals the source (src/editor/cm6PreviewWidget.tsx), so every element of a preview shows the text cursor; in the
-// rendered block a click follows the link, so the same element keeps the hand. An element that takes its own mouse press
-// before the reveal (the code block's language button, the image and video resize grips, a writable table's column grip)
-// keeps its own cursor there, in left-to-right and right-to-left documents.
-// usage: xvfb-run -a node scripts/shot-cm6-link-cursor.mjs [out-dir]
+// reveals the source (src/editor/cm6PreviewWidget.tsx), so those link kinds show the text cursor there; in the rendered
+// block a click follows the link, so the same element keeps the hand. Every other element of an editing preview (the task
+// checkbox, a footnote ref, the media resize grips, a table column grip, the code language button, ...) computes exactly the
+// cursor it computes under the base revision's src/components/cm6-editor.css, in left-to-right and right-to-left documents.
+// usage: xvfb-run -a node scripts/shot-cm6-link-cursor.mjs [out-dir] [base-ref, default origin/develop]
 //   The system WebKitGTK (what Tine ships on Linux) through WebKitWebDriver + MiniBrowser, on the cm6-line-height fixture.
-// Exits 1 when an element inside an editing preview computes a cursor other than `text` (an own-press element: other than
-// its own), when a link kind or an own-press element is not drawn in an editing preview, or when the rendered link loses
-// its cursor.
-import { spawn } from "node:child_process";
+//   The base comparison swaps the editor stylesheet's text in the page for `git show <base-ref>:src/components/cm6-editor.css`.
+// Exits 1 when a link kind inside an editing preview computes a cursor other than `text`, when any other element of an
+// editing preview computes a cursor other than the base's, when a case's element is not drawn in an editing preview, or
+// when the rendered link loses its cursor.
+import { execFileSync, spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const out = resolve(process.argv[2] || "target/artifacts/cm6-link-cursor");
+const baseRef = process.argv[3] || "origin/develop";
+const baseCss = execFileSync("git", ["show", `${baseRef}:src/components/cm6-editor.css`], { encoding: "utf8" });
 mkdirSync(out, { recursive: true });
 const port = 20000 + Math.floor(Math.random() * 20000);
 const wdPort = 20000 + Math.floor(Math.random() * 20000);
 const serverLog = openSync(`${out}/vite.log`, "w");
 const server = spawn("npx", ["vite", "--port", String(port), "--strictPort"], { stdio: ["ignore", serverLog, serverLog], detached: true });
 closeSync(serverLog);
-// Fixture case -> the link element the view draws (every link kind the preview widget draws inline) and its cursor in the
-// rendered block: the hand (`pointer`; `auto` over an `a[href]`) where a click follows it. The fixture has no backend, so
-// its block ref is dangling (`.block-ref-missing`, no hand), and a footnote reference has no hand in the view either.
+// The link kinds the preview draws that have a hand in the view (app.css `.page-ref, .tag` and `.block-ref`, the
+// browser's over `a[href]`): an element inside one of them must show `text` in an editing preview.
+const KINDS = [".page-ref", ".tag", ".block-ref", "a[href]"];
+// Fixture case -> the element the view draws for it and its cursor in the rendered block: the hand (`pointer`; `auto`
+// over an `a[href]`) where a click follows it. The fixture has no backend, so its block ref is dangling
+// (`.block-ref-missing`, no hand); a footnote reference has no hand in the view and is not a link kind.
 const LINKS = {
   i_page: [".page-ref", "pointer"], i_tag: [".tag", "pointer"], i_btag: [".tag", "pointer"], i_aliasref: [".page-ref", "pointer"],
   i_bref: [".block-ref", "default"], i_link: ["a[href]", "auto"], i_url: ["a[href]", "auto"], i_fn: [".footnote-ref", "default"],
-  todotags: [".tag", "pointer"],
+  todotags: [".tag", "pointer"], todo: [".block-task-checkbox", "pointer"],
 };
-// Own-press elements -> their cursor in a left-to-right and a right-to-left document (src/styles/app.css).
-const OWN = { "button.code-language": ["pointer", "pointer"], ".img-resize-grip": ["nwse-resize", "nesw-resize"],
-  ".sheet-table-column-resize-handle": ["col-resize", "col-resize"] };
-// Fixture case -> the own-press element its editing preview must draw.
+// Fixture case -> the element (not a link kind) its editing preview must draw; its cursor must be the base's.
 const OWNED = { c_image: ".img-resize-grip", c_video: ".media-resize-grip", c_vurl: ".media-resize-grip" };
-// Runs in the page: the rendered link's cursor, then (the caret at the end, away from the construct, so the construct is
-// drawn as a preview) the cursor of every element of the editing previews; then the media grip cases in both directions
-// and a seeded preview holding a writable table column grip and a code-language button.
-const PROBE = `const [cases, owned, own, done] = [arguments[0], arguments[1], arguments[2], arguments[arguments.length - 1]];
+// Runs in the page: the rendered element's cursor, then (the caret at the end, away from the construct, so the construct
+// is drawn as a preview) the cursor of every element of the editing previews under this revision's and the base's editor
+// stylesheet; then the media grip cases in both directions and a seeded preview holding a writable table column grip and
+// a code-language button.
+const PROBE = `const [cases, owned, kinds, baseCss, done] = [arguments[0], arguments[1], arguments[2], arguments[3], arguments[arguments.length - 1]];
 (async () => {
   const rows = [];
   const label = e => e.tagName.toLowerCase() + "." + String(e.className).replace(/\\s+/g, ".");
-  const scan = (previews, rtl) => {
+  const kindSel = kinds.join(",");
+  const scan = previews => {
+    const sheet = document.querySelector('style[data-vite-dev-id$="/src/components/cm6-editor.css"]');
+    if (!sheet) throw new Error("editor stylesheet not found");
     const all = previews.flatMap(p => [p, ...p.querySelectorAll("*")]);
-    const ownSel = Object.keys(own).join(",");
-    const wrong = all.filter(e => !e.closest(ownSel)).map(e => label(e) + "=" + getComputedStyle(e).cursor).filter(s => !s.endsWith("=text"));
-    const owns = all.filter(e => e.matches(ownSel)).map(e => {
-      const sel = Object.keys(own).find(k => e.matches(k)), cursor = getComputedStyle(e).cursor;
-      return { sel, cursor, ok: cursor === own[sel][rtl ? 1 : 0] };
+    const headCss = sheet.textContent, head = all.map(e => getComputedStyle(e).cursor);
+    sheet.textContent = baseCss;
+    const base = all.map(e => getComputedStyle(e).cursor);
+    sheet.textContent = headCss;
+    const wrong = [], cursors = [];
+    all.forEach((e, i) => {
+      const kind = e !== e.closest(".cm6-preview") && !!e.closest(kindSel) && e.closest(".cm6-preview").contains(e.closest(kindSel));
+      const want = kind ? "text" : base[i];
+      cursors.push(label(e) + "=" + head[i] + (head[i] === base[i] ? "" : " (base " + base[i] + ")"));
+      if (head[i] !== want) wrong.push(label(e) + "=" + head[i] + ", expected " + want + (kind ? " (link kind)" : " (base)"));
     });
-    return { wrong, owns };
+    return { wrong, cursors, links: all.filter(e => e.matches(kindSel)).length };
   };
   // This host's WebKitGTK decodes no video (MediaError 4 for mp4 and webm), and a video that fails is replaced by a
   // chip without a grip. Keep media elements from loading: the embed, its wrapper and its grip render as shipped.
@@ -63,7 +75,7 @@ const PROBE = `const [cases, owned, own, done] = [arguments[0], arguments[1], ar
     await window.openEditor(id, true, 1e9);
     const previews = Array.from(document.querySelectorAll('[data-block-id="' + id + '"] .cm6-preview'));
     const drawn = previews.some(p => p.querySelector(link));
-    rows.push({ id, link, hand, rendered, drawn, ...scan(previews, false), ...(drawn ? {} : { html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 600) }) });
+    rows.push({ id, link, hand, rendered, drawn, ...scan(previews), ...(drawn ? {} : { html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 600) }) });
   }
   for (const dir of ["ltr", "rtl"]) {
     document.documentElement.dir = dir;
@@ -71,11 +83,11 @@ const PROBE = `const [cases, owned, own, done] = [arguments[0], arguments[1], ar
       await window.openEditor(id, true, 1e9);
       const previews = Array.from(document.querySelectorAll('[data-block-id="' + id + '"] .cm6-preview'));
       const drawn = previews.some(p => p.querySelector(need));
-      rows.push({ id: id + ":" + dir, link: need, own: true, drawn, ...scan(previews, dir === "rtl"), html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 6000) });
+      rows.push({ id: id + ":" + dir, link: need, own: true, drawn, ...scan(previews), ...(drawn ? {} : { html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 6000) }) });
     }
     await window.closeEditor();
     const host = window.mountOwnPressHost();
-    rows.push({ id: "seeded:" + dir, link: "column grip, language button", own: true, drawn: !!host.querySelector(".sheet-table-column-resize-handle") && !!host.querySelector("button.code-language"), ...scan([host], dir === "rtl"), html: host.outerHTML.slice(0, 600) });
+    rows.push({ id: "seeded:" + dir, link: "column grip, language button", own: true, drawn: !!host.querySelector(".sheet-table-column-resize-handle") && !!host.querySelector("button.code-language"), ...scan([host]), html: host.outerHTML.slice(0, 600) });
     host.remove();
   }
   document.documentElement.dir = "";
@@ -106,7 +118,7 @@ try {
     await delay(250);
   }
   await call("POST", `/session/${sid}/timeouts`, { script: 240000 });
-  rows = await call("POST", `/session/${sid}/execute/async`, { script: PROBE, args: [LINKS, OWNED, OWN] });
+  rows = await call("POST", `/session/${sid}/execute/async`, { script: PROBE, args: [LINKS, OWNED, KINDS, baseCss] });
   console.log("engine:", await call("POST", `/session/${sid}/execute/sync`, { script: "return navigator.userAgent", args: [] }));
   await call("DELETE", `/session/${sid}`);
 } finally {
@@ -117,12 +129,10 @@ if (!Array.isArray(rows)) throw new Error(`cursor probe failed: ${JSON.stringify
 writeFileSync(`${out}/results.json`, JSON.stringify(rows, null, 2));
 const bad = [];
 for (const r of rows) {
-  const owns = r.owns.map(o => o.sel + "=" + o.cursor).join(" ") || "-";
-  console.log(r.id.padEnd(16), r.link.padEnd(13), "rendered:", String(r.rendered ?? "-").padEnd(8), "drawn:", r.drawn, "wrong:", r.wrong.join(" ") || "-", "own:", owns);
+  console.log(r.id.padEnd(16), r.link.padEnd(20), "rendered:", String(r.rendered ?? "-").padEnd(8), "drawn:", r.drawn, "link kinds:", r.links, "wrong:", r.wrong.join(" ") || "-");
   if (!r.own && r.rendered !== r.hand) bad.push(`${r.id}: rendered ${r.link} cursor ${r.rendered}, expected ${r.hand}`);
   if (!r.drawn) bad.push(`${r.id}: ${r.link} not drawn in an editing preview: ${r.html}`);
-  for (const o of r.owns) if (!o.ok) bad.push(`${r.id}: editing preview ${o.sel} cursor ${o.cursor}, expected its own`);
-  for (const w of r.wrong) bad.push(`${r.id}: editing preview ${w}, expected text`);
+  for (const w of r.wrong) bad.push(`${r.id}: editing preview ${w}`);
 }
-console.log(bad.length ? "FAIL\n" + bad.join("\n") : "PASS: links in an editing preview show the text cursor, rendered links the hand, own-press elements their own cursor");
+console.log(bad.length ? "FAIL\n" + bad.join("\n") : `PASS: link kinds in an editing preview show the text cursor, rendered links the hand, every other preview element the cursor it has under ${baseRef}`);
 process.exit(bad.length ? 1 : 0);

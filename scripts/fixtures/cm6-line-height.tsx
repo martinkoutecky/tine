@@ -78,8 +78,8 @@ export const CASES: Record<string, string> = {
   // CM6-WIDE: a long unwrapped code line beside prose must not widen the block when the prose is edited.
   widecode: "Intro paragraph\n```\n[[Shared]] opens pages/Alpha.md      (pages/Zed.md would beat pages/alpha.md and this line goes on well past the column edge)\n```\nOutro paragraph",
 };
-// Media resize grips inside a preview, which take their own mouse press (UI-CM6-LINK-CURSOR, scripts/shot-cm6-link-cursor.mjs);
-// the media is served by the dev server. Their own page, so the line-height census above keeps its cases.
+// Media resize grips inside a preview, whose cursor the link-cursor rule must leave alone (UI-CM6-LINK-CURSOR,
+// scripts/shot-cm6-link-cursor.mjs); the media is served by the dev server. Their own page, so the line-height census above keeps its cases.
 const VIDEO = `${location.origin}/website/img/guide-demo.mp4`, IMAGE = `${location.origin}/public/theme-thumbnails/default.png`;
 export const CURSOR_CASES: Record<string, string> = {
   c_image: `Intro line ![alt](${IMAGE}) after`, c_video: `Intro line ![clip](${VIDEO}) after`, c_vurl: `Intro line ${VIDEO} after`,
@@ -297,9 +297,9 @@ Object.assign(window, {
     };
   },
   closeEditor: async () => { endEdit("page-navigation"); await wait(50); },
-  // A seeded preview holding the own-press elements this backend-less fixture cannot route into one: a writable query
-  // table's column grip (no query backend) and an active code-language button (it reaches a preview through an embed,
-  // which needs the backend). The shipped components, the grip owned by a loaded block. Returns the preview.
+  // A seeded preview holding elements with their own cursor that this backend-less fixture cannot route into one: a
+  // writable query table's column grip (no query backend) and an active code-language button (it reaches a preview
+  // through an embed, which needs the backend). The shipped components, the grip owned by a loaded block. Returns the preview.
   mountOwnPressHost: () => {
     const preview = document.createElement("span");
     preview.className = "cm6-preview";
