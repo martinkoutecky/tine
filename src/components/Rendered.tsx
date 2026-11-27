@@ -80,8 +80,6 @@ function RenderedContent(props: {
   // through its own caret mapping) shows the body with the block's chips and properties
   // but starts no edit gesture of its own.
   inertBody?: boolean;
-  // This occurrence draws the block's children grid (the caller's grid mount answers).
-  mountsGrid?: () => boolean;
 }): JSX.Element {
   // In a query result, Scheduled/Deadline resolve the result row again at commit.
   const resultTarget = useContext(ResultWriteTargetContext);
@@ -167,7 +165,7 @@ function RenderedContent(props: {
   );
 
   return (
-    <OccurrenceHostContext.Provider value={props.owner || props.mountsGrid ? { id: props.id, owner: props.owner ?? null, mountsGrid: props.mountsGrid } : null}>
+    <OccurrenceHostContext.Provider value={props.owner ? { id: props.id, owner: props.owner } : null}>
     <Show
       when={!macro()}
       fallback={

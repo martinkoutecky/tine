@@ -933,12 +933,6 @@ mod search_guide_tests {
             );
         }
     }
-    /// tine#874: one sheet per block. Where a block shows as a grid, its own query draws as a list.
-    #[test]
-    fn one_sheet_per_block_is_documented() {
-        assert!(include_str!("templates/sheets.md")
-            .contains("A block draws one sheet: where the query's block shows as a grid, its results show as a list"));
-    }
     #[test]
     fn table_resize_and_export_are_documented() {
         let sheets = include_str!("templates/sheets.md");

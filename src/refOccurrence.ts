@@ -62,10 +62,8 @@ export function createShownOccurrence(
 export type OwnedOccurrence = RefOccurrence & { owner: string | null };
 
 /** The rendered block instance an occurrence's actions belong to. Rendered.tsx
- *  provides it, so Edit link turns exactly that copy of the host into an editor.
- *  `mountsGrid`: this occurrence also draws the block's children grid (asked by the
- *  block's own query, tine#874); the grid mount that renders the body answers it. */
-export const OccurrenceHostContext = createContext<{ id: string; owner: string | null; mountsGrid?: () => boolean } | null>(null);
+ *  provides it, so Edit link turns exactly that copy of the host into an editor. */
+export const OccurrenceHostContext = createContext<{ id: string; owner: string } | null>(null);
 
 /** The rendered instance owning `host`, for `editOccurrence`; null when the
  *  nearest rendered block is another one (the editor then follows the caret's surface). */
