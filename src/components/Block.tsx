@@ -148,7 +148,7 @@ import { EditorGate } from "./EditorGate";
 import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
-import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridMergeScope, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
 import { splitBlockInView } from "../editor/splitBlockInView";
 import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
@@ -512,7 +512,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:") ? surfaceKey : null;
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   // A navOnly display-list scope must never act as a merge/structural topology.
-  const structuralScope = outlineScope?.navOnly ? null : outlineScope;
+  const structuralScope = gridMergeScope(sheetCell) ?? (outlineScope?.navOnly ? null : outlineScope);
   // Where this row sits: a whole-block embed's root row stands for its host (D-20261030-EMB).
   const position = (): RowHost => embedNavExit?.rowHost(props.id) ?? { id: props.id, scope: outlineScope, surface: surfaceKey };
   const setOccurrenceCollapsed = (value: boolean) => {

@@ -40,9 +40,18 @@ export function moveInGridEdit(blockId: string, cell: SheetCellCtx, move: GridMo
   return true;
 }
 
-/** A cell's child outline is a complete selection/merge scope, excluding the fixed cell text. */
+/** A cell's child outline is a complete selection scope, excluding the fixed cell text. */
 export function gridOutlineScope(cell: SheetCellCtx): OutlineScope {
   return { get roots() { return [...(node(cellBlockId(cell) ?? "")?.children ?? [])]; }, forceExpandedRoot: cellBlockId(cell) ?? undefined };
+}
+
+/** The merge scope of a grid cell (null for other cells and blocks): the cell block and its
+ * child outline. Backspace and Delete merge as in the outline, so the first child joins the
+ * cell text, while the cell block itself is never absorbed (nothing precedes it) and no
+ * merge reaches past the cell's last descendant. */
+export function gridMergeScope(cell: SheetCellCtx | null | undefined): OutlineScope | null {
+  if (!cell || !editsLikeOutline(cell)) return null;
+  return { get roots() { const host = cellBlockId(cell); return host ? [host] : []; }, get forceExpandedRoot() { return cellBlockId(cell) ?? undefined; } };
 }
 
 const structureCommands = new Set([
@@ -124,11 +133,9 @@ export function gridEditKey(e: KeyboardEvent, ctx: {
     return true;
   }
   if (plain && start === end) {
-    if (e.key === "Backspace" && start === 0
-      && (!nested || node(id)?.parent === host && node(host!)?.children[0] === id)) return true;
-    // The fixed cell text must also survive forward deletion; nested Delete is
-    // allowed only while its merge target remains in the cell's child scope.
-    if (e.key === "Delete" && end === raw.length && !nested) return true;
+    // Nothing merges into the cell block's start. Every other Backspace and Delete is the
+    // outline's, bounded by the cell's merge scope (gridMergeScope).
+    if (e.key === "Backspace" && start === 0 && !nested) return true;
     if (!e.shiftKey && ctx.edge) {
       commit(raw);
       moveInGridEdit(id, cell, ctx.edge, ctx.col);

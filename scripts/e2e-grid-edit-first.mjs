@@ -81,6 +81,22 @@ try {
   // Tab to delta, then Shift+Tab back to gamma; both remain in Edit.
   await textIs("gamma");
 
+  stage = "type, Enter, Backspace leaves the cell as typed with no sub-block";
+  await end();
+  await browser.keys(" typed");
+  await browser.keys(["Enter"]);
+  await textIs("");
+  await browser.keys(["Backspace"]);
+  await textIs("gamma typed");
+  // The caret is back at the end of the cell's text: the next key lands there.
+  await browser.keys("!");
+  await textIs("gamma typed!");
+  assert.deepEqual(await recordCell(stage), { focused: true, row: "1", col: "0" });
+  assert.equal(await browser.$('.sheet-cell[data-row="1"][data-col="0"] .sheet-nested-line').isExisting(), false,
+    "the cell shows no sub-block");
+  const merged = "- Before\n- Grid host\n  tine.view:: grid\n  tine.col-widths:: 0=260;1=180\n  -\n    - alpha\n    - beta\n  -\n    - gamma typed!\n    - delta\n- After\n";
+  assert.equal(await waitForFileText(FILE, text => text.includes("gamma typed!")), merged);
+
   stage = "Enter and Tab indent inside a cell";
   await end();
   await browser.keys(["Enter"]);
@@ -92,7 +108,7 @@ try {
   await browser.keys(["Tab"]);
   await textIs("second child");
   await recordCell(stage);
-  await waitForFileText(FILE, text => /- gamma\n\s+- first child\n\s+- second child/.test(text));
+  await waitForFileText(FILE, text => /- gamma typed!\n\s+- first child\n\s+- second child/.test(text));
   const nested = await browser.execute(selector => {
     const editor = document.querySelector(selector);
     const line = editor?.closest(".sheet-nested-line");
@@ -107,7 +123,7 @@ try {
   await browser.$(editorSelector).waitForExist({ reverse: true, timeout: 10000 });
   assert.equal(await browser.$('.sheet-cell-selected[data-row="1"][data-col="0"]').isExisting(), true);
   const saved = await waitForFileText(FILE, text => text.includes("second child kept"));
-  assert.match(saved, /- gamma\n\s+- first child\n\s+- second child kept/);
+  assert.match(saved, /- gamma typed!\n\s+- first child\n\s+- second child kept/);
   assert.match(saved, /- alpha\n\s+- beta/);
   assert.match(saved, /- delta/);
   await browser.keys(["Escape"]);
@@ -118,7 +134,7 @@ try {
   console.log(`PASS ${RUN}`);
 } catch (error) {
   try { screenshot("failure.png"); } catch {}
-  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit} + worktree diff\nJourney: ${stage}\nExpected: caret enters and walks the grid, Tab indents within a cell, Esc keeps saved text\nObserved: ${error.stack}\nClassification: ambiguous until diagnosed (product assertion or harness/infrastructure)\n`);
+  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit} + worktree diff\nJourney: ${stage}\nExpected: caret enters and walks the grid, Backspace removes an empty first sub-block, Tab indents within a cell, Esc keeps saved text\nObserved: ${error.stack}\nClassification: ambiguous until diagnosed (product assertion or harness/infrastructure)\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
