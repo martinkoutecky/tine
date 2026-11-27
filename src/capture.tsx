@@ -2,6 +2,7 @@ import { t } from "./i18n";
 import { dbg, initDebug } from "./debug";
 import { Toasts } from "./components/Toasts";
 import { LinkSchemePrompt } from "./components/LinkSchemePrompt";
+import { captureContentHeight } from "./captureFit";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
 // running app pops on a `tine --capture` signal. It renders the SAME block tree
 // the main app uses (Block + Editor) over an isolated scratch store — so all
@@ -168,22 +169,7 @@ function Capture() {
   // window to fit (capped at HALF the screen). Rust resets it to the base size
   // on each show, so this only ever grows from the small base.
   let lastH = 0;
-  const measureHeight = (): number => {
-    const PAD = 18; // breathing room below the content
-    const shell = document.querySelector<HTMLElement>(".capture-shell");
-    let h = shell ? shell.getBoundingClientRect().bottom : 72;
-    const popup = document.querySelector<HTMLElement>(".autocomplete");
-    if (popup) h = Math.max(h, popup.getBoundingClientRect().bottom);
-    // The format toolbar floats just below the editing line (see capture.css) —
-    // grow the window so it isn't clipped at the bottom edge.
-    const toolbar = document.querySelector<HTMLElement>(".sel-toolbar");
-    if (toolbar) h = Math.max(h, toolbar.getBoundingClientRect().bottom);
-    // The date picker is fixed-positioned and clamps to the *current* window
-    // height, so reserve a fixed slab tall enough to show it (it then positions
-    // itself once the resize takes effect — its placement is window-size-aware).
-    if (datePicker()) h = Math.max(h, 392);
-    return Math.ceil(h + PAD);
-  };
+  const measureHeight = (): number => captureContentHeight(document, !!datePicker());
 
   const fitWindow = async () => {
     try {
