@@ -1,27 +1,56 @@
 // Delete/Backspace pressed while a NON-EDITOR text selection exists in a
-// rendered (not-editing) block — OG contenteditable parity: in OG the rendered
-// view IS the editor, so deleting a rendered selection deletes the text. In
-// Tine the rendered view and the textarea are separate, so the same gesture's
-// keypress previously reached no editor and died silently (selection highlight
-// stayed, nothing changed — Martin's "quick select + delete does nothing").
+// rendered (not-editing) block. In OG the rendered view IS the editor; in Tine
+// the rendered view and the editor are separate, so the key reached no editor
+// and died silently. The key never writes the block from here:
+// mapping a rendered range back to source bytes is not exact (inline HTML, link
+// destinations, media, hidden markup), and every splice from it lost unselected
+// text. Instead it opens the block's editor exactly as a click and shift-click
+// at the two ends would, with that range selected, so the user sees the source
+// that the next Delete removes.
 //
-// Conservative contract (data safety first): only act on a selection that lies
-// ENTIRELY within ONE block's rendered content (multi-block rendered selections
-// merge blocks in OG — too destructive to guess, so they stay a no-op), only
-// when the block is writable, not an annotation/calc block, not being edited
-// (the textarea owns keys then), and only when the rendered points map
-// unambiguously back to source offsets. On success the text is deleted through
-// the normal store path (undo snapshot, dirty marking — same as an editor
-// delete), and the block opens in the editor with the caret at the join point
-// so the user lands exactly where OG would leave them.
+// Gates (unchanged): only a selection that lies ENTIRELY within ONE block's
+// rendered content, in the live outline, of a writable block that is not an
+// annotation or calc block and not being edited, whose two ends map to source.
 
-import { node as docNode, setRaw, blockWritable, pageByName } from "../document";
+import { node as docNode, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
-import { splitProps, joinProps, BUILTIN_HIDE } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE } from "../editor/properties";
 import { editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput } from "../render/spans";
+import { codeCardBodyPoint } from "../components/blockGestures";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
 import { queryAllWindows, selectionOf } from "../windowRealm";
+
+// The rendered instance (Block's content wrapper) -> the owner its click passes
+// to `startEditing`, so the handoff opens the editor in the selecting instance.
+const instanceOwners = new WeakMap<Element, string>();
+export function noteInstanceOwner(wrapper: Element, owner: string): void {
+  instanceOwners.set(wrapper, owner);
+}
+
+// The key that handed a rendered selection to its editor, while it is held:
+// its auto-repeat must not reach the editor that just opened and delete the
+// selection the user has not seen yet. Set only by a consumed handoff; cleared
+// by that key's keyup, a window blur, or a keydown of any other key.
+let heldHandoffKey: string | null = null;
+
+/** The global keydown handler's first step: true when `e` is the held handoff
+ *  key's auto-repeat, which is then consumed and stopped before any editor. O(1). */
+export function swallowHeldHandoffRepeat(e: KeyboardEvent): boolean {
+  if (heldHandoffKey === null) return false;
+  if (e.key === heldHandoffKey && e.repeat) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return true;
+  }
+  heldHandoffKey = null;
+  return false;
+}
+
+/** Window keyup (capture) and blur listener ending the hold. O(1). */
+export function releaseHeldHandoffKey(e: Event): void {
+  if (e.type !== "keyup" || (e as KeyboardEvent).key === heldHandoffKey) heldHandoffKey = null;
+}
 
 function blockRowOf(node: Node | null): Element | null {
   if (!node) return null;
@@ -29,17 +58,20 @@ function blockRowOf(node: Node | null): Element | null {
   return el?.closest?.(".ls-block") ?? null;
 }
 
-/** Delete the current rendered text selection inside one block. Returns true
- *  when the key press was consumed (text deleted through `setRaw`: one undo
- *  step, one `save-block` dirty mark, then the block opens in the editor at the
- *  join point); false to leave the event to its default handling. Refuses
- *  (false) a collapsed or cross-block selection, a reference/embed/query
+/** Hand the current rendered text selection inside one block to its editor.
+ *  Returns true when the key press was consumed: `startEditing` was asked to
+ *  open the block in the selecting instance with the mapped range selected (a
+ *  code card's body range in body mode), as a click entry would; nothing is
+ *  written by this function. The rendered selection is cleared once the block
+ *  is editing; when an entry guard refuses, it stays. Returns false (the key
+ *  goes on) for a collapsed or cross-block selection, a reference/embed/query
  *  rendering, a selection end that depends on generated output (a query's, a
- *  failed-region or embed-depth notice), the
- *  block being edited, a read-only page, annotation or calc blocks, an open
- *  modal, and any selection point that does not map to source.
+ *  failed-region or embed-depth notice), the block being edited, a read-only
+ *  page, annotation or calc blocks, an open modal, a selection point that does
+ *  not map to source, and a range that maps to nothing. On true, `key` is held
+ *  (see `swallowHeldHandoffRepeat`) until released.
  *  Cost: O(length of that block). */
-export function deleteRenderedTextSelection(): boolean {
+export function openRenderedSelectionInEditor(key: string): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   // A modal owns keystrokes while open — never mutate background blocks behind it.
   if (queryAllWindows(".modal-overlay")) return false;
@@ -82,34 +114,38 @@ export function deleteRenderedTextSelection(): boolean {
   if (rangeEndDependsOnGeneratedOutput(wrapper, range.startContainer)
     || rangeEndDependsOnGeneratedOutput(wrapper, range.endContainer)) return false;
 
-  const start = editorOffsetFromRenderedRange(
-    wrapper,
-    { startContainer: range.startContainer, startOffset: range.startOffset },
-    node.raw,
-    BUILTIN_HIDE,
-    fmt,
-  );
-  const end = editorOffsetFromRenderedRange(
-    wrapper,
-    { startContainer: range.endContainer, startOffset: range.endOffset },
-    node.raw,
-    BUILTIN_HIDE,
-    fmt,
-  );
-  if (start === null || end === null || end < start) return false;
-
   const split = splitProps(node.raw, BUILTIN_HIDE, fmt);
-  const s = Math.min(start, split.visible.length);
-  const e = Math.min(end, split.visible.length);
-  if (s === e) return false;
-  const newVisible = split.visible.slice(0, s) + split.visible.slice(e);
-  const newRaw = joinProps(newVisible, split.hidden, fmt, node.raw);
-  if (newRaw === node.raw) return false;
+  const backward = !!sel.anchorNode && sel.anchorNode === range.endContainer && sel.anchorOffset === range.endOffset;
+  const direction = backward ? "backward" as const : "forward" as const;
+  // Inside one code card each end is mapped as a body click maps it, and the
+  // editor opens in body mode at that body, in body coordinates.
+  const content = wrapper.querySelector(".block-content") ?? wrapper;
+  const startPoint = { startContainer: range.startContainer, startOffset: range.startOffset };
+  const endPoint = { startContainer: range.endContainer, startOffset: range.endOffset };
+  const cardStart = codeCardBodyPoint(content, split.visible, fmt, range.startContainer, startPoint);
+  const cardEnd = cardStart && codeCardBodyPoint(content, split.visible, fmt, range.endContainer, endPoint);
+  let selection: { start: number; end: number; direction: "forward" | "backward"; codeBodyStart?: number };
+  if (cardStart && cardEnd && cardStart.card === cardEnd.card) {
+    if (cardStart.offset >= cardEnd.offset) return false;
+    selection = { start: cardStart.offset, end: cardEnd.offset, direction, codeBodyStart: cardStart.bodyStart };
+  } else {
+    const start = editorOffsetFromRenderedRange(wrapper, startPoint, node.raw, BUILTIN_HIDE, fmt);
+    const end = editorOffsetFromRenderedRange(wrapper, endPoint, node.raw, BUILTIN_HIDE, fmt);
+    if (start === null || end === null || end < start) return false;
+    const s = Math.min(start, split.visible.length);
+    const e = Math.min(end, split.visible.length);
+    if (s === e) return false;
+    selection = { start: s, end: e, direction };
+  }
 
-  setRaw(id, newRaw);
-  // The rendered selection now points at stale text — clear it, and land in the
-  // editor at the join point so the next keystroke continues editing there.
-  sel.removeAllRanges();
-  startEditing(id, s);
+  heldHandoffKey = key;
+  startEditing(id, selection, instanceOwners.get(wrapper) ?? null);
+  // The editor now shows the range; a refused entry keeps the user's selection.
+  // Clear only a document selection that is still the rendered range: in WebKit
+  // a focused textarea's own selection IS the document selection, and clearing
+  // that would drop the range the editor was just given.
+  const now = sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (editingId() === id && now && now.startContainer === range.startContainer && now.startOffset === range.startOffset
+    && now.endContainer === range.endContainer && now.endOffset === range.endOffset) sel.removeAllRanges();
   return true;
 }

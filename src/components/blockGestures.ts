@@ -307,6 +307,27 @@ export function beginEditGesture(
   doc.addEventListener("mouseup", onUp, true);
 }
 
+/** The code card of `contentRef` that holds `target`, and `point` in it as a body click maps it: the card's body
+ *  start in visible source, and the body offset (the body's end when the point cannot be mapped). The card
+ *  chooses body mode even then. null when `target` is in no card with a parser-owned body (GH #489/#510).
+ *  Cost: O(visible text). */
+export function codeCardBodyPoint(
+  contentRef: Element,
+  visible: string,
+  fmt: "md" | "org",
+  target: Node,
+  point: Pick<Range, "startContainer" | "startOffset"> | null,
+): { card: Element; bodyStart: number; offset: number } | null {
+  const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
+  const index = cards.findIndex(card => card.parentElement!.contains(target));
+  if (index < 0) return null;
+  const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[index];
+  const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
+  if (!projection) return null;
+  const offset = point && codeCardOffsetFromRange(cards[index].parentElement!, point);
+  return { card: cards[index], bodyStart: projection.open.length, offset: Math.min(offset ?? projection.body.length, projection.body.length) };
+}
+
 /** Click on rendered block content -> raw caret offset for the editor, placing
  *  the caret WHERE you clicked when lsdoc span data can map the rendered leaf
  *  back through source bytes and hidden props. Anything without trustworthy
@@ -318,16 +339,9 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   // parser-owned fence, then map its rendered body to visible-raw coordinates.
   const visible = splitProps(raw, BUILTIN_HIDE, fmt).visible;
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+  const card = codeCardBodyPoint(contentRef, visible, fmt, e.target as Node, range ?? null);
+  if (card) return card.bodyStart + card.offset;
   const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
-  const index = cards.findIndex(card => card.parentElement!.contains(e.target as Node));
-  if (index >= 0) {
-    const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[index];
-    const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
-    const offset = range && codeCardOffsetFromRange(cards[index].parentElement!, range);
-    // The card chooses body mode even when its caret cannot be mapped (or is
-    // empty). Coordinates choose only the body position, falling back to its end.
-    if (projection) return projection.open.length + Math.min(offset ?? projection.body.length, projection.body.length);
-  }
   // An outside edge can resolve to a nearby code glyph; it still chooses source.
   if (range && cards.some(card => card === range.startContainer || card.contains(range.startContainer))) return visible.length;
   // GH #465: a click in the empty run-out past the last glyph means "the end",
