@@ -15,23 +15,25 @@ thread_local! {
     static WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// The raw text of a new row whose checkbox columns are `keys` (the table's
-/// schema order): an empty title line, then `key:: false` (Org: a drawer row
+/// The raw text of a new row whose checkbox columns are `keys` and whose other
+/// property columns are `others` (the table's schema order): an empty title line, then `key:: false` (Org: a drawer row
 /// `:key: false`) for each admitted key, written by the block's one property
 /// writer; `""` (an empty row) when none is admitted. A key is admitted when it
 /// is plain (ASCII letter first, then letters, digits, `_` or `-`; never `end`
 /// or `properties`, which spell an Org drawer's own lines) and names no Logseq
 /// built-in, Tine key or the asset pointer. The whole row stays empty, as
-/// before this seed, when two columns are the engine's same key (a later click
-/// on one would write or read the other's line), or, in Org, when a column is
-/// named `end` or `properties` (a later click on it would put that entry in the
-/// seeded drawer, where the drawer's own lines are mistaken for it). Every
-/// other column stays unset. O(key bytes) plus one writer call on a one-line
+/// before this seed, when two of all its property columns (`keys` and
+/// `others`) are the engine's same key (a later edit of one would write or read
+/// the other's line), or, in Org, when any of them is named `end` or
+/// `properties` (a later edit of it would put that entry in the seeded drawer,
+/// where the drawer's own lines are mistaken for it). Every
+/// other column stays unset. O(key bytes of all columns) plus one writer call on a one-line
 /// block; no parse when nothing is admitted.
-pub fn new_checkbox_row_raw(org: bool, keys: &[String]) -> String {
+pub fn new_checkbox_row_raw(org: bool, keys: &[String], others: &[String]) -> String {
+    let columns = || keys.iter().chain(others);
     let mut norms = HashSet::new();
-    if !keys.iter().all(|key| norms.insert(property_key_norm(key)))
-        || (org && keys.iter().any(|key| drawer_word(key)))
+    if !columns().all(|key| norms.insert(property_key_norm(key)))
+        || (org && columns().any(|key| drawer_word(key)))
     {
         return String::new();
     }

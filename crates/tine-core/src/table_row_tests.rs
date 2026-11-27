@@ -4,7 +4,13 @@ use crate::doc::DocBlock;
 
 fn seed(org: bool, keys: &[&str]) -> String {
     let keys: Vec<String> = keys.iter().map(|key| key.to_string()).collect();
-    new_checkbox_row_raw(org, &keys)
+    new_checkbox_row_raw(org, &keys, &[])
+}
+
+/// The row for checkbox columns `keys` beside other property columns `others`.
+fn seed_beside(org: bool, keys: &[&str], others: &[&str]) -> String {
+    let own = |list: &[&str]| list.iter().map(|key| key.to_string()).collect::<Vec<_>>();
+    new_checkbox_row_raw(org, &own(keys), &own(others))
 }
 
 /// The row as written with only `ready` admitted.
@@ -239,6 +245,60 @@ fn columns_that_are_one_key_leave_the_row_empty() {
     }
 }
 
+/// Any property column of the schema counts, not only checkbox ones: a text
+/// column `Ready` beside checkbox `ready` (typing in it would overwrite the
+/// seeded line), and in Org a text column `properties` (editing it would
+/// break the seeded drawer), leave the row empty. Other columns that are
+/// neither do not hold the seed back.
+#[test]
+fn a_risky_column_of_any_type_leaves_the_row_empty() {
+    for org in [false, true] {
+        for other in ["Ready", "READY", "ready"] {
+            assert_eq!(
+                seed_beside(org, &["ready"], &[other]),
+                "",
+                "{other} org={org}"
+            );
+        }
+        assert_eq!(seed_beside(org, &["ready"], &["note", "Note"]), "");
+        assert_eq!(
+            seed_beside(org, &["ready"], &["note", "due"]),
+            ready_only(org)
+        );
+    }
+    for word in ["properties", "Properties", "PROPERTIES", "end", "End"] {
+        assert_eq!(seed_beside(true, &["ready"], &[word]), "", "{word}");
+        assert_eq!(
+            seed_beside(false, &["ready"], &[word]),
+            ready_only(false),
+            "{word}"
+        );
+    }
+}
+
+/// A text column beside a checkbox one, through the edits a user then makes, on the row
+/// the seed now writes (develop's empty row): nothing seeded is lost.
+#[test]
+fn typing_in_a_risky_text_column_finds_no_seed_to_lose() {
+    for org in [false, true] {
+        let raw = seed_beside(org, &["ready"], &["Ready"]);
+        let typed = block_regions::edit(
+            &raw,
+            org,
+            Edit::Property {
+                key: "Ready".into(),
+                value: Some("x".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(parse(&typed, org).properties.len(), 1, "org={org}");
+        assert_eq!(parse(&typed, org).properties[0].value, "x");
+    }
+    let raw = seed_beside(true, &["ready"], &["properties"]);
+    assert_eq!(raw, "");
+    assert!(!raw.contains(":ready:"));
+}
+
 #[test]
 fn the_kelvin_sign_is_a_different_key_from_k() {
     for org in [false, true] {
@@ -363,7 +423,7 @@ fn one_writer_call_whatever_the_number_of_columns() {
             ] {
                 WRITES.with(|n| n.set(0));
                 let start = std::time::Instant::now();
-                let raw = new_checkbox_row_raw(org, &keys);
+                let raw = new_checkbox_row_raw(org, &keys, &[]);
                 let elapsed = start.elapsed();
                 assert_eq!(WRITES.with(|n| n.get()), writes, "{name} k={k} org={org}");
                 assert_eq!(raw.is_empty(), writes == 0);

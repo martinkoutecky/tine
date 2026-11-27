@@ -716,12 +716,17 @@ export function SheetTable(props: {
     if (!owner || blockPageReadOnly(props.ownerId)) return;
     const at = owner.children.length;
     // A checkbox column shows an unset value as unchecked, so the new row is
-    // written `false` there (the core decides which columns can take it): a
-    // query for `false` then finds what the table shows.
-    const checkboxKeys = schemaFields().flatMap((spec) => spec.type === "checkbox" ? [spec.field.slice("prop:".length)] : []);
+    // written `false` there (the core decides which columns can take it, given
+    // every property column of the schema): a query for `false` then finds what
+    // the table shows.
+    const checkboxKeys: string[] = [];
+    const otherKeys: string[] = [];
+    for (const spec of schemaFields()) {
+      if (spec.field.startsWith("prop:")) (spec.type === "checkbox" ? checkboxKeys : otherKeys).push(spec.field.slice("prop:".length));
+    }
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => {
       const row = insertEmptyChildBlock(props.ownerId, at);
-      const raw = row ? new_checkbox_row_raw(formatForBlock(row) === "org", checkboxKeys) : "";
+      const raw = row ? new_checkbox_row_raw(formatForBlock(row) === "org", checkboxKeys, otherKeys) : "";
       if (row && raw) setRaw(row, raw);
       return row;
     });

@@ -353,11 +353,12 @@ export function nested_reference_names(content: string): string[];
 
 /**
  * The raw text of a children table's new row whose checkbox columns are
- * `keys`, in schema order: `false` for each plain, ordinary one, or `""`
+ * `keys` and other property columns `others`, in schema order: `false` for
+ * each plain, ordinary checkbox one, or `""`
  * (I-12: the one answerer, `tine_core::table_row::new_checkbox_row_raw`).
  * O(key bytes) plus one property write on a one-line block.
  */
-export function new_checkbox_row_raw(is_org: boolean, keys: string[]): string;
+export function new_checkbox_row_raw(is_org: boolean, keys: string[], others: string[]): string;
 
 /**
  * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
@@ -664,7 +665,7 @@ export interface InitOutput {
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
-    readonly new_checkbox_row_raw: (a: number, b: number, c: number) => [number, number];
+    readonly new_checkbox_row_raw: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;

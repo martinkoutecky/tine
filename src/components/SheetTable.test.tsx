@@ -7,7 +7,7 @@ import { ContextMenu } from "./ContextMenu";
 import { __sheetTableTestHooks, SheetTable as ActualSheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, ensureBlockId, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
+import { blockProperty, ensureBlockId, pageByName, readPageProperty, redo, resetStore, setBlockProperty, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { setWorkflow } from "../ui";
@@ -1915,6 +1915,26 @@ describe("SheetTable", () => {
   ] as const)("children add-row (%s, %j) writes %j (tine#1047)", async (format, columns, raw) => {
     const { id, dispose } = await addRowUnderSchema(tableOf(columns.map((key) => `${key}=checkbox`).join(";"), format), format);
     expect(doc.byId[id].raw).toBe(raw);
+    dispose();
+  });
+
+  // Any property column of the schema counts: typing in a text column `Ready` would overwrite a seeded `ready`, and in
+  // Org editing a text column `properties` would break the seeded drawer. So the row stays empty, and typing there
+  // writes only the typed value.
+  it.each([
+    ["md", "ready=checkbox;Ready=text", "Ready"],
+    ["org", "ready=checkbox;Ready=text", "Ready"],
+    ["org", "ready=checkbox;properties=text", "properties"],
+  ] as const)("children add-row (%s, %s) seeds nothing a later edit of %s could lose (tine#1047)", async (format, fields, typed) => {
+    const { id, dispose } = await addRowUnderSchema(tableOf(fields, format), format);
+    expect(doc.byId[id].raw).toBe("");
+    setBlockProperty(id, typed, "x");
+    expect(blockProperty(id, typed)).toBe("x");
+    dispose();
+  });
+  it.each(["md", "org"] as const)("children add-row still seeds beside unrelated text columns (%s) (tine#1047)", async (format) => {
+    const { id, dispose } = await addRowUnderSchema(tableOf("ready=checkbox;note=text", format), format);
+    expect(doc.byId[id].raw).toBe(seededRaw(["ready"], format));
     dispose();
   });
 

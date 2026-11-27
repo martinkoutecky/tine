@@ -1717,25 +1717,29 @@ function __tine_raw_nested_reference_names(content) {
 
 /**
  * The raw text of a children table's new row whose checkbox columns are
- * `keys`, in schema order: `false` for each plain, ordinary one, or `""`
+ * `keys` and other property columns `others`, in schema order: `false` for
+ * each plain, ordinary checkbox one, or `""`
  * (I-12: the one answerer, `tine_core::table_row::new_checkbox_row_raw`).
  * O(key bytes) plus one property write on a one-line block.
  * @param {boolean} is_org
  * @param {string[]} keys
+ * @param {string[]} others
  * @returns {string}
  */
-function __tine_raw_new_checkbox_row_raw(is_org, keys) {
-    let deferred2_0;
-    let deferred2_1;
+function __tine_raw_new_checkbox_row_raw(is_org, keys, others) {
+    let deferred3_0;
+    let deferred3_1;
     try {
         const ptr0 = passArrayJsValueToWasm0(keys, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.new_checkbox_row_raw(is_org, ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
+        const ptr1 = passArrayJsValueToWasm0(others, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.new_checkbox_row_raw(is_org, ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 

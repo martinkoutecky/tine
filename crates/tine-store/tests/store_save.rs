@@ -1142,7 +1142,7 @@ fn an_added_table_row_with_false_is_found_by_a_false_query_after_reopen() {
             let id = PageId::from(path);
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
-            let raw = tine_core::table_row::new_checkbox_row_raw(org, &["prop".into()]);
+            let raw = tine_core::table_row::new_checkbox_row_raw(org, &["prop".into()], &[]);
             doc.blocks[0].children.push(BlockDto {
                 raw: raw.clone(),
                 ..Default::default()

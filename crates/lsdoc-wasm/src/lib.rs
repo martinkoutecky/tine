@@ -189,12 +189,13 @@ pub fn is_og_built_in_property(key: &str) -> bool {
 }
 
 /// The raw text of a children table's new row whose checkbox columns are
-/// `keys`, in schema order: `false` for each plain, ordinary one, or `""`
+/// `keys` and other property columns `others`, in schema order: `false` for
+/// each plain, ordinary checkbox one, or `""`
 /// (I-12: the one answerer, `tine_core::table_row::new_checkbox_row_raw`).
 /// O(key bytes) plus one property write on a one-line block.
 #[wasm_bindgen]
-pub fn new_checkbox_row_raw(is_org: bool, keys: Vec<String>) -> String {
-    tine_core::table_row::new_checkbox_row_raw(is_org, &keys)
+pub fn new_checkbox_row_raw(is_org: bool, keys: Vec<String>, others: Vec<String>) -> String {
+    tine_core::table_row::new_checkbox_row_raw(is_org, &keys, &others)
 }
 
 /// Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
