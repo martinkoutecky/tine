@@ -248,3 +248,130 @@ describe("the card lookup inspects only the host's own cards", () => {
     expect(new Set(counts).size).toBe(1);
   });
 });
+
+/** A host whose block draws `zzzzzz` from another source, under the element `marker` matches. */
+type ForeignCase = { name: string; host: string; hostFmt: "md" | "org"; target: string; targetFmt: "md" | "org"; marker: string };
+const PROSE_AFTER = "ninechars";
+const foreignCases: ForeignCase[] = [
+  { name: "a block reference whose target has prose after its fence", host: "((target))", hostFmt: "md",
+    target: `${FOREIGN}\n${PROSE_AFTER}`, targetFmt: "md", marker: ".block-ref" },
+  { name: "a code-only macro in a Note callout", host: "> [!NOTE]\n> {{code}}", hostFmt: "md",
+    target: "t", targetFmt: "md", marker: ".macro-blocks" },
+  { name: "a code-only macro in a Tip callout", host: "> [!TIP]\n> {{code}}", hostFmt: "md",
+    target: "t", targetFmt: "md", marker: ".macro-blocks" },
+  { name: "a block reference to an Org source card", host: "((target))", hostFmt: "org",
+    target: `#+BEGIN_SRC\nzzzzzz\n#+END_SRC\n${PROSE_AFTER}`, targetFmt: "org", marker: ".block-ref" },
+  { name: "a block reference to an Org example card", host: "((target))", hostFmt: "org",
+    target: `#+BEGIN_EXAMPLE\nzzzzzz\n#+END_EXAMPLE\n${PROSE_AFTER}`, targetFmt: "org", marker: ".block-ref" },
+  { name: "prose before a block reference to a code card", host: "before ((target))", hostFmt: "md",
+    target: `${FOREIGN}\n${PROSE_AFTER}`, targetFmt: "md", marker: ".block-ref" },
+];
+
+async function mountForeign(c: ForeignCase): Promise<void> {
+  const target = leaf("target", c.target);
+  const foreign: PageDto = { ...page("Foreign", [target]), format: c.targetFmt };
+  loadFeed([{ ...page("Host", [leaf("host", c.host)]), format: c.hostFmt }, foreign]);
+  setGraphMeta({ macros: { code: FOREIGN } } as never);
+  vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids =>
+    ids.map(id => (id === "target" ? { page: "Foreign", kind: "page", blocks: [{ ...target, children: [] }] } : null)));
+  vi.spyOn(backend(), "getPage").mockResolvedValue(foreign as never);
+  const root = document.createElement("div");
+  document.body.append(root);
+  cleanup.push(render(() => <For each={pageByName("Host")?.roots}>{id => <Block id={id} />}</For>, root));
+  cleanup.push(installKeybindings());
+  await vi.waitFor(() => expect(textUnder(c.marker, "zzzzzz")).not.toBeNull());
+}
+
+/** The first text node holding `needle` below an element `selector` matches in the host's content (or anywhere in it, for null). */
+function textUnder(selector: string | null, needle: string): Text | null {
+  const scope = selector ? content().querySelector(selector) : content();
+  if (!scope) return null;
+  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if ((n as Text).data.includes(needle)) return n as Text;
+  return null;
+}
+
+describe.each<EditorKind>(["textarea", "cm6"])("%s editor: a selection reaching into another source", kind => {
+  useEditorKind(kind);
+
+  it.each(foreignCases.map(c => [c.name, c] as const))("does nothing for %s, as before the handoff", async (_n, c) => {
+    await mountForeign(c);
+    const z = textUnder(c.marker, "zzzzzz")!;
+    const at = z.data.indexOf("zzzzzz");
+    const before = textUnder(null, "before");
+    const ranges: [Text, number, Text, number][] = [[z, at + 1, z, at + 2], [z, at, z, at + 6]];
+    // From the card into the target's prose after it: the two ends fall either side of the reference's middle.
+    const after = textUnder(c.marker, PROSE_AFTER);
+    if (after) ranges.push([z, at + 1, after, after.data.indexOf(PROSE_AFTER) + PROSE_AFTER.length]);
+    if (c.target.includes(PROSE_AFTER)) expect(after).not.toBeNull();
+    if (before && !before.parentElement!.closest(`[${FOREIGN_SOURCE_ATTR}]`)) ranges.push([before, 1, z, at + 3], [z, at + 3, before, 1]);
+    for (const key of ["Delete", "Backspace"]) {
+      for (const [a, ao, f, fo] of ranges) {
+        endEdit("blur");
+        window.getSelection()!.setBaseAndExtent(a, ao, f, fo);
+        expect(press(key).defaultPrevented).toBe(false);
+        expect(doc.byId.host.raw).toBe(c.host);
+        expect(editingId()).not.toBe("host");
+      }
+    }
+    // Every mixed case ran: two in-card ranges, the card-to-prose range, and both host-to-card directions.
+    if (c.host.startsWith("before")) expect(ranges.length).toBe(5);
+  });
+});
+
+describe("a click on another source's code card", () => {
+  /** Host content: `spans` positioned words, then a macro expansion drawing one code card. */
+  function contentWith(spans: number): { root: HTMLElement; code: Text } {
+    const root = document.createElement("div");
+    root.className = "block-content";
+    for (let i = 0; i < spans; i++) {
+      const s = document.createElement("span");
+      s.setAttribute("data-so", "2");
+      s.setAttribute("data-se", "3");
+      s.textContent = "w";
+      root.append(s);
+    }
+    const macro = document.createElement("div");
+    macro.className = "macro-blocks";
+    macro.setAttribute(FOREIGN_SOURCE_ATTR, "macro");
+    macro.innerHTML = `<pre class="code-block"><code><span class="code-text">zzzzzz</span></code></pre>`;
+    root.append(macro);
+    document.body.append(root);
+    return { root, code: macro.querySelector(".code-text")!.firstChild as Text };
+  }
+
+  it("opens the block at its end, in source, without reading layout, at 0, 10, 100 and 1,000 spans", () => {
+    const raw = "w {{code}}";
+    const rectReads: number[] = [];
+    const stubs: [object, string, unknown][] = [];
+    let reads = 0;
+    const rect = () => { reads++; return { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 } as DOMRect; };
+    const rects = () => { reads++; return [] as unknown as DOMRectList; };
+    for (const [proto, name, fn] of [[Element.prototype, "getBoundingClientRect", rect], [Element.prototype, "getClientRects", rects],
+      [Range.prototype, "getBoundingClientRect", rect], [Range.prototype, "getClientRects", rects]] as const) {
+      stubs.push([proto, name, Object.getOwnPropertyDescriptor(proto, name)]);
+      Object.defineProperty(proto, name, { value: fn, configurable: true, writable: true });
+    }
+    try {
+      for (const n of [0, 10, 100, 1000]) {
+        const { root, code } = contentWith(n);
+        const range = document.createRange();
+        range.setStart(code, 2);
+        (document as unknown as { caretRangeFromPoint: () => Range }).caretRangeFromPoint = () => range;
+        const e = new MouseEvent("click", { clientX: 1, clientY: 1 });
+        Object.defineProperty(e, "target", { value: code.parentElement });
+        reads = 0;
+        expect(renderedClickOffset(root, raw, "md", e)).toBe(raw.length);
+        rectReads.push(reads);
+        delete (document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint;
+        root.remove();
+      }
+    } finally {
+      for (const [proto, name, desc] of stubs) {
+        if (desc) Object.defineProperty(proto, name, desc as PropertyDescriptor);
+        else delete (proto as Record<string, unknown>)[name];
+      }
+    }
+    expect(rectReads).toEqual([0, 0, 0, 0]);
+  });
+});

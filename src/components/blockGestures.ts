@@ -307,18 +307,18 @@ export function beginEditGesture(
   doc.addEventListener("mouseup", onUp, true);
 }
 
-/** The code card (`pre.code-block`) holding `node` that the block `contentRef` renders from its own source, or null.
- *  A card an embed, a query's results, a block reference's target or a macro's expansion draws inside the block
- *  (under a {@link FOREIGN_SOURCE_ATTR} element) is another source's, never one of this block's fences.
- *  O(depth of `node`). */
-function ownCodeCard(contentRef: Element, node: Node): Element | null {
+/** The code card (`pre.code-block`) in `contentRef` holding `node`, or null, and whether the block renders it from
+ *  its own source. A card an embed, a query's results, a block reference's target or a macro's expansion draws
+ *  inside the block (under a {@link FOREIGN_SOURCE_ATTR} element) is another source's, never one of this block's
+ *  fences. O(depth of `node`). */
+function codeCardOf(contentRef: Element, node: Node): { card: Element; own: boolean } | null {
   const el = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
   const card = el?.closest("pre.code-block");
   if (!card || !contentRef.contains(card)) return null;
   for (let up = card.parentElement; up && up !== contentRef; up = up.parentElement) {
-    if (up.hasAttribute(FOREIGN_SOURCE_ATTR)) return null;
+    if (up.hasAttribute(FOREIGN_SOURCE_ATTR)) return { card, own: false };
   }
-  return card;
+  return { card, own: true };
 }
 
 /** The ordinal of `card` among the block's own code cards, in document order. Foreign subtrees and card interiors
@@ -349,8 +349,9 @@ export function codeCardBodyAt(
   fmt: "md" | "org",
   target: Node,
 ): { card: Element; bodyStart: number; offset: (point: Pick<Range, "startContainer" | "startOffset"> | null) => number } | null {
-  const card = ownCodeCard(contentRef, target);
-  if (!card) return null;
+  const hit = codeCardOf(contentRef, target);
+  if (!hit?.own) return null;
+  const card = hit.card;
   const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[ownCodeCardIndex(contentRef, card)];
   const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
   if (!projection) return null;
@@ -375,8 +376,10 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
   const card = codeCardBodyAt(contentRef, visible, fmt, e.target as Node);
   if (card) return card.bodyStart + card.offset(range ?? null);
-  // An outside edge can resolve to a nearby code glyph of the block's own; it still chooses source.
-  if (range && ownCodeCard(contentRef, range.startContainer)?.querySelector(":scope > code")?.contains(range.startContainer)) return visible.length;
+  // Another source's code card names none of this block's text: the click opens the block at its end, in source.
+  if (codeCardOf(contentRef, e.target as Node)?.own === false) return visible.length;
+  // An outside edge can resolve to a nearby code glyph; it still chooses source.
+  if (range && codeCardOf(contentRef, range.startContainer)?.card.querySelector(":scope > code")?.contains(range.startContainer)) return visible.length;
   // GH #465: a click in the empty run-out past the last glyph means "the end",
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click

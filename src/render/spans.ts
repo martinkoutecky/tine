@@ -203,19 +203,14 @@ function elementFromNode(node: Node): Element | null {
   return node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
 }
 
-/** The nearest element at or above `node` whose span is in `root`'s own source:
- *  a span below a {@link FOREIGN_SOURCE_ATTR} element counts another text's
- *  bytes, so the construct that summons that source (or the marker itself, when
- *  it carries the host's span, as a block reference does) answers instead.
- *  O(depth of `node` below `root`). */
 function closestSpanElement(root: Element, node: Node): Element | null {
-  let found: Element | null = null;
-  for (let el = elementFromNode(node); el && root.contains(el); el = el.parentElement) {
-    if (el.hasAttribute(FOREIGN_SOURCE_ATTR)) found = null;
-    if (!found && el.hasAttribute("data-so")) found = el;
+  let el = elementFromNode(node);
+  while (el && root.contains(el)) {
+    if (el.hasAttribute("data-so")) return el;
     if (el === root) break;
+    el = el.parentElement;
   }
-  return found;
+  return null;
 }
 
 /** Whether mapping a range end at `node` onto the text of the block `root`

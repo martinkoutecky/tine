@@ -15,7 +15,7 @@
 import { node as docNode, blockWritable, pageByName } from "../document";
 import { startEditing, editingId } from "../editorController";
 import { splitProps, BUILTIN_HIDE } from "../editor/properties";
-import { editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput } from "../render/spans";
+import { FOREIGN_SOURCE_ATTR, editorOffsetFromRenderedRange, rangeEndDependsOnGeneratedOutput } from "../render/spans";
 import { codeCardBodyAt } from "../components/blockGestures";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
@@ -58,6 +58,13 @@ function blockRowOf(node: Node | null): Element | null {
   return el?.closest?.(".ls-block") ?? null;
 }
 
+/** Whether `node` lies below a {@link FOREIGN_SOURCE_ATTR} element inside `wrapper`. O(depth of `node`). */
+function inForeignSource(wrapper: Element, node: Node): boolean {
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const marker = el?.closest(`[${FOREIGN_SOURCE_ATTR}]`);
+  return !!marker && wrapper.contains(marker);
+}
+
 /** Hand the current rendered text selection inside one block to its editor.
  *  Returns true when the key press was consumed: `startEditing` was asked to
  *  open the block in the selecting instance with the mapped range selected (a
@@ -66,7 +73,8 @@ function blockRowOf(node: Node | null): Element | null {
  *  is editing; when an entry guard refuses, this function leaves it (the guard
  *  may move focus and the selection to what it refuses for). Returns false (the key
  *  goes on) for a collapsed or cross-block selection, a reference/embed/query
- *  rendering, a selection end that depends on generated output (a query's, a
+ *  rendering, a selection end inside another source drawn in the block (an
+ *  embed, a block reference's target, a macro's expansion), a selection end that depends on generated output (a query's, a
  *  failed-region or embed-depth notice), the block being edited, a read-only
  *  page, annotation or calc blocks, an open modal, a selection point that does
  *  not map to source, and a range that maps to nothing. On true, `key` is held
@@ -105,6 +113,11 @@ export function openRenderedSelectionInEditor(key: string): boolean {
   if (!page) return false;
   const fmt = page.format === "org" ? "org" : "md";
   if (isAnnotationBlock(node.raw, fmt) || calcSource(node.raw) !== null) return false;
+  // A point inside another source drawn in the block (an embed, a block
+  // reference's target, a query's results, a macro's expansion, a notice, and
+  // every code card they draw) names none of this block's text: the key does
+  // nothing, before any mapping.
+  if (inForeignSource(wrapper, range.startContainer) || inForeignSource(wrapper, range.endContainer)) return false;
   // A query's output and the app's notices are generated: an end there names
   // none of this block's text, and inside a heading, quote or callout it would
   // snap to an edge of that construct and take the macro's source with it. So

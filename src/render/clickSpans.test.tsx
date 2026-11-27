@@ -354,31 +354,6 @@ describe("rendered point from editor offset (GH #375 re-selection)", () => {
     }
   });
 
-  it("a click in another source's spans maps as a click on the construct that summons it", () => {
-    // Hand-built: the parser sees "- " + raw. The macro `{{m}}` (host bytes 9..14) draws a
-    // code card whose span (2..16) counts the expansion's own bytes, not the host's.
-    const raw = "prefix   {{m}} tail tail tail";
-    const root = document.createElement("div");
-    root.innerHTML =
-      `<span data-so="11" data-sce="16"><div data-foreign-source="macro"><pre data-so="2" data-sce="16">zzzzzz</pre></div></span>` +
-      `<span data-foreign-source="block-ref" data-so="2" data-sce="8"><span data-so="2" data-se="8">zzzzzz</span></span>` +
-      `<div data-foreign-source="embed"><span data-so="2" data-se="8">zzzzzz</span></div>`;
-    document.body.append(root);
-    const [macro, ref, embed] = Array.from(root.children);
-    const at = (el: Element, offset: number) => ({ startContainer: el.querySelector("pre, span, div")!.firstChild ?? el, startOffset: offset });
-    try {
-      const card = macro.querySelector("pre")!.firstChild!;
-      expect(editorOffsetFromRenderedRange(root, { startContainer: card, startOffset: 1 }, raw, BUILTIN_HIDE)).toBe(9);
-      expect(editorOffsetFromRenderedRange(root, { startContainer: card, startOffset: 5 }, raw, BUILTIN_HIDE)).toBe(14);
-      // A marker carrying the host's span answers for what it draws.
-      expect(editorOffsetFromRenderedRange(root, { startContainer: ref.firstElementChild!.firstChild!, startOffset: 1 }, raw, BUILTIN_HIDE)).toBe(0);
-      // No host construct around the foreign spans: nothing of the host to map to.
-      expect(editorOffsetFromRenderedRange(root, at(embed, 1), raw, BUILTIN_HIDE)).toBeNull();
-    } finally {
-      root.remove();
-    }
-  });
-
   it("exact source mapping declines a rendered gap that a click snaps across (GH #375 review r2)", async () => {
     const { exactSourceByteFromPlainTextByte, sourceByteFromPlainTextByte } = await import("./spans");
     // `alpha -> x` rendered `alpha → x`: runs "alpha " (text 0..6 → source 10..16)
