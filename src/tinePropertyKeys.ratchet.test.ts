@@ -52,7 +52,7 @@ const PASS_THROUGH: Record<string, [number, string]> = {
   "src/components/PageProps.tsx": [2, "the properties form writes the key the user typed"],
   "src/components/QuerySheet.tsx": [1, "the query builder's property test names the user's key"],
   "src/components/QueryVocabularyPicker.tsx": [2, "the query builder's property test names the user's key"],
-  "src/components/SheetTable.tsx": [2, "removes a `tine.formula.*` / `tine.fields` home key"],
+  "src/components/SheetTable.tsx": [3, "removes a `tine.formula.*` / `tine.fields` home key; Add row writes `false` for each checkbox column the user's `tine.fields` declares"],
   "src/document/convert.ts": [1, "queryBlockRaw: keys from appendQueryBlock callers (checked there)"],
   "src/document/edits/identity.ts": [1, "Org identity writer: `id`/`custom-id` from its caller"],
   "src/document/edits/paste.ts": [2, "paste keeps the pasted block's own properties"],

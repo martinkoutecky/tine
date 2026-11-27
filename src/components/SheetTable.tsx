@@ -714,7 +714,17 @@ export function SheetTable(props: {
     const owner = docNode(props.ownerId);
     if (!owner || blockPageReadOnly(props.ownerId)) return;
     const at = owner.children.length;
-    const id = withUndoUnit("sheet:table-add-row", [owner.page], () => insertEmptyChildBlock(props.ownerId, at));
+    // A checkbox column shows an unset value as unchecked, so the new row is
+    // written `false` there: a query for `false` then finds what the table shows.
+    // The values go below an empty first line, where the title editor's caret opens.
+    const checkboxKeys = schemaFields().flatMap((spec) => spec.type === "checkbox" ? [spec.field.slice("prop:".length)] : []);
+    const id = withUndoUnit("sheet:table-add-row", [owner.page], () => {
+      const row = insertEmptyChildBlock(props.ownerId, at);
+      if (!row || checkboxKeys.length === 0) return row;
+      setRaw(row, "\n");
+      for (const key of checkboxKeys) setBlockProperty(row, key, "false");
+      return row;
+    });
     if (!id) return;
     queueMicrotask(() => {
       const rowIndex = sortedRows().findIndex((row) => row.id === id && !!liveFormulaRowNode(row));

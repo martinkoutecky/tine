@@ -1086,3 +1086,81 @@ fn an_unchanged_non_page_replace_makes_the_equal_bytes_durable() {
         "an Unchanged replace reported success without syncing its directory (G26, mutant MQ): {synced:?}"
     );
 }
+
+/// tine#1047: a children table's "Add row" gives the new row an empty first
+/// line and `prop:: false` for a checkbox column. Saved and reopened, the reporter's query for unchecked
+/// rows finds it; a row without the value still does not equal `false`.
+#[test]
+fn an_added_table_row_with_false_is_found_by_a_false_query_after_reopen() {
+    use tine_core::date::JournalDate;
+    use tine_core::query::ir::{ExecutionContext, QueryRows};
+    use tine_core::query::{parse_query_text, QueryDialect};
+
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let fixture = Fixture::new();
+    let source = "\
+- [[Demo-Sheet]]
+  tine.fields:: name=text;prop=checkbox
+  tine.view:: table
+\t- name:: This is True
+\t  prop:: true
+\t- name:: This is False
+\t  prop:: false
+\t- name:: This is undefined
+";
+    fixture.write("pages/Demo.md", source);
+    let (store, writer) = open(&fixture);
+    let id = PageId::from("pages/Demo.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.blocks[0].children.push(BlockDto {
+        raw: "\nprop:: false".into(),
+        ..Default::default()
+    });
+    writer
+        .save(EditKind::SaveBlock, &id, SaveBase::Existing(read.rev), &doc)
+        .unwrap();
+    drop(writer);
+    store.close();
+    drop(store);
+    assert_eq!(
+        fs::read_to_string(fixture.0.join(id.as_str())).unwrap(),
+        format!("{source}\t-\n\t  prop:: false\n")
+    );
+
+    let (store, _writer) = open(&fixture);
+    let saved = store.page(&id).unwrap().doc;
+    assert_eq!(saved.blocks[0].children[3].raw, "\nprop:: false");
+    let (query, view) = parse_query_text(
+        "@block and [[Demo-Sheet]] and prop('prop') = false",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    let answer = store
+        .whole_graph()
+        .unwrap()
+        .query_ir(
+            crate::IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::none(),
+            },
+            &crate::Cancel::default(),
+        )
+        .unwrap()
+        .expect("never cancelled");
+    let crate::IrAnswer::Result(result) = answer else {
+        panic!("{answer:?}")
+    };
+    let QueryRows::Block { groups } = &result.rows else {
+        panic!("{:?}", result.rows)
+    };
+    let mut raws: Vec<&str> = groups
+        .iter()
+        .flat_map(|group| group.blocks.iter())
+        .map(|block| block.raw.as_str())
+        .collect();
+    raws.sort();
+    assert_eq!(raws, ["\nprop:: false", "name:: This is False\nprop:: false"]);
+}

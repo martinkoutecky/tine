@@ -20,7 +20,7 @@ import {
   setCellSel,
   startCellEditing,
 } from "../sheet/selection";
-import { editingId, editingOwner } from "../editorController";
+import { editingId, editingOwner, endEdit } from "../editorController";
 import type { RefGroup } from "../types";
 import { installKeybindings } from "../keybindings";
 import { setToasts, toasts } from "../toasts";
@@ -1767,6 +1767,83 @@ describe("SheetTable", () => {
     expect(editingId()).toBe(id);
     expect(editingOwner()).toBe(`sheet:main:table:${id}:title`);
 
+    dispose();
+  });
+
+  // tine#1047: a checkbox column shows an unset value as unchecked, so Add row
+  // writes it `false`; text columns stay unset. One Undo removes row and value.
+  const addRowUnderSchema = async (ownerRaw: string, format: "md" | "org") => {
+    const otherRaw = format === "md" ? "Other\nprop:: true" : "Other\n:PROPERTIES:\n:prop: true\n:END:";
+    setDoc({
+      byId: {
+        table: node("table", ownerRaw, null, ["r1"]),
+        r1: node("r1", "Existing", "table"),
+        other: node("other", otherRaw, null),
+      },
+      pages: [{ ...page(["table", "other"]), format }],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
+    await tick();
+    const id = doc.byId.table.children[1];
+    expect(doc.byId.table.raw).toBe(ownerRaw);
+    expect(doc.byId.r1.raw).toBe("Existing");
+    expect(doc.byId.other.raw).toBe(otherRaw);
+    expect(editingId()).toBe(id);
+    expect(editingOwner()).toBe(`sheet:main:table:${id}:title`);
+    return { id, root, dispose };
+  };
+
+  const demoSchema = "[[Demo-Sheet]]\ntine.fields:: name=text;prop=checkbox\ntine.view:: table";
+
+  it("children add-row writes false for each checkbox field and nothing for other fields (tine#1047)", async () => {
+    const { id, dispose } = await addRowUnderSchema(demoSchema, "md");
+    expect(doc.byId[id].raw).toBe("\nprop:: false");
+    expect(blockProperty(id, "prop")).toBe("false");
+    expect(blockProperty(id, "name")).toBeNull();
+    dispose();
+    undo();
+    expect(doc.byId.table.children).toEqual(["r1"]);
+    expect(doc.byId[id]).toBeUndefined();
+  });
+
+  it("children add-row opens the title editor above the written checkbox value (tine#1047)", async () => {
+    const { id, root, dispose } = await addRowUnderSchema(demoSchema, "md");
+    const editor = maybeEditorIn(root) as EditorDriver;
+    expect(editor.value()).toBe("\nprop:: false");
+    expect(editor.selection()).toEqual([0, 0]);
+    editor.input("New\nprop:: false", 3, { inputType: "insertText", data: "New" });
+    endEdit("select-block");
+    await tick();
+    expect(doc.byId[id].raw).toBe("New\nprop:: false");
+    expect(blockProperty(id, "prop")).toBe("false");
+    expect(root.querySelector(`.sheet-title-cell[data-block-id="${id}"] .sheet-cell-body`)?.textContent?.trim()).toBe("New");
+    dispose();
+  });
+
+  it("children add-row left without typing keeps the written checkbox value (tine#1047)", async () => {
+    const { id, root, dispose } = await addRowUnderSchema(demoSchema, "md");
+    endEdit("select-block");
+    await tick();
+    expect(editingId()).toBeNull();
+    expect(doc.byId[id].raw).toBe("\nprop:: false");
+    expect(root.querySelector(`.sheet-title-cell[data-block-id="${id}"] .sheet-cell-body`)?.textContent?.trim()).toBe("");
+    dispose();
+  });
+
+  it("children add-row writes an Org checkbox field in the Org property drawer (tine#1047)", async () => {
+    const ownerRaw = ["Demo", ":PROPERTIES:", ":tine.fields: name=text;prop=checkbox", ":tine.view: table", ":END:"].join("\n");
+    const { id, dispose } = await addRowUnderSchema(ownerRaw, "org");
+    expect(doc.byId[id].raw).toBe("\n:PROPERTIES:\n:prop: false\n:END:");
+    expect(blockProperty(id, "prop")).toBe("false");
+    dispose();
+  });
+
+  it("children add-row under a schema without checkbox fields leaves the row empty", async () => {
+    const { id, dispose } = await addRowUnderSchema("Table\ntine.fields:: name=text;n=number\ntine.view:: table", "md");
+    expect(doc.byId[id].raw).toBe("");
     dispose();
   });
 
