@@ -34,8 +34,10 @@ spans; links, chips, media and other controls retain their own pointer actions.
   the trailing text; Alt+Enter is an alias. Tab/Shift+Tab on cell text edit the
   next/previous cell, stopping at the grid ends. Nested blocks use outline
   structure commands and multiline paste, bounded by the cell. The cell block
-  cannot move, indent, split into a sibling or merge; Backspace at its first
-  child's start is also a no-op.
+  cannot move, indent, split into a sibling or merge. Backspace in an empty
+  first child (whitespace-only, no children), or Delete at the end of the cell
+  text before one, removes that child; with any other first child both keys
+  are a no-op, so non-empty blocks are not merged.
 - **Keyboard exit:** `Esc` keeps text and enters Cell Selection on the edited
   cell. The existing selection ladder continues: range → cell, nested grid →
   enclosing cell, cell → outline-selected grid. Enter/F2/typing from Cell

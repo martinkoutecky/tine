@@ -2,7 +2,7 @@
 // (CM6 and the textarea), so the two never drift. Table title cells and board cards keep
 // today's sheet keys; only cells of a `tine.view:: grid` edit like an outline.
 import { batch } from "solid-js";
-import { blockIsGridView, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
+import { blockIsGridView, blockIsOpaqueSheetView, deleteBlock, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
 import { editingId, editingOwner, startEditing, takeCaretFor, type CaretPos } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import type { SheetCellCtx } from "./context";
@@ -90,6 +90,22 @@ export function gridNestedBlock(id: string, cell: SheetCellCtx | null | undefine
   return !!cell && editsLikeOutline(cell) && id !== cellBlockId(cell);
 }
 
+/** Removes the cell block's first child when it is empty (whitespace-only text, no children),
+ * then runs `after`, as one undo unit (as the grid Enter). `host`'s own text is never written.
+ * A cell that hosts a grid, table or board renders its children as that sheet's rows, not as
+ * its outline (the sheet-view answer the renderer uses), so none of them is removed.
+ * Deciding reads `host` and its first child only. */
+function removeEmptyFirstChild(host: string, after?: () => void): void {
+  if (blockIsOpaqueSheetView(host)) return;
+  const k = node(host).children[0];
+  const child = k ? node(k) : undefined;
+  if (!child || child.raw.trim() !== "" || child.children.length) return;
+  batch(() => withUndoUnit(`grid:remove-empty-child:${host}`, [child.page], () => {
+    deleteBlock(k);
+    if (!node(k)) after?.();
+  }));
+}
+
 /** Shared grid key policy. Editors supply their own visual-edge measurements;
  * unhandled keys continue through the ordinary outline editor, within its cell scope. */
 export function gridEditKey(e: KeyboardEvent, ctx: {
@@ -124,11 +140,20 @@ export function gridEditKey(e: KeyboardEvent, ctx: {
     return true;
   }
   if (plain && start === end) {
-    if (e.key === "Backspace" && start === 0
-      && (!nested || node(id)?.parent === host && node(host!)?.children[0] === id)) return true;
-    // The fixed cell text must also survive forward deletion; nested Delete is
-    // allowed only while its merge target remains in the cell's child scope.
-    if (e.key === "Delete" && end === raw.length && !nested) return true;
+    if (e.key === "Backspace" && start === 0 && !nested) return true;
+    // The cell text and its first child never merge. An empty first child goes:
+    // Backspace at its start, or Delete at the end of the cell text.
+    if (e.key === "Backspace" && start === 0 && node(id)?.parent === host && node(host!)?.children[0] === id) {
+      // A non-blank buffer composes to a non-blank raw: refuse without writing.
+      if (raw.trim() !== "") return true;
+      commit(raw);
+      removeEmptyFirstChild(host!, () => openGridTarget({ blockId: host!, cell, caret: "end" }));
+      return true;
+    }
+    if (e.key === "Delete" && end === raw.length && !nested) {
+      if (!node(id).collapsed) removeEmptyFirstChild(id);
+      return true;
+    }
     if (!e.shiftKey && ctx.edge) {
       commit(raw);
       moveInGridEdit(id, cell, ctx.edge, ctx.col);
