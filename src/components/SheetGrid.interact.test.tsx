@@ -10,7 +10,7 @@ import { initParser } from "../render/parse";
 import { blockProperty, blockIsGridView, hasSelection, isSelected, resetStore, selectBlock, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { editingId, editingOwner, endEdit } from "../editorController";
+import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { setFocusedPaneId } from "../panes";
 import { resetCommentAuthorNameForTests } from "../commentIdentity";
@@ -778,40 +778,8 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
-  it("GH874: type, Enter, Backspace leaves the cell as typed with no sub-block; one Undo restores it", async () => {
-    const { root, dispose } = setup();
-    setCellSel({ gridId: "grid", row: 0, col: 0 });
-    keydown(window, "Enter");
-    await tick();
-    activeEditor(root).select(5, 5);
-    activeEditor(root).type(" typed");
-    keydown(activeEditor(root), "Enter");
-    await tick();
-    const child = doc.byId.c1.children[0];
-    expect(editingId()).toBe(child);
-    keydown(activeEditor(root), "Backspace");
-    await tick();
-    expect(doc.byId.c1.raw).toBe("Alpha typed");
-    expect(doc.byId.c1.children).toEqual([]);
-    expect(doc.byId[child]).toBeUndefined();
-    expect(editingId()).toBe("c1");
-    expect(editingOwner()).toMatch(/^sheet:/);
-    expect(cell(root, 0, 0).contains(activeEditor(root).element)).toBe(true);
-    expect(activeEditor(root).value()).toBe("Alpha typed");
-    expect(activeEditor(root).selection()).toEqual([11, 11]);
-    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
-    undo();
-    await tick();
-    expect(doc.byId.c1.children).toEqual([child]);
-    expect(doc.byId.c1.raw).toBe("Alpha typed");
-    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
-    dispose();
-  });
-
-  it("GH874: Backspace joins the first child onto the cell text with its children; cell text start stays a no-op", async () => {
+  it("GH874: Backspace protects the cell's first child and merges later nested blocks", async () => {
     loadSheetDocWithOutlineChild();
-    setDoc("byId", "grandchild", node("grandchild", "Grandchild", "c1child"));
-    setDoc("byId", "c1child", "children", ["grandchild"]);
     setDoc("byId", "other", node("other", "Other", "c1"));
     setDoc("byId", "c1", "children", ["c1child", "other"]);
     disposeKeys = installKeybindings();
@@ -821,43 +789,12 @@ describe("SheetGrid interaction", () => {
     await tick();
     activeEditor(root).select(0, 0);
     keydown(activeEditor(root), "Backspace");
-    await tick();
     expect(doc.byId.c1.raw).toBe("Alpha");
-    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
-    expect(editingId()).toBe("c1");
-    activeEditor(root).select(5, 5);
     keydown(activeEditor(root), "ArrowDown");
     await tick();
-    expect(editingId()).toBe("c1child");
     activeEditor(root).select(0, 0);
     keydown(activeEditor(root), "Backspace");
-    await tick();
-    expect(doc.byId.c1.raw).toBe("AlphaChild");
-    expect(doc.byId.c1child).toBeUndefined();
-    // The outline's merge verb: the absorbed block's children follow the survivor's own.
-    expect(doc.byId.c1.children).toEqual(["other", "grandchild"]);
-    expect(doc.byId.grandchild.parent).toBe("c1");
-    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
-    expect(editingId()).toBe("c1");
-    expect(editingOwner()).toMatch(/^sheet:/);
-    expect(cell(root, 0, 0).contains(activeEditor(root).element)).toBe(true);
-    expect(activeEditor(root).value()).toBe("AlphaChild");
-    expect(activeEditor(root).selection()).toEqual([5, 5]);
-    dispose();
-  });
-
-  it("GH874: later nested blocks still merge within the cell", async () => {
-    loadSheetDocWithOutlineChild();
-    setDoc("byId", "other", node("other", "Other", "c1"));
-    setDoc("byId", "c1", "children", ["c1child", "other"]);
-    disposeKeys = installKeybindings();
-    const { root, dispose } = mount(() => <Block id="grid" />);
-    setCellSel({ gridId: "grid", row: 0, col: 0 });
-    keydown(window, "Enter");
-    await tick();
-    activeEditor(root).select(5, 5);
-    keydown(activeEditor(root), "ArrowDown");
-    await tick();
+    expect(doc.byId.c1child.raw).toBe("Child");
     activeEditor(root).select(5, 5);
     keydown(activeEditor(root), "ArrowDown");
     await tick();
@@ -869,78 +806,6 @@ describe("SheetGrid interaction", () => {
     expect(editingId()).toBe("c1child");
     expect(activeEditor(root).value()).toBe("ChildOther");
     expect(doc.byId.c1.raw).toBe("Alpha");
-    dispose();
-  });
-
-  it("GH874: Delete at the end of the cell text pulls up the first child, its children kept; one Undo restores it", async () => {
-    loadSheetDocWithOutlineChild();
-    setDoc("byId", "grandchild", node("grandchild", "Grandchild", "c1child"));
-    setDoc("byId", "c1child", "children", ["grandchild"]);
-    disposeKeys = installKeybindings();
-    const { root, dispose } = mount(() => <Block id="grid" />);
-    setCellSel({ gridId: "grid", row: 0, col: 0 });
-    keydown(window, "Enter");
-    await tick();
-    activeEditor(root).select(5, 5);
-    keydown(activeEditor(root), "Delete");
-    await tick();
-    expect(doc.byId.c1.raw).toBe("AlphaChild");
-    expect(doc.byId.c1child).toBeUndefined();
-    expect(doc.byId.c1.children).toEqual(["grandchild"]);
-    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
-    expect(editingId()).toBe("c1");
-    expect(editingOwner()).toMatch(/^sheet:/);
-    expect(cell(root, 0, 0).contains(activeEditor(root).element)).toBe(true);
-    expect(activeEditor(root).value()).toBe("AlphaChild");
-    expect(activeEditor(root).selection()).toEqual([5, 5]);
-    undo();
-    await tick();
-    expect(doc.byId.c1.raw).toBe("Alpha");
-    expect(doc.byId.c1.children).toEqual(["c1child"]);
-    expect(doc.byId.c1child.children).toEqual(["grandchild"]);
-    dispose();
-  });
-
-  it("GH874: Backspace and Delete merge inside a nested grid's cell and never cross it", async () => {
-    loadSheetDocWithNestedHostGrid();
-    setDoc("byId", "sub", node("sub", "Sub", "hc1"));
-    setDoc("byId", "hc1", "children", ["sub"]);
-    disposeKeys = installKeybindings();
-    const { root, dispose } = mount(() => <Block id="grid" />);
-    setCellSel({ gridId: "host", row: 0, col: 0 });
-    keydown(window, "Enter");
-    await tick();
-    expect(editingId()).toBe("hc1");
-    activeEditor(root).select(5, 5);
-    keydown(activeEditor(root), "Delete");
-    await tick();
-    expect(doc.byId.hc1.raw).toBe("InnerSub");
-    expect(doc.byId.sub).toBeUndefined();
-    expect(editingId()).toBe("hc1");
-    expect(editingOwner()).toMatch(/^sheet:/);
-    undo();
-    await tick();
-    expect(doc.byId.hc1.children).toEqual(["sub"]);
-    setCellSel({ gridId: "host", row: 0, col: 0 });
-    keydown(window, "Enter");
-    await tick();
-    activeEditor(root).select(5, 5);
-    keydown(activeEditor(root), "ArrowDown");
-    await tick();
-    expect(editingId()).toBe("sub");
-    activeEditor(root).select(0, 0);
-    keydown(activeEditor(root), "Backspace");
-    await tick();
-    expect(doc.byId.hc1.raw).toBe("InnerSub");
-    expect(doc.byId.hr1.children).toEqual(["hc1"]);
-    expect(doc.byId.host.children).toEqual(["hr1"]);
-    expect(editingId()).toBe("hc1");
-    expect(activeEditor(root).selection()).toEqual([5, 5]);
-    activeEditor(root).select(0, 0);
-    keydown(activeEditor(root), "Backspace");
-    await tick();
-    expect(doc.byId.hc1.raw).toBe("InnerSub");
-    expect(doc.byId.host.raw).toBe("Nested host\ntine.view:: grid");
     dispose();
   });
 
@@ -1031,7 +896,6 @@ describe("SheetGrid interaction", () => {
 
   it("GH874: empty nested Enter, Delete and cell structure commands preserve the cell boundary", async () => {
     loadSheetDocWithOutlineChild();
-    setDoc("byId", "c1child", "raw", "");
     disposeKeys = installKeybindings();
     const { root, dispose } = mount(() => <Block id="grid" />);
     setCellSel({ gridId: "grid", row: 0, col: 0 });
@@ -1041,9 +905,14 @@ describe("SheetGrid interaction", () => {
     keydown(activeEditor(root), "Tab", { shiftKey: true });
     expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
     activeEditor(root).select(5, 5);
+    keydown(activeEditor(root), "Delete");
+    // A first child with text is never merged into the cell (an empty one is removed:
+    // SheetGrid.cellJoin.test.tsx).
+    expect(doc.byId.c1.raw).toBe("Alpha");
+    expect(doc.byId.c1child.raw).toBe("Child");
+    setDoc("byId", "c1child", "raw", "");
     keydown(activeEditor(root), "ArrowDown");
     await tick();
-    expect(editingId()).toBe("c1child");
     keydown(activeEditor(root), "Enter");
     await tick();
     expect(doc.byId[editingId()!].parent).toBe("c1");

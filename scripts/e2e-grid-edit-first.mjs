@@ -88,23 +88,14 @@ try {
   await textIs("");
   await browser.keys(["Backspace"]);
   await textIs("gamma typed");
-  await waitForFileText(FILE, text => text.includes("- gamma typed\n    - delta"));
-
-  stage = "one Undo restores the sub-block with the caret in the cell";
-  await browser.keys(["Control", "z", "NULL"]);
-  await waitForFileText(FILE, text => /- gamma typed\n\s+-[ \t]*\n\s+- delta/.test(text));
-  await textIs("");
-  assert.deepEqual(await recordCell(stage), { focused: true, row: "1", col: "0" });
-  await browser.keys(["Backspace"]);
-  await textIs("gamma typed");
-  // The caret is back at the end of the cell's text: the next key lands there.
+  // The caret is at the end of the cell's text: the next key lands there.
   await browser.keys("!");
   await textIs("gamma typed!");
   assert.deepEqual(await recordCell(stage), { focused: true, row: "1", col: "0" });
   assert.equal(await browser.$('.sheet-cell[data-row="1"][data-col="0"] .sheet-nested-line').isExisting(), false,
     "the cell shows no sub-block");
-  const merged = "- Before\n- Grid host\n  tine.view:: grid\n  tine.col-widths:: 0=260;1=180\n  -\n    - alpha\n    - beta\n  -\n    - gamma typed!\n    - delta\n- After\n";
-  assert.equal(await waitForFileText(FILE, text => text.includes("gamma typed!")), merged);
+  const typed = "- Before\n- Grid host\n  tine.view:: grid\n  tine.col-widths:: 0=260;1=180\n  -\n    - alpha\n    - beta\n  -\n    - gamma typed!\n    - delta\n- After\n";
+  assert.equal(await waitForFileText(FILE, text => text.includes("gamma typed!")), typed);
 
   stage = "Enter and Tab indent inside a cell";
   await end();
@@ -139,22 +130,21 @@ try {
   assert.equal(await browser.$(`.ls-block[data-block-id="${gridId}"] > .block-main.selected`).isExisting(), true);
   screenshot("cell-selection.png");
 
-  stage = "reopened, the page shows the joined cell from the saved file";
+  stage = "reopened, the page shows the saved cell and the file is unchanged";
   await browser.refresh();
   await browser.$(".app-container").waitForExist({ timeout: 30000 });
   await openPageByName(browser, "Grid edit first");
   await browser.$(".sheet-grid").waitForExist({ timeout: 15000 });
   await browser.waitUntil(async () => (await browser.$('.sheet-cell[data-row="1"][data-col="0"]').getText()).includes("gamma typed!"),
-    { timeout: 15000, timeoutMsg: "the reopened cell does not show the joined text" });
-  const reopened = await browser.$('.sheet-cell[data-row="1"][data-col="0"]').getText();
-  assert.match(reopened, /first child/);
+    { timeout: 15000, timeoutMsg: "the reopened cell does not show the saved text" });
+  assert.match(await browser.$('.sheet-cell[data-row="1"][data-col="0"]').getText(), /second child kept/);
   assert.equal(fs.readFileSync(FILE, "utf8"), saved, "reopening leaves the saved bytes as they were");
   fixture.verify();
   fs.writeFileSync(path.join(RUN, "receipt.json"), JSON.stringify({ outcome: "PASS", testedCommit, candidate: "worktree diff", app: APP, editorKind, evidence, saved }, null, 2));
   console.log(`PASS ${RUN}`);
 } catch (error) {
   try { screenshot("failure.png"); } catch {}
-  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit} + worktree diff\nJourney: ${stage}\nExpected: caret enters and walks the grid, Backspace removes an empty first sub-block and one Undo restores it, Tab indents within a cell, Esc keeps saved text, reopening shows the saved cell\nObserved: ${error.stack}\nClassification: ambiguous until diagnosed (product assertion or harness/infrastructure)\n`);
+  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit} + worktree diff\nJourney: ${stage}\nExpected: caret enters and walks the grid, type, Enter, Backspace leaves no empty sub-block, Tab indents within a cell, Esc keeps saved text, reopening shows the saved cell with the bytes unchanged\nObserved: ${error.stack}\nClassification: ambiguous until diagnosed (product assertion or harness/infrastructure)\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

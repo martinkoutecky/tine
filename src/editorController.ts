@@ -219,12 +219,6 @@ export function captureHistoryEditorContext(): HistoryEditorContext | null {
 /** Queue a surface-scoped editor reopen after data replay or navigation. The caller validates
  * block existence and supplies the restored text length; this controller clamps
  * the request before any textarea sees it. */
-/** Whether an editor owner is a sheet cell's (`cellOwner`): positional, so it names the same
- *  cell after a replay remounts it. */
-export function isSheetCellOwner(owner: string | null): boolean {
-  return owner?.startsWith("sheet:") ?? false;
-}
-
 export function restoreHistoryEditorContext(
   context: HistoryEditorContext,
   restoredTextLength: number | null,
@@ -238,9 +232,7 @@ export function restoreHistoryEditorContext(
   const pending = { ...context, selectionStart: start, selectionEnd: end };
   setPendingHistoryEditorRestore(pending);
   pendingFocusSurface.set(context.blockId, context.surface);
-  // A sheet cell's editor mounts only for its cell's owner; any other owner named one
-  // rendered instance, which the replay may have replaced, so the surface decides.
-  startEditing(context.blockId, start, isSheetCellOwner(context.owner) ? context.owner : null, context.surface, true);
+  startEditing(context.blockId, start, null, context.surface, true);
   return true;
 }
 

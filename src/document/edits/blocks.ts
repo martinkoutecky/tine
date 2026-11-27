@@ -349,9 +349,8 @@ export function mergeWithNext(
  *  transfers only when the survivor has none. Two IDs refuse rather than break
  *  references (OG rewrites graph-wide referrers, outside this page-local verb).
  *  Cold/unavailable counts conservatively preserve the absorbed identity. Refuses
- *  (false) across pages and past the outline cap. `hide` is the survivor editor's
- *  hide policy: the join point and the caret are at the end of its visible text. */
-export function absorbInto(survivor: string, absorbed: string, editingSurface: string | null, hide: HidePolicy = BUILTIN_HIDE): boolean {
+ *  (false) across pages and past the outline cap. */
+function absorbInto(survivor: string, absorbed: string, editingSurface: string | null): boolean {
   const pageName = doc.byId[absorbed].page;
   const id = existingBlockId(doc.byId[absorbed].raw, formatForBlock(absorbed));
   const count = id ? captureReferenceChangeCount([id]) : 0;
@@ -359,8 +358,6 @@ export function absorbInto(survivor: string, absorbed: string, editingSurface: s
   const change = outlineChange(
     { verb: "merge", survivor, absorbed, absorbed_referenced: referenced },
     [doc.byId[survivor].page, pageName],
-    undefined,
-    hide,
   );
   if ("refused" in change) {
     if (change.refused === "depth_cap") pushToast(msg("blocks-outline-is-too-deep-to-merge"), "error");

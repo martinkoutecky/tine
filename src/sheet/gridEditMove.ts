@@ -2,14 +2,11 @@
 // (CM6 and the textarea), so the two never drift. Table title cells and board cards keep
 // today's sheet keys; only cells of a `tine.view:: grid` edit like an outline.
 import { batch } from "solid-js";
-import { absorbInto, blockIsGridView, blockIsOpaqueSheetView, blockWritable, formatForBlock, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
-import { isAnnotationBlock } from "../editor/annotation";
-import { calcSource } from "../editor/calc";
-import { BUILTIN_HIDE, SHEET_CELL_HIDE, splitProps } from "../editor/properties";
+import { blockIsGridView, deleteBlock, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
 import { editingId, editingOwner, startEditing, takeCaretFor, type CaretPos } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import type { SheetCellCtx } from "./context";
-import { firstInside, gridEntry, gridNeighbour, type GridMove, type GridTarget } from "./gridNeighbour";
+import { gridEntry, gridNeighbour, type GridMove, type GridTarget } from "./gridNeighbour";
 import { cellBlockId, cellOwner, selectCellAfterEdit, setCellSel } from "./selection";
 import { wrapCompactGridCell } from "./mutations";
 
@@ -43,33 +40,9 @@ export function moveInGridEdit(blockId: string, cell: SheetCellCtx, move: GridMo
   return true;
 }
 
-/** A cell's child outline is a complete selection scope, excluding the fixed cell text. */
+/** A cell's child outline is a complete selection/merge scope, excluding the fixed cell text. */
 export function gridOutlineScope(cell: SheetCellCtx): OutlineScope {
   return { get roots() { return [...(node(cellBlockId(cell) ?? "")?.children ?? [])]; }, forceExpandedRoot: cellBlockId(cell) ?? undefined };
-}
-
-/** Whether the cell join may absorb `id`: an ordinary block (not a sub-grid, a hosted table,
- * board or query sheet, a calculator or an annotation) whose merge would drop nothing the
- * cell editor hides but the outline editor shows, such as a sheet setting. */
-function cellJoinAbsorbable(id: string): boolean {
-  const raw = node(id)?.raw ?? "", format = formatForBlock(id);
-  return !blockIsGridView(id) && !blockIsOpaqueSheetView(id) && !isAnnotationBlock(raw, format) && calcSource(raw) === null
-    && splitProps(raw, SHEET_CELL_HIDE, format).visible === splitProps(raw, BUILTIN_HIDE, format).visible;
-}
-
-/** Backspace at the start of the cell's first child (`edited`) or Delete at the end of the
- * cell's own text (`edited` is the cell block): the block that follows the cell's text
- * (`firstInside`, asked once) joins onto it, as an outline merge whose join point is the end
- * of the cell's visible text. Writes nothing unless that block is `edited` (Backspace) and
- * absorbable; the key is the cell's either way. */
-function joinCell(cell: SheetCellCtx, host: string, edited: string, raw: string, commit: (raw: string) => void): void {
-  const target = firstInside(host, cell);
-  if (!target || target.cell !== cell || (edited !== host && target.blockId !== edited)) return;
-  const hostRaw = node(host).raw;
-  if (!blockWritable(host) || isAnnotationBlock(hostRaw, formatForBlock(host)) || calcSource(hostRaw) !== null
-    || !cellJoinAbsorbable(target.blockId)) return;
-  commit(raw);
-  runGridOutline(cell, () => absorbInto(host, target.blockId, null, SHEET_CELL_HIDE));
 }
 
 const structureCommands = new Set([
@@ -117,6 +90,19 @@ export function gridNestedBlock(id: string, cell: SheetCellCtx | null | undefine
   return !!cell && editsLikeOutline(cell) && id !== cellBlockId(cell);
 }
 
+/** Removes the cell block's first child when it is empty (whitespace-only text, no children),
+ * then runs `after`, as one undo unit (as the grid Enter). `host`'s own text is never written.
+ * Deciding reads `host` and its first child only. */
+function removeEmptyFirstChild(host: string, after?: () => void): void {
+  const k = node(host).children[0];
+  const child = k ? node(k) : undefined;
+  if (!child || child.raw.trim() !== "" || child.children.length) return;
+  batch(() => withUndoUnit(`grid:remove-empty-child:${host}`, [child.page], () => {
+    deleteBlock(k);
+    if (!node(k)) after?.();
+  }));
+}
+
 /** Shared grid key policy. Editors supply their own visual-edge measurements;
  * unhandled keys continue through the ordinary outline editor, within its cell scope. */
 export function gridEditKey(e: KeyboardEvent, ctx: {
@@ -151,12 +137,18 @@ export function gridEditKey(e: KeyboardEvent, ctx: {
     return true;
   }
   if (plain && start === end) {
-    // Nothing merges into the cell block's start. The block that follows the cell's text
-    // joins onto it (joinCell); merges between nested blocks are the outline's.
     if (e.key === "Backspace" && start === 0 && !nested) return true;
-    if ((e.key === "Backspace" && start === 0 && node(id)?.parent === host && node(host!)?.children[0] === id)
-      || (e.key === "Delete" && end === raw.length && !nested)) {
-      joinCell(cell, host!, id, raw, commit);
+    // The cell text and its first child never merge. An empty first child goes:
+    // Backspace at its start, or Delete at the end of the cell text.
+    if (e.key === "Backspace" && start === 0 && node(id)?.parent === host && node(host!)?.children[0] === id) {
+      // A non-blank buffer composes to a non-blank raw: refuse without writing.
+      if (raw.trim() !== "") return true;
+      commit(raw);
+      removeEmptyFirstChild(host!, () => openGridTarget({ blockId: host!, cell, caret: "end" }));
+      return true;
+    }
+    if (e.key === "Delete" && end === raw.length && !nested) {
+      if (!node(id).collapsed) removeEmptyFirstChild(id);
       return true;
     }
     if (!e.shiftKey && ctx.edge) {

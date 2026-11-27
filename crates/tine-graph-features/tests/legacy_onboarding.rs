@@ -148,7 +148,7 @@ fn guide_explains_grid_edit_first() {
         "first child",
         "Tab",
         "Shift+Tab",
-        "joins it onto the cell's text",
+        "removes that empty child",
         "Esc",
         "keeps your text",
         "ruling",

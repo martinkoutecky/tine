@@ -187,7 +187,7 @@
       "stability": "burn-in"
     },
     "scripts/e2e-grid-edit-first.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"On a routed page, Down from grid text edits its top-left cell; caret arrows cross cells and Right wraps a row. Typing, Enter and Backspace on a cell's text leaves the cell as typed with no sub-block on disk and the caret at its end; one Undo restores the sub-block with the caret in the cell. Enter creates a cell's child outline, Tab indents inside it, and Esc keeps the typed text on disk while switching to Cell Selection; after a reload the page shows the saved cell and the file is unchanged.","blocking":false,"authority":"GH #874; UI-GH874-GRID-EDIT-FIRST; UI-GH874-GRID-CELL-BACKSPACE"}],
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed page, Down from grid text edits its top-left cell; caret arrows cross cells and Right wraps a row. Typing on a cell's text, Enter, then Backspace leaves the cell as typed on disk with no sub-block and the caret at its end. Enter creates a cell's child outline, Tab indents inside it, and Esc keeps the typed text on disk while switching to Cell Selection; reopened, the page shows the saved cell and the file is unchanged.","blocking":false,"authority":"GH #874; UI-GH874-GRID-EDIT-FIRST; UI-GH874-GRID-CELL-BACKSPACE"}],
       "acceptableVariations": ["Cell geometry, wrapping, editor implementation and save latency may vary."],
       "nonRequirements": ["No exact pixels, private graph, release burn-in, macOS/Windows, IME or RTL certification; cell and key boundaries are covered in both editor render suites."],
       "stability":"burn-in"

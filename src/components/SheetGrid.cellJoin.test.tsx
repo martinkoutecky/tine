@@ -1,14 +1,14 @@
-// GH #874: Backspace at the start of a grid cell's first child and Delete at the end of the
-// cell's own text join that child onto the cell's visible text, in both editors. A block
-// that is not an ordinary block (a hosted sheet, one carrying sheet settings), a folded
-// cell's hidden child, and the text the cell editor hides are never joined or written into.
+// GH #874: in a grid cell, Backspace at the start of the cell's first child and Delete at the
+// end of the cell's own text remove that child when it is empty (whitespace-only text, no
+// children), in both editors and both formats. Nothing else is removed or merged: every other
+// first child is refused, the page unchanged and nothing queued for saving.
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
 import { initParser } from "../render/parse";
-import { resetStore, undo } from "../document";
+import { isDirty, resetStore, undo } from "../document";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { editingId, editingOwner } from "../editorController";
 import { installKeybindings } from "../keybindings";
@@ -40,16 +40,18 @@ function node(id: string, raw: string, parent: string | null, children: string[]
 const prop = (format: Format, key: string, value: string) =>
   format === "md" ? `${key}:: ${value}` : `:PROPERTIES:\n:${key}: ${value}\n:END:`;
 
-/** A grid whose top-left cell `c1` holds `cellRaw` and the given child blocks. */
-function load(format: Format, cellRaw: string, kids: StoreNode[], extra: StoreNode[] = []) {
+/** A grid whose top-left cell `c1` holds `cellRaw`; its first child `k` holds `kRaw`, then `later`. */
+function load(format: Format, cellRaw: string, kRaw: string, opts: { kChildren?: boolean; later?: boolean } = {}) {
   const page: FeedPage = { name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["grid"], format, readOnly: false, guide: false };
   const byId: Record<string, StoreNode> = {
     grid: node("grid", `Grid\n${prop(format, "tine.view", "grid")}`, null, ["r1"]),
     r1: node("r1", "", "grid", ["c1", "c2"]),
-    c1: node("c1", cellRaw, "r1", kids.map(k => k.id)),
+    c1: node("c1", cellRaw, "r1", opts.later ? ["k", "later"] : ["k"]),
     c2: node("c2", "Beta", "r1"),
+    k: node("k", kRaw, "c1", opts.kChildren ? ["g"] : []),
   };
-  for (const k of [...kids, ...extra]) byId[k.id] = k;
+  if (opts.kChildren) byId.g = node("g", "Grand", "k");
+  if (opts.later) byId.later = node("later", "Later", "c1");
   setDoc({ byId, pages: [page], feed: ["Sheet"], loaded: true });
   disposeKeys = installKeybindings();
   const root = document.createElement("div");
@@ -84,19 +86,21 @@ async function editCellEnd(root: HTMLElement): Promise<EditorDriver> {
   return ed;
 }
 
-/** Edit the cell's first child, caret at its start (Down from the cell text's end). */
+/** Edit the first child `k`, caret at its start (Down from the cell text's end). */
 async function editFirstChildStart(root: HTMLElement): Promise<EditorDriver> {
   const ed = await editCellEnd(root);
   keydown(ed, "ArrowDown");
   await tick();
+  expect(editingId()).toBe("k");
   const child = editor(root);
   child.select(0, 0);
   return child;
 }
 
+/** The page as the serializer sees it: every block's text, children and fold. */
 const snapshot = () => JSON.stringify(Object.keys(doc.byId).sort().map(id => [id, doc.byId[id].raw, doc.byId[id].children, doc.byId[id].collapsed]));
 
-const keys = ["Delete", "Backspace"] as const;
+const keys = ["Backspace", "Delete"] as const;
 type Key = typeof keys[number];
 
 async function press(root: HTMLElement, key: Key): Promise<void> {
@@ -105,144 +109,171 @@ async function press(root: HTMLElement, key: Key): Promise<void> {
   await tick();
 }
 
-function expectJoinedInCell(root: HTMLElement, visible: string, caret: number) {
+function expectInCell(root: HTMLElement, visible: string, caret: number) {
   expect(editingId()).toBe("c1");
   expect(editingOwner()).toMatch(/^sheet:/);
+  expect(root.querySelector('.sheet-cell[data-row="0"][data-col="0"]')!.contains(editor(root).element)).toBe(true);
   expect(editor(root).value()).toBe(visible);
   expect(editor(root).selection()).toEqual([caret, caret]);
-  expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
 }
 
-describe.each(keys)("GH874 cell join: %s", (key) => {
-  it.each(["md", "org"] as const)("joins after the visible text, the hidden sheet setting unchanged (%s)", async (format) => {
-    const setting = prop(format, "tine.col-widths", "0=120");
-    const root = load(format, `Cell\n${setting}`, [node("k", "Child", "c1")]);
-    await press(root, key);
-    expect(doc.byId.c1.raw).toBe(`CellChild\n${setting}`);
-    expect(doc.byId.k).toBeUndefined();
-    expectJoinedInCell(root, "CellChild", 4);
-  });
+const formats = ["md", "org"] as const;
+const cases = keys.flatMap(key => formats.map(format => [key, format] as const));
 
-  it.each(["md", "org"] as const)("a blank cell body takes the child's text before the hidden setting (%s)", async (format) => {
-    const setting = prop(format, "tine.col-widths", "0=120");
-    const root = load(format, format === "md" ? `\n${setting}` : setting, [node("k", "Child", "c1")]);
+describe.each(cases)("GH874 %s at a grid cell's edge (%s)", (key, format) => {
+  it.each([["empty", ""], ["whitespace-only", "  "]])("removes an %s first child; the cell's text stays as typed", async (_, kRaw) => {
+    const root = load(format, "Cell", kRaw);
     await press(root, key);
     expect(doc.byId.k).toBeUndefined();
-    expect(doc.byId.c1.raw.startsWith("Child")).toBe(true);
-    expect(doc.byId.c1.raw.endsWith(setting)).toBe(true);
-    expectJoinedInCell(root, "Child", 0);
+    expect(doc.byId.c1.children).toEqual([]);
+    expect(doc.byId.c1.raw).toBe("Cell");
+    expect(doc.byId.r1.children).toEqual(["c1", "c2"]);
+    expectInCell(root, "Cell", 4);
+    expect(isDirty("Sheet")).toBe(true);
   });
 
-  it("visible body after the hidden setting: the join and the caret are at the visible end", async () => {
-    const root = load("md", "Cell\ntine.col-widths:: 0=120\nBody", [node("k", "Child", "c1")]);
+  it("with a hidden sheet setting on the cell, the caret ends at the cell's visible text and the setting is untouched", async () => {
+    const setting = prop(format, "tine.col-widths", "0=120");
+    const root = load(format, `Cell\n${setting}`, "");
     await press(root, key);
-    // The merge re-places the hidden rows as every outline merge does (kernel `join`).
-    expect(doc.byId.c1.raw).toBe("Cell\nBodyChild\ntine.col-widths:: 0=120");
-    expectJoinedInCell(root, "Cell\nBodyChild", 9);
+    expect(doc.byId.k).toBeUndefined();
+    expect(doc.byId.c1.raw).toBe(`Cell\n${setting}`);
+    expectInCell(root, "Cell", 4);
   });
 
-  it("a metadata-only first child carrying a sheet setting is not joined and shows nothing", async () => {
-    const root = load("md", "Cell", [node("k", "tine.col-widths:: 0=50", "c1")]);
+  it("one Undo brings the empty child back", async () => {
+    const root = load(format, "Cell", "", { later: true });
+    await press(root, key);
+    expect(doc.byId.c1.children).toEqual(["later"]);
+    undo();
+    await tick();
+    expect(doc.byId.c1.children).toEqual(["k", "later"]);
+    expect(doc.byId.k.raw).toBe("");
+    expect(doc.byId.c1.raw).toBe("Cell");
+  });
+});
+
+/** Inputs whose first child is not empty: [label, format, cell raw, first child raw]. */
+const refused: [string, Format, string, string][] = [
+  ["hidden tine.col-widths on the cell", "md", "Cell\ntine.col-widths:: 0=120", "Child"],
+  ["hidden tine.col-widths on the cell", "org", "Cell\n:PROPERTIES:\n:tine.col-widths: 0=120\n:END:", "Child"],
+  ["owner:: Alice on the cell", "md", "Cell\nowner:: Alice", "Child"],
+  ["a child `:: 0=20`", "md", "Cell", ":: 0=20"],
+  ["a tine.view child", "md", "Cell", "Hosted\ntine.view:: table"],
+  ["a tine.view child", "org", "Cell", "Hosted\n:PROPERTIES:\n:tine.view: board\n:END:"],
+  ["a drawer-only child", "org", "Cell", ":PROPERTIES:\n:owner: Alice\n:END:"],
+  ["a configured-hidden key", "md", "Cell", "secret:: x"],
+  ["a calculator child", "md", "Cell", "```calc\n1+1\n```"],
+  ["a calculator child after a hidden property", "md", "Cell", "tine.col-widths:: 0=20\n```calc\n1+1\n```"],
+  ["a calculator cell", "md", "```calc\n1+1\n```", "Child"],
+  ["a comment child", "md", "Cell", "Note\nls-type:: annotation"],
+  ["seam property tine.view + `:: grid`", "md", "Cell\ntine.view", ":: grid"],
+  ["seam property tine.col-widths + `:: 0=20`", "md", "Cell\ntine.col-widths", ":: 0=20"],
+  ["Org drawer seam", "org", "Cell\n:PROPER", "TIES:\n:owner: Alice\n:END:"],
+  ["a LOGBOOK child", "org", "Cell", ":LOGBOOK:\nCLOCK: [2026-11-27 Fri 10:00]--[2026-11-27 Fri 11:00] =>  1:00\n:END:"],
+  ["a LOGBOOK child", "md", "Cell", ":LOGBOOK:\nCLOCK: [2026-11-27 Fri 10:00]--[2026-11-27 Fri 11:00] =>  1:00\n:END:"],
+  ["a CLOSED child", "org", "Cell", "CLOSED: [2026-11-27 Fri]"],
+  ["a SCHEDULED child", "md", "Cell", "SCHEDULED: <2026-11-27 Fri>"],
+  ["a DEADLINE child", "org", "Cell", "DEADLINE: <2026-11-27 Fri>"],
+  ["a TODO child", "md", "Cell", "TODO Child"],
+  ["a heading child", "md", "Cell", "## Child"],
+  ["#+BEGIN_ + QUOTE", "org", "#+BEGIN_", "QUOTE"],
+  ["#+BEGIN_ + QUOTE", "md", "#+BEGIN_", "QUOTE"],
+  ["an HTML comment seam", "md", "<!-", "-Child-->"],
+  ["#+CAP + TION", "org", "#+CAP", "TION: Child"],
+  ["#one + two", "md", "#one", "two"],
+  ["an Org tag on the cell", "org", "Cell :tag:", "Child"],
+  ["> + >", "org", ">", ">"],
+  ["Cell + Child", "md", "Cell", "Child"],
+  ["Cell + Child", "org", "Cell", "Child"],
+  ["a child with trailing spaces", "md", "Cell", "Child  "],
+  ["a hidden collapsed:: child", "md", "Cell", "collapsed:: true"],
+  ["a hidden id:: child", "md", "Cell", "id:: 6566c5d3-1b2c-4d5e-8f90-123456789abc"],
+  ["a hidden tine.view:: grid child", "md", "Cell", "tine.view:: grid"],
+  ["a hidden id child", "org", "Cell", ":PROPERTIES:\n:id: 6566c5d3-1b2c-4d5e-8f90-123456789abc\n:END:"],
+];
+
+describe.each(keys)("GH874 %s refuses a first child that is not empty", (key) => {
+  it.each(refused)("%s (%s): nothing changes and nothing is queued", async (_, format, cellRaw, kRaw) => {
+    const root = load(format, cellRaw, kRaw);
     const before = snapshot();
     await press(root, key);
     expect(snapshot()).toBe(before);
-    expect(editor(root).value()).not.toContain("tine.");
+    expect(isDirty("Sheet")).toBe(false);
+    expect(root.querySelector('.sheet-cell[data-row="0"][data-col="0"]')!.contains(editor(root).element)).toBe(true);
   });
 
-  it("a metadata-only first child with only built-in hidden properties joins as an empty block", async () => {
-    const root = load("md", "Cell", [node("k", "background-color:: red", "c1")]);
+  it.each(formats)("an empty child with children (%s)", async (format) => {
+    const root = load(format, "Cell", "", { kChildren: true });
+    const before = snapshot();
     await press(root, key);
-    expect(doc.byId.k).toBeUndefined();
-    expect(doc.byId.c1.raw).toBe("Cell");
-    expectJoinedInCell(root, "Cell", 4);
+    expect(snapshot()).toBe(before);
+    expect(isDirty("Sheet")).toBe(false);
   });
-
-  it.each([["grid", "md"], ["table", "md"], ["board", "md"], ["grid", "org"], ["table", "org"], ["board", "org"]] as const)(
-    "a hosted %s first in the cell is never joined (%s)", async (view, format) => {
-      const root = load(format, "Cell", [
-        node("hosted", `Hosted\n${prop(format, "tine.view", view)}`, "c1", ["hr"]),
-        node("sib", "Sibling", "c1"),
-      ], [node("hr", view === "grid" ? "" : "Row", "hosted", view === "grid" ? ["hc"] : []), ...(view === "grid" ? [node("hc", "Inner", "hr")] : [])]);
-      const before = snapshot();
-      if (key === "Delete") {
-        keydown(await editCellEnd(root), "Delete");
-      } else {
-        // The hosted sheet's own title, edited at its start.
-        const ed = await editCellEnd(root);
-        keydown(ed, "ArrowDown");
-        await tick();
-        expect(editingId()).toBe("hosted");
-        editor(root).select(0, 0);
-        keydown(editor(root), "Backspace");
-      }
-      await tick();
-      expect(snapshot()).toBe(before);
-    });
 });
 
-describe("GH874 cell join: a folded cell", () => {
-  it.each(["md", "org"] as const)("Delete at the end of a folded cell's text leaves its hidden child alone (%s)", async (format) => {
-    const root = load(format, `Cell\n${prop(format, "collapsed", "true")}`, [node("k", "Hidden child", "c1")]);
+describe("GH874 Delete on a folded cell", () => {
+  it.each(formats)("leaves its hidden empty child alone (%s)", async (format) => {
+    const root = load(format, `Cell\n${prop(format, "collapsed", "true")}`, "");
     setDoc("byId", "c1", "collapsed", true);
     const before = snapshot();
     keydown(await editCellEnd(root), "Delete");
     await tick();
     expect(snapshot()).toBe(before);
+    expect(isDirty("Sheet")).toBe(false);
     expect(editingId()).toBe("c1");
   });
 });
 
-describe("GH874 cell join: Undo", () => {
-  it.each(keys)("one Undo after %s restores the child, with the caret in the cell", async (key) => {
-    const root = load("md", "Cell", [node("k", "", "c1")]);
-    await press(root, key);
-    expect(doc.byId.k).toBeUndefined();
-    expect(doc.byId.c1.raw).toBe("Cell");
-    undo();
+describe("GH874 controls: develop's answers elsewhere in the cell", () => {
+  it.each(formats)("Backspace at the cell text's start does nothing (%s)", async (format) => {
+    const root = load(format, "Cell", "");
+    const before = snapshot();
+    const ed = await editCellEnd(root);
+    ed.select(0, 0);
+    keydown(ed, "Backspace");
     await tick();
-    expect(doc.byId.c1.children).toEqual(["k"]);
-    expect(doc.byId.k.raw).toBe("");
-    expect(editingId()).toBe(key === "Delete" ? "c1" : "k");
-    expect(editingOwner()).toMatch(/^sheet:/);
-    expect(root.querySelector('.sheet-cell[data-row="0"][data-col="0"]')!.contains(editor(root).element)).toBe(true);
-    expect(editor(root).selection()).toEqual(key === "Delete" ? [4, 4] : [0, 0]);
-  });
-});
-
-describe("GH874 cell join: positive controls", () => {
-  it("Delete joins a first child with its own children; one Undo restores it", async () => {
-    const root = load("md", "Cell", [node("k", "Child", "c1", ["g"]), node("later", "Later", "c1")], [node("g", "Grand", "k")]);
-    await press(root, "Delete");
-    expect(doc.byId.c1.raw).toBe("CellChild");
-    expect(doc.byId.c1.children).toEqual(["later", "g"]);
-    expectJoinedInCell(root, "CellChild", 4);
-    undo();
-    await tick();
-    expect(doc.byId.c1.raw).toBe("Cell");
-    expect(doc.byId.c1.children).toEqual(["k", "later"]);
-    expect(doc.byId.k.children).toEqual(["g"]);
+    expect(snapshot()).toBe(before);
+    expect(isDirty("Sheet")).toBe(false);
   });
 
-  it("Backspace at the cell text's start and at a later nested block's start keep develop's answers", async () => {
-    const root = load("md", "Cell", [node("k", "Child", "c1"), node("later", "Later", "c1")]);
-    setCellSel({ gridId: "grid", row: 0, col: 0 });
-    keydown(window, "Enter");
-    await tick();
-    editor(root).select(0, 0);
-    keydown(editor(root), "Backspace");
-    await tick();
-    expect(doc.byId.c1.raw).toBe("Cell");
-    expect(doc.byId.c1.children).toEqual(["k", "later"]);
-    // A later nested block merges with the block before it, as in the outline.
-    editor(root).select(4, 4);
-    keydown(editor(root), "ArrowDown");
-    await tick();
-    editor(root).select(5, 5);
-    keydown(editor(root), "ArrowDown");
+  it.each(formats)("Backspace at a later nested block's start merges it into the block before (%s)", async (format) => {
+    const root = load(format, "Cell", "Child", { later: true });
+    const ed = await editFirstChildStart(root);
+    ed.select(5, 5);
+    keydown(ed, "ArrowDown");
     await tick();
     expect(editingId()).toBe("later");
     editor(root).select(0, 0);
     keydown(editor(root), "Backspace");
+    await tick();
+    expect(doc.byId.k.raw).toBe("ChildLater");
+    expect(doc.byId.c1.children).toEqual(["k"]);
+    expect(doc.byId.c1.raw).toBe("Cell");
+  });
+
+  it.each(formats)("Backspace at an empty later nested block's start merges it away, as in the outline (%s)", async (format) => {
+    const root = load(format, "Cell", "Child", { later: true });
+    setDoc("byId", "later", "raw", "");
+    setDoc("byId", "c1", "children", ["k", "later", "last"]);
+    setDoc("byId", "last", node("last", "Last", "c1"));
+    const ed = await editFirstChildStart(root);
+    ed.select(5, 5);
+    keydown(ed, "ArrowDown");
+    await tick();
+    expect(editingId()).toBe("later");
+    keydown(editor(root), "Backspace");
+    await tick();
+    expect(doc.byId.later).toBeUndefined();
+    expect(doc.byId.k.raw).toBe("Child");
+    expect(doc.byId.c1.children).toEqual(["k", "last"]);
+  });
+
+  it.each(formats)("Delete at the end of a nested block merges the next one into it (%s)", async (format) => {
+    const root = load(format, "Cell", "Child", { later: true });
+    const ed = await editFirstChildStart(root);
+    ed.select(5, 5);
+    keydown(ed, "Delete");
     await tick();
     expect(doc.byId.k.raw).toBe("ChildLater");
     expect(doc.byId.c1.raw).toBe("Cell");

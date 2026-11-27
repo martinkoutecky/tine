@@ -33,15 +33,11 @@ spans; links, chips, media and other controls retain their own pointer actions.
 - **Edit structure:** Enter on cell text creates its first child and transfers
   the trailing text; Alt+Enter is an alias. Tab/Shift+Tab on cell text edit the
   next/previous cell, stopping at the grid ends. Nested blocks use outline
-  structure commands and multiline paste, bounded by the cell. Backspace at
-  the first child's start and Delete at the end of the cell text join that
-  child onto the cell, as an outline merge: its text follows the cell's
-  visible text (hidden cell properties stay where they are) and its children
-  follow. The joined block is the one caret navigation enters after the cell
-  text; a hosted sheet, a block carrying sheet settings, a calculation, a
-  folded cell's hidden child or a sub-grid's cell is never joined, and the key
-  is then a no-op. The cell block cannot move, indent, split into a sibling or
-  merge away; Backspace at the start of its text is a no-op.
+  structure commands and multiline paste, bounded by the cell. The cell block
+  cannot move, indent, split into a sibling or merge. Backspace in an empty
+  first child (whitespace-only, no children), or Delete at the end of the cell
+  text before one, removes that child; with any other first child both keys
+  are a no-op, so non-empty blocks are not merged.
 - **Keyboard exit:** `Esc` keeps text and enters Cell Selection on the edited
   cell. The existing selection ladder continues: range → cell, nested grid →
   enclosing cell, cell → outline-selected grid. Enter/F2/typing from Cell
