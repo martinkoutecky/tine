@@ -366,8 +366,10 @@ export function linkTarget(name: string): LinkDestination {
   return linkTargetIn(nameAnswer(pageIdentityKey(name)), name, nameAnswer);
 }
 
-/** The inventory's typed namespace identity, or its immediate parent.
- *  Prefix spelling is only a fallback before inventory/for legacy rows. */
+/** The inventory's typed namespace identity, or with `parent` its namespace
+ *  tree parent: the store's one answer (`InventoryEntry::parent`), `null` when
+ *  it gives none or does not list the name. Nothing is derived from the
+ *  name's prefix here. */
 export function namespaceTarget(name: string, parent = false, kind?: PageKind): LinkDestination | null {
   ensureInstalled();
   const key = pageIdentityKey(name);
@@ -376,11 +378,7 @@ export function namespaceTarget(name: string, parent = false, kind?: PageKind): 
     : answer?.pages.get(key) ?? answer?.journals.get(key) ?? journalRowIn(answer, name, nameAnswer);
   if (kind && (!entry || entry.namespace_excluded)) return null;
   if (!parent) return { name: entry?.name ?? name, kind: entry?.is_journal ? "journal" : "page" };
-  if (entry?.parent) return entry.parent;
-  const parts = name.split("/");
-  parts.pop();
-  while (parts.length && !parts.join("/")) parts.pop();
-  return parts.length ? { name: parts.join("/"), kind: "page" } : null;
+  return entry?.parent ?? null;
 }
 
 /** Typed entity navigation preserves an absent day's safe opening spelling. */

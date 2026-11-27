@@ -171,12 +171,14 @@ fn image(entries: &[InventoryEntry]) -> BTreeMap<(bool, String, String), String>
                 // `link` is part of the answer the window holds: a delta that
                 // left it stale would route a link to the wrong page; so is
                 // why a fileless entry exists (a namespace parent), and
-                // whether an empty file yields its name (EMPTY-ALIAS).
+                // whether an empty file yields its name (EMPTY-ALIAS), and its
+                // namespace tree parent (absence is an answer).
                 format!(
-                    "{:?} {:?} {:?}{}{}",
+                    "{:?} {:?} {:?} up {:?}{}{}",
                     entry.target,
                     entry.day,
                     entry.link,
+                    entry.parent,
                     if entry.namespace_parent {
                         " parent"
                     } else {
@@ -1704,5 +1706,256 @@ fn bracket_completion_offers_namespace_parents() {
         ),
         1
     );
+    store.close();
+}
+
+/// Each listed row's namespace tree parent, keyed `(journal?, name)`:
+/// `Some((journal?, name))` or `None`, the inventory's one answer
+///.
+fn tree_parents(store: &Store) -> BTreeMap<(bool, String), Option<(bool, String)>> {
+    store
+        .whole_graph()
+        .unwrap()
+        .inventory(InventoryScope::All)
+        .0
+        .iter()
+        .map(|entry| {
+            (
+                (entry.is_journal, entry.name.clone()),
+                entry
+                    .parent
+                    .as_ref()
+                    .map(|parent| (parent.is_journal, parent.name.clone())),
+            )
+        })
+        .collect()
+}
+
+fn page(name: &str) -> Option<(bool, String)> {
+    Some((false, name.to_owned()))
+}
+
+/// a day is a namespace child only
+/// of a page whose displayed name has fewer `/`-separated parts, and every
+/// other typed edge obeys the same check. Each row: (case, config, files,
+/// expected parents of the named rows; an unlisted name is asserted absent).
+#[test]
+fn slash_day_parents_need_a_parent_with_fewer_parts() {
+    let _guard = crate::test_transactions::integration_lock();
+    type Expect<'a> = &'a [((bool, &'a str), Option<Option<(bool, String)>>)];
+    let cases: &[(&str, &str, &[(&str, &str)], Expect)] = &[
+        (
+            // Round 5: each title's ISO prefix names the other day. Neither
+            // accepts the other (equal depth); both stay listed.
+            "swapped slash",
+            "yyyy-dd-MM/0",
+            &[
+                ("journals/2026_11_02.md", "- notes\n"),
+                ("journals/2026_02_11.md", "- notes\n"),
+            ],
+            &[
+                ((true, "2026-02-11/0"), Some(None)),
+                ((true, "2026-11-02/0"), Some(None)),
+                ((false, "2026-02-11"), None),
+                ((false, "2026-11-02"), None),
+            ],
+        ),
+        (
+            // The prefix names the same day: never its own parent.
+            "same-day prefix",
+            "yyyy-MM-dd/0",
+            &[("journals/2026_11_02.md", "- notes\n")],
+            &[((true, "2026-11-02/0"), Some(None))],
+        ),
+        (
+            // The day's ordinary prefix page is accepted; that page's ISO
+            // prefix names the deeper day again and is refused.
+            "mixed cycle",
+            "yyyy-MM-dd/0/0",
+            &[("journals/2026_11_02.md", "- notes\n")],
+            &[
+                ((true, "2026-11-02/0/0"), Some(page("2026-11-02/0"))),
+                ((false, "2026-11-02/0"), Some(None)),
+            ],
+        ),
+        (
+            "ys3",
+            "dd/MM/yyyy",
+            &[
+                ("journals/2026_11_02.md", "- 2026\n"),
+                ("journals/2027_11_02.md", "title:: 2026-11-02\n- target\n"),
+                ("pages/physical.md", "title:: 2026-11-02\n- target\n"),
+                (
+                    "pages/Notes.md",
+                    "- year-less [[11-02]]\n- alternate 2027 [[02/11/2027]]\n- default 2026 [[Nov 2nd, 2026]]\n",
+                ),
+            ],
+            &[
+                ((true, "02/11/2026"), Some(page("02/11"))),
+                ((true, "02/11/2027"), Some(page("02/11"))),
+                ((false, "02/11"), Some(page("02"))),
+            ],
+        ),
+        (
+            // Nonblank title-derived seed: the journal supplies its month
+            // and year without any reference; a blank journal lists its own
+            // day but no month, so its candidate parent is not a listed row.
+            "nonblank seed",
+            "yyyy/MM/dd",
+            &[
+                ("journals/2026_11_02.md", "- notes\n"),
+                ("journals/2026_12_01.md", ""),
+            ],
+            &[
+                ((true, "2026/11/02"), Some(page("2026/11"))),
+                ((false, "2026/11"), Some(page("2026"))),
+                ((false, "2026"), Some(None)),
+                ((true, "2026/12/01"), Some(page("2026/12"))),
+                ((false, "2026/12"), None),
+            ],
+        ),
+        (
+            // Fileless mentioned day and an ordinary name beside it.
+            "fileless mentioned day",
+            "yyyy/MM/dd",
+            &[("pages/R.md", "- [[2026/11/02]] [[2026/11/Notes]]\n")],
+            &[
+                ((true, "2026/11/02"), Some(page("2026/11"))),
+                ((false, "2026/11/Notes"), Some(page("2026/11"))),
+                ((false, "2026/11"), Some(page("2026"))),
+            ],
+        ),
+    ];
+    for (case, title, files, expect) in cases {
+        let config = format!("{{:journal/page-title-format \"{title}\"}}\n");
+        let mut all = vec![("logseq/config.edn", config.as_str())];
+        all.extend_from_slice(files);
+        let (_dir, store) = fixture(&all);
+        let parents = tree_parents(&store);
+        for ((journal, name), want) in *expect {
+            assert_eq!(
+                parents.get(&(*journal, (*name).to_owned())),
+                want.as_ref(),
+                "{case}: parent of {name:?} in {parents:#?}"
+            );
+        }
+        store.close();
+    }
+}
+
+/// ys5 (a pages file claims a day by `title::`; its displayed title supplies
+/// the namespace), an alias-only month (its row is an alias, so the day's
+/// candidate parent is not a namespace page), and a populated month whose
+/// file goes away: the day supplies the month again as a fileless page.
+#[test]
+fn slash_day_parents_follow_the_displayed_title_and_month_rename() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"dd/MM/yyyy\" :journal/file-name-format \"yyyy/MM/dd\" :file/name-format :legacy}\n",
+        ),
+        ("pages/2026.md", "- notes\n"),
+        ("pages/dayphysical.md", "title:: 2026/10/26\n- day\n"),
+        ("pages/R.md", "- [[2026/10/26]] [[2026/x]]\n"),
+    ]);
+    let parents = tree_parents(&store);
+    assert_eq!(parents[&(true, "26/10/2026".to_owned())], page("26/10"));
+    assert_eq!(parents[&(false, "26/10".to_owned())], page("26"));
+    assert_eq!(parents[&(false, "2026/x".to_owned())], page("2026"));
+    store.close();
+
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- notes\n"),
+        ("pages/Owner.md", "alias:: 2026/11\n\n- owner\n"),
+    ]);
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let month: Vec<_> = inventory
+        .0
+        .iter()
+        .filter(|entry| entry.name == "2026/11")
+        .collect();
+    assert!(
+        month.len() == 1 && matches!(month[0].target, crate::Resolved::Alias { .. }),
+        "the month is only an alias: {month:?}"
+    );
+    drop(view);
+    assert_eq!(
+        tree_parents(&store)[&(true, "2026/11/02".to_owned())],
+        page("2026/11")
+    );
+    store.close();
+
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- notes\n"),
+        ("pages/Month.md", "title:: 2026/11\n\n- November review\n"),
+    ]);
+    assert_eq!(
+        tree_parents(&store)[&(true, "2026/11/02".to_owned())],
+        page("2026/11")
+    );
+    let month = PageId::from("pages/Month.md");
+    let mut tx = store.page_plan(Some(EditKind::DeletePage));
+    tx.trash(&month.file(), store.page(&month).unwrap().rev, crate::TrashIf::Any);
+    apply_plan(&store, tx);
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let month: Vec<_> = inventory
+        .0
+        .iter()
+        .filter(|entry| entry.name == "2026/11")
+        .collect();
+    assert!(
+        month.len() == 1
+            && month[0].namespace_parent
+            && matches!(month[0].target, crate::Resolved::Absent { .. }),
+        "the day supplies the month again: {month:?}"
+    );
+    drop(view);
+    let parents = tree_parents(&store);
+    assert_eq!(parents[&(true, "2026/11/02".to_owned())], page("2026/11"));
+    assert_eq!(parents[&(false, "2026/11".to_owned())], page("2026"));
+    store.close();
+}
+
+/// The publication delta carries the same tree parent as a fresh read for a
+/// fileless day whose mention is added to and removed from a resident graph
+/// (`assert_patch` compares every row's parent), and a blank journal's
+/// month appears and goes as a reference-only page while the day keeps its
+/// one answer.
+#[test]
+fn fileless_slash_day_parent_travels_in_the_delta() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("pages/R.md", "- start\n"),
+        ("journals/2026_12_01.md", ""),
+    ]);
+    assert_patch(&store, "pages/R.md", "[[2026/11/02]]");
+    assert_eq!(
+        tree_parents(&store)[&(true, "2026/11/02".to_owned())],
+        page("2026/11")
+    );
+    assert_patch(&store, "pages/R.md", "[[2026/11/02]] [[2026/11/Notes]]");
+    assert_patch(&store, "pages/R.md", "[[2026/11/Notes]]");
+    assert_patch(&store, "pages/R.md", "[[2026/12]]");
+    assert_eq!(
+        tree_parents(&store)[&(true, "2026/12/01".to_owned())],
+        page("2026/12")
+    );
+    assert_patch(&store, "pages/R.md", "start");
+    assert!(!tree_parents(&store).contains_key(&(true, "2026/11/02".to_owned())));
     store.close();
 }

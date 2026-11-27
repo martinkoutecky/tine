@@ -60,7 +60,8 @@ pub struct PageInventoryEntryWire {
     /// prefixes.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub namespace_parent: bool,
-    /// Canonical typed immediate parent, independently of alias navigation.
+    /// The namespace tree parent (`InventoryEntry::parent`). Omitted means
+    /// the row has none: the views derive no parent from its prefix.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<LinkWire>,
     /// Retired live flag (always false). Frozen published v1 rows retain

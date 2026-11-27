@@ -10,7 +10,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
-import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, namespaceTarget } from "../pageIndex";
+import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, linkTarget, namespaceTarget } from "../pageIndex";
 import { isPublishedExport } from "../publishedBackend";
 import { EmojiText } from "../render/emoji";
 import { PageReferenceLabel } from "../render/PageReferenceLabel";
@@ -55,7 +55,7 @@ export function NamespaceCrumb(props: { name: string }): JSX.Element {
           {(_, i) => {
             const prefix = () => parts().slice(0, i() + 1).join("/");
             const target = () => isPublishedExport() ? { name: prefix(), kind: "page" as const }
-              : namespaceTarget(parts().slice(0, i() + 2).join("/"), true) ?? { name: prefix(), kind: "page" as const };
+              : namespaceTarget(parts().slice(0, i() + 2).join("/"), true) ?? linkTarget(prefix());
             return (
               <>
                 <span class="ns-crumb-item" {...nsLink(target().name, undefined, false, target().kind)}>
@@ -81,12 +81,14 @@ export interface NsNode {
 }
 
 /** The namespace tree of the inventory's names (CM step 2 batch 10, model rule 1):
- *  every node is a listed page, nested under its immediate nonempty `/`-prefix
- *  when that page exists. Rust excludes alias-only names from this universe.
+ *  every node is a listed page, nested under the store's tree parent
+ *  (`InventoryEntry::parent`) when that page is listed. Rust excludes
+ *  alias-only names from this universe.
  *  The backend lists every namespace parent
  *  (`InventoryEntry.namespace_parent`), so no level is synthesized here; a name
- *  whose prefixes are not listed (only an empty-key prefix, as in `/x`) is a top
- *  node. `seg` is the part of the name below its parent. Names that are not
+ *  without a listed parent is a top node, shown when something lies below it or
+ *  when it is a day whose title has a nonempty prefix. `seg` is
+ *  the part of the name below its parent. Names that are not
  *  namespace names (no `/`, or the store's `not_namespace`: `./x`, a URL; model
  *  round 10, S15) and have no listed name below them have no node.
  *  O(names x length) when the list holds each name's immediate prefix, as the
@@ -123,32 +125,37 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
     const rawKey = known?.[at] ?? pageIdentityKey(name);
     if (!wanted.has(`page:${rawKey}`) && !wanted.has(`journal:${rawKey}`)) return;
     const targets = legacy ? [identity(name)] : [namespaceTarget(name, false, "page"), namespaceTarget(name, false, "journal")];
-    // Names supplied before the inventory arrives still have the plain-page fallback.
-    if (!targets.some(Boolean)) targets.push(identity(name));
     for (const target of targets) {
       if (!target) continue;
       const key = typedKey(target.name, target.kind);
       if (wanted.has(key) && !nodes.has(key) && isNamespacePage(name, rawKey)) nodes.set(key, { seg: name, full: name, children: [], ...(target.kind === "journal" ? { kind: target.kind } : {}) });
     }
   });
-  // One key call per immediate parent. Missing alias-only intermediates do
-  // not attach a child to a more distant ancestor (model round 11, C12).
+  // The live tree attaches each node below the store's one parent answer
+  // (`namespaceTarget(_, true)`) when that page is a node; an absent answer
+  // is final, so no node gains a more distant ancestor (model round 11, C12;
+  // A day left without a parent stays a top node when its
+  // title has a nonempty prefix, even with nothing below it.
   const roots: NsNode[] = [];
   const placed = new Set<NsNode>();
+  const kept = new Set<NsNode>();
   for (const [node, segs] of slashed) {
     let parent: NsNode | undefined;
+    // The label is the part below the immediate nonempty prefix.
     let depth = segs.length - 1;
-    // r11 C12: no edge across an alias-only immediate parent. Empty
-    // prefixes are skipped, as the model's shared nsParent answers them.
     while (depth > 0 && !segs.slice(0, depth).join("/")) depth--;
-    const target = legacy ? { name: segs.slice(0, depth).join("/"), kind: "page" as const } : namespaceTarget(node.full, true);
-    const candidate = target ? nodes.get(typedKey(target.name, target.kind)) : undefined;
-    if (depth > 0 && candidate !== node) parent = candidate;
-    if (legacy && !parent) {
-      for (depth--; depth > 0; depth--) {
-        const ancestor = nodes.get(typedKey(segs.slice(0, depth).join("/")));
-        if (ancestor && ancestor !== node) { parent = ancestor; break; }
+    if (legacy) {
+      const candidate = nodes.get(typedKey(segs.slice(0, depth).join("/")));
+      if (depth > 0 && candidate !== node) parent = candidate;
+      if (!parent) {
+        for (depth--; depth > 0; depth--) {
+          const ancestor = nodes.get(typedKey(segs.slice(0, depth).join("/")));
+          if (ancestor && ancestor !== node) { parent = ancestor; break; }
+        }
       }
+    } else {
+      const target = namespaceTarget(node.full, true);
+      parent = target ? nodes.get(typedKey(target.name, target.kind)) : undefined;
     }
     node.seg = parent ? segs.slice(depth).join("/") : node.full;
     if (parent) {
@@ -159,6 +166,7 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
       }
     } else {
       roots.push(node);
+      if (node.kind === "journal" && depth > 0) kept.add(node);
     }
   }
   const pending = [roots];
@@ -167,7 +175,7 @@ export function buildNamespaceTree(names: readonly string[]): NsNode[] {
     level.sort((a, b) => a.seg.localeCompare(b.seg));
     for (const node of level) if (node.children.length) pending.push(node.children);
   }
-  return legacy ? roots : roots.filter((node) => node.children.length > 0);
+  return legacy ? roots : roots.filter((node) => node.children.length > 0 || kept.has(node));
 }
 
 const treeOfNames = new WeakMap<readonly string[], NsNode[]>();
@@ -415,7 +423,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                         const parent = namespaceTarget(props.name, true);
                         return (i() < segs.length - 1 ? namespaceTarget(segs.slice(0, i() + 2).join("/"), true)
                           : parent?.name === full() ? parent : namespaceTarget(full()))
-                          ?? { name: full(), kind: "page" as const };
+                          ?? linkTarget(full());
                       };
                       return (
                         <>

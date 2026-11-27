@@ -32,8 +32,9 @@ pub struct InventoryEntry {
     /// its target is the absent page its name would create. Views that show
     /// a namespace tree read it instead of re-deriving prefixes.
     pub namespace_parent: bool,
-    /// Canonical typed immediate namespace prefix. It is an entity target,
-    /// never an alias opening destination; consumers attach only listed pages.
+    /// The namespace tree parent ([`tree_parent`]): an entity target, never
+    /// an alias opening destination. `None` means no parent, never "derive
+    /// one from the prefix"; consumers attach only below listed pages.
     pub parent: Option<LinkTarget>,
     /// Retired live answer, always false (R13-C4). Frozen published v1 rows
     /// can still carry their historical answer.
@@ -167,8 +168,46 @@ pub(crate) fn link_target_in(
     })
 }
 
-/// `entry` with its `link` set when the link opens something other than the
-/// entry itself. Real files have no content-dependent redirect.
+/// The live namespace tree's one parent answer for the row `name` (CM Round
+/// 5b): the typed page its immediate nonempty prefix names
+/// before alias opening (the prefix's real owner, else the day or ordinary
+/// page the prefix spells), accepted only when that page's displayed name has
+/// fewer `/`-separated parts than `name`. Strict descent makes every chain of
+/// parents end. `None` is final: consumers add no ancestor of their own, and
+/// attach a row only below a listed page. Depends only on the name, the real
+/// owners and the journal format, so a delta (which changes neither) leaves
+/// every physical row's answer current. O(1) indexed lookups.
+fn tree_parent(
+    graph: &ReadSnapshot,
+    format: &JournalFormat,
+    name: &str,
+    is_journal: bool,
+) -> Option<LinkTarget> {
+    let (prefix, key) = crate::model::namespace_parents::parent_prefixes(name).last()?;
+    let target = graph
+        .real_page_owners()
+        .opening_entry(&key)
+        .map(|parent| LinkTarget {
+            name: parent.name.clone(),
+            is_journal: parent.kind == PageKind::Journal,
+        })
+        .unwrap_or_else(|| {
+            let fallback = crate::model::fileless_names::FilelessName::new(format, prefix);
+            LinkTarget {
+                name: fallback.name,
+                is_journal: fallback.day.is_some(),
+            }
+        });
+    let parts = |name: &str| name.split('/').count();
+    // `a/`'s prefix `a` folds to the row's own key: still no edge.
+    let itself = target.is_journal == is_journal
+        && tine_core::refs::page_key(&target.name) == tine_core::refs::page_key(name);
+    (!itself && parts(&target.name) < parts(name)).then_some(target)
+}
+
+/// `entry` with its tree `parent` ([`tree_parent`]) and its `link` set when
+/// the link opens something other than the entry itself. Real files have no
+/// content-dependent redirect.
 fn with_link(
     claimants: &SharedMap<(bool, String), Vec<PageEntry>>,
     graph: &ReadSnapshot,
@@ -176,25 +215,7 @@ fn with_link(
     mut entry: InventoryEntry,
     declared: Option<bool>,
 ) -> InventoryEntry {
-    if let Some((prefix, key)) =
-        crate::model::namespace_parents::parent_prefixes(&entry.name).last()
-    {
-        let owners = graph.real_page_owners();
-        let target = owners
-            .opening_entry(&key)
-            .map(|parent| LinkTarget {
-                name: parent.name.clone(),
-                is_journal: parent.kind == PageKind::Journal,
-            })
-            .unwrap_or_else(|| {
-                let fallback = crate::model::fileless_names::FilelessName::new(format, prefix);
-                LinkTarget {
-                    name: fallback.name,
-                    is_journal: fallback.day.is_some(),
-                }
-            });
-        entry.parent = (target.is_journal || target.name != prefix).then_some(target);
-    }
+    entry.parent = tree_parent(graph, format, &entry.name, entry.is_journal);
     if matches!(entry.target, Resolved::Existing { .. })
         && !entry.name.bytes().any(|byte| byte.is_ascii_digit())
     {
@@ -896,7 +917,7 @@ impl Snapshot {
                 return None;
             }
             return self.graph.fileless_page_for_day(day).map(|answer| {
-                fileless_entry(
+                self.linked(fileless_entry(
                     answer,
                     Resolved::Absent {
                         id: proposed_journal_id(
@@ -904,7 +925,7 @@ impl Snapshot {
                             self.journal_format.file_stem(day),
                         ),
                     },
-                )
+                ))
             });
         }
         // A key no reference names may still be a namespace parent.

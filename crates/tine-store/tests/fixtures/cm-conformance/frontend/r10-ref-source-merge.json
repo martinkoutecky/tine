@@ -74,6 +74,10 @@
       "is_journal": false,
       "key": "n/y",
       "name": "n/y",
+      "parent": {
+        "kind": "page",
+        "name": "n"
+      },
       "target": {
         "id": "pages/n%2Fy.md",
         "kind": "existing",

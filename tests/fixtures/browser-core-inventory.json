@@ -131,6 +131,10 @@
     "kind": "existing",
     "id": "pages/Team%2FChild.md",
     "others": []
+   },
+   "parent": {
+    "name": "Team",
+    "kind": "page"
    }
   }
  ],

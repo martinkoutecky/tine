@@ -9,6 +9,8 @@ const backendMock = vi.hoisted(() => {
     is_journal: false,
     day: null,
     target: { kind: "absent" as const, id: `pages/${name.replaceAll("/", "___")}.md` },
+    // The store's tree parent: the immediate prefix page.
+    parent: { name: name.slice(0, name.lastIndexOf("/")), kind: "page" as const },
   });
   return {
     graphBindingGeneration: () => 0,
@@ -32,10 +34,10 @@ const backendMock = vi.hoisted(() => {
 
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
-import { NamespaceHierarchy, NamespaceMacro, buildNamespaceTree } from "./Namespace";
+import { NamespaceCrumb, NamespaceHierarchy, NamespaceMacro, buildNamespaceTree } from "./Namespace";
 import { createSignal } from "solid-js";
 import { resetReferenceSectionState } from "../referenceSectionState";
-import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import { allPageNames, namespaceTarget, patchPageIndex, refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { route } from "../router";
 import { setJournalFormats } from "../journal";
 import { setGraphMeta } from "../graphSession";
@@ -171,7 +173,7 @@ it("keeps same-title ordinary and virtual journal namespace parents distinct whe
     { key: "2026-10-23/child", name: "2026-10-23/child", is_journal: false, day: null,
       target: { kind: "absent", id: "pages/2026-10-23___child.md" }, parent: { name: canonical, kind: "journal" } },
     { key: `${canonical}/literal`, name: `${canonical}/literal`, is_journal: false, day: null,
-      target: { kind: "absent", id: `pages/${canonical}___literal.md` } },
+      target: { kind: "absent", id: `pages/${canonical}___literal.md` }, parent: { name: canonical, kind: "page" } },
   ];
   backendMock.pageInventory.mockResolvedValueOnce({ rev: "3", entries });
   resetPageIndex();
@@ -193,4 +195,76 @@ it("keeps same-title ordinary and virtual journal namespace parents distinct whe
     resetPageIndex();
     setJournalFormats("", "");
   }
+});
+
+// the store's `parent` is the tree's one answer.
+// A row without one has no parent (no prefix is derived here), and a day left
+// without a parent is a top node even with nothing below it.
+describe("slash days in the namespace tree", () => {
+  type Entry = PageInventory["entries"][number];
+  const journal = (name: string, day: number, extra: Partial<Entry> = {}): Entry => ({
+    key: name.toLowerCase(), name, is_journal: true, day,
+    target: { kind: "existing", id: `journals/${day}.md`, others: [] }, ...extra });
+  const ordinary = (name: string, extra: Partial<Entry> = {}): Entry => ({
+    key: name.toLowerCase(), name, is_journal: false, day: null,
+    target: { kind: "absent", id: `pages/${name.replaceAll("/", "___")}.md` }, ...extra });
+  async function hold(entries: Entry[], rev = "10") {
+    backendMock.pageInventory.mockResolvedValueOnce({ rev, entries });
+    resetPageIndex();
+    await refreshPageIndex();
+    return entries.map(entry => entry.name);
+  }
+  const shape = (names: string[]) => buildNamespaceTree(names)
+    .map(node => [node.full, node.kind ?? "page", node.children.map(child => child.seg)]);
+  afterEach(() => { resetPageIndex(); setJournalFormats("", ""); });
+
+  it("keeps both swapped-slash days and a same-day-prefix day as childless top nodes", async () => {
+    // yyyy-dd-MM/0: 2 Nov shows 2026-02-11/0 and 11 Feb 2026-11-02/0; the
+    // store accepts neither ISO prefix (equal depth), so neither row has one.
+    const names = await hold([journal("2026-02-11/0", 20261102), journal("2026-11-02/0", 20260211)]);
+    expect(namespaceTarget("2026-02-11/0", true)).toBeNull();
+    expect(shape(names)).toEqual([["2026-02-11/0", "journal", []], ["2026-11-02/0", "journal", []]]);
+    expect(shape(await hold([journal("2026-11-02/0", 20261102)]))).toEqual([["2026-11-02/0", "journal", []]]);
+  });
+
+  it("nests a day under its accepted ordinary prefix and not the reverse (mixed cycle)", async () => {
+    const names = await hold([
+      journal("2026-11-02/0/0", 20261102, { parent: { name: "2026-11-02/0", kind: "page" } }),
+      ordinary("2026-11-02/0", { namespace_parent: true }),
+    ]);
+    expect(shape(names)).toEqual([["2026-11-02/0", "page", ["0"]]]);
+  });
+
+  it("keeps a day whose month is only an alias as a top node, and lists no alias node", async () => {
+    const names = await hold([
+      journal("2026/11/02", 20261102, { parent: { name: "2026/11", kind: "page" } }),
+      { ...ordinary("2026/11", { namespace_excluded: true }), target: { kind: "alias", owners: ["pages/Owner.md"] } },
+      { ...ordinary("Owner"), target: { kind: "existing", id: "pages/Owner.md", others: [] } },
+    ]);
+    expect(shape(names)).toEqual([["2026/11/02", "journal", []]]);
+  });
+
+  it("drops an ordinary row without a parent and its crumb opens what the prefix links to", async () => {
+    setJournalFormats("yyyy-dd-MM/0", "yyyy_MM_dd");
+    const names = await hold([journal("2026-02-11/0", 20261102), ordinary("2026-11-02/notes")]);
+    expect(shape(names)).toEqual([["2026-02-11/0", "journal", []]]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <NamespaceCrumb name="2026-11-02/notes" />, root);
+    try {
+      root.querySelector<HTMLElement>(".ns-crumb-item")!.click();
+      expect(route()).toMatchObject({ kind: "page", name: "2026-02-11/0", pageKind: "journal" });
+    } finally { dispose(); }
+  });
+
+  it("attaches a blank day once a delta lists its month, and detaches it when the month goes", async () => {
+    const day = journal("2026/12/01", 20261201, { parent: { name: "2026/12", kind: "page" } });
+    await hold([day], "20");
+    const tree = () => shape(allPageNames());
+    expect(tree()).toEqual([["2026/12/01", "journal", []]]);
+    expect(patchPageIndex(21n, { keys: ["2026/12"], entries: [ordinary("2026/12")] })).not.toBeNull();
+    expect(tree()).toEqual([["2026/12", "page", ["01"]]]);
+    expect(patchPageIndex(22n, { keys: ["2026/12"], entries: [] })).not.toBeNull();
+    expect(tree()).toEqual([["2026/12/01", "journal", []]]);
+  });
 });

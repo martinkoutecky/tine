@@ -7,6 +7,7 @@ import { resetTabsToJournals } from "../router";
 import type { PaneRouter } from "../router";
 import { resetLeftSidebarSections, setLeftSidebarOpen } from "../ui";
 import type { PageInventoryEntry } from "../types";
+import { withOrdinaryParent } from "../namespaceInventory.test.support";
 import { Namespaces, NAMESPACES_ROW_HEIGHT } from "./Namespaces";
 
 // GH #335 (D-20261101-L5): the full Namespaces view. The user outcomes: a namespaced
@@ -15,13 +16,14 @@ import { Namespaces, NAMESPACES_ROW_HEIGHT } from "./Namespaces";
 // full path, a row opens its page by the ordinary link gestures, and none of it reads
 // the backend beyond the shared page inventory (and the windowed icon batch).
 
-const existing = (name: string): PageInventoryEntry => ({
+// Each row carries the tree parent the store answers.
+const existing = (name: string): PageInventoryEntry => withOrdinaryParent({
   key: name.toLowerCase(), name, is_journal: false, day: null,
   target: { kind: "existing", id: `pages/${name.replaceAll("/", "___")}.md`, others: [] },
 });
 // A namespace parent as the backend lists it (CM step 2 batch 10, model rule 1):
 // an absent entry that opens itself, flagged `namespace_parent`.
-const parent = (name: string): PageInventoryEntry => ({
+const parent = (name: string): PageInventoryEntry => withOrdinaryParent({
   key: name.toLowerCase(), name, is_journal: false, day: null, namespace_parent: true,
   target: { kind: "absent", id: `pages/${name.replaceAll("/", "___")}.md` },
 });
