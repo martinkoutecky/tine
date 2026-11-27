@@ -27,8 +27,10 @@
 .cm6-block-editor .cm-content { min-width: 0; }
 /* A pointer anywhere in a concealed construct reveals its source (cm6PreviewWidget.tsx), so the whole preview shows the
    text cursor: the view's own rules (a page ref's, tag's or block ref's hand, a link's, a copy button's) would promise a
-   navigation or an action that does not happen here. The code block's language button stays a real control. */
-.cm6-preview, .cm6-preview :not(button.code-language, button.code-language *) { cursor: text; }
+   navigation or an action that does not happen here. An element marked `data-own-mouse-press` takes a mouse press
+   before the reveal (the code block's language button; the media and table-column resize grips), so it keeps its own
+   cursor. The cursor answers only for the mouse: touch and pen still reveal at a grip. */
+.cm6-preview, .cm6-preview :not([data-own-mouse-press], [data-own-mouse-press] *) { cursor: text; }
 /* A concealed page reference is drawn by the read renderer, brackets included when the graph preference shows them
    (they were hidden here, which made the line 24px narrower than the view until the caret reached it). */
 .cm6-block-editor .code-editor-region > div:has(> .cm-editor) { min-width: 0; }

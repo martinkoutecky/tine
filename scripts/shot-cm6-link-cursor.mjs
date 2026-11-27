@@ -1,10 +1,13 @@
 // Cursor probe (UI-CM6-LINK-CURSOR): inside a block edited in CodeMirror, a pointer over a drawn link, tag or block ref only
 // reveals the source (src/editor/cm6PreviewWidget.tsx), so every element of a preview shows the text cursor; in the
-// rendered block a click follows the link, so the same element keeps the hand.
+// rendered block a click follows the link, so the same element keeps the hand. An element that takes its own mouse press
+// before the reveal (the code block's language button, the image and video resize grips, a writable table's column grip)
+// keeps its own cursor there, in left-to-right and right-to-left documents.
 // usage: xvfb-run -a node scripts/shot-cm6-link-cursor.mjs [out-dir]
 //   The system WebKitGTK (what Tine ships on Linux) through WebKitWebDriver + MiniBrowser, on the cm6-line-height fixture.
-// Exits 1 when an element inside an editing preview computes a cursor other than `text` (the code block's language button:
-// other than `pointer`), when a link kind is not drawn as a preview, or when the rendered link loses its cursor.
+// Exits 1 when an element inside an editing preview computes a cursor other than `text` (an own-press element: other than
+// its own), when a link kind or an own-press element is not drawn in an editing preview, or when the rendered link loses
+// its cursor.
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,11 +28,33 @@ const LINKS = {
   i_bref: [".block-ref", "default"], i_link: ["a[href]", "auto"], i_url: ["a[href]", "auto"], i_fn: [".footnote-ref", "default"],
   todotags: [".tag", "pointer"],
 };
+// Own-press elements -> their cursor in a left-to-right and a right-to-left document (src/styles/app.css).
+const OWN = { "button.code-language": ["pointer", "pointer"], ".img-resize-grip": ["nwse-resize", "nesw-resize"],
+  ".sheet-table-column-resize-handle": ["col-resize", "col-resize"] };
+// Fixture case -> the own-press element its editing preview must draw.
+const OWNED = { c_image: ".img-resize-grip", c_video: ".media-resize-grip", c_vurl: ".media-resize-grip" };
 // Runs in the page: the rendered link's cursor, then (the caret at the end, away from the construct, so the construct is
-// drawn as a preview) the cursor of every element of the editing previews.
-const PROBE = `const [cases, done] = [arguments[0], arguments[arguments.length - 1]];
+// drawn as a preview) the cursor of every element of the editing previews; then the media grip cases in both directions
+// and a seeded preview holding a writable table column grip and a code-language button.
+const PROBE = `const [cases, owned, own, done] = [arguments[0], arguments[1], arguments[2], arguments[arguments.length - 1]];
 (async () => {
   const rows = [];
+  const label = e => e.tagName.toLowerCase() + "." + String(e.className).replace(/\\s+/g, ".");
+  const scan = (previews, rtl) => {
+    const all = previews.flatMap(p => [p, ...p.querySelectorAll("*")]);
+    const ownSel = Object.keys(own).join(",");
+    const wrong = all.filter(e => !e.closest(ownSel)).map(e => label(e) + "=" + getComputedStyle(e).cursor).filter(s => !s.endsWith("=text"));
+    const owns = all.filter(e => e.matches(ownSel)).map(e => {
+      const sel = Object.keys(own).find(k => e.matches(k)), cursor = getComputedStyle(e).cursor;
+      return { sel, cursor, ok: cursor === own[sel][rtl ? 1 : 0] };
+    });
+    return { wrong, owns };
+  };
+  // This host's WebKitGTK decodes no video (MediaError 4 for mp4 and webm), and a video that fails is replaced by a
+  // chip without a grip. Keep media elements from loading: the embed, its wrapper and its grip render as shipped.
+  const setAttribute = Element.prototype.setAttribute;
+  HTMLMediaElement.prototype.setAttribute = function (name, value) { return name === "src" ? undefined : setAttribute.call(this, name, value); };
+  Object.defineProperty(HTMLMediaElement.prototype, "src", { configurable: true, get() { return ""; }, set() {} });
   await window.openEditor("plain", true); // the first CodeMirror mount loads the editor's chunk
   for (const [id, [link, hand]] of Object.entries(cases)) {
     await window.closeEditor();
@@ -37,13 +62,23 @@ const PROBE = `const [cases, done] = [arguments[0], arguments[arguments.length -
     const rendered = el ? getComputedStyle(el).cursor : null;
     await window.openEditor(id, true, 1e9);
     const previews = Array.from(document.querySelectorAll('[data-block-id="' + id + '"] .cm6-preview'));
-    const els = previews.flatMap(p => [p, ...p.querySelectorAll("*")]).filter(e => !e.closest("button.code-language"));
-    const wrong = els.map(e => e.tagName.toLowerCase() + "." + String(e.className).replace(/\\s+/g, ".") + "=" + getComputedStyle(e).cursor)
-      .filter(s => !s.endsWith("=text"));
     const drawn = previews.some(p => p.querySelector(link));
-    const controls = previews.flatMap(p => [...p.querySelectorAll("button.code-language")]).map(e => getComputedStyle(e).cursor);
-    rows.push({ id, link, hand, rendered, drawn, wrong, controls, ...(drawn ? {} : { html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 600) }) });
+    rows.push({ id, link, hand, rendered, drawn, ...scan(previews, false), ...(drawn ? {} : { html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 600) }) });
   }
+  for (const dir of ["ltr", "rtl"]) {
+    document.documentElement.dir = dir;
+    for (const [id, need] of Object.entries(owned)) {
+      await window.openEditor(id, true, 1e9);
+      const previews = Array.from(document.querySelectorAll('[data-block-id="' + id + '"] .cm6-preview'));
+      const drawn = previews.some(p => p.querySelector(need));
+      rows.push({ id: id + ":" + dir, link: need, own: true, drawn, ...scan(previews, dir === "rtl"), html: document.querySelector('[data-block-id="' + id + '"] .cm-content')?.outerHTML.slice(0, 6000) });
+    }
+    await window.closeEditor();
+    const host = window.mountOwnPressHost();
+    rows.push({ id: "seeded:" + dir, link: "column grip, language button", own: true, drawn: !!host.querySelector(".sheet-table-column-resize-handle") && !!host.querySelector("button.code-language"), ...scan([host], dir === "rtl"), html: host.outerHTML.slice(0, 600) });
+    host.remove();
+  }
+  document.documentElement.dir = "";
   await window.closeEditor();
   return rows;
 })().then(done, e => done({ error: String(e) }));`;
@@ -71,7 +106,7 @@ try {
     await delay(250);
   }
   await call("POST", `/session/${sid}/timeouts`, { script: 240000 });
-  rows = await call("POST", `/session/${sid}/execute/async`, { script: PROBE, args: [LINKS] });
+  rows = await call("POST", `/session/${sid}/execute/async`, { script: PROBE, args: [LINKS, OWNED, OWN] });
   console.log("engine:", await call("POST", `/session/${sid}/execute/sync`, { script: "return navigator.userAgent", args: [] }));
   await call("DELETE", `/session/${sid}`);
 } finally {
@@ -82,11 +117,12 @@ if (!Array.isArray(rows)) throw new Error(`cursor probe failed: ${JSON.stringify
 writeFileSync(`${out}/results.json`, JSON.stringify(rows, null, 2));
 const bad = [];
 for (const r of rows) {
-  console.log(r.id.padEnd(11), r.link.padEnd(13), "rendered:", String(r.rendered).padEnd(8), "drawn:", r.drawn, "wrong:", r.wrong.join(" ") || "-", "controls:", r.controls.join(" ") || "-");
-  if (r.rendered !== r.hand) bad.push(`${r.id}: rendered ${r.link} cursor ${r.rendered}, expected ${r.hand}`);
+  const owns = r.owns.map(o => o.sel + "=" + o.cursor).join(" ") || "-";
+  console.log(r.id.padEnd(16), r.link.padEnd(13), "rendered:", String(r.rendered ?? "-").padEnd(8), "drawn:", r.drawn, "wrong:", r.wrong.join(" ") || "-", "own:", owns);
+  if (!r.own && r.rendered !== r.hand) bad.push(`${r.id}: rendered ${r.link} cursor ${r.rendered}, expected ${r.hand}`);
   if (!r.drawn) bad.push(`${r.id}: ${r.link} not drawn in an editing preview: ${r.html}`);
-  for (const c of r.controls) if (c !== "pointer") bad.push(`${r.id}: editing preview language button cursor ${c}, expected pointer`);
+  for (const o of r.owns) if (!o.ok) bad.push(`${r.id}: editing preview ${o.sel} cursor ${o.cursor}, expected its own`);
   for (const w of r.wrong) bad.push(`${r.id}: editing preview ${w}, expected text`);
 }
-console.log(bad.length ? "FAIL\n" + bad.join("\n") : "PASS: links in an editing preview show the text cursor, rendered links the hand");
+console.log(bad.length ? "FAIL\n" + bad.join("\n") : "PASS: links in an editing preview show the text cursor, rendered links the hand, own-press elements their own cursor");
 process.exit(bad.length ? 1 : 0);

@@ -9,6 +9,8 @@ import { createMarginSurface } from "../../src/components/MarginColumn";
 import { MarginContext } from "../../src/components/marginContext";
 import { startEditing, endEdit } from "../../src/editorController";
 import { setCm6EditorEnabled } from "../../src/editor/cm6Setting";
+import { createTableColumnResize } from "../../src/sheet/tableColumnResize";
+import { CodeLanguage } from "../../src/render/CodeLanguage";
 import "../../src/styles/inter.css";
 import "../../src/styles/theme.css";
 import "../../src/styles/app.css";
@@ -76,6 +78,12 @@ export const CASES: Record<string, string> = {
   // CM6-WIDE: a long unwrapped code line beside prose must not widen the block when the prose is edited.
   widecode: "Intro paragraph\n```\n[[Shared]] opens pages/Alpha.md      (pages/Zed.md would beat pages/alpha.md and this line goes on well past the column edge)\n```\nOutro paragraph",
 };
+// Media resize grips inside a preview, which take their own mouse press (UI-CM6-LINK-CURSOR, scripts/shot-cm6-link-cursor.mjs);
+// the media is served by the dev server. Their own page, so the line-height census above keeps its cases.
+const VIDEO = `${location.origin}/website/img/guide-demo.mp4`, IMAGE = `${location.origin}/public/theme-thumbnails/default.png`;
+export const CURSOR_CASES: Record<string, string> = {
+  c_image: `Intro line ![alt](${IMAGE}) after`, c_video: `Intro line ![clip](${VIDEO}) after`, c_vurl: `Intro line ${VIDEO} after`,
+};
 // Facets the Rust backend would seed that the in-browser fixture must supply by hand.
 const DTO_EXTRA: Record<string, Record<string, unknown>> = {
   mdh1: { heading_level: 1 }, mdh1body: { heading_level: 1 }, todo: { marker: "TODO" }, priority: { priority: "A" },
@@ -89,7 +97,9 @@ loadSingle({ name: "Target", title: "Target", kind: "page", pre_block: null, for
     { id: "12345678-1234-1234-1234-123456789abc", raw: "Referenced block text", collapsed: false, children: [] }] });
 loadSingle({ name: "LH", title: "LH", kind: "page", pre_block: null, format: "md",
   blocks: Object.entries(CASES).map(([id, raw]) => ({ id, raw, collapsed: false, ...DTO_EXTRA[id], scheduled: raw.match(/SCHEDULED: <([^>]*)>/)?.[1], deadline: raw.match(/DEADLINE: <([^>]*)>/)?.[1], properties: raw.match(/\nheading:: (\w+)$/) ? [["heading", raw.match(/\nheading:: (\w+)$/)![1]]] : [], children: [{ id: `${id}-child`, raw: "child", collapsed: false, children: [] }] })) });
-Object.assign(window, { startEditing, endEdit, setCm6EditorEnabled, CASES });
+loadSingle({ name: "Cursor", title: "Cursor", kind: "page", pre_block: null, format: "md",
+  blocks: Object.entries(CURSOR_CASES).map(([id, raw]) => ({ id, raw, collapsed: false, children: [] })) });
+Object.assign(window, { startEditing, endEdit, setCm6EditorEnabled, CASES, CURSOR_CASES });
 // Plain-text wrap census uses real outline nesting and the shipped main/sidebar/margin boxes.
 // Varying word lengths (including short words at line ends) exposes changed breaks even when height stays equal.
 const WRAP_TEXT = `${CASES.plain} Small words fit at the edge of a line while longer ordinary words test the next break. `.repeat(3).trim();
@@ -130,6 +140,7 @@ function WrapFixture() {
 }
 render(() => <><main class="main-content" style={{ padding: "40px", width: "640px", display: wrapping() ? "none" : undefined }}>
   <For each={pageByName("LH")!.roots}>{id => <Block id={id} />}</For>
+  <For each={pageByName("Cursor")!.roots}>{id => <Block id={id} />}</For>
 </main><Show when={wrapping()}><WrapFixture /></Show></>, document.getElementById("root")!);
 
 // In-page probe, so any driver (Playwright Chromium, WebKitGTK's WebKitWebDriver) runs the identical measurement.
@@ -286,4 +297,14 @@ Object.assign(window, {
     };
   },
   closeEditor: async () => { endEdit("page-navigation"); await wait(50); },
+  // A seeded preview holding the own-press elements this backend-less fixture cannot route into one: a writable query
+  // table's column grip (no query backend) and an active code-language button (it reaches a preview through an embed,
+  // which needs the backend). The shipped components, the grip owned by a loaded block. Returns the preview.
+  mountOwnPressHost: () => {
+    const preview = document.createElement("span");
+    preview.className = "cm6-preview";
+    document.querySelector("main")!.append(preview);
+    render(() => <>{createTableColumnResize("plain").handle("a", "A")}<CodeLanguage lang="js" onEdit={() => {}} /></>, preview);
+    return preview;
+  },
 });

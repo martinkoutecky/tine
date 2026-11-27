@@ -950,7 +950,7 @@ export function AssetImage(props: {
           </span>
         </Show>
         <Show when={props.blockId && props.token?.full.startsWith("![") && src()}>
-          <span class="img-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
+          <span class="img-resize-grip" data-own-mouse-press title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
       </span>
     </Show>
@@ -1129,7 +1129,7 @@ function MediaEmbed(props: {
           </svg>
         </button>
         <Show when={props.kind === "video" && props.blockId}>
-          <span class="img-resize-grip media-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
+          <span class="img-resize-grip media-resize-grip" data-own-mouse-press title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
         <Show when={props.kind === "audio"}>
           <button

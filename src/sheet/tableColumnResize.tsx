@@ -94,7 +94,7 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string, ho
   };
   onCleanup(() => cancelActive?.());
   const handle = (column: string, label: string) => <Show when={writable()}>
-    <button type="button" class="sheet-table-column-resize-handle"
+    <button type="button" class="sheet-table-column-resize-handle" data-own-mouse-press
       data-sheet-resize-handle={column} aria-label={t("sheet-resize-column", { label: String(label) })}
       title={t("sheet-drag-to-resize-double-click-to-reset")}
       onPointerDown={(event) => begin(column, event)}
