@@ -14,7 +14,8 @@ export function openTodayInSidebar(): void {
 /** The Journals click (left sidebar, toolbar, toolbar overflow) at the shared
  *  link destination (linkGesture.ts, GH #1050): Shift opens today beside the
  *  current page (OG's `sidebar-journals!`), Ctrl/Cmd the feed in a background
- *  tab, Alt the feed in the other pane, a plain click the feed here. Logseq has
+ *  tab, Alt the feed in the other pane, a plain click the feed here; a feed the
+ *  window already holds is focused instead (panes.ts, one feed). Logseq has
  *  no tabs or panes and ignores Ctrl/Alt on Journals as on page links; those two
  *  are Tine's link contract (GH #283/#438). Returns the destination so a caller
  *  completes its own navigation (the mobile drawer) only for "default". */
