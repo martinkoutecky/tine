@@ -27,21 +27,16 @@ import { setToasts, toasts } from "../toasts";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
 const draftHandoffDisposers: (() => void)[] = [];
-// Counts the parser and splice calls an Add row makes (tine#1047's count gate).
-const wasmCalls = vi.hoisted(() => ({ parses: [] as string[], edits: 0 }));
+// Counts every call into the parser module an Add row makes (tine#1047's count gate).
+const wasmCalls = vi.hoisted(() => ({ counts: {} as Record<string, number>, parses: [] as string[] }));
 vi.mock("../render/wasm/lsdoc_wasm.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../render/wasm/lsdoc_wasm.js")>();
-  return {
-    ...actual,
-    parse_block_bundle_json: (...args: Parameters<typeof actual.parse_block_bundle_json>) => {
-      wasmCalls.parses.push(args[0]);
-      return actual.parse_block_bundle_json(...args);
-    },
-    edit_block_regions_json: (...args: Parameters<typeof actual.edit_block_regions_json>) => {
-      wasmCalls.edits++;
-      return actual.edit_block_regions_json(...args);
-    },
-  };
+  const actual = await importOriginal<Record<string, unknown>>();
+  return Object.fromEntries(Object.entries(actual).map(([name, value]) => [name, typeof value !== "function" || name === "default" ? value
+    : (...args: unknown[]) => {
+      wasmCalls.counts[name] = (wasmCalls.counts[name] ?? 0) + 1;
+      if (name === "parse_block_bundle_json") wasmCalls.parses.push(args[0] as string);
+      return (value as (...a: unknown[]) => unknown)(...args);
+    }]));
 });
 vi.mock("../document/host/wiring", () => new Proxy({}, {
   get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
@@ -1788,7 +1783,7 @@ describe("SheetTable", () => {
 
   // tine#1047: a checkbox column shows an unset value as unchecked, so Add row
   // writes it `false`; text columns stay unset. One Undo removes row and value.
-  const addRowUnderSchema = async (ownerRaw: string, format: "md" | "org") => {
+  const clickAddRow = async (ownerRaw: string, format: "md" | "org") => {
     const otherRaw = format === "md" ? "Other\nprop:: true" : "Other\n:PROPERTIES:\n:prop: true\n:END:";
     setDoc({
       byId: {
@@ -1807,14 +1802,24 @@ describe("SheetTable", () => {
     expect(doc.byId.table.raw).toBe(ownerRaw);
     expect(doc.byId.r1.raw).toBe("Existing");
     expect(doc.byId.other.raw).toBe(otherRaw);
-    expect(editingId()).toBe(id);
-    expect(editingOwner()).toBe(`sheet:main:table:${id}:title`);
     return { id, root, dispose };
   };
+  const addRowUnderSchema = async (ownerRaw: string, format: "md" | "org") => {
+    const added = await clickAddRow(ownerRaw, format);
+    expect(editingId()).toBe(added.id);
+    expect(editingOwner()).toBe(`sheet:main:table:${added.id}:title`);
+    return added;
+  };
+  const tableOf = (fields: string, format: "md" | "org", extra = "") => format === "md"
+    ? `Table\ntine.fields:: ${fields}\ntine.view:: table${extra && `\n${extra.replace(/^(\S+): /, "$1:: ")}`}`
+    : ["Table", ":PROPERTIES:", `:tine.fields: ${fields}`, ":tine.view: table", ...(extra ? [`:${extra}`] : []), ":END:"].join("\n");
+  const seededRaw = (keys: string[], format: "md" | "org") => !keys.length ? ""
+    : format === "md" ? ["", ...keys.map((key) => `${key}:: false`)].join("\n")
+    : ["", ":PROPERTIES:", ...keys.map((key) => `:${key}: false`), ":END:"].join("\n");
 
   const demoSchema = "[[Demo-Sheet]]\ntine.fields:: name=text;prop=checkbox\ntine.view:: table";
 
-  it("children add-row writes false for each checkbox field and nothing for other fields (tine#1047)", async () => {
+  it("children add-row writes false for each checkbox field and nothing for other fields; one undo, one redo (tine#1047)", async () => {
     const { id, dispose } = await addRowUnderSchema(demoSchema, "md");
     expect(doc.byId[id].raw).toBe("\nprop:: false");
     expect(blockProperty(id, "prop")).toBe("false");
@@ -1823,6 +1828,12 @@ describe("SheetTable", () => {
     undo();
     expect(doc.byId.table.children).toEqual(["r1"]);
     expect(doc.byId[id]).toBeUndefined();
+    redo();
+    expect(doc.byId.table.children).toHaveLength(2);
+    const again = doc.byId.table.children[1];
+    expect(doc.byId[again].raw).toBe("\nprop:: false");
+    undo();
+    expect(doc.byId.table.children).toEqual(["r1"]);
   });
 
   it("children add-row opens the title editor above the written checkbox value (tine#1047)", async () => {
@@ -1850,8 +1861,7 @@ describe("SheetTable", () => {
   });
 
   it("children add-row writes an Org checkbox field in the Org property drawer (tine#1047)", async () => {
-    const ownerRaw = ["Demo", ":PROPERTIES:", ":tine.fields: name=text;prop=checkbox", ":tine.view: table", ":END:"].join("\n");
-    const { id, dispose } = await addRowUnderSchema(ownerRaw, "org");
+    const { id, dispose } = await addRowUnderSchema(tableOf("name=text;prop=checkbox", "org"), "org");
     expect(doc.byId[id].raw).toBe("\n:PROPERTIES:\n:prop: false\n:END:");
     expect(blockProperty(id, "prop")).toBe("false");
     dispose();
@@ -1879,43 +1889,81 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("children add-row writes case-insensitive duplicate checkbox columns once, under the first spelling (tine#1047)", async () => {
-    const { id, dispose } = await addRowUnderSchema("Table\ntine.fields:: Done=checkbox;done=checkbox\ntine.view:: table", "md");
-    expect(doc.byId[id].raw).toBe("\nDone:: false");
-    dispose();
-  });
-
-  it.each([["end", "a", "b"], ["a", "end", "b"]])("children add-row keeps the Org drawer whole with an `end` checkbox column (%s first) (tine#1047)", async (...keys) => {
-    const fields = keys.map((key) => `${key}=checkbox`).join(";");
-    const ownerRaw = ["Demo", ":PROPERTIES:", `:tine.fields: ${fields}`, ":tine.view: table", ":END:"].join("\n");
-    const { id, dispose } = await addRowUnderSchema(ownerRaw, "org");
-    expect(doc.byId[id].raw).toBe("\n:PROPERTIES:\n:a: false\n:b: false\n:END:");
-    expect(blockProperty(id, "a")).toBe("false");
-    expect(blockProperty(id, "b")).toBe("false");
+  it.each(["md", "org"] as const)("children add-row writes only plain, ordinary checkbox columns, once per key (%s) (tine#1047)", async (format) => {
+    const columns = ["template", "tine.quote", "Tags", "done", "file-path", "État", "a:b", "c d", "EnD", "Shipped", "shipped", "a_b", "a-b", "ready"];
+    const { id, dispose } = await addRowUnderSchema(tableOf(columns.map((key) => `${key}=checkbox`).join(";"), format), format);
+    expect(doc.byId[id].raw).toBe(seededRaw(["Shipped", "a_b", "ready"], format));
+    // The table reads a column by its exact spelling; both engine spellings are pinned natively.
+    expect(blockProperty(id, "Shipped")).toBe("false");
+    expect(blockProperty(id, "a_b")).toBe("false");
+    for (const key of ["template", "tine.quote", "done", "file-path", "État", "EnD"]) expect(blockProperty(id, key)).toBeNull();
     dispose();
     undo();
     expect(doc.byId[id]).toBeUndefined();
   });
 
-  it("children add-row skips checkbox columns whose key has a colon or a space (tine#1047)", async () => {
-    const { id, dispose } = await addRowUnderSchema("Table\ntine.fields:: a:b=checkbox;ok=checkbox;c d=checkbox\ntine.view:: table", "md");
-    expect(doc.byId[id].raw).toBe("\nok:: false");
+  it("children add-row under a filter that excludes `false` writes the row and opens no editor (tine#1047)", async () => {
+    const errors = vi.spyOn(console, "error");
+    const { id, root, dispose } = await clickAddRow(tableOf("shipped=checkbox", "md", "tine.filter: isEmpty(shipped)"), "md");
+    expect(doc.byId[id].raw).toBe("\nshipped:: false");
+    expect(root.querySelector(`.sheet-title-cell[data-block-id="${id}"]`)).toBeNull();
+    expect(editingId()).toBeNull();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
     dispose();
   });
 
-  it.each([1, 64, 512])("children add-row with %i checkbox columns parses the new row once and splices nothing (tine#1047)", async (k) => {
-    const keys = Array.from({ length: k }, (_, i) => `c${i}`);
-    const schema = `Table\ntine.fields:: ${keys.map((key) => `${key}=checkbox`).join(";")}\ntine.view:: table`;
-    wasmCalls.parses = [];
-    wasmCalls.edits = 0;
-    const { id, dispose } = await addRowUnderSchema(schema, "md");
-    const raw = doc.byId[id].raw;
-    expect(raw).toBe(["", ...keys.map((key) => `${key}:: false`)].join("\n"));
-    expect(wasmCalls.parses.filter((text) => text.includes("c0:: false"))).toHaveLength(1);
-    expect(wasmCalls.edits).toBe(0);
+  it("children add-row under a filter on a reserved checkbox column keeps the unset row and its editor", async () => {
+    const { id, root, dispose } = await addRowUnderSchema(tableOf("done=checkbox", "md", "tine.filter: isEmpty(done)"), "md");
+    expect(doc.byId[id].raw).toBe("");
+    expect(root.querySelector(`.sheet-title-cell[data-block-id="${id}"]`)).not.toBeNull();
     dispose();
-    undo();
-    expect(doc.byId[id]).toBeUndefined();
+  });
+
+  // Every call into the parser module, per Add row: the same for 1, 64 and 512
+  // checkbox columns, whether all, some or none of them can take a value; each
+  // case's keys are new, so every parse is a cache miss. Key readers that run
+  // once for each property a row shows (the render's hidden-key check; the
+  // CodeMirror editor's lookups for a property name) are no parse: they are a
+  // populated row's existing render and editor cost, so they are only reported.
+  const PER_SHOWN_PROPERTY = new Set(["is_render_hidden_prop", "page_identity_key", "journal_day_json", "absent_link_is_journal", "is_editable_linkable_built_in"]);
+  it.each(["md", "org"] as const)("children add-row calls the parser the same number of times for any number of checkbox columns (%s) (tine#1047)", async (format) => {
+    const kinds = {
+      valid: (prefix: string, i: number) => `${prefix}c${i}`,
+      mixed: (prefix: string, i: number) => i % 2 ? `${prefix} ${i}` : `${prefix}c${i}`,
+      rejected: (prefix: string, i: number) => `${prefix} ${i}`,
+    };
+    const timings: string[] = [];
+    // The first mount of a run does one-time work, and an all-rejected row is
+    // always the same text (""), read from cache after its first time: neither is counted.
+    for (const fields of ["warmup=checkbox", "warm up=checkbox"]) (await addRowUnderSchema(tableOf(fields, format), format)).dispose();
+    for (const [kind, keyOf] of Object.entries(kinds)) {
+      const counts: Record<string, number>[] = [];
+      for (const k of [1, 64, 512]) {
+        const keys = Array.from({ length: k }, (_, i) => keyOf(`${kind}${k}`, i));
+        const written = keys.filter((key) => !key.includes(" "));
+        wasmCalls.counts = {};
+        wasmCalls.parses = [];
+        const started = performance.now();
+        const { id, dispose } = await addRowUnderSchema(tableOf(keys.map((key) => `${key}=checkbox`).join(";"), format), format);
+        timings.push(`${format} ${kind} k=${k}: ${(performance.now() - started).toFixed(1)} ms`);
+        const raw = doc.byId[id].raw;
+        expect(raw).toBe(seededRaw(written, format));
+        if (written.length) expect(wasmCalls.parses.filter((text) => text === raw)).toHaveLength(1);
+        expect(wasmCalls.counts.new_checkbox_row_raw).toBe(1);
+        const parserCalls = Object.fromEntries(Object.entries(wasmCalls.counts).filter(([name]) => !PER_SHOWN_PROPERTY.has(name)));
+        const perProperty = Object.fromEntries(Object.entries(wasmCalls.counts).filter(([name]) => PER_SHOWN_PROPERTY.has(name)));
+        timings.push(`${format} ${kind} k=${k}: per shown property ${JSON.stringify(perProperty)}`);
+        counts.push(parserCalls);
+        dispose();
+        undo();
+        expect(doc.byId[id]).toBeUndefined();
+      }
+      expect(counts[1], `${format} ${kind} k=64`).toEqual(counts[0]);
+      expect(counts[2], `${format} ${kind} k=512`).toEqual(counts[0]);
+      timings.push(`${format} ${kind} calls: ${JSON.stringify(counts[0])}`);
+    }
+    console.info(timings.join("\n"));
   });
 
   it("children add-column ghost adds an extra property column", () => {

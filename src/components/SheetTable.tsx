@@ -12,8 +12,9 @@ export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, newBlockRawWithProperties, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
+import { new_checkbox_row_raw } from "../render/wasm/lsdoc_wasm";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
@@ -715,19 +716,20 @@ export function SheetTable(props: {
     if (!owner || blockPageReadOnly(props.ownerId)) return;
     const at = owner.children.length;
     // A checkbox column shows an unset value as unchecked, so the new row is
-    // written `false` there: a query for `false` then finds what the table shows.
-    // The values go below an empty first line, where the title editor's caret opens.
+    // written `false` there (the core decides which columns can take it): a
+    // query for `false` then finds what the table shows.
     const checkboxKeys = schemaFields().flatMap((spec) => spec.type === "checkbox" ? [spec.field.slice("prop:".length)] : []);
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => {
       const row = insertEmptyChildBlock(props.ownerId, at);
-      const raw = row ? newBlockRawWithProperties(checkboxKeys, "false", formatForBlock(row)) : "";
+      const raw = row ? new_checkbox_row_raw(formatForBlock(row) === "org", checkboxKeys) : "";
       if (row && raw) setRaw(row, raw);
       return row;
     });
     if (!id) return;
     queueMicrotask(() => {
+      // A filter can leave the new row out (its `false` fails `isEmpty`): then no editor opens.
       const rowIndex = sortedRows().findIndex((row) => row.id === id && !!liveFormulaRowNode(row));
-      if (rowIndex !== undefined) startCellEditing({ gridId: props.ownerId, surfaceId, rowId: id, columnId: "title", row: rowIndex, col: 0 }, 0);
+      if (rowIndex >= 0) startCellEditing({ gridId: props.ownerId, surfaceId, rowId: id, columnId: "title", row: rowIndex, col: 0 }, 0);
     });
   };
   const runAddRow = () => {

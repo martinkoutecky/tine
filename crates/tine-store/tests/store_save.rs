@@ -1088,8 +1088,9 @@ fn an_unchanged_non_page_replace_makes_the_equal_bytes_durable() {
 }
 
 /// tine#1047: a children table's "Add row" gives the new row an empty first
-/// line and `prop:: false` for a checkbox column. Saved and reopened, the reporter's query for unchecked
-/// rows finds it; a row without the value still does not equal `false`.
+/// line and `prop:: false` (Org: a drawer row) for a checkbox column. Saved and
+/// reopened, in Markdown and Org, LF and CRLF pages, the reporter's query for
+/// unchecked rows finds it; a row without the value still does not equal `false`.
 #[test]
 fn an_added_table_row_with_false_is_found_by_a_false_query_after_reopen() {
     use tine_core::date::JournalDate;
@@ -1097,70 +1098,114 @@ fn an_added_table_row_with_false_is_found_by_a_false_query_after_reopen() {
     use tine_core::query::{parse_query_text, QueryDialect};
 
     let _integration_guard = crate::test_transactions::integration_lock();
-    let fixture = Fixture::new();
-    let source = "\
+    for org in [false, true] {
+        for nl in ["\n", "\r\n"] {
+            let fixture = Fixture::new();
+            let (path, source) = if org {
+                (
+                    "pages/Demo.org",
+                    "\
+* [[Demo-Sheet]]
+:PROPERTIES:
+:tine.fields: name=text;prop=checkbox
+:tine.view: table
+:END:
+** This is True
+:PROPERTIES:
+:prop: true
+:END:
+** This is False
+:PROPERTIES:
+:prop: false
+:END:
+** This is undefined
+",
+                )
+            } else {
+                (
+                    "pages/Demo.md",
+                    "\
 - [[Demo-Sheet]]
   tine.fields:: name=text;prop=checkbox
   tine.view:: table
-\t- name:: This is True
+\t- This is True
 \t  prop:: true
-\t- name:: This is False
+\t- This is False
 \t  prop:: false
-\t- name:: This is undefined
-";
-    fixture.write("pages/Demo.md", source);
-    let (store, writer) = open(&fixture);
-    let id = PageId::from("pages/Demo.md");
-    let read = store.page(&id).unwrap();
-    let mut doc = read.doc;
-    doc.blocks[0].children.push(BlockDto {
-        raw: "\nprop:: false".into(),
-        ..Default::default()
-    });
-    writer
-        .save(EditKind::SaveBlock, &id, SaveBase::Existing(read.rev), &doc)
-        .unwrap();
-    drop(writer);
-    store.close();
-    drop(store);
-    assert_eq!(
-        fs::read_to_string(fixture.0.join(id.as_str())).unwrap(),
-        format!("{source}\t-\n\t  prop:: false\n")
-    );
+\t- This is undefined
+",
+                )
+            };
+            let source = source.replace('\n', nl);
+            fixture.write(path, &source);
+            let (store, writer) = open(&fixture);
+            let id = PageId::from(path);
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            let raw = tine_core::table_row::new_checkbox_row_raw(org, &["prop".into()]);
+            doc.blocks[0].children.push(BlockDto {
+                raw: raw.clone(),
+                ..Default::default()
+            });
+            writer
+                .save(EditKind::SaveBlock, &id, SaveBase::Existing(read.rev), &doc)
+                .unwrap();
+            drop(writer);
+            store.close();
+            drop(store);
+            let added = if org {
+                "**\n:PROPERTIES:\n:prop: false\n:END:\n"
+            } else {
+                "\t-\n\t  prop:: false\n"
+            };
+            assert_eq!(
+                fs::read_to_string(fixture.0.join(id.as_str())).unwrap(),
+                format!("{source}{}", added.replace('\n', nl)),
+                "org={org} nl={nl:?}"
+            );
 
-    let (store, _writer) = open(&fixture);
-    let saved = store.page(&id).unwrap().doc;
-    assert_eq!(saved.blocks[0].children[3].raw, "\nprop:: false");
-    let (query, view) = parse_query_text(
-        "@block and [[Demo-Sheet]] and prop('prop') = false",
-        QueryDialect::Tql,
-        JournalDate::today(),
-    );
-    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
-    let answer = store
-        .whole_graph()
-        .unwrap()
-        .query_ir(
-            crate::IrRequest::Run {
-                query: &query,
-                view: &view,
-                context: &ExecutionContext::none(),
-            },
-            &crate::Cancel::default(),
-        )
-        .unwrap()
-        .expect("never cancelled");
-    let crate::IrAnswer::Result(result) = answer else {
-        panic!("{answer:?}")
-    };
-    let QueryRows::Block { groups } = &result.rows else {
-        panic!("{:?}", result.rows)
-    };
-    let mut raws: Vec<&str> = groups
-        .iter()
-        .flat_map(|group| group.blocks.iter())
-        .map(|block| block.raw.as_str())
-        .collect();
-    raws.sort();
-    assert_eq!(raws, ["\nprop:: false", "name:: This is False\nprop:: false"]);
+            let (store, _writer) = open(&fixture);
+            let saved = store.page(&id).unwrap().doc;
+            assert_eq!(saved.blocks[0].children[3].raw, raw);
+            let (query, view) = parse_query_text(
+                "@block and [[Demo-Sheet]] and prop('prop') = false",
+                QueryDialect::Tql,
+                JournalDate::today(),
+            );
+            assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+            let answer = store
+                .whole_graph()
+                .unwrap()
+                .query_ir(
+                    crate::IrRequest::Run {
+                        query: &query,
+                        view: &view,
+                        context: &ExecutionContext::none(),
+                    },
+                    &crate::Cancel::default(),
+                )
+                .unwrap()
+                .expect("never cancelled");
+            let crate::IrAnswer::Result(result) = answer else {
+                panic!("{answer:?}")
+            };
+            let QueryRows::Block { groups } = &result.rows else {
+                panic!("{:?}", result.rows)
+            };
+            let mut raws: Vec<&str> = groups
+                .iter()
+                .flat_map(|group| group.blocks.iter())
+                .map(|block| block.raw.as_str())
+                .collect();
+            raws.sort();
+            let other = if org {
+                "This is False\n:PROPERTIES:\n:prop: false\n:END:"
+            } else {
+                "This is False\nprop:: false"
+            };
+            let mut expected = [raw.as_str(), other];
+            expected.sort();
+            assert_eq!(raws, expected, "org={org} nl={nl:?}");
+        }
+    }
 }

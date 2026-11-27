@@ -56,7 +56,7 @@ const PASS_THROUGH: Record<string, [number, string]> = {
   "src/document/convert.ts": [1, "queryBlockRaw: keys from appendQueryBlock callers (checked there)"],
   "src/document/edits/identity.ts": [1, "Org identity writer: `id`/`custom-id` from its caller"],
   "src/document/edits/paste.ts": [2, "paste keeps the pasted block's own properties"],
-  "src/document/edits/properties.ts": [7, "the generic writers themselves (setBlockProperty, setPageProperty, toggle); newBlockRawWithProperties' Markdown and Org lines: a table's Add row, each checkbox column the user's `tine.fields` declares"],
+  "src/document/edits/properties.ts": [5, "the generic writers themselves (setBlockProperty, setPageProperty, toggle)"],
   "src/document/edits/propertyDeclaration.ts": [1, "property declaration page: the user's key"],
   "src/editor/editorCompletions.ts": [1, "both editors' property autocomplete inserts the key the user picked"],
   "src/editor/exportProjection.ts": [1, "source export restores only parser-owned comment presentation keys when Remove properties is selected"],

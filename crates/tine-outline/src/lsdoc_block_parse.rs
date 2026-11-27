@@ -975,6 +975,26 @@ mod preparation_tests {
         }
     }
 
+    /// A table's Add row writes k properties on a blank title line with one
+    /// property edit: its parses do not grow with k (tine#1047). Release
+    /// parses the input once; a debug build also re-reads the output.
+    #[test]
+    fn a_properties_edit_on_a_blank_line_parses_the_same_for_any_number_of_keys() {
+        use crate::block_regions::{edit, Edit};
+        for is_org in [false, true] {
+            let counts: Vec<usize> = [1usize, 64, 512]
+                .map(|k| {
+                    let values = (0..k).map(|i| (format!("c{i}"), "false".into())).collect();
+                    super::PARSES.with(|n| n.set(0));
+                    edit("\n", is_org, Edit::Properties { values }).unwrap();
+                    super::PARSES.with(|n| n.replace(0))
+                })
+                .into();
+            let once = if cfg!(debug_assertions) { 2 } else { 1 };
+            assert_eq!(counts, [once; 3], "is_org={is_org}");
+        }
+    }
+
     /// PC-3 (review r3, r6 follow-up): parses per read. Every block costs one
     /// parse; only a lone marker-shaped word that lsdoc did not see at the end
     /// of input, with nothing but rows or blank lines after it, costs a second

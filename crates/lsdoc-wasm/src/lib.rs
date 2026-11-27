@@ -188,6 +188,15 @@ pub fn is_og_built_in_property(key: &str) -> bool {
     tine_core::reference_evidence::is_og_built_in_property(key)
 }
 
+/// The raw text of a children table's new row whose checkbox columns are
+/// `keys`, in schema order: `false` for each plain, ordinary one, or `""`
+/// (I-12: the one answerer, `tine_core::table_row::new_checkbox_row_raw`).
+/// O(key bytes) plus one property write on a one-line block.
+#[wasm_bindgen]
+pub fn new_checkbox_row_raw(is_org: bool, keys: Vec<String>) -> String {
+    tine_core::table_row::new_checkbox_row_raw(is_org, &keys)
+}
+
 /// Whether All pages leaves this name out (a UUID, a drawing, an OG built-in
 /// page; I-12: the one answerer, `tine_core::reference_evidence::hidden_from_all_pages`, shared
 /// with tine-core).

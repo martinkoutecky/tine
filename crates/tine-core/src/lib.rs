@@ -45,6 +45,7 @@ pub mod render;
 pub mod render_facets;
 pub mod search_query;
 pub mod sync_diff;
+pub mod table_row;
 pub mod template;
 pub mod text_merge;
 pub mod text_trace;

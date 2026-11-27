@@ -742,6 +742,30 @@ function __tine_raw_nested_reference_names(content) {
 }
 
 /**
+ * The raw text of a children table's new row whose checkbox columns are
+ * `keys`, in schema order: `false` for each plain, ordinary one, or `""`
+ * (I-12: the one answerer, `tine_core::table_row::new_checkbox_row_raw`).
+ * O(key bytes) plus one property write on a one-line block.
+ * @param {boolean} is_org
+ * @param {string[]} keys
+ * @returns {string}
+ */
+function __tine_raw_new_checkbox_row_raw(is_org, keys) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArrayJsValueToWasm0(keys, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.new_checkbox_row_raw(is_org, ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
  * @param {number} index
  * @param {number} depth
@@ -1994,6 +2018,7 @@ export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_log
 export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
 export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
+export const new_checkbox_row_raw = __tineGuard("new_checkbox_row_raw", __tine_raw_new_checkbox_row_raw);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);

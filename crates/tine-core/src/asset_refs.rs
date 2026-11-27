@@ -40,6 +40,16 @@ macro_rules! count {
     };
 }
 
+/// The property whose value points at an asset (the PDF pane's `hls__` page
+/// pointer, read on every block): `file-path`, in any ASCII case.
+pub const ASSET_POINTER_KEY: &str = "file-path";
+
+/// Whether a property key is the asset pointer, so its value names a live
+/// asset ([`ASSET_POINTER_KEY`], any ASCII case). O(key bytes).
+pub fn is_asset_pointer_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case(ASSET_POINTER_KEY)
+}
+
 /// Asset liveness combines parser-accepted targets with conservative plaintext
 /// mentions. The latter may retain extra files (including literal code), but
 /// cannot shorten or replace an accepted target. Parsing is skipped entirely
@@ -357,7 +367,8 @@ fn names_assets_folder(text: &str) -> bool {
 
 type Needle = std::sync::LazyLock<memchr::memmem::Finder<'static>>;
 static ASSETS: Needle = Needle::new(|| memchr::memmem::Finder::new(b"assets"));
-static FILE_PATH: Needle = Needle::new(|| memchr::memmem::Finder::new(b"file-path"));
+static FILE_PATH: Needle =
+    Needle::new(|| memchr::memmem::Finder::new(ASSET_POINTER_KEY.as_bytes()));
 
 /// Whether `text` holds the lowercase `needle` in any ASCII case (a
 /// necessary condition: a few other bytes fold onto `-`). One vectorized
@@ -611,7 +622,7 @@ fn widen_text(text: &str, property: bool, into: &mut HashSet<String>) {
             count!(PROPERTY_PARSES, 1);
             let regions = crate::block_regions::parse_document(text, org);
             for p in &regions.properties {
-                if p.key.eq_ignore_ascii_case("file-path") {
+                if is_asset_pointer_key(&p.key) {
                     widen_one(p.value.trim(), true, true, into);
                 }
             }
