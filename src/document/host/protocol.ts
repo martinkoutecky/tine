@@ -108,15 +108,12 @@ export interface DraftStatus {
 }
 
 /** An original a cancelled rename kept (`io.rs` `KeptOriginal`), addressed by
- * (`key`, `origin`). `name` and `kind`: the page a file at `path` holding it
- * would be; null when the graph's settings no longer make the file a page.
- * `text`: it is UTF-8 text, so Copy original can copy it. */
+ * (`key`, `origin`). `text`: it is text (UTF-8, no NUL), so Copy original can
+ * copy it. */
 export interface KeptOriginal {
   key: string;
   origin: number;
   path: string;
-  name: string | null;
-  kind: "page" | "journal" | null;
   len: number;
   text: boolean;
 }

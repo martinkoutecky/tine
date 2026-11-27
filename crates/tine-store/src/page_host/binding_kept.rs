@@ -10,9 +10,8 @@ impl PageHost {
     /// (`Order::kept`), for window `session`; None when not answered (the
     /// driver ended, the host is down, or `session` is not the current one).
     /// One walk over the durable pairs under the state mutex; then, per row,
-    /// its UTF-8 check and the page its text names
-    /// (`Graph::page_entry_of_text`: a preamble scan of text in hand, no
-    /// read, no discovery record).
+    /// its text check (`as_text`), off the driver. No row is parsed or
+    /// named: the panel shows its path.
     pub fn kept_originals(&self, session: u64) -> Option<Vec<KeptOriginal>> {
         let read = move |state: &HostState| {
             let host = &state.progress.host;
@@ -26,20 +25,14 @@ impl PageHost {
             Some(rows.collect::<Vec<_>>())
         };
         let rows = self.driver.shared.read(read).ok()??;
-        let graph = &self.store.graph;
         let rows = rows.into_iter().map(|(key, origin, path, bytes)| {
             let bytes = bytes.as_deref().unwrap_or_default();
-            let text = std::str::from_utf8(bytes).ok();
-            // Bytes that are not text name the page by its file name.
-            let entry = graph.page_entry_of_text(&graph.root.join(&path), text.unwrap_or(""));
             KeptOriginal {
                 key,
                 origin,
                 path,
-                kind: entry.as_ref().map(|entry| entry.kind),
-                name: entry.map(|entry| entry.name),
                 len: bytes.len(),
-                text: text.is_some(),
+                text: as_text(bytes).is_some(),
             }
         });
         Some(rows.collect())
@@ -47,7 +40,7 @@ impl PageHost {
 
     /// `page_kept_text`: the kept original (`key`, `origin`) for the panel's
     /// Copy original: its exact text, or `NotText` for bytes that are not
-    /// UTF-8; `Missing` when the current session's host keeps no such
+    /// text (`as_text`); `Missing` when the current session's host keeps no such
     /// original; `Unavailable` when not answered. One pair search.
     pub fn kept_text(&self, session: u64, key: &str, origin: u64) -> KeptText {
         let key = key.to_owned();
@@ -60,11 +53,20 @@ impl PageHost {
                 return KeptText::Missing;
             };
             let bytes = pair.preimage.as_deref().unwrap_or_default();
-            match std::str::from_utf8(bytes) {
-                Ok(text) => KeptText::Text { text: text.into() },
-                Err(_) => KeptText::NotText { len: bytes.len() },
+            match as_text(bytes) {
+                Some(text) => KeptText::Text { text: text.into() },
+                None => KeptText::NotText { len: bytes.len() },
             }
         };
         (self.driver.shared.read(read)).unwrap_or(KeptText::Unavailable)
     }
+}
+
+/// A kept original's text, when Copy original can hand it over exactly:
+/// UTF-8 with no NUL. A Windows clipboard ends text at the first NUL, and
+/// Logseq and git take such a file for binary.
+fn as_text(bytes: &[u8]) -> Option<&str> {
+    std::str::from_utf8(bytes)
+        .ok()
+        .filter(|text| !text.contains('\0'))
 }

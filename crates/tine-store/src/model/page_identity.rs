@@ -551,6 +551,8 @@ fn preamble_title(preamble: &str, format: Format) -> Option<String> {
     if preamble.contains(TEST_TITLE_PANIC_SENTINEL) {
         panic!("deterministic test sentinel for a page title panic");
     }
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::title_parse();
     tine_core::model::page_title_from_preamble(preamble, format)
 }
 

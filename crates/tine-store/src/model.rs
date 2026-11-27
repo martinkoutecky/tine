@@ -3824,35 +3824,7 @@ impl Graph {
     }
 
     /// The page entry `path` names, its page name from `text` when given.
-    /// Records the name's discovery (`discover_page_name`).
     pub(crate) fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
-        self.page_entry_named(path, |stem, fmt| {
-            self.discover_page_name(path, stem, fmt, text)
-        })
-    }
-
-    /// The page entry a file at `path` holding `text` would be, with no
-    /// discovery or memo effect: a malformed preamble names it by its file
-    /// name, as `page_entry_in` does, without recording the failure. Only
-    /// custody naming reads it (a kept original's row, GH #540); a live
-    /// read names its file through `page_entry_in`.
-    pub(crate) fn page_entry_of_text(&self, path: &Path, text: &str) -> Option<PageEntry> {
-        self.page_entry_named(path, |stem, fmt| {
-            let filename = decode_page_name(stem, fmt);
-            Some(
-                page_identity::effective_page_name_from_text(path, &filename, text)
-                    .unwrap_or(filename),
-            )
-        })
-    }
-
-    /// `page_entry_in`'s entry for an eligible `path`, its page name (not a
-    /// journal's) from `name` of its stem.
-    fn page_entry_named(
-        &self,
-        path: &Path,
-        name: impl FnOnce(&str, FileNameFormat) -> Option<String>,
-    ) -> Option<PageEntry> {
         if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
@@ -3867,7 +3839,8 @@ impl Graph {
                 path: path.to_path_buf(),
             }
         } else {
-            let name = name(stem, self.current_config().file_name_format)?;
+            let name =
+                self.discover_page_name(path, stem, self.current_config().file_name_format, text)?;
             let (name, kind, date_key) =
                 page_identity::page_file_claim(&self.current_journal_format(), name);
             PageEntry {

@@ -136,7 +136,7 @@ export function outlineToHtml(md: string): string {
 export function writeClipboardText(text: string, still?: () => boolean): Promise<void> {
   if (still && !still()) return Promise.resolve();
   clearClipboardPayload();
-  return backend().writeText(text, still);
+  return still ? backend().writeText(text, still) : backend().writeText(text);
 }
 
 /**

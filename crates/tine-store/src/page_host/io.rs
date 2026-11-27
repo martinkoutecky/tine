@@ -143,21 +143,16 @@ pub struct KeptOriginal {
     pub(crate) origin: u64,
     /// The source's file, relative to the graph root.
     pub(crate) path: String,
-    /// The page a file at `path` holding the original would be, named from
-    /// its text; None when the graph's settings no longer make the file a
-    /// page (a hidden path).
-    pub(crate) name: Option<String>,
-    /// Whether that is a page or a journal day; None with `name`.
-    pub(crate) kind: Option<tine_core::model::PageKind>,
     /// The original's length in bytes.
     pub(crate) len: usize,
-    /// The original is UTF-8 text, so Copy original can copy it
-    /// (`KeptText::Text`); independent of `name` and `kind`.
+    /// The original is text (UTF-8, no NUL), so Copy original can copy it
+    /// (`KeptText::Text`).
     pub(crate) text: bool,
 }
 
 /// A kept original's text for Copy original (`PageHost::kept_text`).
-/// Never a lossy conversion: bytes that are not UTF-8 answer `NotText`.
+/// Never a lossy conversion: bytes that are not text (not UTF-8, or with a
+/// NUL) answer `NotText`.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum KeptText {
@@ -166,7 +161,7 @@ pub enum KeptText {
         /// The original's text.
         text: String,
     },
-    /// The original is not UTF-8 text; it stays kept.
+    /// The original is not text; it stays kept.
     NotText {
         /// The original's length in bytes.
         len: usize,

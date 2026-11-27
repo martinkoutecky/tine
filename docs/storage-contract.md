@@ -1426,8 +1426,8 @@ from the scanned drafts before any recovered save or choice.
   addressed by its source and its record's write sequence, for the window
   session that listed it (GH #540). Copy original text answers the exact
   text, or that it is not text (never a lossy conversion), no longer kept,
-  or not answered. Both only read: they write nothing and record no name
-  discovery (`Graph::page_entry_of_text`).
+  or not answered; text is UTF-8 with no NUL character. Both only read:
+  they write nothing, and List names and parses no row (a row is its path).
 - A source anchors its original text only while a **source witness** of that
   very file succeeds (`HostIo::source_witnessed`; `Host::source_original` is
   the one answerer; REG-LAUNCH-CUSTODY-SECOND-CUT). Recipe: on one handle,

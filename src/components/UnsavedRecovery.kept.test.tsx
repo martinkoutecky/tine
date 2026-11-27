@@ -16,7 +16,7 @@ import { paletteCommands } from "../keybindings";
 import { noticeKeptOriginals } from "../graph";
 import { setToasts, toasts } from "../toasts";
 
-const ROW: KeptOriginal = { key: "pages/a.md", origin: 7, path: "pages/a.md", name: "a", kind: "page", len: 7, text: true };
+const ROW: KeptOriginal = { key: "pages/a.md", origin: 7, path: "pages/a.md", len: 7, text: true };
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
 /** A promise and its resolver: an answer the test releases. */
@@ -74,8 +74,8 @@ describe("kept originals in the recovery panel (GH #540)", () => {
 
   it("a binary row and a hidden text row from one List: not text without Copy, and Copy", async () => {
     rows = [
-      { key: "journals/Loose.md", origin: 3, path: "journals/Loose.md", name: null, kind: null, len: 3, text: false },
-      { key: "pages/x.md", origin: 4, path: "pages/x.md", name: null, kind: null, len: 3, text: true },
+      { key: "journals/Loose.md", origin: 3, path: "journals/Loose.md", len: 3, text: false },
+      { key: "pages/x.md", origin: 4, path: "pages/x.md", len: 3, text: true },
     ];
     await openPanel(2);
     const [binary, text] = [...root.querySelectorAll(".recovery-kept-row")];

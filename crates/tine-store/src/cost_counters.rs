@@ -131,6 +131,7 @@ thread_local! {
     static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     static UNREADABLE_PATH_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static THREAD_PARSE_INPUT_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TITLE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -701,6 +702,14 @@ pub(crate) fn rename_title_probes(entries: usize) {
 pub(crate) fn parse_input_check() {
     PARSE_INPUT_CHECKS.fetch_add(1, Ordering::Relaxed);
     THREAD_PARSE_INPUT_CHECKS.with(|checks| checks.set(checks.get() + 1));
+}
+
+/// Calling thread's page-title reads from a preamble (`preamble_title`).
+pub fn thread_title_parses() -> usize {
+    TITLE_PARSES.with(std::cell::Cell::get)
+}
+pub(crate) fn title_parse() {
+    TITLE_PARSES.with(|parses| parses.set(parses.get() + 1));
 }
 
 /// Calling thread's page-byte input checks (`parse_input_checks`, free of

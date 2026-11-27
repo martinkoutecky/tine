@@ -6,7 +6,6 @@
 use super::*;
 use crate::page_host::io::{KeptOriginal, KeptText};
 use std::sync::atomic::Ordering;
-use tine_core::model::PageKind;
 
 const SOURCE: &str = "pages/a.md";
 const RECEIVER: &str = "pages/c.md";
@@ -75,25 +74,16 @@ fn tree(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 /// Acceptance 1 and 15: CRLF and LF originals are listed with their path,
-/// name and kind, and Copy original hands over the exact text (the string
+/// and Copy original hands over the exact text (the string
 /// the clipboard writer receives); listing and copying write nothing (the
 /// graph and app directories are byte-identical), publish no edit kind and
 /// send no mail.
 #[test]
-fn the_list_names_each_kept_original_and_copy_gives_its_exact_text() {
+fn the_list_shows_each_kept_original_and_copy_gives_its_exact_text() {
     for original in [ORIGINAL, "title:: Named\n\n- old\n"] {
         let live = kept(original.as_bytes(), &[]);
         let row = listed(&live);
-        let named = if original == ORIGINAL { "a" } else { "Named" };
-        assert_eq!(
-            (
-                row.key.as_str(),
-                row.path.as_str(),
-                row.name.as_deref(),
-                row.kind
-            ),
-            (SOURCE, SOURCE, Some(named), Some(PageKind::Page))
-        );
+        assert_eq!((row.key.as_str(), row.path.as_str()), (SOURCE, SOURCE));
         assert_eq!((row.len, row.text), (original.len(), true));
         assert_eq!(live.host.draft_status().kept, 1, "the launch count");
         while live.mail.try_recv().is_ok() {}
@@ -131,24 +121,17 @@ fn listing_and_copying_leave_a_discovery_failure_recorded() {
     let recorded = |live: &Live| live.store.graph.name_discovery_recorded(&path);
     assert!(recorded(&live), "the live file's read failure is recorded");
     let row = listed(&live);
-    assert_eq!(
-        row.name.as_deref(),
-        Some("Named"),
-        "named from the kept text"
-    );
     assert!(matches!(copy(&live, &row), KeptText::Text { .. }));
     assert!(recorded(&live), "List and Copy leave it recorded");
     live.host.stop();
 }
 
 /// Acceptance 3: a path the graph's settings hide after the list was taken
-/// keeps its row (by key and origin), without a name or kind, and Copy
-/// original still gives its text.
+/// keeps its row (by key and origin), and Copy original still gives its text.
 #[test]
 fn a_hidden_path_keeps_its_row_and_its_copy() {
     let live = kept(ORIGINAL.as_bytes(), &[]);
     let before = listed(&live);
-    assert!(before.name.is_some());
     let config = live.root.join("logseq/config.edn");
     fs::write(config, "{:hidden [\"pages/a.md\"]}\n").unwrap();
     live.store.refresh(crate::Depth::Rebuild).unwrap();
@@ -156,12 +139,7 @@ fn a_hidden_path_keeps_its_row_and_its_copy() {
         panic!("Copy of a row listed before the path was hidden")
     };
     assert_eq!(text, ORIGINAL);
-    let row = listed(&live);
-    assert_eq!((row.name, row.kind), (None, None), "no page now");
-    assert_eq!(
-        (row.key, row.origin, row.text),
-        (before.key, before.origin, true)
-    );
+    assert_eq!(listed(&live), before, "the same row");
     live.host.stop();
 }
 
@@ -204,23 +182,11 @@ fn stale_rows_are_missing_and_other_sessions_are_unanswered() {
 /// Acceptance 8 and 13: an original that is not UTF-8 (`ff fe 00`) is listed
 /// as not text and Copy answers `NotText`, never a lossy string, and it stays
 /// kept. Beside it in the same List call, a text original (`78 0d 0a`) under
-/// a hidden path (both rows have no name or kind) is text and copies.
+/// a hidden path is text and copies.
 #[test]
 fn a_binary_original_is_not_text_beside_a_hidden_text_one() {
-    let binary: &[u8] = &[0xff, 0xfe, 0x00];
-    // A rename of a file that is not text is refused, so the kept text
-    // original's preimage is set to those bytes, as a source rewritten by
-    // another program before its removal would have kept them.
     let live = kept(ORIGINAL.as_bytes(), &[]);
-    live.host.driver.shared.with_state_for_tests(|state| {
-        let order = &mut state.progress.host.order;
-        let name = order.kept().next().unwrap().0.clone();
-        let mut op = order.paired(&name).unwrap().clone();
-        for pair in op.pairs.iter_mut().filter(|p| p.kept()) {
-            pair.preimage = Some(Arc::from(binary));
-        }
-        order.adopt(name, op);
-    });
+    keep_bytes(&live, &[0xff, 0xfe, 0x00]);
     let row = listed(&live);
     assert_eq!((row.text, row.len), (false, 3));
     assert_eq!(copy(&live, &row), KeptText::NotText { len: 3 });
@@ -244,8 +210,6 @@ fn a_binary_original_is_not_text_beside_a_hidden_text_one() {
     assert_eq!(rows.len(), 2, "{rows:?}");
     let by_key = |key: &str| rows.iter().find(|r| r.key == key).unwrap();
     let (binary_row, text_row) = (by_key(SOURCE), by_key(other));
-    assert_eq!((binary_row.name.clone(), binary_row.kind), (None, None));
-    assert_eq!((text_row.name.clone(), text_row.kind), (None, None));
     assert_eq!((binary_row.text, text_row.text), (false, true));
     assert_eq!(copy(&live, binary_row), KeptText::NotText { len: 3 });
     assert_eq!(
@@ -255,6 +219,53 @@ fn a_binary_original_is_not_text_beside_a_hidden_text_one() {
         }
     );
     assert_eq!(live.host.draft_status().kept, 2, "both stay kept");
+    live.host.stop();
+}
+
+/// Sets every kept pair's original to `bytes`, as a source rewritten by
+/// another program before its removal would have kept them (a rename of a
+/// file that is not text is refused).
+fn keep_bytes(live: &Live, bytes: &'static [u8]) {
+    live.host.driver.shared.with_state_for_tests(|state| {
+        let order = &mut state.progress.host.order;
+        let name = order.kept().next().unwrap().0.clone();
+        let mut op = order.paired(&name).unwrap().clone();
+        for pair in op.pairs.iter_mut().filter(|p| p.kept()) {
+            pair.preimage = Some(Arc::from(bytes));
+        }
+        order.adopt(name, op);
+    });
+}
+
+/// Valid UTF-8 holding a NUL is not text: a Windows clipboard would end the
+/// copy at the NUL, so Copy would not give the original exactly. The row
+/// says not text, Copy answers `NotText`, and the original stays kept.
+#[test]
+fn an_original_with_a_nul_is_not_text() {
+    let live = kept(ORIGINAL.as_bytes(), &[]);
+    keep_bytes(&live, b"before\0after");
+    let row = listed(&live);
+    assert_eq!((row.text, row.len), (false, 12));
+    assert_eq!(copy(&live, &row), KeptText::NotText { len: 12 });
+    assert_eq!(live.host.draft_status().kept, 1, "it stays kept");
+    live.host.stop();
+}
+
+/// Acceptance 6, list half: List reads no title from any row (the panel
+/// shows only the path), so its cost is the pair walk and a byte check per
+/// row. Each original here has a title the old list would have parsed.
+#[test]
+fn listing_parses_no_row() {
+    let live = kept(b"title:: Named\n\n- old\n", &[]);
+    let before = crate::cost_counters::thread_title_parses();
+    for _ in 0..3 {
+        listed(&live);
+    }
+    assert_eq!(
+        crate::cost_counters::thread_title_parses(),
+        before,
+        "no title parse"
+    );
     live.host.stop();
 }
 

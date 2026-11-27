@@ -743,38 +743,3 @@ fn a_path_read_of_a_held_file_does_not_join_the_claimant_memo() {
     assert!(wrong.is_empty(), "{wrong:#?}");
     store.close();
 }
-
-/// GH #540 (acceptance 2 and 9): naming text in hand for custody
-/// (`page_entry_of_text`) records nothing, so a direct-read failure that is
-/// the file's only record survives it; the live-read callers that name a
-/// file from supplied bytes (`Store::page_of`, the claim guard's
-/// `entry_for_path_in(path, Some(""))`, through `page_entry_in`) still record
-/// their discovery and clear it, as before.
-#[test]
-fn naming_kept_text_records_no_discovery_and_page_of_still_does() {
-    let (_temp, store) = graph(&[("pages/a.md", b"title:: \xff\xfe\n- b\n")]);
-    let path = store.graph.root.join("pages/a.md");
-    // The direct-name discovery record (the launch read's own row is kept
-    // apart and is not what these callers touch).
-    let recorded = |store: &Store| store.graph.name_discovery_recorded(&path);
-    let _ = store.graph.entry_for_path(&path);
-    assert!(recorded(&store), "the direct read's failure is recorded");
-    let entry = store
-        .graph
-        .page_entry_of_text(&path, "title:: Named\n\n- old\n");
-    assert_eq!(
-        entry.map(|e| (e.name, e.kind)),
-        Some(("Named".into(), PageKind::Page))
-    );
-    let entry = store
-        .graph
-        .page_entry_of_text(&path, "title:: \u{0}\n- x\n");
-    assert!(entry.is_some());
-    assert!(recorded(&store), "custody naming leaves it");
-    let _ = store.page_of(&PageId::from("pages/a.md"), b"title:: \xff\n- c\n");
-    assert!(
-        !recorded(&store),
-        "page_of records its discovery, as before"
-    );
-    store.close();
-}
