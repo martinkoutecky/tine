@@ -1745,7 +1745,7 @@ fn slash_day_parents_need_a_parent_with_fewer_parts() {
     type Expect<'a> = &'a [((bool, &'a str), Option<Option<(bool, String)>>)];
     let cases: &[(&str, &str, &[(&str, &str)], Expect)] = &[
         (
-            // Round 5: each title's ISO prefix names the other day. Neither
+            // Each title's ISO prefix names the other day. Neither
             // accepts the other (equal depth); both stay listed.
             "swapped slash",
             "yyyy-dd-MM/0",
