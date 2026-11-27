@@ -171,12 +171,15 @@ fn image(entries: &[InventoryEntry]) -> BTreeMap<(bool, String, String), String>
                 // `link` is part of the answer the window holds: a delta that
                 // left it stale would route a link to the wrong page; so is
                 // why a fileless entry exists (a namespace parent), and
-                // whether an empty file yields its name (EMPTY-ALIAS).
+                // whether an empty file yields its name (EMPTY-ALIAS), and its
+                // namespace tree parent (absence is an answer).
                 format!(
-                    "{:?} {:?} {:?}{}{}",
+                    "{:?} {:?} {:?} up {:?}{}{}{}",
                     entry.target,
                     entry.day,
                     entry.link,
+                    entry.parent,
+                    if entry.namespace_day { " day" } else { "" },
                     if entry.namespace_parent {
                         " parent"
                     } else {
@@ -598,9 +601,19 @@ fn a_masked_journal_cannot_extend_an_ordinary_files_literal_date_claim() {
 /// signals exactly when the inventory changed (the old code signalled every
 /// change of the saved page's own name set, and always as a refetch).
 fn assert_patch(store: &Arc<Store>, id: &str, raw: &str) -> usize {
+    assert_patch_edit(store, id, raw, set_block(raw))
+}
+
+/// [`assert_patch`] for any edit, named `raw` in messages.
+fn assert_patch_edit(
+    store: &Arc<Store>,
+    id: &str,
+    raw: &str,
+    edit: impl FnOnce(&mut tine_core::model::PageDto),
+) -> usize {
     let before = inventory(store);
     let mut held = before.clone();
-    let (changed, deltas) = save(store, id, set_block(raw));
+    let (changed, deltas) = save(store, id, edit);
     let deltas = deltas.unwrap_or_else(|| panic!("{raw:?}: a refetch instead of a delta"));
     let mut entries = 0;
     for delta in &deltas {
@@ -1704,5 +1717,507 @@ fn bracket_completion_offers_namespace_parents() {
         ),
         1
     );
+    store.close();
+}
+
+/// Each listed row's namespace tree parent candidate, keyed
+/// `(journal?, name)`: `Some((journal?, name))` or `None`.
+fn tree_parents(store: &Store) -> BTreeMap<(bool, String), Option<(bool, String)>> {
+    store
+        .whole_graph()
+        .unwrap()
+        .inventory(InventoryScope::All)
+        .0
+        .iter()
+        .map(|entry| {
+            (
+                (entry.is_journal, entry.name.clone()),
+                entry
+                    .parent
+                    .as_ref()
+                    .map(|parent| (parent.is_journal, parent.name.clone())),
+            )
+        })
+        .collect()
+}
+
+fn page(name: &str) -> Option<(bool, String)> {
+    Some((false, name.to_owned()))
+}
+
+/// A day's tree parent candidate is a page whose page key has fewer
+/// `/`-separated parts, and every other typed candidate obeys the same check.
+/// Each row: (case, config, files, expected candidates of the named rows; an
+/// unlisted name is asserted absent).
+#[test]
+fn slash_day_parents_need_a_parent_with_fewer_parts() {
+    let _guard = crate::test_transactions::integration_lock();
+    type Expect<'a> = &'a [((bool, &'a str), Option<Option<(bool, String)>>)];
+    let cases: &[(&str, &str, &[(&str, &str)], Expect)] = &[
+        (
+            // Each title's ISO prefix names the other day. Neither
+            // accepts the other (equal depth); both stay listed.
+            "swapped slash",
+            "yyyy-dd-MM/0",
+            &[
+                ("journals/2026_11_02.md", "- notes\n"),
+                ("journals/2026_02_11.md", "- notes\n"),
+            ],
+            &[
+                ((true, "2026-02-11/0"), Some(None)),
+                ((true, "2026-11-02/0"), Some(None)),
+                ((false, "2026-02-11"), None),
+                ((false, "2026-11-02"), None),
+            ],
+        ),
+        (
+            // The prefix names the same day: never its own parent.
+            "same-day prefix",
+            "yyyy-MM-dd/0",
+            &[("journals/2026_11_02.md", "- notes\n")],
+            &[((true, "2026-11-02/0"), Some(None))],
+        ),
+        (
+            // The day's ordinary prefix page is accepted; that page's ISO
+            // prefix names the deeper day again and is refused.
+            "mixed cycle",
+            "yyyy-MM-dd/0/0",
+            &[("journals/2026_11_02.md", "- notes\n")],
+            &[
+                ((true, "2026-11-02/0/0"), Some(page("2026-11-02/0"))),
+                ((false, "2026-11-02/0"), Some(None)),
+            ],
+        ),
+        (
+            "ys3",
+            "dd/MM/yyyy",
+            &[
+                ("journals/2026_11_02.md", "- 2026\n"),
+                ("journals/2027_11_02.md", "title:: 2026-11-02\n- target\n"),
+                ("pages/physical.md", "title:: 2026-11-02\n- target\n"),
+                (
+                    "pages/Notes.md",
+                    "- year-less [[11-02]]\n- alternate 2027 [[02/11/2027]]\n- default 2026 [[Nov 2nd, 2026]]\n",
+                ),
+            ],
+            &[
+                ((true, "02/11/2026"), Some(page("02/11"))),
+                ((true, "02/11/2027"), Some(page("02/11"))),
+                ((false, "02/11"), Some(page("02"))),
+            ],
+        ),
+        (
+            // Nonblank title-derived seed: the journal supplies its month
+            // and year without any reference; a blank journal lists its own
+            // day but no month, so its candidate names no listed row.
+            "nonblank seed",
+            "yyyy/MM/dd",
+            &[
+                ("journals/2026_11_02.md", "- notes\n"),
+                ("journals/2026_12_01.md", ""),
+            ],
+            &[
+                ((true, "2026/11/02"), Some(page("2026/11"))),
+                ((false, "2026/11"), Some(page("2026"))),
+                ((false, "2026"), Some(None)),
+                ((true, "2026/12/01"), Some(page("2026/12"))),
+                ((false, "2026/12"), None),
+            ],
+        ),
+        (
+            // Fileless mentioned day and an ordinary name beside it.
+            "fileless mentioned day",
+            "yyyy/MM/dd",
+            &[("pages/R.md", "- [[2026/11/02]] [[2026/11/Notes]]\n")],
+            &[
+                ((true, "2026/11/02"), Some(page("2026/11"))),
+                ((false, "2026/11/Notes"), Some(page("2026/11"))),
+                ((false, "2026/11"), Some(page("2026"))),
+            ],
+        ),
+    ];
+    for (case, title, files, expect) in cases {
+        let config = format!("{{:journal/page-title-format \"{title}\"}}\n");
+        let mut all = vec![("logseq/config.edn", config.as_str())];
+        all.extend_from_slice(files);
+        let (_dir, store) = fixture(&all);
+        let parents = tree_parents(&store);
+        for ((journal, name), want) in *expect {
+            assert_eq!(
+                parents.get(&(*journal, (*name).to_owned())),
+                want.as_ref(),
+                "{case}: parent of {name:?} in {parents:#?}"
+            );
+        }
+        store.close();
+    }
+}
+
+/// ys5 (a pages file claims a day by `title::`; its displayed title supplies
+/// the namespace), an alias-only month (its row is an alias, so the day's
+/// candidate parent is not a namespace page), and a populated month whose
+/// file goes away: the day supplies the month again as a fileless page.
+#[test]
+fn slash_day_parents_follow_the_displayed_title_and_month_rename() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"dd/MM/yyyy\" :journal/file-name-format \"yyyy/MM/dd\" :file/name-format :legacy}\n",
+        ),
+        ("pages/2026.md", "- notes\n"),
+        ("pages/dayphysical.md", "title:: 2026/10/26\n- day\n"),
+        ("pages/R.md", "- [[2026/10/26]] [[2026/x]]\n"),
+    ]);
+    let parents = tree_parents(&store);
+    assert_eq!(parents[&(true, "26/10/2026".to_owned())], page("26/10"));
+    assert_eq!(parents[&(false, "26/10".to_owned())], page("26"));
+    assert_eq!(parents[&(false, "2026/x".to_owned())], page("2026"));
+    store.close();
+
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- notes\n"),
+        ("pages/Owner.md", "alias:: 2026/11\n\n- owner\n"),
+    ]);
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let month: Vec<_> = inventory
+        .0
+        .iter()
+        .filter(|entry| entry.name == "2026/11")
+        .collect();
+    assert!(
+        month.len() == 1 && matches!(month[0].target, crate::Resolved::Alias { .. }),
+        "the month is only an alias: {month:?}"
+    );
+    drop(view);
+    assert_eq!(
+        tree_place(&store, true, "2026/11/02"),
+        (page("2026/11"), true),
+        "the candidate is the month before alias opening"
+    );
+    assert!(
+        !node(&store, false, "2026/11"),
+        "an alias is no tree node, so the day has no edge"
+    );
+    store.close();
+
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- notes\n"),
+        ("pages/Month.md", "title:: 2026/11\n\n- November review\n"),
+    ]);
+    assert_eq!(
+        tree_parents(&store)[&(true, "2026/11/02".to_owned())],
+        page("2026/11")
+    );
+    let month = PageId::from("pages/Month.md");
+    let mut tx = store.page_plan(Some(EditKind::DeletePage));
+    tx.trash(
+        &month.file(),
+        store.page(&month).unwrap().rev,
+        crate::TrashIf::Any,
+    );
+    apply_plan(&store, tx);
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let month: Vec<_> = inventory
+        .0
+        .iter()
+        .filter(|entry| entry.name == "2026/11")
+        .collect();
+    assert!(
+        month.len() == 1
+            && month[0].namespace_parent
+            && matches!(month[0].target, crate::Resolved::Absent { .. }),
+        "the day supplies the month again: {month:?}"
+    );
+    drop(view);
+    let parents = tree_parents(&store);
+    assert_eq!(parents[&(true, "2026/11/02".to_owned())], page("2026/11"));
+    assert_eq!(parents[&(false, "2026/11".to_owned())], page("2026"));
+    store.close();
+}
+
+/// The publication delta carries the same tree parent as a fresh read for a
+/// fileless day whose mention is added to and removed from a resident graph
+/// (`assert_patch` compares every row's parent), and a blank journal's
+/// month appears and goes as a reference-only page in a delta while the day
+/// keeps its one candidate.
+#[test]
+fn fileless_slash_day_parent_travels_in_the_delta() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("pages/R.md", "- start\n"),
+        ("journals/2026_12_01.md", ""),
+    ]);
+    assert_patch(&store, "pages/R.md", "[[2026/11/02]]");
+    assert_eq!(
+        tree_parents(&store)[&(true, "2026/11/02".to_owned())],
+        page("2026/11")
+    );
+    assert_patch(&store, "pages/R.md", "[[2026/11/02]] [[2026/11/Notes]]");
+    assert_patch(&store, "pages/R.md", "[[2026/11/Notes]]");
+    // The blank journal does not list its month: the month's row comes and
+    // goes in a delta, and the day's own row, which no delta carries, keeps
+    // its candidate.
+    let day = (page("2026/12"), true);
+    assert_eq!(tree_place(&store, true, "2026/12/01"), day);
+    assert!(!node(&store, false, "2026/12"));
+    assert_patch(&store, "pages/R.md", "[[2026/12]]");
+    assert_eq!(tree_place(&store, true, "2026/12/01"), day);
+    assert!(node(&store, false, "2026/12"));
+    assert_patch(&store, "pages/R.md", "start");
+    assert_eq!(tree_place(&store, true, "2026/12/01"), day);
+    assert!(!node(&store, false, "2026/12"));
+    assert!(!tree_parents(&store).contains_key(&(true, "2026/11/02".to_owned())));
+    store.close();
+}
+
+/// Declaring the month as an alias takes its tree node away from a day file
+/// the delta does not carry, and dropping the alias gives it back: both
+/// travel as the month's own row in a delta equal to a fresh read, and the
+/// day's candidate never changes.
+#[test]
+fn an_alias_month_travels_in_the_delta() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", "- notes\n"),
+        ("pages/Owner.md", "- owner\n"),
+    ]);
+    let pre = |text: Option<&'static str>| {
+        move |doc: &mut tine_core::model::PageDto| doc.pre_block = text.map(str::to_owned)
+    };
+    let day = (page("2026/11"), true);
+    assert_eq!(tree_place(&store, true, "2026/11/02"), day);
+    assert!(node(&store, false, "2026/11"));
+    assert_patch_edit(
+        &store,
+        "pages/Owner.md",
+        "alias:: 2026/11",
+        pre(Some("alias:: 2026/11")),
+    );
+    assert_eq!(tree_place(&store, true, "2026/11/02"), day);
+    assert!(!node(&store, false, "2026/11"), "the month's node went");
+    assert_patch_edit(&store, "pages/Owner.md", "no alias", pre(None));
+    assert_eq!(tree_place(&store, true, "2026/11/02"), day);
+    assert!(node(&store, false, "2026/11"), "the month's node came back");
+    store.close();
+}
+
+/// Whether the inventory lists a tree node of this kind and page key: a row
+/// that is no alias (what the tree attaches a candidate to).
+fn node(store: &Store, journal: bool, name: &str) -> bool {
+    let key = tine_core::refs::page_key(name);
+    store
+        .whole_graph()
+        .unwrap()
+        .inventory(InventoryScope::All)
+        .0
+        .iter()
+        .any(|entry| {
+            entry.is_journal == journal
+                && tine_core::refs::page_key(&entry.name) == key
+                && !matches!(entry.target, crate::Resolved::Alias { .. })
+        })
+}
+
+/// The row's tree answers: (parent candidate, namespace day).
+fn tree_place(store: &Store, journal: bool, name: &str) -> (Option<(bool, String)>, bool) {
+    let view = store.whole_graph().unwrap();
+    let inventory = view.inventory(InventoryScope::All);
+    let entry = inventory
+        .0
+        .iter()
+        .find(|entry| entry.is_journal == journal && entry.name == name)
+        .unwrap_or_else(|| panic!("{name:?} is listed"));
+    (
+        entry
+            .parent
+            .as_ref()
+            .map(|parent| (parent.is_journal, parent.name.clone())),
+        entry.namespace_day,
+    )
+}
+
+/// The candidate's page key, for candidates whose spelling is a reference's.
+fn candidate_key(store: &Store, journal: bool, name: &str) -> Option<(bool, String)> {
+    tree_place(store, journal, name)
+        .0
+        .map(|(journal, name)| (journal, tine_core::refs::page_key(&name)))
+}
+
+/// Parent part counts and days read folded keys: a month spelled with a
+/// boundary slash still counts two parts, so the day nests under it, and the
+/// month itself nests under the year (a prefix that folds to the row's own
+/// key is skipped, as `a/b/` lies below `a`); an absent month is no node; a
+/// title whose every prefix folds to an empty key is no namespace day.
+#[test]
+fn slash_day_places_read_folded_keys() {
+    let _guard = crate::test_transactions::integration_lock();
+    for month in ["2026/11/", "/2026/11", "/2026/11/"] {
+        let refs = format!("- [[{month}]]\n");
+        let (_dir, store) = fixture(&[
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+            ),
+            ("journals/2026_11_02.md", ""),
+            ("pages/R.md", refs.as_str()),
+        ]);
+        assert_eq!(
+            tree_place(&store, true, "2026/11/02"),
+            (page("2026/11"), true),
+            "{month:?}"
+        );
+        assert!(node(&store, false, "2026/11"), "{month:?}");
+        assert_eq!(
+            candidate_key(&store, false, month),
+            Some((false, "2026".to_owned())),
+            "{month:?}"
+        );
+        assert!(node(&store, false, "2026"), "{month:?}");
+        store.close();
+    }
+    let (_dir, store) = fixture(&[("pages/R.md", "- [[a/b/]]\n"), ("pages/a%2Fc.md", "- c\n")]);
+    assert_eq!(tree_place(&store, false, "a/b/"), (page("a"), false));
+    assert!(node(&store, false, "a"));
+    store.close();
+    // Absent month: a blank journal seeds nothing and nothing names it.
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("journals/2026_11_02.md", ""),
+    ]);
+    assert_eq!(
+        tree_place(&store, true, "2026/11/02"),
+        (page("2026/11"), true)
+    );
+    assert!(!node(&store, false, "2026/11"));
+    store.close();
+    for (title, name, root) in [
+        ("/yyyy-MM-dd", "/2026-11-02", false),
+        ("//yyyy-MM-dd", "//2026-11-02", false),
+        ("///yyyy-MM-dd", "///2026-11-02", false),
+        ("yyyy-MM-dd/0", "2026-11-02/0", true),
+    ] {
+        let config = format!("{{:journal/page-title-format \"{title}\"}}\n");
+        let (_dir, store) = fixture(&[
+            ("logseq/config.edn", config.as_str()),
+            ("journals/2026_11_02.md", "- notes\n"),
+        ]);
+        assert_eq!(tree_place(&store, true, name), (None, root), "{title:?}");
+        store.close();
+    }
+}
+
+/// A blank day titled with whitespace before a `/` (`2026/11 /02`): its
+/// candidate is the folded month `2026/11`, which is not a literal prefix of
+/// the day's key. Adding the month's first reference and removing it again
+/// travel as deltas equal to a fresh read (no refetch), and the day's row
+/// keeps its candidate throughout, so the tree attaches it exactly while the
+/// month is listed.
+#[test]
+fn a_spaced_slash_day_keeps_its_folded_month_through_deltas() {
+    let _guard = crate::test_transactions::integration_lock();
+    for space in [" ", "  ", "\u{a0}"] {
+        let config = format!("{{:journal/page-title-format \"yyyy/MM{space}/dd\"}}\n");
+        let (_dir, store) = fixture(&[
+            ("logseq/config.edn", config.as_str()),
+            ("journals/2026_11_02.md", ""),
+            ("pages/R.md", "- start\n"),
+        ]);
+        let day = format!("2026/11{space}/02");
+        let month = Some((false, "2026/11".to_owned()));
+        assert_eq!(candidate_key(&store, true, &day), month, "{space:?}");
+        assert!(!node(&store, false, "2026/11"), "{space:?}");
+        assert_patch(&store, "pages/R.md", "[[2026/11]]");
+        assert_eq!(candidate_key(&store, true, &day), month, "{space:?}");
+        assert!(node(&store, false, "2026/11"), "{space:?}");
+        assert_patch(&store, "pages/R.md", "start");
+        assert_eq!(candidate_key(&store, true, &day), month, "{space:?}");
+        assert!(!node(&store, false, "2026/11"), "{space:?}");
+        store.close();
+    }
+}
+
+/// Blank pages under a date-normalised prefix (`2026/11/2/Notes` names the
+/// day `2026/11/02`): each one's candidate is that day, whether or not it is
+/// listed, and a link to the day comes and goes in a delta equal to a fresh
+/// read.
+#[test]
+fn a_date_normalised_prefix_names_its_day_through_deltas() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(&[
+        (
+            "logseq/config.edn",
+            "{:journal/page-title-format \"yyyy/MM/dd\"}\n",
+        ),
+        ("pages/2026%2F11%2F2%2FNotes.md", ""),
+        ("pages/2026%2F1%2F02%2FNotes.md", ""),
+        ("pages/2026%2F1%2F2%2FNotes.md", ""),
+        ("pages/R.md", "- start\n"),
+    ]);
+    let pages = [
+        ("2026/11/2/Notes", "2026/11/02"),
+        ("2026/1/02/Notes", "2026/01/02"),
+        ("2026/1/2/Notes", "2026/01/02"),
+    ];
+    let check = |store: &Store, listed: bool| {
+        for (name, day) in pages {
+            assert_eq!(
+                candidate_key(store, false, name),
+                Some((true, day.to_owned())),
+                "{name:?}"
+            );
+            assert_eq!(node(store, true, day), listed, "{day:?}");
+        }
+    };
+    check(&store, false);
+    assert_patch(&store, "pages/R.md", "[[2026/11/02]] [[2026/01/02]]");
+    check(&store, true);
+    assert_patch(&store, "pages/R.md", "start");
+    check(&store, false);
+    store.close();
+}
+
+/// A page that blank files lie two levels below (`A/<n>/Leaf`) starting to
+/// be referenced moves no row: `A/<n>` is not listed, since blank files
+/// supply no prefixes. The publication is a delta of `a`'s own row only.
+#[test]
+fn a_new_page_above_blank_leaves_is_a_one_key_delta() {
+    let _guard = crate::test_transactions::integration_lock();
+    let mut files: Vec<(String, String)> = (0..200)
+        .map(|n| (format!("pages/A%2F{n}%2FLeaf.md"), String::new()))
+        .collect();
+    files.push(("pages/R.md".into(), "- start\n".into()));
+    let files: Vec<_> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let (_dir, store) = fixture(&files);
+    for raw in ["[[A]]", "start"] {
+        let (changed, deltas) = save(&store, "pages/R.md", set_block(raw));
+        let deltas = deltas.unwrap_or_else(|| panic!("{raw:?}: a refetch"));
+        let keys: Vec<_> = deltas.iter().flat_map(|delta| delta.keys.clone()).collect();
+        assert!(changed && keys == ["a"], "{raw:?}: {keys:?}");
+    }
     store.close();
 }

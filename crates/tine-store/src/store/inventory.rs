@@ -32,9 +32,15 @@ pub struct InventoryEntry {
     /// its target is the absent page its name would create. Views that show
     /// a namespace tree read it instead of re-deriving prefixes.
     pub namespace_parent: bool,
-    /// Canonical typed immediate namespace prefix. It is an entity target,
-    /// never an alias opening destination; consumers attach only listed pages.
+    /// The namespace tree parent candidate ([`tree_place`]), as an entity
+    /// target, never an alias opening destination. The tree attaches the row
+    /// below it exactly when the inventory lists that typed page (no alias).
+    /// `None` means no candidate, never "derive one from the prefix".
     pub parent: Option<LinkTarget>,
+    /// A day whose title has a nonempty namespace prefix ([`tree_place`]):
+    /// shown at the top of the namespace tree when it has no parent, even
+    /// with nothing below it.
+    pub namespace_day: bool,
     /// Retired live answer, always false (R13-C4). Frozen published v1 rows
     /// can still carry their historical answer.
     pub empty_alias: bool,
@@ -64,6 +70,7 @@ fn fileless_entry(
         }),
         namespace_parent: answer.namespace_parent,
         parent: None,
+        namespace_day: false,
         empty_alias: false,
     }
 }
@@ -167,6 +174,58 @@ pub(crate) fn link_target_in(
     })
 }
 
+/// The live namespace tree's per-row answers for `entry`, a pure function of
+/// its own name, the real page owners and the journal format (both change
+/// only through a full inventory read).
+///
+/// `parent` is the tree parent candidate: the typed page that the last proper
+/// prefix with a nonempty page key different from the row's own names, before
+/// alias opening (the prefix's real owner, else the day or ordinary page the
+/// prefix spells). It is dropped when it is the row itself or when its page
+/// key has as many `/`-separated parts as the row's page key or more (empty
+/// parts count; keys fold case and one boundary slash at each end, so
+/// `2026/11/` counts two parts). Strict descent makes every chain end. The
+/// candidate says nothing about whether that page is listed: the tree
+/// attaches the row only when the inventory has the candidate's row.
+///
+/// `namespace_day`: the row is a day and some proper prefix of its title has
+/// a nonempty page key, so the tree shows it at the top when it has no
+/// parent, even with nothing below it. O(1) indexed lookups and one date
+/// parse of the prefix.
+fn tree_place(
+    graph: &ReadSnapshot,
+    format: &JournalFormat,
+    mut entry: InventoryEntry,
+) -> InventoryEntry {
+    let own = tine_core::refs::page_key(&entry.name);
+    let mut prefixes = crate::model::namespace_parents::parent_prefixes(&entry.name).peekable();
+    entry.namespace_day = entry.is_journal && prefixes.peek().is_some();
+    entry.parent = prefixes
+        .filter(|(_, key)| *key != own)
+        .last()
+        .and_then(|(prefix, key)| {
+            let target = graph
+                .real_page_owners()
+                .opening_entry(&key)
+                .map(|parent| LinkTarget {
+                    name: parent.name.clone(),
+                    is_journal: parent.kind == PageKind::Journal,
+                })
+                .unwrap_or_else(|| {
+                    let fallback = crate::model::fileless_names::FilelessName::new(format, prefix);
+                    LinkTarget {
+                        name: fallback.name,
+                        is_journal: fallback.day.is_some(),
+                    }
+                });
+            let key = tine_core::refs::page_key(&target.name);
+            let parts = |key: &str| key.split('/').count();
+            let itself = target.is_journal == entry.is_journal && key == own;
+            (!itself && parts(&key) < parts(&own)).then_some(target)
+        });
+    entry
+}
+
 /// `entry` with its `link` set when the link opens something other than the
 /// entry itself. Real files have no content-dependent redirect.
 fn with_link(
@@ -176,25 +235,6 @@ fn with_link(
     mut entry: InventoryEntry,
     declared: Option<bool>,
 ) -> InventoryEntry {
-    if let Some((prefix, key)) =
-        crate::model::namespace_parents::parent_prefixes(&entry.name).last()
-    {
-        let owners = graph.real_page_owners();
-        let target = owners
-            .opening_entry(&key)
-            .map(|parent| LinkTarget {
-                name: parent.name.clone(),
-                is_journal: parent.kind == PageKind::Journal,
-            })
-            .unwrap_or_else(|| {
-                let fallback = crate::model::fileless_names::FilelessName::new(format, prefix);
-                LinkTarget {
-                    name: fallback.name,
-                    is_journal: fallback.day.is_some(),
-                }
-            });
-        entry.parent = (target.is_journal || target.name != prefix).then_some(target);
-    }
     if matches!(entry.target, Resolved::Existing { .. })
         && !entry.name.bytes().any(|byte| byte.is_ascii_digit())
     {
@@ -408,6 +448,7 @@ impl WholeGraph {
                                 link: None,
                                 namespace_parent: false,
                                 parent: None,
+                                namespace_day: false,
                                 empty_alias: false,
                             })
                         })
@@ -458,6 +499,7 @@ impl WholeGraph {
                         link: None,
                         namespace_parent: false,
                         parent: None,
+                        namespace_day: false,
                         empty_alias: false,
                     })
                     .into_iter()
@@ -480,6 +522,7 @@ impl WholeGraph {
                             link: None,
                             namespace_parent: false,
                             parent: None,
+                            namespace_day: false,
                             empty_alias: false,
                         })
                     })
@@ -499,6 +542,7 @@ impl WholeGraph {
                             link: None,
                             namespace_parent: false,
                             parent: None,
+                            namespace_day: false,
                             empty_alias: false,
                         }
                     })
@@ -669,6 +713,7 @@ impl WholeGraph {
                 link: None,
                 namespace_parent: false,
                 parent: None,
+                namespace_day: false,
                 empty_alias: false,
             });
         }
@@ -691,6 +736,7 @@ impl WholeGraph {
                     declared,
                 )
             })
+            .map(|entry| tree_place(&self.graph, &self.journal_format, entry))
             .collect();
         sort_inventory(&mut entries);
         #[cfg(feature = "test-faults")]
@@ -812,6 +858,7 @@ impl WholeGraph {
                 link: None,
                 namespace_parent: false,
                 parent: None,
+                namespace_day: false,
                 empty_alias: false,
             })
             .collect()
@@ -831,6 +878,23 @@ impl Snapshot {
     /// with `key`. A canonical fileless day checks the resident
     /// reference/namespace support for that day (O(log days + its spellings)).
     pub(super) fn name_entry(
+        &self,
+        table: &crate::model::referenced_names::ReferencedNameTable,
+        key: &str,
+        day: Option<JournalDate>,
+    ) -> Option<InventoryEntry> {
+        let entry = with_link(
+            &self.claimants,
+            &self.graph,
+            &self.journal_format,
+            self.bare_entry(table, key, day)?,
+            None,
+        );
+        Some(tree_place(&self.graph, &self.journal_format, entry))
+    }
+
+    /// [`Self::name_entry`] before its link and tree answers.
+    fn bare_entry(
         &self,
         table: &crate::model::referenced_names::ReferencedNameTable,
         key: &str,
@@ -871,7 +935,7 @@ impl Snapshot {
             if answer.day.is_some() && tine_core::refs::page_key(&answer.name) != key {
                 return None;
             }
-            return Some(self.linked(InventoryEntry {
+            return Some(InventoryEntry {
                 name: answer.name,
                 target: Resolved::Alias {
                     owners: owners.into_iter().map(PageId::from).collect(),
@@ -881,8 +945,9 @@ impl Snapshot {
                 link: None,
                 namespace_parent: false,
                 parent: None,
+                namespace_day: false,
                 empty_alias: false,
-            }));
+            });
         }
         let fallback = crate::model::fileless_names::FilelessName::new(
             &self.journal_format,
@@ -925,17 +990,7 @@ impl Snapshot {
         let target = Resolved::Absent {
             id: proposed_page_id(&self.config.config, &answer.name),
         };
-        Some(self.linked(fileless_entry(answer, target)))
-    }
-
-    fn linked(&self, entry: InventoryEntry) -> InventoryEntry {
-        with_link(
-            &self.claimants,
-            &self.graph,
-            &self.journal_format,
-            entry,
-            None,
-        )
+        Some(fileless_entry(answer, target))
     }
 }
 

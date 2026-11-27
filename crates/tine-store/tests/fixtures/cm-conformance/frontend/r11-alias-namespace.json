@@ -178,6 +178,10 @@
       },
       "name": "old/sub",
       "namespace_excluded": true,
+      "parent": {
+        "kind": "page",
+        "name": "old"
+      },
       "target": {
         "kind": "alias",
         "owners": [
@@ -223,6 +227,10 @@
       "is_journal": false,
       "key": "real/alias",
       "name": "real/alias",
+      "parent": {
+        "kind": "page",
+        "name": "real"
+      },
       "target": {
         "id": "pages/real%2Falias.md",
         "kind": "existing",
@@ -245,6 +253,10 @@
       "is_journal": false,
       "key": "ref/only",
       "name": "ref/only",
+      "parent": {
+        "kind": "page",
+        "name": "ref"
+      },
       "target": {
         "id": "pages/ref%2Fonly.md",
         "kind": "absent"

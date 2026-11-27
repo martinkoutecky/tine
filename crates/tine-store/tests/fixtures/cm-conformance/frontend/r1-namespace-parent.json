@@ -98,6 +98,10 @@
       "key": "a/b",
       "name": "a/b",
       "namespace_parent": true,
+      "parent": {
+        "kind": "page",
+        "name": "a"
+      },
       "target": {
         "id": "pages/a%2Fb.md",
         "kind": "absent"
@@ -108,6 +112,10 @@
       "is_journal": false,
       "key": "a/b/c",
       "name": "a/b/c",
+      "parent": {
+        "kind": "page",
+        "name": "a/b"
+      },
       "target": {
         "id": "pages/a%2Fb%2Fc.md",
         "kind": "absent"
@@ -129,6 +137,10 @@
       "is_journal": false,
       "key": "n/y",
       "name": "n/y",
+      "parent": {
+        "kind": "page",
+        "name": "n"
+      },
       "target": {
         "id": "pages/n%2Fy.md",
         "kind": "existing",

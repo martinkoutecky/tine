@@ -67,6 +67,10 @@
       "is_journal": false,
       "key": "foo/bar",
       "name": "Foo/bar",
+      "parent": {
+        "kind": "page",
+        "name": "Foo"
+      },
       "target": {
         "id": "pages/Foo%2Fbar.md",
         "kind": "existing",

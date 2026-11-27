@@ -147,6 +147,10 @@
       "is_journal": false,
       "key": "a/b",
       "name": "a/b",
+      "parent": {
+        "kind": "page",
+        "name": "a"
+      },
       "target": {
         "id": "pages/a%2Fb.md",
         "kind": "absent"

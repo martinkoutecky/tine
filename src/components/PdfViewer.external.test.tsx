@@ -175,7 +175,7 @@ it.each([
     expect(message).toContain("/home/user/my papers/a.pdf");
     expect(message).not.toContain("file://");
     expect(host.querySelector(".pdf-close-btn")).not.toBeNull();
-    expect(read).toHaveBeenCalledExactlyOnceWith("file:///home/user/my%20papers/a.pdf", api.graphBindingGeneration());
+    expect(read).toHaveBeenCalledExactlyOnceWith("file:///home/user/my%20papers/a.pdf", api.graphBindingGeneration(), "link");
     expect(getDocument).not.toHaveBeenCalled();
   } finally {
     dispose(); disposeSource(); setGraphMeta(null);

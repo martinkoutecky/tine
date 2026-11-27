@@ -118,6 +118,10 @@
       },
       "name": "ML/sub",
       "namespace_excluded": true,
+      "parent": {
+        "kind": "page",
+        "name": "ML"
+      },
       "target": {
         "kind": "alias",
         "owners": [
