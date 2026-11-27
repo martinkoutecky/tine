@@ -43,6 +43,19 @@ describe("structuredHtmlOutline", () => {
     ]);
   });
 
+  it.each([
+    ["<p>After</p>", "md"], ["<div>After</div>", "md"], ["After", "md"], ["<p>After</p>", "org"],
+  ] as const)("keeps content after a nested list (%s) below that list's items in %s", (after, format) => {
+    for (const [outer, inner] of [["ul", "ul"], ["ol", "ul"], ["ul", "ol"], ["ol", "ol"]]) {
+      expect(structuredHtmlOutline(
+        `<${outer}><li>Before<${inner}><li>Child</li></${inner}>${after}</li></${outer}>`,
+        "Before\nChild\nAfter", format,
+      )).toEqual([
+        { raw: "Before", children: [{ raw: "Child", children: [] }, { raw: "After", children: [] }] },
+      ]);
+    }
+  });
+
   it("keeps literal square brackets instead of backslash-escaping them (GH: Martin)", () => {
     // Multi-block matches outlineToHtml's own output for a multi-line block copy,
     // so the single-node plain-text bypass does not apply and the outline is asserted.

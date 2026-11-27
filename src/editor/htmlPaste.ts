@@ -121,7 +121,7 @@ export function structuredHtmlPaste(html: string, plain: string, format: Format 
   // block is never re-read as an outline, so its text stays the element's text.
   let outline: OutlineNode[];
   try {
-    outline = htmlBlocks(doc.body, (nodes) => {
+    outline = htmlBlocks(doc.body.childNodes, (nodes) => {
       const holder = doc.createElement("div");
       for (const node of nodes) holder.appendChild(node.cloneNode(true));
       return service.turndown(holder).trim();
@@ -142,7 +142,7 @@ export function structuredHtmlPaste(html: string, plain: string, format: Format 
 const BLOCK_ELEMENTS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE", "TABLE", "HR"]);
 const LIST_ELEMENTS = new Set(["UL", "OL"]);
 
-function htmlBlocks(parent: Node, markdown: (nodes: Node[]) => string): OutlineNode[] {
+function htmlBlocks(nodes: Iterable<Node>, markdown: (nodes: Node[]) => string): OutlineNode[] {
   const out: OutlineNode[] = [];
   let run: Node[] = [];
   const push = (nodes: Node[]) => {
@@ -153,7 +153,7 @@ function htmlBlocks(parent: Node, markdown: (nodes: Node[]) => string): OutlineN
     if (run.length) push(run);
     run = [];
   };
-  for (const child of parent.childNodes) {
+  for (const child of nodes) {
     if (LIST_ELEMENTS.has(child.nodeName)) {
       flush();
       for (const item of child.childNodes) {
@@ -168,7 +168,7 @@ function htmlBlocks(parent: Node, markdown: (nodes: Node[]) => string): OutlineN
       push([child]);
     } else if (child.nodeName === "DIV") {
       flush();
-      out.push(...htmlBlocks(child, markdown));
+      out.push(...htmlBlocks(child.childNodes, markdown));
     } else {
       run.push(child);
     }
@@ -178,17 +178,11 @@ function htmlBlocks(parent: Node, markdown: (nodes: Node[]) => string): OutlineN
 }
 
 function listItem(item: Node, markdown: (nodes: Node[]) => string): OutlineNode {
-  const own: Node[] = [];
-  const children: OutlineNode[] = [];
-  for (const child of item.childNodes) {
-    if (LIST_ELEMENTS.has(child.nodeName)) {
-      for (const nested of child.childNodes) {
-        if (nested.nodeName === "LI") children.push(listItem(nested, markdown));
-        else if (nested.textContent?.trim()) children.push({ raw: markdown([nested]), children: [] });
-      }
-    } else {
-      own.push(child);
-    }
-  }
-  return { raw: markdown(own), children };
+  // The item's own text is what comes before its first nested list. From that
+  // list on, its content is its children, in document order: nested items, and
+  // any block or inline run after them, as blocks of their own.
+  const nodes = [...item.childNodes];
+  const first = nodes.findIndex((node) => LIST_ELEMENTS.has(node.nodeName));
+  if (first < 0) return { raw: markdown(nodes), children: [] };
+  return { raw: markdown(nodes.slice(0, first)), children: htmlBlocks(nodes.slice(first), markdown) };
 }
