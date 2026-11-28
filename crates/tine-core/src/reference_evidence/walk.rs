@@ -699,6 +699,7 @@ pub(crate) fn markdown_directives(
             name,
             value,
             span: Some(span),
+            ..
         } => Some((name, value, mapper.map(span, raw.len())?)),
         _ => None,
     });
@@ -826,6 +827,7 @@ fn walk_blocks(
             Block::Drawer {
                 name,
                 span: Some(span),
+                ..
             } if name.eq_ignore_ascii_case("logbook") => {
                 if let Some(range) = mapper.map(span, raw.len()) {
                     projection.source.withheld_ranges.push(range);

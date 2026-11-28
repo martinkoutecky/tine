@@ -1049,3 +1049,24 @@ fn hoisted_planning_goes_after_an_empty_first_line() {
         );
     }
 }
+
+/// The window's region JSON names `opaque_regions` only when a region is
+/// opaque; the checkpoint's positional binary form always carries the field,
+/// so a decoded block keeps its opaque regions.
+#[test]
+fn opaque_regions_travel_in_json_and_in_the_binary_form() {
+    let plain = parse("Title\n:PROPERTIES:\n:id: A\n:END:\nafter", true);
+    let opaque = parse("Title\n:PROPERTIES:\n:id: A\n:END: keep\nafter", true);
+    assert!(plain.opaque_regions.is_empty());
+    assert_eq!(opaque.opaque_regions, [0]);
+    for regions in [&plain, &opaque] {
+        let json = serde_json::to_string(regions).unwrap();
+        assert_eq!(
+            json.contains("opaque_regions"),
+            !regions.opaque_regions.is_empty()
+        );
+        let bytes = postcard::to_stdvec(regions).unwrap();
+        let back: tine_core::block_regions::BlockRegions = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(&back, regions);
+    }
+}

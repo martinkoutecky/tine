@@ -61,7 +61,7 @@
   {"format":"org","input":"prose\n:PROPERTIES:\n:a: x\n:END:\n* blk","properties":["a"],"header_end":31},
   {"format":"org","input":":PROPERTIES:\n:a: x\n:END:\n:PROPERTIES:\n:b: y\n:END:\n* blk","properties":["a","b"],"header_end":50},
   {"format":"org","input":"#+title: t\r\n#+alias: a\r\n* blk","properties":["title","alias"],"header_end":null},
-  {"format":"org","input":"#+title: t\r#+alias: a\r* blk","properties":["title","alias"],"header_end":null},
+  {"format":"org","input":"#+title: t\r#+alias: a\r* blk","properties":["title","alias"],"header_end":null,"known_difference":"OG reads a directive that follows a bare CR; Tine reads an Org directive only where it starts its LF line, because a write to it would rewrite that whole line"},
   {"format":"org","input":"a:: x\n* blk","properties":[],"header_end":null},
   {"format":"org","input":"#+BEGIN_QUOTE\n#+title: t\n#+END_QUOTE\n* blk","properties":[],"header_end":null},
   {"format":"org","input":"#+title: t\nprose\n* blk","properties":["title"],"header_end":null},

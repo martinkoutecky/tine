@@ -521,6 +521,16 @@ fn regions_from_js(raw: &str, regions: &JsValue) -> Result<block_regions::BlockR
     for v in array(regions, "property_regions").iter() {
         r.property_regions.push(range(&v)?);
     }
+    // Omitted from the JSON when no region is opaque.
+    let opaque = get(regions, "opaque_regions");
+    if !opaque.is_undefined() {
+        for v in js_sys::Array::from(&opaque).iter() {
+            let index = v
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str("Invalid region"))?;
+            r.opaque_regions.push(index as usize);
+        }
+    }
     for p in array(regions, "properties").iter() {
         r.properties.push(Property {
             key: text(&p, "key"),

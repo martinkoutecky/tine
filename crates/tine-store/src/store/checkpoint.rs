@@ -161,10 +161,13 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // timestamp crosses a newline. Rebuild older projections from the files.
 // 41 (Org result rows): cached reference and query results carry their
 // source file's format before the page loads. Older caches rebuild.
-pub(crate) const FORMAT: u32 = 41;
+// 42 (drawer delimiters): each block's cached regions carry its opaque
+// property regions, and a drawer's delimiter lines are no longer property
+// rows. Older caches rebuild.
+pub(crate) const FORMAT: u32 = 42;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.12";
+pub(crate) const PARSER: &str = "lsdoc v0.5.13";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12

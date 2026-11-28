@@ -969,12 +969,20 @@ fn merge(
     if !all_fit(&gone.children, |c| tx.subtree_fits(c, Some(survivor)))? {
         return Err(Reason::DepthCap);
     }
-    let keep = editor_text::split(&keep_raw, format.is_org(), cx.hide);
-    let lost = editor_text::split(&gone.raw, format.is_org(), cx.hide);
-    let survivor_has_id = block_regions::parse(&keep_raw, format.is_org())
-        .id
-        .is_some_and(|p| !p.value.trim().is_empty());
-    let absorbed_id = block_regions::parse(&gone.raw, format.is_org())
+    let keep_regions = block_regions::parse(&keep_raw, format.is_org());
+    let gone_regions = block_regions::parse(&gone.raw, format.is_org());
+    // An opaque drawer shows as text, so the joined text would read it as the
+    // survivor's own drawer and drop the survivor's hidden rows (its id).
+    if [&keep_regions, &gone_regions]
+        .iter()
+        .any(|r| !r.opaque_regions.is_empty())
+    {
+        return Err(Reason::Unparseable);
+    }
+    let keep = editor_text::split_with(&keep_raw, format.is_org(), &keep_regions, cx.hide);
+    let lost = editor_text::split_with(&gone.raw, format.is_org(), &gone_regions, cx.hide);
+    let survivor_has_id = keep_regions.id.is_some_and(|p| !p.value.trim().is_empty());
+    let absorbed_id = gone_regions
         .id
         .filter(|p| !p.value.trim().is_empty())
         .map(|p| js_trim(p.line.slice(&gone.raw)).to_string());

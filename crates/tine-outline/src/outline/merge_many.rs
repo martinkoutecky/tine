@@ -77,12 +77,19 @@ pub(super) fn merge_many(
     let mut transfers: Vec<Key> = Vec::new();
     for key in &order {
         let lost_raw = &tx.block(key).ok_or(Reason::Incomplete)?.raw;
-        let keep = editor_text::split(&raw, format.is_org(), cx.hide);
-        let lost = editor_text::split(lost_raw, format.is_org(), cx.hide);
-        let survivor_has_id = block_regions::parse(&raw, format.is_org())
-            .id
-            .is_some_and(|p| !p.value.trim().is_empty());
-        let absorbed_id = block_regions::parse(lost_raw, format.is_org())
+        let keep_regions = block_regions::parse(&raw, format.is_org());
+        let lost_regions = block_regions::parse(lost_raw, format.is_org());
+        // As in `merge`: an opaque drawer would join as the survivor's own.
+        if [&keep_regions, &lost_regions]
+            .iter()
+            .any(|r| !r.opaque_regions.is_empty())
+        {
+            return Err(Reason::Unparseable);
+        }
+        let keep = editor_text::split_with(&raw, format.is_org(), &keep_regions, cx.hide);
+        let lost = editor_text::split_with(lost_raw, format.is_org(), &lost_regions, cx.hide);
+        let survivor_has_id = keep_regions.id.is_some_and(|p| !p.value.trim().is_empty());
+        let absorbed_id = lost_regions
             .id
             .filter(|p| !p.value.trim().is_empty())
             .map(|p| js_trim(p.line.slice(lost_raw)).to_string());

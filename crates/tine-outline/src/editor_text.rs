@@ -166,7 +166,12 @@ fn classify(raw: &str, is_org: bool, regions: &BlockRegions, hide: &HidePolicy) 
         return Classified { lines, class };
     }
     let line_at = |byte: usize| lines.partition_point(|&(s, _)| s <= byte).saturating_sub(1);
-    let own = || regions.properties.iter().filter(|p| p.primary);
+    // An opaque region's bytes are shown as text, so a save writes back what
+    // the user sees: none of its rows is hidden and no line of it is dropped.
+    let own = || {
+        (regions.properties.iter())
+            .filter(|p| p.primary && !regions.opaque_regions.contains(&p.region))
+    };
     let comment = has_comment_quote(regions);
     // Unlike OG remove-built-in-properties' first-match line scan, hide every
     // accepted duplicate and never strip fenced examples. Carry original bytes

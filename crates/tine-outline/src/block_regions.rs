@@ -331,7 +331,7 @@ pub struct Drawer {
     pub close: usize,
     pub clocks: Vec<Range>,
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct BlockRegions {
     pub header: Header,
     pub literals: Vec<Range>,
@@ -351,6 +351,37 @@ pub struct BlockRegions {
     /// position (`*\n:PROPERTIES:`, `- id:: x`). `None` on most blocks, so
     /// empty regions stay shared (GH #623); [`Self::title_end`] reads it.
     pub headline_end: Option<usize>,
+    /// Org property regions (indices into `property_regions`) that are not
+    /// exactly one drawer framed by their first and last lines: more than one
+    /// drawer, a delimiter sharing its line, or other rows folded after the
+    /// closer. The editor shows them as text, and a merge refuses them.
+    #[serde(default)]
+    pub opaque_regions: Vec<usize>,
+}
+impl Serialize for BlockRegions {
+    /// The window's JSON omits an empty `opaque_regions`, as nearly every
+    /// block has one; a binary form (the launch checkpoint) is positional and
+    /// always carries it.
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let opaque = !s.is_human_readable() || !self.opaque_regions.is_empty();
+        let mut out = s.serialize_struct("BlockRegions", 11 + usize::from(opaque))?;
+        out.serialize_field("header", &self.header)?;
+        out.serialize_field("literals", &self.literals)?;
+        out.serialize_field("property_regions", &self.property_regions)?;
+        out.serialize_field("properties", &self.properties)?;
+        out.serialize_field("planning", &self.planning)?;
+        out.serialize_field("drawers", &self.drawers)?;
+        out.serialize_field("id", &self.id)?;
+        out.serialize_field("quarantined", &self.quarantined)?;
+        out.serialize_field("literal_blocks", &self.literal_blocks)?;
+        out.serialize_field("open_fence", &self.open_fence)?;
+        out.serialize_field("headline_end", &self.headline_end)?;
+        if opaque {
+            out.serialize_field("opaque_regions", &self.opaque_regions)?;
+        }
+        out.end()
+    }
 }
 
 // The only conversion from prepared single-block coordinates to raw coordinates.
@@ -795,6 +826,32 @@ impl BlockRegions {
         }
         at
     }
+    /// Whether property region `index` is contiguous with the head: the region
+    /// starting at the block start or at `head_end`, then each region starting
+    /// at or before the furthest end so far. Two regions overlap when lsdoc
+    /// splits a line at a bare CR (`:END:\r:PROPERTIES:`). Regions are visited
+    /// in start order by a scan per step, O(regions²) over a block's few
+    /// regions, rather than sorting them.
+    fn in_head_chain(&self, raw: &str, org: bool, index: usize) -> bool {
+        let head = self.head_end(raw, org);
+        let (mut end, mut previous) = (None::<usize>, None);
+        loop {
+            let Some((i, r)) = (self.property_regions.iter().enumerate())
+                .filter(|(i, r)| previous.is_none_or(|p| (r.0, *i) > p))
+                .min_by_key(|(i, r)| (r.0, *i))
+            else {
+                return false;
+            };
+            previous = Some((r.0, i));
+            let chained = r.0 == 0 || r.0 == head || end.is_some_and(|end| r.0 <= end);
+            if chained {
+                end = Some(end.map_or(r.1, |end| end.max(r.1)));
+            }
+            if i == index {
+                return chained;
+            }
+        }
+    }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);
         let prefix = if at > 0 && !raw[..at].ends_with('\n') {
@@ -920,8 +977,7 @@ impl BlockRegions {
             }
             if let Some(first) = matching.first() {
                 let trailer = matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type");
-                let region = self.property_regions[first.region];
-                if !org && !trailer && region.0 != 0 && region.0 != self.head_end(raw, org) {
+                if !org && !trailer && !self.in_head_chain(raw, org, first.region) {
                     // Move legacy trailing user properties to the existing head,
                     // using accepted property spans rather than a second scanner.
                     edits.extend(matching.iter().map(|p| (p.line, String::new())));
