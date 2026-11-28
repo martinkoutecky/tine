@@ -35,9 +35,10 @@ We will ship the Tauri updater for **Windows and Linux (AppImage)** and keep
   `latest.json` itself is not signed, so the app installs an update only when its
   signature's trusted comment names the version `latest.json` offers; otherwise a
   compromised endpoint could offer an older signed release as a newer one (GH #983).
-  Release assembly refuses a candidate whose signature's trusted comment line
-  lacks `version:<release>`; the app's verifier (the updater plugin's minisign
-  check) remains the authority on what is installed.
+  The release check refuses a signature whose trusted comment line does not name
+  the release version. The app's own verifier (the updater plugin's minisign
+  check) is the authority, and it also refuses signatures this check cannot
+  judge, such as wrapped or malformed ones.
 - Rust: register `tauri-plugin-updater` + `tauri-plugin-process`; grant
   `updater:default` + `process:allow-restart` in the default capability.
 - Frontend: the existing GitHub-releases toast stays the cross-platform **notifier**.

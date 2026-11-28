@@ -173,9 +173,10 @@ export function releaseNotes(root, version) {
 
 // The version an updater signature (a base64 minisign signature file) was signed
 // for: the `version:` field of its trusted comment, whose fields the Tauri
-// bundler separates with tabs. Undefined when the comment names none. The
-// trusted comment is the third line, read as the app's verifier reads it (a
-// line ends at LF, less one trailing CR); the app's verifier stays the authority.
+// bundler separates with tabs. Undefined when the comment names none. It looks
+// at the third line (a line ends at LF, less one trailing CR) and does not
+// verify the signature: the app's own verifier is the authority, and it also
+// refuses signatures this check cannot judge, such as wrapped or malformed ones.
 export function signedVersion(signature) {
   const comment = Buffer.from(signature, "base64").toString("utf8").split("\n")[2]?.replace(/\r$/, "");
   if (!comment?.startsWith("trusted comment: ")) return undefined;

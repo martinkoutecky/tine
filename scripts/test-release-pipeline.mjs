@@ -706,9 +706,9 @@ try {
   }
   // An updater signature must name the version latest.json offers, or the app
   // (requireSignedVersion) refuses the update: assembly refuses it first. The
-  // trusted comment is read as the app's verifier reads it: the third line, so
-  // a version on another line does not count, and a CRLF line ending does not
-  // change the version.
+  // check looks at the third line, so a version on another line does not count,
+  // and a CRLF line ending does not change the version. It does not verify the
+  // signature; the app's verifier refuses wrapped or malformed ones.
   const windowsSignature = [
     ["unversioned", fixtureSignature("Tine-setup.exe", undefined)],
     ["empty", fixtureSignature("Tine-setup.exe", "")],
