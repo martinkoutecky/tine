@@ -30,9 +30,9 @@ it("the Guide explains unique context, ambiguous quotes, flat replies and touch 
 
 it("the Guide explains sibling author runs and their independent visibility command (GH #892, #893, #896)", () => {
   const tips = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
-  for (const fact of ["faint background in the author's colour", "never moves the text", "share one card", "chip only on the first block", "Hover a tinted block to see its author's name", "**Show/Hide author marks**", "no default key", "shown by default", "Author chips stay when the tints are hidden", "child outlines, embeds and comment threads break runs"])
+  for (const fact of ["faint background in the author's colour", "never moves the text", "share one card", "chip only on the first block", "Hover the chip to see the author's name", "the line shows it too", "the rest of the block shows no tooltip", "**Show/Hide author marks**", "no default key", "shown by default", "hides every mark, with both looks: no tint, no thread line and no author chip on any block", "Comments and replies keep their own names", "Right-click a block to reach the menu its chip opens", "child outlines, embeds and comment threads break runs"])
     expect(tips).toContain(fact);
-  for (const gone of ["gutter lines", "centred in the bullet-to-text gap", "continuous line"]) expect(tips).not.toContain(gone);
+  for (const gone of ["gutter lines", "centred in the bullet-to-text gap", "continuous line", "Hover a tinted block", "Author chips stay"]) expect(tips).not.toContain(gone);
 });
 
 it("the Guide explains that body structure skips whole annotation threads (GH #891, #110)", () => {

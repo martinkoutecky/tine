@@ -118,15 +118,18 @@ it.each(["main", "ref:cost", "embed:cost", "rs:cost"])("starts and releases comm
     const tints = () => [...row.classList].filter(name => name.startsWith("author-tint-"));
     setDoc("byId", "parent", "raw", `${raw}\ntine.author:: Someone`);
     expect(tints()).toHaveLength(1);
-    expect(row.querySelector(".block-content-wrapper")?.getAttribute("title")).toContain("Someone");
+    expect(row.querySelector(".block-content-wrapper")?.getAttribute("title")).toBeNull();
+    expect(row.querySelector(":scope > .block-main > .author-line")?.getAttribute("title")).toContain("Someone");
     expect(row.classList.contains("author-tinted")).toBe(true);
     setDoc("byId", "parent", "raw", `${raw}\ntine.author:: Another writer`);
     expect(tints()).toHaveLength(1);
-    expect(row.querySelector(".block-content-wrapper")?.getAttribute("title")).toContain("Another writer");
+    expect(row.querySelector(".block-content-wrapper")?.getAttribute("title")).toBeNull();
+    expect(row.querySelector(":scope > .block-main > .author-line")?.getAttribute("title")).toContain("Another writer");
     setDoc("byId", "parent", "raw", raw);
     expect(tints()).toEqual([]);
     expect(row.classList.contains("authored")).toBe(false);
     expect(row.classList.contains("author-tinted")).toBe(false);
+    expect(row.querySelector(".author-line")).toBeNull();
   } finally { dispose(); host.remove(); }
 });
 

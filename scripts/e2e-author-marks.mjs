@@ -1,5 +1,6 @@
-// GH #892/#893/#896: real WebKitGTK layout, sibling run tint cards, both editors,
-// independent Settings/palette/rebound-key visibility and guarded removal.
+// GH #892/#893/#896/#999: real WebKitGTK layout, sibling run tint cards, both editors,
+// independent Settings/palette/rebound-key visibility (hidden: no tint, line or chip in either look),
+// the author's name on hover over the chip and the thread line only, and guarded removal.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -82,6 +83,24 @@ async function snapshot(id) {
       chip: (c => c && c.getClientRects().length > 0 ? c.textContent : null)(wrapper.querySelector(".author-chip")) };
   }, id);
 }
+/** The tooltip the pointer gets: the `title` of the hovered element or of its nearest ancestor. */
+async function tooltipOver(element) {
+  await element.moveTo();
+  return browser.execute(() => [...document.querySelectorAll(":hover")].pop()?.closest("[title]")?.getAttribute("title") ?? null);
+}
+/** Author chips drawn on outline rows (a comment's or reply's own header is not an author mark). */
+const outlineChips = () => browser.execute(() => [...document.querySelectorAll(".page-blocks .ls-block:not(.comment-in-thread) > .block-main .author-chip")]
+  .filter(chip => chip.getClientRects().length > 0 && getComputedStyle(chip).visibility !== "hidden").map(chip => chip.textContent.trim()));
+/** Settings > Appearance > Advanced > Fine-tuning > Author marks. */
+async function authorLook(value) {
+  await settings(); await browser.$('.settings-nav-item=Appearance').click();
+  const look = await browser.$('select[aria-label="Author marks"]');
+  if (!(await look.isExisting())) await browser.$(".settings-advanced-toggle").click();
+  await look.waitForExist({ timeout: 5000 }); await look.scrollIntoView(); await look.selectByAttribute("value", value);
+  // Escape would first fold Advanced away: close Settings with its own button.
+  await browser.$(".settings-close").click(); await browser.$(".settings-modal").waitForExist({ timeout: 5000, reverse: true });
+  assert.equal(await browser.execute(() => document.documentElement.classList.contains("tine-author-marks-thread")), value === "thread", `Author marks = ${value} did not apply`);
+}
 async function palette(label) {
   await keys("Control", "Shift", "p");
   const search = await browser.$(".switcher-input");
@@ -133,9 +152,11 @@ try {
     assert.equal((await snapshot(ids[text])).chip, "Ada", `${text} must start a separate run`);
   for (const text of ["Child next", "With comment", "Source next"])
     assert.equal((await snapshot(ids[text])).chip, null, `${text} must continue its sibling run`);
-  // A continuation with no chip still names its author, in the row's tooltip.
-  for (const text of ["Run beta", "Run gamma"]) assert.match((await snapshot(ids[text])).title ?? "", /Ada/, `${text} does not name its author`);
-  await shot("02-continuation-names-its-author");
+  // GH #999: the block's text box shows no tooltip; the name is on the chip (and, in the thread look, the line).
+  for (const text of ["Run alpha", "Run beta", "Run gamma"]) assert.equal((await snapshot(ids[text])).title, null, `${text} shows a tooltip over its text`);
+  assert.equal(await tooltipOver(await browser.$(`${rowSelector(ids["Run beta"])} > .block-main > .block-content-wrapper > .block-content`)), null, "Hovering a block's text shows a tooltip");
+  assert.match(await tooltipOver(await browser.$(`${rowSelector(ids["Run alpha"])} .author-chip`)) ?? "", /Ada/, "Hovering the chip does not name its author");
+  await shot("02-name-on-the-chip");
   assert.equal(fs.readFileSync(file, "utf8"), initial + extraFixture, "Reading/disclosing marks changed the graph");
 
   for (const editor of ["textarea", "cm6"]) {
@@ -171,7 +192,9 @@ try {
   assert.equal(await commentsSwitch.getAttribute("aria-checked"), "true");
   await shot("04-settings-independent-switches"); await keys("Escape");
   const hidden = await snapshot(ids["Run alpha"]);
-  assert.equal(hidden.tint, null); assert.equal(hidden.textX, before.textX); assert.equal(hidden.chip, "Ada");
+  // GH #896: hidden means no tint and no chip on any block, while the comment keeps its card.
+  assert.equal(hidden.tint, null); assert.equal(hidden.textX, before.textX); assert.equal(hidden.chip, null);
+  assert.deepEqual(await outlineChips(), [], "Author chips stay with author marks hidden");
   assert.equal(await browser.$(".comment-card").isDisplayed(), true);
   await shot("05-tint-hidden-text-stable");
   await browser.refresh(); await ensureMainWindow(browser); await openPageByName(browser, pageName);
@@ -187,6 +210,31 @@ try {
   await browser.$(".author-tinted").waitForExist({ timeout: 5000, reverse: true });
   await keys("F8"); await browser.$(".author-tinted").waitForExist({ timeout: 5000 });
   proof.steps.push({ outcome: "independent persisted switch, palette and rebound F8; text coordinate unchanged", before, hidden });
+  stage = "thread look: the name on hover over the chip and the line only; hidden takes every mark";
+  await authorLook("thread");
+  const childNext = rowSelector(await blockId("Child next"));
+  const threadHover = {
+    text: await tooltipOver(await browser.$(`${childNext} > .block-main > .block-content-wrapper > .block-content`)),
+    chip: await tooltipOver(await browser.$(`${rowSelector(await blockId("Parent outline"))} .author-chip`)),
+    line: await tooltipOver(await browser.$(`${childNext} > .block-main > .author-line`)),
+  };
+  const shownThreadChips = await outlineChips();
+  await shot("05b-thread-shown");
+  await keys("F8"); await browser.$(".author-tinted").waitForExist({ timeout: 5000, reverse: true });
+  const hiddenThreadChips = await outlineChips();
+  // Moving the pointer also retires the tooltip the line opened (WebKitGTK keeps it until the pointer moves).
+  const hiddenHover = await tooltipOver(await browser.$(`${childNext} > .block-main > .block-content-wrapper > .block-content`));
+  proof.steps.push({ stage, threadHover, shownThreadChips, hiddenThreadChips, hiddenHover });
+  await shot("05c-thread-hidden");
+  assert.equal(threadHover.text, null, "Thread look: hovering a block's text shows a tooltip");
+  assert.match(threadHover.chip ?? "", /Ada/, "Thread look: hovering the chip does not name its author");
+  assert.match(threadHover.line ?? "", /Ada/, "Thread look: hovering the line does not name its author");
+  assert.deepEqual(hiddenThreadChips, [], "Thread look: chips are drawn with author marks hidden");
+  assert.equal(hiddenHover, null, "Thread look: a tooltip shows with author marks hidden");
+  assert.equal((await browser.$$(".page-blocks .author-line")).length, 0, "Thread look: the line's hover target stays with author marks hidden");
+  assert.equal(await browser.$(".comment-card").isDisplayed(), true);
+  await keys("F8"); await browser.$(".author-tinted").waitForExist({ timeout: 5000 });
+  await authorLook("tint");
   stage = "first chip removes author through the guarded save and undo restores it";
   const first = rowSelector(await blockId("Run alpha"));
   await browser.$(`${first} .author-chip`).click();
@@ -200,7 +248,7 @@ try {
   assert.ok(fs.readFileSync(file, "utf8").includes("tine.author:: Quote Agent  \t"));
   await shot("06-completed"); proof.steps.push(stage);
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
-  console.log("PASS: tinted continuous author runs, context boundaries, names, both editors, independent persisted visibility, palette, rebound key, remove/undo");
+  console.log("PASS: tinted continuous author runs, context boundaries, names on the chip and line only, both editors, independent persisted visibility hiding every mark, thread look, palette, rebound key, remove/undo");
 } catch (error) {
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   const failure = { testedCommit, journey: "author-marks", stage, expected: "tinted sibling runs with independent visibility and retained authorship in both editors",

@@ -11,6 +11,7 @@ import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
 import { authorRunContinues, authorThreadSides, lastRow, type AuthorNeighbors, type RowSides } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
+import { authorMarksHidden } from "../authorMarksPref";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
 import { createCommentChildren, createCommentIndexFor, type CommentIndex } from "../commentIndex";
@@ -82,7 +83,10 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   // Every hit of a results list starts with its own chip: the tint card may still join adjacent hits (the
   // stylesheet hides the chip of a joined one under the tint), but the thread never links across hits.
   const inResults = () => !!run?.neighbours()?.()?.results;
-  const showsAuthor = () => (author() !== null && (!continued() || inResults())) || bulletless();
+  // GH #896: the one place that decides whether this row draws its author mark (tint or thread line, and chip),
+  // from the Show/Hide switch. Comments and replies are not author marks: their own header names them.
+  const authorMarked = () => author() !== null && !bulletless() && !authorMarksHidden();
+  const showsAuthor = () => authorMarked() && (!continued() || inResults());
   // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => (commentSelector() !== null || inThread()) && (!datedThreadRoot(node().id) || hasMessageDate(node().id));
   const commentClasses = () => {
@@ -107,7 +111,7 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     if (by !== null) classes[`author-tint-${authorTint(by)}`] = true;
     return classes;
   };
-  return { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses };
+  return { commentSelector, storedAuthor, author, authorMarked, showsAuthor, bulletless, commentClasses };
 }
 
 const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:");

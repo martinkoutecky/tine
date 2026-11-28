@@ -61,6 +61,7 @@ function measureRows(scopeEl) {
       folded: bullet.classList.contains("bullet-closed"), ordered: bullet.classList.contains("ordered"), editing: !!(editor || cm),
       continued: row.classList.contains("author-card-continued"), continues: row.classList.contains("author-card-continues"),
       title: wrapper.getAttribute("title"), bulletRight: br.right, textX,
+      chips: [...wrapper.querySelectorAll(":scope > .block-content > .author-chip, :scope > .authored-editor > .author-chip")].filter(c => c.getClientRects().length > 0).length,
       wrapperLeft: wr.left, wrapperRight: wr.right, top: wr.top, bottom: wr.bottom });
   }
   return rows;
@@ -78,7 +79,10 @@ function check(name, rows, { needAuthored = 1, needFolded = false, needEditing =
     if (needEditing) assert.ok(authored.some(x => x.editing), `${name}: no authored row in an editor`);
     for (const x of authored) {
       assert.equal(x.gutterLines, 0, `${name} "${x.label}": a gutter line element is still drawn`);
-      if (switchOff) { assert.ok(!x.tinted && !x.hasBackground, `${name} "${x.label}": tint drawn with the switch off`); continue; }
+      // GH #999: the block's own text box shows no tooltip; the chip names the author.
+      assert.equal(x.title, null, `${name} "${x.label}": the block's text shows a tooltip (${x.title})`);
+      // GH #896: hidden means no tint and no chip.
+      if (switchOff) { assert.ok(!x.tinted && !x.hasBackground && x.chips === 0, `${name} "${x.label}": tint or chip drawn with the switch off`); continue; }
       assert.ok(x.tinted, `${name} "${x.label}": authored row is not tinted`);
       if (x.selected) assert.ok(!x.hasBackground, `${name} "${x.label}": selected row keeps its tint under the selection colour`);
       else assert.ok(x.hasBackground, `${name} "${x.label}": tinted row has no background`);

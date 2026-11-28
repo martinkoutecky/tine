@@ -265,6 +265,51 @@ try {
       assert.deepEqual(claude.map(r => [r.up, r.down]), [[false, true], [true, true], [true, true], [true, true], [true, false]], "Claude's run");
       assert.deepEqual(ada.map(r => [r.up, r.down]), [[false, true], [true, true], [true, true], [true, false]], "Mira's run");
     });
+    // GH #999: the name shows on hover over the chip and the line only, never over the block's text. A tooltip is the
+    // `title` of the element the pointer hits or of its nearest ancestor, so hit-test the three points the way the
+    // pointer does.
+    const hover = await page.evaluate(() => {
+      const tipAt = (x, y) => document.elementFromPoint(x, y)?.closest("[title]")?.getAttribute("title") ?? null;
+      const rows = [...document.querySelectorAll(".page-blocks .ls-block.author-tinted")];
+      return rows.map(row => {
+        const main = row.querySelector(":scope > .block-main"), wrapper = main.querySelector(":scope > .block-content-wrapper");
+        const after = getComputedStyle(wrapper, "::after"), m = main.getBoundingClientRect(), w = wrapper.getBoundingClientRect();
+        const walker = document.createTreeWalker(wrapper.querySelector(".block-content") ?? wrapper, NodeFilter.SHOW_TEXT);
+        let n; while ((n = walker.nextNode())) if (n.textContent.trim() && !n.parentElement.closest(".author-chip, .block-refs-count")) break;
+        const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, 1); const letter = r.getBoundingClientRect();
+        const chip = wrapper.querySelector(":scope > .block-content > .author-chip"), c = chip?.offsetParent ? chip.getBoundingClientRect() : null;
+        const lineX = m.right - parseFloat(after.right) - 1, lineY = (w.top + w.bottom) / 2;
+        return { label: n.textContent.trim().slice(0, 30), author: row.dataset.author,
+          text: tipAt(letter.left + 2, (letter.top + letter.bottom) / 2),
+          chip: c && tipAt((c.left + c.right) / 2, (c.top + c.bottom) / 2), line: tipAt(lineX, lineY),
+          beside: [tipAt(lineX - 5, lineY), tipAt(lineX + 5, lineY)] };
+      });
+    });
+    results[`${theme}-thread-hover`] = hover;
+    await run(`${theme} thread hover`, () => {
+      assert.ok(hover.length >= 9, `expected the two runs' rows, saw ${hover.length}`);
+      for (const h of hover) {
+        assert.equal(h.text, null, `"${h.label}": a tooltip over the block's text (${h.text})`);
+        assert.match(h.line ?? "", new RegExp(h.author), `"${h.label}": the line does not name ${h.author}`);
+        assert.deepEqual(h.beside, [null, null], `"${h.label}": the line's hover target is wider than it should be`);
+        if (h.chip !== null) assert.match(h.chip, new RegExp(h.author), `"${h.label}": the chip does not name ${h.author}`);
+      }
+      assert.equal(hover.filter(h => h.chip !== null).length, 2, "one chip per run to hover");
+    });
+    // GH #896: Hide author marks hides every mark in the thread look: no line, no tint and no chip on any block,
+    // continued rows included, and the line's hover target goes with it.
+    await page.evaluate(async () => (await import("/src/authorMarksPref.ts")).setAuthorMarksHidden(true));
+    const hiddenThread = await page.evaluate(() => [...document.querySelectorAll(".page-blocks .ls-block.authored:not(.comment-in-thread)")].map(row => ({
+      label: row.textContent.trim().slice(0, 30), tinted: row.classList.contains("author-tinted"),
+      line: !!row.querySelector(":scope > .block-main > .author-line"),
+      chips: [...row.querySelectorAll(":scope > .block-main .author-chip")].filter(c => c.getClientRects().length > 0).length })));
+    await shoot(page, `${theme}-b-thread-hidden.png`);
+    await page.evaluate(async () => (await import("/src/authorMarksPref.ts")).setAuthorMarksHidden(false));
+    results[`${theme}-thread-hidden`] = hiddenThread;
+    await run(`${theme} thread hidden`, () => {
+      assert.ok(hiddenThread.length >= 9, `expected the authored rows, saw ${hiddenThread.length}`);
+      for (const r of hiddenThread) assert.deepEqual([r.tinted, r.line, r.chips], [false, false, 0], `"${r.label}": a mark is still drawn with author marks hidden`);
+    });
     // (c) the thread with an icon for Claude: both tokens on the chip, as the Guide says.
     await addCss(page, iconCss);
     const icon = await page.evaluate(measure);

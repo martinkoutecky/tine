@@ -209,7 +209,9 @@
    placed against the row's end edge and live inside the gutter: a long name is cut to it with an ellipsis (the
    tooltip keeps the name). The phone's 44px fold area stays at the very end, right of the gutter. Everything is
    logical, so a mirrored layout puts the thread on the left. Marks hidden (`tine-author-marks-off`, set by
-   authorMarksPref.ts; a documented hook, the Guide's thread example reads it) reserve nothing. */
+   authorMarksPref.ts; a documented hook, the Guide's thread example reads it) reserve nothing. Whether a row draws
+   its mark (line, tint, chip) is decided once, in JS (`authorMarked`, blockComments.ts), by `author-tinted` and
+   the chip being there; the window class only ends the gutter every row reserves. */
 .tine-author-marks-thread {
   --author-thread-gutter: var(--tine-author-gutter, 68px);
   --author-thread-clear: 0px;
@@ -261,6 +263,20 @@
 .tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
   display: none;
 }
+/* GH #999: the line names the author on hover. The line is drawn by the ::after above, which cannot carry a
+   tooltip, so an empty `.author-line` (6px, centred on it, inside the gutter, never over the chip or the text)
+   holds the name. It takes no space and is drawn only in the thread look. */
+.author-line { display: none; }
+.tine-author-marks-thread .ls-block.author-tinted > .block-main > .author-line {
+  display: block;
+  position: absolute;
+  top: calc(1px + var(--author-thread-top));
+  bottom: 1px;
+  inset-inline-end: calc(var(--author-thread-reserve) - 7px);
+  width: 6px;
+}
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .author-line { top: 0; }
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continues > .block-main > .author-line { bottom: 0; }
 
 /* Threads read flat in file pre-order, including hand-nested replies.
    Keep the stored tree intact: no structure or save operation runs to flatten it. */

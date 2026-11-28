@@ -141,7 +141,6 @@ import { CommentBelowChip } from "./CommentBelowChip";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
-import { authorMarksHidden } from "../authorMarksPref";
 import type { AuthorNeighbors } from "./authorRuns";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { EditorGate } from "./EditorGate";
@@ -286,7 +285,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // the host's position (`rowHost`). Page embeds and hosts with text keep theirs.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
-  const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, {
+  const { commentSelector, storedAuthor, author, authorMarked, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, {
     id: () => props.id, neighbours: () => props.authorNeighbors,
     // A thread runs through the rows drawn: the first child shown, and a prior sibling's last row (fold state as this surface draws it).
     firstChild: () => (props.forceExpanded || !collapsed()) && sheet().view === null ? outlineChildren()[0] : undefined,
@@ -295,11 +294,15 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
   // GH #893: the author mark is a faint tint behind the row's own text. Comments, replies and the
   // bulletless host of a whole-block embed keep their own presentation; the source block tints itself.
-  const authorTinted = () => author() !== null && !bulletless() && !blockEmbedHost() && !authorMarksHidden();
+  const authorTinted = () => authorMarked() && !blockEmbedHost();
   let mainEl: HTMLDivElement | undefined; const expandThread = () => { const surface = viewCollapseSurface(); if (surface) surface.setMany([props.id], false); else setCollapsedBlocks([props.id], false); };
   const commentPresentation = createMemo(() => hasCommentIdentity() ? {
-    quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() || !bulletless() ? null : commentSelector()} />,
-    header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} folded={collapsed()} toggleFold={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())} /></Show>,
+    // The quote above the header: one slot, so the line's slot below costs a plain row nothing.
+    head: <><CommentQuoteHeader parentId={node().parent} selector={groupedQuote() || !bulletless() ? null : commentSelector()} />
+      <Show when={bulletless()}><CommentHeader id={props.id} author={author()} folded={collapsed()} toggleFold={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())} /></Show></>,
+    // GH #999: the thread look's line names the author on hover, as the chip does; the row itself shows no tooltip.
+    // It only takes the line's place (comments.css) and is blank outline space like the gutter it sits in.
+    line: <Show when={authorTinted()}><span class="author-line" ref={el => registerOutlineBlankZone(el)} title={translate("comment-written-by", { author: author()! })} /></Show>,
     composer: <Show when={commentClasses()["comment-card"]}><CommentMessages id={props.id} collapsed={collapsed()} expand={expandThread} /><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} collapsed={collapsed} expand={expandThread} /></Show>,
   } : null);
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
@@ -329,8 +332,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
       <Show when={stickyParent() ? macro()?.kind ?? "outline" : false} keyed><StickyAncestor id={props.id} raw={macro()?.kind === "embed" ? macro()!.inner.slice("embed ".length) : node().raw} /></Show>
-      {commentPresentation()?.quote}
-      {commentPresentation()?.header}
+      {commentPresentation()?.head}
       <div
         class="block-main"
         ref={(el) => {
@@ -385,7 +387,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           ref={el => noteInstanceOwner(el, instanceId)}
           class="block-content-wrapper"
           classList={{ "read-only": readOnly() }}
-          title={authorTinted() && !editing() ? translate("comment-written-by", { author: author()! }) : undefined}
           onMouseDown={(e) => {
             // Mousedown anywhere in the row (not on a link/chip) arms the same
             // click-or-drag gesture as block content, with an end-of-block caret
@@ -421,6 +422,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
           </Show>
         </div>
+        {commentPresentation()?.line}
         <Show when={node().children.length > 0}><MarginMarker parentId={props.id} comments={marginComments()} source={commentChildren} coverage={quoteCoverage()} />
         <CommentBelowChip id={props.id} collapsed={collapsed() && !props.forceExpanded && !bulletless()} expand={() => toggleViewFold(props.id, viewCollapseSurface(), true)} /></Show>
       </div>

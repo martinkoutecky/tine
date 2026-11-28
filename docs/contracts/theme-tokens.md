@@ -282,7 +282,7 @@ same run and the same "you". The stored text is never rewritten.
 | `--author-color` | The author's colour, one of eight chosen from the name's key and defined on every authored row and on its chip. Read it as `var(--author-color, var(--accent))`. A rule sets it per author, on the row and its chip: `.ls-block[data-author="Claude"], .ls-block[data-author="Claude"] .author-chip { --author-color: #d97757; }` |
 | `.ls-block > .block-main` | The full row, never its children: bullet column, text and the controls drawn after the text (comment marker, resolved label, folded "N below" chip). Its right edge is the row's edge, whatever trails the text: anchor a drawing at the row's end here (the thread look does) |
 | `.ls-block > .block-main > .block-content-wrapper` | The row's own text box, which the trailing controls make narrower; never its children. The chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`). These two paths are the only structure promised here, because a thread or any other row-level drawing needs them |
-| `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With `--tine-author-icon-size` (section 2) and a `background-image` set on it, it shows the icon instead of the name |
+| `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. An outline row has none while **Show/Hide author marks** is off (a comment's or reply's own header keeps its chip). It carries `data-author="<trimmed name>"` (none on a "you" chip). With `--tine-author-icon-size` (section 2) and a `background-image` set on it, it shows the icon instead of the name |
 | `html.tine-author-marks-thread` | Tine's own thread look, below. A class on `<html>`, not a token: Settings > Appearance > Fine-tuning > **Author marks** (Tint, the default, or Thread; the class `tine-<id>-<option>` of the class knob `author-marks`) sets it. `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how); a theme package cannot set it |
 | `html.tine-author-marks-off` | On `<html>` exactly while **Show/Hide author marks** is off (no `author-tinted` row then, and the thread look reserves nothing). Read it, as the Guide's thread example does, to end a gutter your own stylesheet reserves; never set it |
 
@@ -321,7 +321,8 @@ before the gutter, never inside it. The phone's 44px fold area stays at the very
 right of the gutter. In the gutter a 2px line in the author's colour sits 3px inside
 its start, and the chip hangs 5px right of the line, at one distance from the row's
 edge, cut to the gutter's width with an ellipsis when the name is longer (the tooltip
-and the accessible name keep it whole; an icon chip fits as is). The line starts under
+and the accessible name keep it whole; an icon chip fits as is). Hovering the line shows the
+author's name as the chip's tooltip does; the row's text shows no tooltip. The line starts under
 the chip of a run's first row, crosses the two pixels between rows
 (`author-run-continues`, `author-run-continued`) and ends at the bottom of the run's
 last row. Only a run's first row keeps its chip. Text starts where it always did.

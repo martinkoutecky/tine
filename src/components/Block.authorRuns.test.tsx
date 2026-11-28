@@ -47,17 +47,22 @@ const row = (root: ParentNode, id: string) => root.querySelector<HTMLElement>(`[
 
 const tinted = (root: ParentNode, id: string) => row(root, id).classList.contains("author-tinted");
 const wrapperOf = (root: ParentNode, id: string) => row(root, id).querySelector<HTMLElement>(":scope > .block-main > .block-content-wrapper")!;
+const lineOf = (root: ParentNode, id: string) => row(root, id).querySelector<HTMLElement>(":scope > .block-main > .author-line");
 
 it("same-author siblings share a chip, while each tinted row names its own author", () => {
   const root = mount([b("a"), b("b"), b("c"), b("own", null), b("d"), b("e", "Bo")]);
   expect(chipNames(root)).toEqual(["Ada", "Ada", "Bo"]);
   for (const id of ["a", "b", "c", "d", "e"]) {
     expect(tinted(root, id)).toBe(true);
-    expect(wrapperOf(root, id).getAttribute("title")).toContain(id === "e" ? "Bo" : "Ada");
+    // GH #999: the row shows no tooltip; the thread look's line (and the chip) carry the name.
+    expect(wrapperOf(root, id).getAttribute("title")).toBeNull();
+    expect(lineOf(root, id)?.getAttribute("title")).toContain(id === "e" ? "Bo" : "Ada");
     expect(row(root, id).querySelector(".author-mark")).toBeNull();   // GH #893: no gutter line element exists
   }
   expect(tinted(root, "own")).toBe(false);
   expect(wrapperOf(root, "own").getAttribute("title")).toBeNull();
+  expect(lineOf(root, "own")).toBeNull();
+  expect([...root.querySelectorAll(".author-chip")].map(c => c.getAttribute("title")?.replace(/[\u2068\u2069]/g, ""))).toEqual(["Written by Ada", "Written by Ada", "Written by Bo"]);
   // A run is one card: its members carry the join classes the tint's corners and overlap follow (card),
   // and the public run classes the thread follows (run).
   expect([...row(root, "b").classList].filter(name => /^author-(card|run)-/.test(name)).sort())
@@ -105,18 +110,41 @@ it("a results list keeps hits apart, and the outline rules apply inside one hit"
   expect([runOf(root, "a"), runOf(root, "k"), runOf(root, "b")]).toEqual(["down", "up", ""]);
 });
 
-it("the Show/Hide author marks switch turns the tint off and leaves the chips and the file alone", () => {
-  const root = mount([b("a"), b("b"), b("own", null)]);
+it.each(["tint", "thread"])("GH #896: with the %s look, Hide author marks takes away every mark: tint, line and every chip; the file stays", look => {
+  document.documentElement.classList.toggle("tine-author-marks-thread", look === "thread");
+  // a, k and b form one run. k (a's first child) and b (after a's subtree) keep a chip in the outline, which the
+  // thread look draws only on the run's first row; c starts a run of its own.
+  const root = mount([b("a", "Ada", [b("k")]), b("b"), b("own", null), b("c", "Bo")]);
   const raw = doc.byId.a.raw;
+  const marks = () => ["a", "k", "b", "c"].map(id => [tinted(root, id), lineOf(root, id) !== null]);
   try {
-    expect(tinted(root, "a")).toBe(true);
+    expect(chipNames(root)).toEqual(["Ada", "Ada", "Ada", "Bo"]);
+    expect(marks().flat().every(Boolean)).toBe(true);
     setAuthorMarksHidden(true);
-    expect(tinted(root, "a") || tinted(root, "b")).toBe(false);
-    expect(wrapperOf(root, "a").getAttribute("title")).toBeNull();
-    expect(chipNames(root)).toEqual(["Ada"]);
+    expect(chipNames(root)).toEqual([]);
+    expect(marks().flat().some(Boolean)).toBe(false);
+    expect(["a", "k", "b", "c"].map(id => wrapperOf(root, id).getAttribute("title"))).toEqual([null, null, null, null]);
+    // The chip's block menu stays on the row's own right-click.
+    expect(row(root, "a").querySelector(":scope > .block-main")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }))).toBe(false);
     expect(doc.byId.a.raw).toBe(raw);
-  } finally { setAuthorMarksHidden(false); }
+  } finally { setAuthorMarksHidden(false); document.documentElement.classList.remove("tine-author-marks-thread"); }
+  expect(chipNames(root)).toEqual(["Ada", "Ada", "Ada", "Bo"]);
   expect(tinted(root, "a")).toBe(true);
+});
+
+it("GH #896: Hide author marks leaves a comment thread's cards, replies and their chips as they are", () => {
+  const root = mount([b("commented", null, [b("thread", "Bo", [b("reply", "Cy")], "note\ntine.quote:: commented")])]);
+  openCommentThread(row(root, "commented"));
+  const shape = () => ["thread", "reply"].map(id => {
+    const r = document.body.querySelector<HTMLElement>(`[data-block-id="${id}"]`);
+    return r && { classes: r.className, chips: [...r.querySelectorAll(".author-chip")].map(c => c.outerHTML) };
+  });
+  const shown = shape();
+  expect(shown[0]?.chips.length).toBeGreaterThan(0);
+  try {
+    setAuthorMarksHidden(true);
+    expect(shape()).toEqual(shown);
+  } finally { setAuthorMarksHidden(false); }
 });
 
 it("GH #893: no gutter-line rule or element survives in the stylesheet or the components", () => {
