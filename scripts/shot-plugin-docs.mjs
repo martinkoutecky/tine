@@ -176,11 +176,16 @@ try {
   const editor = page.locator(editorSelector());
   await editor.waitFor();
   assert.equal((await editorState(editorBrowser)).kind, "cm6", "launch plugins exercise the default editor");
-  await editor.fill(
+  // Replace the block's text as a person does: select all, then type. Playwright's fill sets a page selection and
+  // inserts in the same instant. Where the keyboard writes through an EditContext (Android), the editor has not read
+  // that selection yet, so the new text would land after the old text.
+  await editor.press("Control+a");
+  await page.keyboard.insertText(
     PLATFORM === "desktop"
       ? "Tasks\n{{query (todo TODO DOING DONE)}}"
       : "Tasks\n{{query (todo TODO DOING DONE)}}\ntine.view:: table",
   );
+  assert.match(await editorText(editorBrowser), /^Tasks\n/, "the typed text replaces the block's text");
   await page.keyboard.press("Escape");
   await editor.waitFor({ state: "detached" });
   if (PLATFORM === "desktop") {
@@ -192,7 +197,13 @@ try {
     await tasksBlock.locator(".qc-panel").waitFor({ state: "detached" });
   }
   await page.locator(".sheet-table").waitFor();
-  await tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^DONE$/ }).waitFor();
+  // The query now runs over the whole mock graph, so several rows are closed. A row on screen also carries its cell
+  // menu button, so closed rows are read from the State column, not from a cell's whole text.
+  const closedCells = tasksBlock
+    .locator('.sheet-table .sheet-cell[data-sheet-column-id="state"]')
+    .filter({ hasText: /(?:DONE|CANCELED|CANCELLED)$/ });
+  await closedCells.first().waitFor();
+  await tasksBlock.getByText("Closed task", { exact: true }).waitFor();
   await tasksBlock.getByText("Open task", { exact: true }).waitFor();
   await tasksBlock.locator(".block-content").first().click({ position: { x: 24, y: 10 } });
   const tableEditor = page.locator(editorSelector());
@@ -211,12 +222,12 @@ try {
   await page.getByText("Query view: hide completed rows", { exact: true }).waitFor();
   await page.screenshot({ path: `${QUERY_SHOTS}/query-filter-command.png` });
   await page.getByText("Query view: hide completed rows", { exact: true }).click();
-  await tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^DONE$/ }).waitFor({ state: "detached" });
+  await closedCells.first().waitFor({ state: "detached" });
+  await tasksBlock.getByText("Closed task", { exact: true }).waitFor({ state: "detached" });
   await tasksBlock.getByText("Open task", { exact: true }).waitFor();
   if (await page.locator(".toast-error").count()) {
     throw new Error(`query-filter command failed: ${await page.locator(".toast-error").innerText()}`);
   }
-  const closedCells = tasksBlock.locator(".sheet-table .sheet-cell").filter({ hasText: /^(?:DONE|CANCELED|CANCELLED)$/ });
   if (await closedCells.count()) throw new Error("query-filter result still contains a closed task row");
   await tasksBlock.screenshot({ path: `${QUERY_SHOTS}/query-filter-result.png` });
 
