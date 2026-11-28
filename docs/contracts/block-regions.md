@@ -39,7 +39,7 @@ Refusals of `apply`, each without mutation:
 
 | Edit | Refused when | Threat in scope |
 |---|---|---|
-| Exact `Edit::Property` (a table or board cell's property write, and each of Flatten's fills) | `BlockRegions::other_spelling` finds, where the write lands (an Org block's own drawer, every accepted Markdown property line), a property whose source spelling is the same key to Logseq (`property_key_norm`: trimmed, ASCII lower case, space and `_` as `-`) but not exactly the column's key | Honest input under another spelling: a `Ready` column's cell would rewrite or delete the row's `ready::` line, or add `a_b::` beside `a-b::`, which Logseq reads as one property. The window shows the refusal naming the other spelling; a cell's control shows the saved value and its gesture ends. |
+| Exact `Edit::Property` (a table or board cell's property write, and each of Flatten's fills) | `BlockRegions::other_spelling` finds, where the write lands (an Org block's own drawer, every accepted Markdown property line), a property whose source spelling is the same key to Logseq (`property_key_norm`: trimmed, ASCII lower case, space and `_` as `-`) but not exactly the column's key | Honest input under another spelling: a `Ready` column's cell would rewrite or delete the row's `ready::` line, or add `a_b::` beside `a-b::`, which Logseq reads as one property. The window shows the refusal naming the other spelling; a checkbox shows the saved value and the date picker closes as after a write; a text or number cell keeps its draft, and each resubmission is refused the same way. |
 
 Property writes that are not exact (every non-cell caller) keep the ASCII case
 match. The refusal's error is `property-other-spelling:` followed by the other
