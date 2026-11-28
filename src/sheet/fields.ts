@@ -1,5 +1,5 @@
 import { msg, t } from "../i18n";
-import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
+import { formatForBlock, setRaw, setCellProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
@@ -246,11 +246,22 @@ export function readField(id: string, field: FieldId): FieldValue | null {
 }
 
 
+/** What a cell write did: `ok`, or refused; a property column's write names
+ *  the row's `otherSpelling` of its key when that is why. */
+export type CellWrite = { ok: true } | { ok: false; otherSpelling?: string };
+const WRITTEN: CellWrite = { ok: true };
+const REFUSED: CellWrite = { ok: false };
+
 export function writeField(id: string, field: FieldId, value: string): boolean {
-  if (isFormulaField(field)) return false;
+  return writeCell(id, field, value).ok;
+}
+
+/** {@link writeField} with the reason for a refusal. */
+export function writeCell(id: string, field: FieldId, value: string): CellWrite {
+  if (isFormulaField(field)) return REFUSED;
   const n = docNode(id);
-  if (!n) return false;
-  if (blockPageReadOnly(id)) return false; // org round-trip gate (review finding)
+  if (!n) return REFUSED;
+  if (blockPageReadOnly(id)) return REFUSED; // org round-trip gate (review finding)
   const trimmed = value.trim();
 
   if (field === "state") {
@@ -273,41 +284,45 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
       raw = setMarker(n.raw, target);
       if (raw !== n.raw) setRaw(id, raw);
     }
-    return true;
+    return WRITTEN;
   }
 
   if (field === "priority") {
     setRaw(id, setPriorityRaw(n.raw, trimmed === "A" || trimmed === "B" || trimmed === "C" ? trimmed : null), {
       timetracking: false,
     });
-    return true;
+    return WRITTEN;
   }
 
   if (field === "scheduled" || field === "deadline") {
     const date = trimmed ? parseIsoDateLike(trimmed) : null;
-    if (trimmed && !date) return false;
+    if (trimmed && !date) return REFUSED;
     setSchedule(id, field, date);
-    return true;
+    return WRITTEN;
   }
 
   if (field.startsWith("prop:")) {
-    setBlockProperty(id, field.slice(5), trimmed ? trimmed : null);
-    return true;
+    const write = setCellProperty(id, field.slice(5), trimmed ? trimmed : null);
+    // Any other failure was already shown, and the cell closes as before.
+    return "otherSpelling" in write ? write : WRITTEN;
   }
 
-  return false;
+  return REFUSED;
 }
 
 /** The user-facing door for a cell edit: `writeField`, and a refusal (read-only
  * page, vanished row, a value this column cannot take) is SHOWN with the
  * rejected text, never a silently closed input (I-9). Same cost as writeField. */
 export function writeFieldVisibly(id: string, field: FieldId, value: string): boolean {
-  const written = writeField(id, field, value);
-  if (!written) {
+  const write = writeCell(id, field, value);
+  if (write.ok) return true;
+  if (write.otherSpelling !== undefined) {
+    pushToast(msg("sheet-cell-other-spelling", { other: write.otherSpelling }), "error");
+  } else {
     const shown = value.trim().slice(0, 60);
     pushToast(msg("sheet-cell-refused", { value: shown, hasValue: shown ? 1 : 0 }), "error");
   }
-  return written;
+  return false;
 }
 
 export function writeTagDelta(id: string, delta: { add?: string; remove?: string }): boolean {

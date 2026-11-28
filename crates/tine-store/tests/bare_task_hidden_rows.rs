@@ -70,6 +70,7 @@ fn bare_task_read_edit_save_budget_and_checkpoint_bytes() {
                 Edit::Property {
                     key: "collapsed".into(),
                     value: (i % 2 == 0).then(|| "true".into()),
+                    exact: false,
                 },
             )
             .unwrap();
@@ -238,6 +239,7 @@ fn id(value: Option<&str>) -> Edit {
     Edit::Property {
         key: "id".into(),
         value: value.map(Into::into),
+        exact: false,
     }
 }
 
@@ -245,6 +247,7 @@ fn fold() -> Edit {
     Edit::Property {
         key: "collapsed".into(),
         value: Some("true".into()),
+        exact: false,
     }
 }
 
@@ -445,6 +448,7 @@ fn removing_the_last_row_beside_blank_lines_keeps_the_task() {
     let unfold = || Edit::Property {
         key: "collapsed".into(),
         value: None,
+        exact: false,
     };
     for (path, source, request) in [
         (
@@ -534,6 +538,7 @@ fn unfold() -> Edit {
     Edit::Property {
         key: "collapsed".into(),
         value: None,
+        exact: false,
     }
 }
 
@@ -541,6 +546,7 @@ fn owner() -> Edit {
     Edit::Property {
         key: "owner".into(),
         value: Some("me".into()),
+        exact: false,
     }
 }
 

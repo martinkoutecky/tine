@@ -1174,6 +1174,7 @@ fn strip_held_ids(b: &DocBlock, owned: &std::collections::HashSet<String>) -> Do
                         crate::block_regions::Edit::Property {
                             key: "id".into(),
                             value: None,
+                            exact: false,
                         },
                     )
                     .expect("parsed copy")
@@ -1204,6 +1205,7 @@ fn without_id_line(raw: &str, is_org: bool, id: &str) -> String {
                 crate::block_regions::Edit::Property {
                     key: "id".into(),
                     value: None,
+                    exact: false,
                 },
             )
             .expect("parsed copy")

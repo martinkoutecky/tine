@@ -3,6 +3,8 @@
 // taken by the block behind it (it entered edit mode, tore the sheet down and the control never acted), and
 // the sheet opened at the viewport's top-left. It then edits a query table's title cell: Delete at its end
 // must not merge the next block of the result's file, which the table does not draw, into the result.
+// Last, typing in a table's `Ready` text column on a row holding `ready:: false` (another spelling of the
+// same property to Logseq) is refused visibly and leaves that line on disk.
 //
 // Every pointer interaction here goes through the W3C Actions API (pointerdown/mousedown/mouseup/click as a
 // pointing device produces them), never `element.click()` from script: a synthetic click skips the
@@ -42,6 +44,10 @@ fs.writeFileSync(`${GRAPH}/pages/Task Table.md`, "- {{query (task TODO)}}\n  tin
 for (let i = 0; i < 12; i += 1) {
   fs.writeFileSync(`${GRAPH}/pages/Book ${i}.md`, `kind-${i}:: v${i}\ntype:: book\n\n- A book page ${i}\n`);
 }
+// A children table whose `ready` checkbox and `Ready` text columns are one property to Logseq.
+const READY_FILE = `${GRAPH}/pages/Ready Table.md`;
+const READY = "- Rows\n  tine.view:: table\n  tine.fields:: ready=checkbox;Ready=text\n\t- Row one\n\t  ready:: false\n";
+fs.writeFileSync(READY_FILE, READY);
 const QUERIES_FILE = `${GRAPH}/pages/Queries.md`;
 const BELOW = "- plain block below the query";
 fs.writeFileSync(QUERIES_FILE, `- {{query (task TODO)}}\n${BELOW}\n`);
@@ -194,6 +200,33 @@ try {
   if (!(await browser.$(`.sheet-table ${BLOCK_EDITOR}`).isExisting())) throw new Error("the title cell's editor closed on Delete");
   await browser.keys(["Escape"]);
   await sleep(1_000);
+
+  // 7. Typing in the `Ready` column of a row holding `ready:: false` is refused with a notice naming
+  //    `ready`. The `ready` checkbox's own write then reaches the disk, and the file holds only it:
+  //    the refused text never replaced the line.
+  await openPageByName(browser, "Ready Table");
+  const column = (field) => browser.execute((wanted) => {
+    const headers = [...document.querySelectorAll(".sheet-table [data-sheet-field-header]")];
+    return headers.findIndex((h) => h.getAttribute("data-sheet-field") === wanted) + 1;
+  }, field);
+  await browser.$(".sheet-table [data-sheet-field-header]").waitForExist({ timeout: 20_000, timeoutMsg: "the Ready Table never drew its columns" });
+  const readyCol = await column("prop:Ready");
+  const checkCol = await column("prop:ready");
+  if (!readyCol || !checkCol) throw new Error("the Ready Table lacks its ready or Ready column");
+  const readyCell = await browser.$(`.sheet-table .sheet-cell[data-row="0"][data-col="${readyCol}"]`);
+  await readyCell.scrollIntoView({ block: "nearest", inline: "nearest" });
+  await browser.action("pointer", { parameters: { pointerType: "mouse" } })
+    .move({ origin: readyCell, x: 0, y: 0 }).down({ button: 0 }).up({ button: 0 }).pause(40).down({ button: 0 }).up({ button: 0 }).perform();
+  const propInput = await browser.$(".sheet-table input.sheet-prop-input");
+  await propInput.waitForExist({ timeout: 10_000, timeoutMsg: "a double press on the Ready cell opened no input" });
+  await browser.keys(["y", "e", "s", "Enter"]);
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".toast-msg")]
+    .some((el) => /already has “ready”, another spelling of this property/.test(el.textContent ?? ""))),
+  { timeout: 10_000, interval: 150, timeoutMsg: "typing in Ready beside ready:: false showed no refusal" });
+  await browser.keys(["Escape"]);
+  await press(`.sheet-table .sheet-cell[data-row="0"][data-col="${checkCol}"] input[type="checkbox"]`);
+  const ready = await waitForFileText(READY_FILE, (body) => body.includes("ready:: true"));
+  if (ready !== READY.replace("ready:: false", "ready:: true")) throw new Error(`a refused Ready cell changed the file:\n${ready}`);
 } catch (error) {
   failed = error;
   if (browser) {

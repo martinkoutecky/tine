@@ -59,6 +59,7 @@ pub(super) fn prop_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 tine_core::block_regions::Edit::Property {
                     key: args.key.clone(),
                     value: value.clone(),
+                    exact: false,
                 },
             )
             .map_err(|e| refused("kernel", Some(page), e))?;

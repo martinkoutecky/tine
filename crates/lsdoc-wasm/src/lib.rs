@@ -584,6 +584,7 @@ pub fn edit_block_regions_json(
         "property" => Edit::Property {
             key: text(request, "key"),
             value: optional(request, "value"),
+            exact: get(request, "exact").as_bool().unwrap_or(false),
         },
         "planning" => Edit::Planning {
             which: text(request, "which"),

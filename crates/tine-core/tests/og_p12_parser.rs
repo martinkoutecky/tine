@@ -96,6 +96,7 @@ fn empty_property_refill_preserves_accepted_syntax() {
             Edit::Property {
                 key: "tine.group-field".into(),
                 value: Some("prop:status".into()),
+                exact: false,
             },
         )
         .unwrap();

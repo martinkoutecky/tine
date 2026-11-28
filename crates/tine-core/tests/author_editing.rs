@@ -82,6 +82,7 @@ fn quote_authors_share_region_editor_and_native_facet_ownership() {
                     block_regions::Edit::Property {
                         key: "tine.author".into(),
                         value: None,
+                        exact: false,
                     },
                 )
                 .unwrap();

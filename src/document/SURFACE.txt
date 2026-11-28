@@ -202,6 +202,7 @@ selectionClaim  # why: one answer to whether a pending Cut still owns the select
 selectionMarkdown
 selectionScope  # why: one-level fold commands resolve the selected occurrence's collapse surface instead of its source (GH #768); batch-fix-gh768
 setBlockProperty
+setCellProperty  # why: a table or board cell's property write refuses beside another spelling of its key; batch-fix-key-spelling-step1
 setCollapsed
 setCollapsedBlocks  # why: D-20261030-EMB inner block/page embed folds save the source in one undo step (GH #868); batch-fix-embed-look-08
 setCollapsedDeep
