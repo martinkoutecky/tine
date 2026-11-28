@@ -97,7 +97,7 @@ pub(super) fn visit_blocks(
                     }
                 }
             }
-            Block::Properties { props, span } => {
+            Block::Properties { props, span, .. } => {
                 if let Some(r) = raw_range(raw, span, coords) {
                     let r = whole_line(raw, r);
                     let index = out.property_regions.len();
@@ -156,7 +156,9 @@ pub(super) fn visit_blocks(
                     }
                 }
             }
-            Block::Directive { name, value, span } if org => {
+            Block::Directive {
+                name, value, span, ..
+            } if org => {
                 if let Some(r) = raw_range(raw, span, coords) {
                     let line = whole_line(raw, r);
                     let region = out.property_regions.len();
@@ -180,7 +182,7 @@ pub(super) fn visit_blocks(
                     }
                 }
             }
-            Block::Drawer { name, span } => {
+            Block::Drawer { name, span, .. } => {
                 if let Some(r) = raw_range(raw, span, coords) {
                     let r = whole_line(raw, r);
                     let lines = line_ranges(raw, r);

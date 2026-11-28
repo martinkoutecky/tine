@@ -33,7 +33,7 @@ export function readLsdocTag() {
   const manifests = ["tine-core", "tine-outline", "lsdoc-wasm", "tine-graph-features"];
   const tags = manifests.map((name) => {
     const rel = `crates/${name}/Cargo.toml`;
-    const pin = readFileSync(join(root, rel), "utf8").match(/lsdoc\s*=\s*\{[^}]*\btag\s*=\s*"([^"]+)"/);
+    const pin = readFileSync(join(root, rel), "utf8").match(/lsdoc\s*=\s*\{[^}]*\b(?:tag|rev)\s*=\s*"([^"]+)"/);
     if (!pin) throw new Error(`could not find lsdoc tag in ${rel}`);
     return pin[1];
   });
