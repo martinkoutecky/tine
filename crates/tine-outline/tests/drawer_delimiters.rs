@@ -12,6 +12,7 @@ fn write(org: bool, raw: &str, key: &str, value: Option<&str>) -> String {
     let edit = Edit::Property {
         key: key.into(),
         value: value.map(Into::into),
+        exact: false,
     };
     let run = std::panic::catch_unwind(|| block_regions::edit(raw, org, edit));
     match run {
