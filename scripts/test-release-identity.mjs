@@ -7,6 +7,7 @@ import { IDENTITIES } from "./lib/app-identity.mjs";
 import { releaseLayout } from "./release-layout.mjs";
 import { workflowInputs } from "./release-workflow-inputs.mjs";
 import { BETA_ENDPOINT } from "./release-policy.mjs";
+import { fixtureSignature } from "./lib/release-signature-fixture.mjs";
 
 // Exercise actual staging/assembly CLI with Tauri's space-bearing filenames,
 // signed byte payloads and binary zsync checksums, under both identity switches.
@@ -15,6 +16,8 @@ const commit = "a".repeat(40);
 // A Beta version: this fixture drives the Beta channel for both identities.
 const version = "0.5.0-beta.6";
 const payload = Buffer.from([0, 128, 255, 10, 13]);
+// A signature names the bundle it signs, as the bundler's trusted comment does.
+const signed = (name, source) => name.endsWith(".sig") ? Buffer.from(fixtureSignature(source.slice(0, -4), version)) : payload;
 try {
   for (const file of ["release-layout.mjs", "release-policy.mjs", "stage-release-lane.mjs",
     "assemble-release-candidate.mjs", "release-workflow-inputs.mjs", "lib/app-identity.mjs"]) {
@@ -45,7 +48,7 @@ try {
         const source = spec.sourceAssets[name];
         const bytes = name.endsWith(".zsync") ? Buffer.concat([
           Buffer.from(`zsync: 0.6.2\nFilename: ${source.slice(0, -6)}\nURL: ${source.slice(0, -6)}\n\n`), payload,
-        ]) : payload;
+        ]) : signed(name, source);
         fs.writeFileSync(path.join(bundle, source), bytes);
       }
       run("stage-release-lane.mjs", lane, "candidate-input", commit);
@@ -56,7 +59,7 @@ try {
           // A Beta's zsync names its AppImage absolutely, inside its own release.
           assert.ok(bytes.includes(Buffer.from(`Filename: ${appimage}\nURL: https://github.com/owner/repo/releases/download/v${version}/${appimage}\n\n`)));
           assert.deepEqual(bytes.subarray(-payload.length), payload, "zsync binary payload changed");
-        } else assert.deepEqual(bytes, payload, "signed artifact changed while renaming");
+        } else assert.deepEqual(bytes, signed(name, spec.sourceAssets[name]), "signed artifact changed while renaming");
       }
       const inputs = workflowInputs(lane, conf, "owner/repo", identity);
       if (lane === "flatpak-x64") {

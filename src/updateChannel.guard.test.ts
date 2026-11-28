@@ -50,6 +50,14 @@ describe("update channel", () => {
       : "https://tine.page/updates/beta/latest.json"]);
   });
 
+  it("the updater installs only an update whose signature names the version it offers (GH #983)", () => {
+    // Without the flag the plugin accepts a signature that names no version, so a
+    // compromised endpoint could offer an older signed Tine under a newer number.
+    const conf = JSON.parse(read("../src-tauri/tauri.conf.json"));
+    expect(conf.plugins.updater.requireSignedVersion,
+      "tauri.conf.json plugins.updater.requireSignedVersion must be true").toBe(true);
+  });
+
   it("I-4/I-12: notification and installation acquire updates through checkedChannelUpdate (src/update.ts)", () => {
     const code = stripComments(read("./update.ts"));
     expect(code.match(/await check\(\)/g), RULE).toHaveLength(1);

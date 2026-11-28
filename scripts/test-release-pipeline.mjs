@@ -21,6 +21,7 @@ import {
   windowsWebviewProfileSnapshot,
 } from "./e2e-capabilities.mjs";
 import { candidateProblems, releaseLayout, RELEASE_LANES } from "./release-layout.mjs";
+import { fixtureSignature } from "./lib/release-signature-fixture.mjs";
 
 const version = "0.5.6";
 const commit = "a".repeat(40);
@@ -579,7 +580,7 @@ assert.match(
 );
 assert.match(preflight, /check-bench-policy\.mjs/, "release preflight omits the performance-baseline currency guard");
 
-function makeInput(base) {
+function makeInput(base, signedFor = () => version) {
   const input = path.join(base, "input");
   fs.mkdirSync(input, { recursive: true });
   for (const lane of RELEASE_LANES) {
@@ -587,7 +588,7 @@ function makeInput(base) {
     fs.mkdirSync(directory, { recursive: true });
     const assets = [];
     for (const name of layout.lanes[lane].assets) {
-      const contents = name.endsWith(".sig") ? `signature-${name}\n` : `fixture-${name}\n`;
+      const contents = name.endsWith(".sig") ? `${fixtureSignature(name.slice(0, -4), signedFor(name))}\n` : `fixture-${name}\n`;
       fs.writeFileSync(path.join(directory, name), contents);
       const bytes = Buffer.from(contents);
       assets.push({ name, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
@@ -702,6 +703,14 @@ try {
     fragment.version = "0.5.7";
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment));
     assert.throws(() => assemble(input, path.join(base, "output")), /version 0\.5\.7, expected 0\.5\.6/);
+  }
+  for (const [label, signedFor] of [["unversioned", undefined], ["older", "0.5.5"]]) {
+    // An updater signature must name the version latest.json offers, or the app
+    // (requireSignedVersion) refuses the update: assembly refuses it first.
+    const base = path.join(temporary, `${label}-signature`);
+    const input = makeInput(base, (name) => name.endsWith("-setup.exe.sig") ? signedFor : version);
+    assert.throws(() => assemble(input, path.join(base, "output")),
+      /latest\.json windows-x86_64 signature is not signed for version 0\.5\.6/);
   }
   {
     const base = path.join(temporary, "duplicate-platform");

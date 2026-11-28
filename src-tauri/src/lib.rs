@@ -826,7 +826,9 @@ pub fn run() {
             }
         }))
         // In-app self-update. The updater reads `plugins.updater` from
-        // tauri.conf.json (endpoints + minisign pubkey); process powers the
+        // tauri.conf.json (endpoints, minisign pubkey, and requireSignedVersion,
+        // which refuses an update whose signature does not name the version the
+        // endpoint offers: GH #983); process powers the
         // frontend's post-install `relaunch()`. Inert until a signed release with
         // a `latest.json` exists — the frontend catches any check() error and
         // falls back to opening the releases page (see src/update.ts).
@@ -1528,6 +1530,19 @@ mod mobile_drawer_policy_tests {
             windows.iter().find(|window| window.label == "neighbor"),
             Some(&neighbor)
         );
+    }
+}
+
+#[cfg(test)]
+mod updater_config_tests {
+    #[test]
+    fn the_updater_requires_the_signed_version() {
+        // GH #983: read through the plugin's own parser, so a misspelt key fails here.
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let config: tauri_plugin_updater::Config =
+            serde_json::from_value(source["plugins"]["updater"].clone()).unwrap();
+        assert!(config.require_signed_version);
     }
 }
 

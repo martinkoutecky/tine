@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import { candidateProblems } from "./release-layout.mjs";
+import { fixtureSignature } from "./lib/release-signature-fixture.mjs";
 import { releaseLayout } from "./release-layout.mjs";
 import { appImageUpdateInformation, updaterAssetUrl, releaseVersion, packagingProblems, publicationPlan, releaseChannel, releaseTag, BETA_ENDPOINT, LEGACY_BETA_ENDPOINT, STABLE_ENDPOINT } from "./release-policy.mjs";
 
@@ -91,7 +92,7 @@ try {
       const appimage = name.slice(0, -".zsync".length);
       const bytes = Buffer.from(name.endsWith(".AppImage.zsync")
         ? `zsync: 0.6.2\nFilename: ${appimage}\nURL: ${channel === "beta" ? updaterAssetUrl("owner/repo", appimage, channel, version) : appimage}\n\nsynthetic`
-        : `synthetic ${name}`);
+        : name.endsWith(".sig") ? fixtureSignature(name.slice(0, -".sig".length), version) : `synthetic ${name}`);
       fs.writeFileSync(path.join(dir, name), bytes);
       return { name, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
     });

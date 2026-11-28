@@ -31,7 +31,11 @@ We will ship the Tauri updater for **Windows and Linux (AppImage)** and keep
 
 - `tauri.conf.json`: `bundle.createUpdaterArtifacts: true` and a `plugins.updater`
   block (GitHub `releases/latest/download/latest.json` endpoint, the minisign
-  `pubkey`, Windows `installMode: "passive"`).
+  `pubkey`, `requireSignedVersion: true`, Windows `installMode: "passive"`).
+  `latest.json` itself is not signed, so the app installs an update only when its
+  signature's trusted comment names the version `latest.json` offers; otherwise a
+  compromised endpoint could offer an older signed release as a newer one (GH #983).
+  Release assembly refuses a candidate whose signatures would fail that check.
 - Rust: register `tauri-plugin-updater` + `tauri-plugin-process`; grant
   `updater:default` + `process:allow-restart` in the default capability.
 - Frontend: the existing GitHub-releases toast stays the cross-platform **notifier**.

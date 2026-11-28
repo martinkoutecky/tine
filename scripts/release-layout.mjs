@@ -171,6 +171,16 @@ export function releaseNotes(root, version) {
   return lines.slice(start + 1, end).join("\n").trim();
 }
 
+// The version an updater signature (a base64 minisign signature file) was signed
+// for: the `version:` field of its trusted comment, whose fields the Tauri
+// bundler separates with tabs. Undefined when the comment names none.
+export function signedVersion(signature) {
+  const comment = Buffer.from(signature, "base64").toString("utf8").split("\n")
+    .find((line) => line.startsWith("trusted comment: "));
+  return comment?.slice("trusted comment: ".length).split("\t")
+    .find((field) => field.startsWith("version:"))?.slice("version:".length);
+}
+
 export function candidateProblems(directory, version, channel = "stable") {
   const layout = releaseLayout(version);
   const names = new Set(
@@ -227,6 +237,10 @@ export function candidateProblems(directory, version, channel = "stable") {
     if (entry && !entry.url?.endsWith(`/${asset}`)) problems.push(`latest.json ${platform} points at the wrong asset`);
     if (entry && (typeof entry.signature !== "string" || entry.signature.length === 0)) {
       problems.push(`latest.json ${platform} has no signature`);
+    } else if (entry && signedVersion(entry.signature) !== version) {
+      // The app refuses an update whose signature does not name the version
+      // latest.json offers (tauri.conf.json requireSignedVersion).
+      problems.push(`latest.json ${platform} signature is not signed for version ${version}`);
     }
   }
   return problems;

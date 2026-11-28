@@ -165,6 +165,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - DOMPurify is updated to 3.4.18 and seroval to 1.6.12, which close published
   advisories. Tine used none of the affected DOMPurify modes, so no known
   exploit applied (reported by Dieterbe in #982).
+- The updater is configured to install an update only when its signature names the version the update server offers, so a compromised server cannot offer an older, genuinely signed Tine as a newer one. A release whose updater signatures do not name its version is refused before it can be published (#983).
 
 ## [0.10.0-beta.1] - 2026-11-16
 
