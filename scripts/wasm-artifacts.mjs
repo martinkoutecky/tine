@@ -18,8 +18,12 @@ export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // (crates/tine-core/src/local_target.rs, about 12k of code). Both modules must
 // export it (src/browserCoreParser.test.ts); trimming its code saved 1.1k of the
 // 2.3k overshoot, and no further trim fits without dropping a rule.
+// 2026-11-28, drawer delimiters: the parser ceiling moved to 1,570,000 (about
+// 0.5% above the vendored 1,562,167) for lsdoc v0.5.13's drawer spans and the
+// writers' guards that use them (about 2.9k); dropping a sort, a collect and a
+// trim saved 4.6k of the first build's overshoot.
 export const wasmArtifacts = [
-  { dir: "src/render/wasm", feature: null, maxBytes: 1_560_000 },
+  { dir: "src/render/wasm", feature: null, maxBytes: 1_570_000 },
   { dir: "src/render/wasm-core", feature: "core", maxBytes: 4_794_000 },
 ];
 
@@ -33,7 +37,7 @@ export function readLsdocTag() {
   const manifests = ["tine-core", "tine-outline", "lsdoc-wasm", "tine-graph-features"];
   const tags = manifests.map((name) => {
     const rel = `crates/${name}/Cargo.toml`;
-    const pin = readFileSync(join(root, rel), "utf8").match(/lsdoc\s*=\s*\{[^}]*\b(?:tag|rev)\s*=\s*"([^"]+)"/);
+    const pin = readFileSync(join(root, rel), "utf8").match(/lsdoc\s*=\s*\{[^}]*\btag\s*=\s*"([^"]+)"/);
     if (!pin) throw new Error(`could not find lsdoc tag in ${rel}`);
     return pin[1];
   });

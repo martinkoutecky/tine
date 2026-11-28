@@ -165,9 +165,9 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // property regions, and a drawer's delimiter lines are no longer property
 // rows. Older caches rebuild.
 pub(crate) const FORMAT: u32 = 42;
-/// The lsdoc tag or rev tine-core parses with (`crates/tine-core/Cargo.toml`;
+/// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc b36d454735906e5c6a8c2d61053bf184b85fb010";
+pub(crate) const PARSER: &str = "lsdoc v0.5.13";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12

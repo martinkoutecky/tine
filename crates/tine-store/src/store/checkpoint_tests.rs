@@ -1484,10 +1484,10 @@ fn the_parser_tag_matches_the_lsdoc_pin() {
         .lines()
         .find(|line| line.trim_start().starts_with("lsdoc"))
         .expect("lsdoc dependency");
-    let tag = ["tag = \"", "rev = \""]
-        .iter()
-        .find_map(|pin| line.split(pin).nth(1))
-        .expect("lsdoc tag or rev")
+    let tag = line
+        .split("tag = \"")
+        .nth(1)
+        .unwrap()
         .split('"')
         .next()
         .unwrap();

@@ -34,7 +34,7 @@ time = { version = "0.3.49", features = ["formatting"] }
 ring = "0.17"
 
 [dev-dependencies]
-lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", rev = "b36d454735906e5c6a8c2d61053bf184b85fb010" }
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.13" }
 tine-core = { path = "../tine-core", features = ["test-counters", "test-faults"] }
 tine-store = { path = "../tine-store", features = ["test-faults"] }
 tine-graph-features = { path = ".", features = ["test-faults"] }
