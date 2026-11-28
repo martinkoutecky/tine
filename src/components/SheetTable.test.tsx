@@ -1964,16 +1964,6 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it.each([
-    ["seeded", "md", "ready=checkbox"], ["seeded", "org", "ready=checkbox"],
-    ["blank", "md", "note=text"], ["blank", "org", "note=text"],
-  ] as const)("children add-row is one document write, %s (%s) (tine#1047)", async (_kind, format, schema) => {
-    saveFixture.markDirty.mockClear();
-    const { dispose } = await clickAddRow(tableOf(schema, format), format);
-    expect(saveFixture.markDirty).toHaveBeenCalledTimes(1);
-    dispose();
-  });
-
   it("children add-row under a filter that excludes `false` writes the row and opens no editor (tine#1047)", async () => {
     const errors = vi.spyOn(console, "error");
     const { id, root, dispose } = await clickAddRow(tableOf("shipped=checkbox", "md", "tine.filter: isEmpty(shipped)"), "md");

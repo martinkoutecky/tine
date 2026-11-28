@@ -12,7 +12,7 @@ export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, insertEmptyChildBlock, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { new_checkbox_row_raw } from "../render/wasm/lsdoc_wasm";
 import { observeNear, unobserveNear } from "../lazyObserve";
@@ -726,11 +726,12 @@ export function SheetTable(props: {
     for (const field of fields()) {
       if (field.startsWith("prop:")) (types.get(field) === "checkbox" ? checkboxKeys : otherKeys).push(field.slice("prop:".length));
     }
-    // One write: the seeded row goes in with its text (develop's blank row otherwise, which also
-    // reports a too-deep outline).
-    const raw = new_checkbox_row_raw(formatForBlock(props.ownerId) === "org", checkboxKeys, otherKeys);
-    const id = withUndoUnit("sheet:table-add-row", [owner.page], () =>
-      (raw && insertOutlineChildren(props.ownerId, [{ raw, children: [] }])) || insertEmptyChildBlock(props.ownerId, at));
+    const id = withUndoUnit("sheet:table-add-row", [owner.page], () => {
+      const row = insertEmptyChildBlock(props.ownerId, at);
+      const raw = row ? new_checkbox_row_raw(formatForBlock(row) === "org", checkboxKeys, otherKeys) : "";
+      if (row && raw) setRaw(row, raw);
+      return row;
+    });
     if (!id) return;
     queueMicrotask(() => {
       // A filter can leave the new row out (its `false` fails `isEmpty`): then no editor opens.
