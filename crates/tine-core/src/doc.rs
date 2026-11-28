@@ -696,23 +696,6 @@ pub fn line_convention(existing: &str) -> &'static str {
     }
 }
 
-/// The physical lines of page text, each with its terminator (CRLF, LF or a
-/// lone CR, as [`normalize_line_endings`] reads them; the last may have none).
-/// For page merge; the reader's lines are `tine_text::PageText`'s, which end
-/// at the same bytes (`tine-text` tests). Concatenated, they are `text`. O(n),
-/// no copy.
-pub fn physical_lines(text: &str) -> impl Iterator<Item = &str> {
-    let mut rest = text;
-    std::iter::from_fn(move || {
-        let end = rest.find(['\r', '\n']).map_or(rest.len(), |at| {
-            at + if rest[at..].starts_with("\r\n") { 2 } else { 1 }
-        });
-        let (line, tail) = rest.split_at(end);
-        rest = tail;
-        (!line.is_empty()).then_some(line)
-    })
-}
-
 /// The terminator `line` ends with: `"\r\n"`, `"\n"`, `"\r"` or `""`. O(1).
 pub fn line_terminator(line: &str) -> &'static str {
     if line.ends_with("\r\n") {
@@ -787,11 +770,12 @@ pub(crate) fn parse_outlined(text: &str, is_org: bool, mapped: bool) -> Outlined
     };
     let page = outline::page_or_preamble(text, &lf, format);
     let (document, pre) = document_of(&page, is_org);
+    let headers = outline::headers_of(&page);
     Outlined {
         lf,
         document,
-        headers: outline::headers_of(&page),
-        map: mapped.then(|| SourceMap::new(&page, pre)),
+        headers,
+        map: mapped.then(|| SourceMap::new(page, pre)),
     }
 }
 
@@ -824,11 +808,11 @@ pub fn is_unbulleted_heading_line(line: &str) -> bool {
 }
 
 /// The raw text the outline parser reads from a continuation `line` of a block
-/// whose continuations dedent by `content_indent` bytes: up to that many
-/// leading tabs, spaces or form feeds removed. For a writer reusing a line's
-/// old bytes; the reparse stays the judge.
+/// whose continuations dedent by `content_indent` bytes: the reader's own
+/// removal ([`tine_text::removed_indent`]). For a writer reusing a line's old
+/// bytes; the reparse stays the judge.
 pub fn continuation_raw(line: &str, content_indent: usize) -> &str {
-    outline::strip_layout_ws(line, content_indent)
+    &line[tine_text::removed_indent(line.as_bytes(), content_indent)..]
 }
 
 /// Formatting knobs detected from a file so re-saving preserves its existing

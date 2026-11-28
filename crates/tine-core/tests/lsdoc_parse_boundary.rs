@@ -34,14 +34,18 @@ const EXEMPT: &[(&str, &str)] = &[
         "the bounded boundary itself",
     ),
     (
-        "crates/tine-text/src/bound.rs",
-        "the page outline parse under the same quote bound",
-    ),
-    (
         "crates/tine-core/src/query/conformance.rs",
         "a #[cfg(test)] module (asserted below)",
     ),
 ];
+
+/// Functions allowed to call lsdoc directly, by file and name, each with its
+/// reason. A call anywhere else in the same file is a hit.
+const EXEMPT_FNS: &[(&str, &str, &str)] = &[(
+    "crates/tine-text/src/bound.rs",
+    "parse_outline_bounded",
+    "the page outline parse under the same quote bound",
+)];
 
 fn raw_calls(code: &str) -> Vec<&'static str> {
     ENTRIES
@@ -82,12 +86,35 @@ fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
-        for (n, line) in text.lines().enumerate() {
-            // Unit tests sit at the end of a production file.
-            if line.trim_start().starts_with("#[cfg(test)]") {
-                break;
-            }
-            let code = line.split("//").next().unwrap_or("");
+        hits.extend(file_hits(&relative, &text));
+    }
+}
+
+/// The raw calls in production file `relative`, outside its exempt functions.
+fn file_hits(relative: &str, text: &str) -> Vec<String> {
+    let exempt: Vec<&str> = (EXEMPT_FNS.iter())
+        .filter(|(file, ..)| *file == relative)
+        .map(|(_, name, _)| *name)
+        .collect();
+    let (mut hits, mut depth) = (Vec::new(), 0usize);
+    // The depth an exempt function was declared at, and whether its body opened.
+    let mut inside: Option<(usize, bool)> = None;
+    for (n, line) in text.lines().enumerate() {
+        // Unit tests sit at the end of a production file.
+        if line.trim_start().starts_with("#[cfg(test)]") {
+            break;
+        }
+        let code = line.split("//").next().unwrap_or("");
+        let declares = |name: &&str| {
+            let words: Vec<&str> = code
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .collect();
+            words.windows(2).any(|w| w == ["fn", *name])
+        };
+        if inside.is_none() && exempt.iter().any(declares) {
+            inside = Some((depth, false));
+        }
+        if inside.is_none() {
             for entry in raw_calls(code) {
                 hits.push(format!(
                     "{relative}:{}: raw `lsdoc::{entry}` in `{}`",
@@ -96,7 +123,21 @@ fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
                 ));
             }
         }
+        for c in code.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        if let Some((at, opened)) = &mut inside {
+            *opened |= depth > *at;
+            if *opened && depth <= *at {
+                inside = None;
+            }
+        }
     }
+    hits
 }
 
 #[test]
@@ -137,4 +178,18 @@ fn the_scanner_sees_raw_calls_and_imports() {
     );
     assert!(raw_calls("let p = crate::render::parse_text_bounded(v, false);").is_empty());
     assert!(raw_calls("use lsdoc::ast::{Block, Inline};").is_empty());
+}
+
+#[test]
+fn an_exempt_function_exempts_only_its_own_body() {
+    let file = "crates/tine-text/src/bound.rs";
+    let bounded = "pub fn parse_outline_bounded(text: &str) -> Option<()> {\n    \
+                   lsdoc::parse_outline(text, \"md\").ok().map(|_| ())\n}\n";
+    assert!(file_hits(file, bounded).is_empty());
+    let second =
+        format!("{bounded}fn other(t: &str) {{\n    lsdoc::parse_outline(t, \"md\");\n}}\n");
+    assert_eq!(file_hits(file, &second).len(), 1, "{second}");
+    let before = format!("fn early(t: &str) {{ lsdoc::parse(t); }}\n{bounded}");
+    assert_eq!(file_hits(file, &before).len(), 1, "{before}");
+    assert_eq!(file_hits("crates/tine-text/src/lib.rs", bounded).len(), 1);
 }

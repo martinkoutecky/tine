@@ -310,7 +310,7 @@ pub fn physical_outline(
     let page = crate::outline::page(text, format)
         .unwrap_or_else(|_| tine_text::PageText::preamble_only(text, format.text()));
     let headers = crate::outline::headers_of(&page);
-    let map = crate::doc::SourceMap::new(&page, 0);
+    let map = crate::doc::SourceMap::new(page, 0);
     (headers.iter().enumerate())
         .map(|(i, h)| {
             let start = map.block_start(i).unwrap();

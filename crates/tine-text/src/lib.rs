@@ -1,19 +1,21 @@
-//! Block text, the physical layer: which
-//! bytes of a page file belong to which block, as layout (structural prefix or
-//! removed indent), text or line break, so that the pieces concatenate to the
-//! file (R0) and a write replaces only named byte ranges (R3).
+//! Block text, the physical layer: which bytes of a page file belong to which
+//! block, as layout (structural prefix or removed indent), text or line break,
+//! so that the pieces concatenate to the file (R0) and a write replaces only
+//! named byte ranges (R3).
 //!
 //! ```text
-//! page  = preamble-piece* slot* tail
-//! slot  = piece+          with a level; the first piece carries the block's structural prefix
+//! page  = preamble slot*                      the owners, in file order
+//! owner = piece* trailer-piece*               only the last owner has a trailer
 //! piece = layout text break
 //! ```
 //!
 //! lsdoc decides where a slot starts ([`bound::parse_outline_bounded`]); this
 //! crate owns no Markdown or Org grammar. Lines end where lsdoc's source
-//! scanner ends them (`lsdoc/src/v2/source.rs`, `SourceScanner::scan`: LF, CRLF
-//! and every other CR). A slot's content is its text pieces joined by `"\n"`
-//! ([`PageText::content`]), with a total map to file bytes ([`ContentMap`]).
+//! scanner ends them ([`lines`]: LF, CRLF and every other CR). A slot's content
+//! is its text pieces joined by `"\n"` ([`PageText::content`]), with a map to
+//! file bytes ([`ContentMap`]). The physical lines after the last owner's
+//! content (an Org file's final empty lines; a Markdown file that is one empty
+//! line) are that owner's trailer: its bytes, not its content.
 //!
 //! Cost of [`PageText::read`]: one outline parse of the page plus O(bytes);
 //! one record per physical line and per slot, no text copied (the outline is
@@ -24,7 +26,7 @@ mod splice;
 
 use std::ops::Range;
 
-pub use splice::{apply, Splice, SpliceError};
+pub use splice::{apply, check_planned_rows, Splice, SpliceError};
 
 /// Which outline grammar the page is read with.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,6 +75,44 @@ impl Break {
     }
 }
 
+/// The physical lines of `text`, in order: each line's bytes before its
+/// break, and the break ([`Break::Eof`] for an unterminated last line). An
+/// empty text has no line and a final break opens none, so the lines and
+/// their breaks concatenate to `text`. The one place a line's end is decided.
+/// O(bytes), no copy.
+pub fn lines(text: &str) -> impl Iterator<Item = (Range<usize>, Break)> + '_ {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if start >= bytes.len() {
+            return None;
+        }
+        let text_end =
+            memchr::memchr2(b'\n', b'\r', &bytes[start..]).map_or(bytes.len(), |at| start + at);
+        let (end, kind) = match bytes.get(text_end) {
+            None => (text_end, Break::Eof),
+            Some(b'\r') if bytes.get(text_end + 1) == Some(&b'\n') => (text_end + 2, Break::CrLf),
+            Some(b'\r') => (text_end + 1, Break::Cr),
+            Some(_) => (text_end + 1, Break::Lf),
+        };
+        let line = start..text_end;
+        start = end;
+        Some((line, kind))
+    })
+}
+
+/// How many leading bytes of `line` the reader removes as layout when it
+/// dedents by up to `dedent` bytes: spaces, tabs and form feeds (mldoc's
+/// layout whitespace). The one answer for a continuation line's removed
+/// indent, a header line's indentation (`usize::MAX`) and the header layout a
+/// new line reuses. O(min(dedent, line)).
+pub fn removed_indent(line: &[u8], dedent: usize) -> usize {
+    line.iter()
+        .take(dedent)
+        .take_while(|b| matches!(b, b' ' | b'\t' | 0x0c))
+        .count()
+}
+
 /// One line piece: three adjacent byte ranges of the file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Piece {
@@ -103,8 +143,8 @@ pub enum HeaderKind {
 }
 
 /// One block's bytes: from the first byte of its outline header to the next
-/// slot (or the tail).
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// slot (or the end of the file).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Slot {
     start: usize,
     text_start: usize,
@@ -112,6 +152,8 @@ pub struct Slot {
     level: u32,
     kind: HeaderKind,
     dedent: usize,
+    indent: usize,
+    lead: usize,
     opaque: bool,
 }
 
@@ -137,6 +179,11 @@ impl Slot {
     pub fn dedent(&self) -> usize {
         self.dedent
     }
+    /// Leading layout bytes of the slot's header line ([`removed_indent`]
+    /// with no bound).
+    pub fn indent(&self) -> usize {
+        self.indent
+    }
     /// Whether two outline headers fell into this slot because lsdoc reported
     /// them without disjoint byte ranges; its content is text only.
     pub fn opaque(&self) -> bool {
@@ -152,25 +199,43 @@ pub enum Owner {
 }
 
 /// One physical line: `start..layout_end` is the layout of whoever owns the
-/// line's first byte, `text_end..end` its break.
+/// line's first byte, `text_end..end` its break; `at` is the line's offset in
+/// that owner's content.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Line {
     start: usize,
     layout_end: usize,
     text_end: usize,
     end: usize,
+    at: usize,
+    kind: Break,
 }
 
-/// The physical layer of one page file.
+/// The physical layer of one page file without its text: every answer about
+/// which byte is what, by offset. [`PageText`] pairs it with the text; a
+/// caller that keeps the answers after the text is gone keeps this.
+#[derive(Clone, Debug)]
+pub struct Layout {
+    format: Format,
+    len: usize,
+    lines: Vec<Line>,
+    slots: Vec<Slot>,
+    /// First trailer line: the last owner's lines after its content.
+    tail: usize,
+}
+
+/// The physical layer of one page file and its text.
 #[derive(Clone, Debug)]
 pub struct PageText<'a> {
     text: &'a str,
-    format: Format,
-    lines: Vec<Line>,
-    slots: Vec<Slot>,
-    /// First physical line of the tail: lines the reader does not read (Org's
-    /// final empty lines; a Markdown file that is one empty line).
-    tail: usize,
+    layout: Layout,
+}
+
+impl std::ops::Deref for PageText<'_> {
+    type Target = Layout;
+    fn deref(&self) -> &Layout {
+        &self.layout
+    }
 }
 
 /// `text` with every break (CRLF, LF, CR) written as one `"\n"`: what lsdoc
@@ -227,11 +292,11 @@ impl<'a> PageText<'a> {
                 .then(|| page.slot_of(lf, line, header))
                 .flatten()
                 .ok_or(Refusal::Invalid { event })?;
-            match page.slots.last_mut() {
+            match page.layout.slots.last_mut() {
                 // A header inside the previous slot's structural prefix (or
                 // before it) cannot have its own bytes.
                 Some(last) if slot.start < last.text_start => last.opaque = true,
-                _ => page.slots.push(slot),
+                _ => page.layout.slots.push(slot),
             }
         }
         page.lay_out();
@@ -241,38 +306,34 @@ impl<'a> PageText<'a> {
     /// `text` with no slots: every line is preamble (develop's reading of a
     /// page whose outline it refuses). O(bytes).
     pub fn preamble_only(text: &'a str, format: Format) -> Self {
-        let mut lines = Vec::new();
-        let bytes = text.as_bytes();
-        let mut start = 0;
-        while start < bytes.len() {
-            let text_end =
-                memchr::memchr2(b'\n', b'\r', &bytes[start..]).map_or(bytes.len(), |at| start + at);
-            let end = match bytes.get(text_end) {
-                None => text_end,
-                Some(b'\r') if bytes.get(text_end + 1) == Some(&b'\n') => text_end + 2,
-                Some(_) => text_end + 1,
-            };
-            lines.push(Line {
-                start,
-                layout_end: start,
-                text_end,
-                end,
-            });
-            start = end;
-        }
+        let lines: Vec<Line> = lines(text)
+            .map(|(line, kind)| Line {
+                start: line.start,
+                layout_end: line.start,
+                text_end: line.end,
+                end: line.end + kind.as_str().len(),
+                at: 0,
+                kind,
+            })
+            .collect();
         let empty = |line: &Line| line.text_end == line.start;
         let tail = match format {
             Format::Org => lines.len() - lines.iter().rev().take_while(|l| empty(l)).count(),
             Format::Markdown if lines.len() == 1 && empty(&lines[0]) => 0,
             Format::Markdown => lines.len(),
         };
-        Self {
+        let mut page = Self {
             text,
-            format,
-            lines,
-            slots: Vec::new(),
-            tail,
-        }
+            layout: Layout {
+                format,
+                len: text.len(),
+                lines,
+                slots: Vec::new(),
+                tail,
+            },
+        };
+        page.layout.number(Owner::Preamble);
+        page
     }
 
     /// The slot an outline event on physical line `line` opens, or `None`
@@ -300,9 +361,11 @@ impl<'a> PageText<'a> {
         if !valid {
             return None;
         }
-        let native = self.lines[line].start;
+        let physical = self.lines[line];
+        let native = physical.start;
         let prefix_end = native + prefix.end - line_start;
         let start = native + header.header_start - line_start;
+        let text_start = start.max(prefix_end);
         let dedent = match kind {
             HeaderKind::MarkdownBullet if lf[..prefix.end].ends_with("- ") => {
                 prefix.end - prefix.start
@@ -310,36 +373,36 @@ impl<'a> PageText<'a> {
             HeaderKind::MarkdownBullet => prefix.end - prefix.start + 1,
             _ => 0,
         };
+        let bytes = self.text.as_bytes();
         Some(Slot {
             start,
-            text_start: start.max(prefix_end),
+            text_start,
             line,
             level: header.level,
             kind,
             dedent,
+            indent: removed_indent(&bytes[native..physical.text_end], usize::MAX),
+            lead: removed_indent(&bytes[start..text_start], dedent),
             opaque: false,
         })
     }
 
-    /// Fill each line's layout for the owner of its first byte. O(bytes).
+    /// Fill each line's layout for the owner of its first byte, then number
+    /// every owner's lines. O(bytes).
     fn lay_out(&mut self) {
-        for n in 0..self.slots.len() {
-            let slot = &self.slots[n];
-            let (first, dedent) = (slot.line, slot.dedent);
-            if slot.start == self.lines[first].start {
-                self.lines[first].layout_end = slot.text_start;
+        let bytes = self.text.as_bytes();
+        let layout = &mut self.layout;
+        for n in 0..layout.slots.len() {
+            let slot = layout.slots[n];
+            if slot.start == layout.lines[slot.line].start {
+                layout.lines[slot.line].layout_end = slot.text_start;
             }
-            let end = self.slots.get(n + 1).map_or(self.tail, |next| {
-                next.line + usize::from(next.start > self.lines[next.line].start)
-            });
-            for line in &mut self.lines[(first + 1).min(end)..end] {
-                let ws = self.text.as_bytes()[line.start..line.text_end]
-                    .iter()
-                    .take(dedent)
-                    .take_while(|b| matches!(b, b' ' | b'\t' | 0x0c))
-                    .count();
-                line.layout_end = line.start + ws;
+            for i in layout.content_lines(Owner::Slot(n)).skip(1) {
+                let line = &mut layout.lines[i];
+                line.layout_end =
+                    line.start + removed_indent(&bytes[line.start..line.text_end], slot.dedent);
             }
+            layout.number(Owner::Slot(n));
         }
     }
 
@@ -347,6 +410,42 @@ impl<'a> PageText<'a> {
     pub fn text(&self) -> &'a str {
         self.text
     }
+
+    /// The physical layer without the text.
+    pub fn into_layout(self) -> Layout {
+        self.layout
+    }
+
+    /// Slot `n`'s content: its text pieces joined by `"\n"`. O(its bytes).
+    pub fn content(&self, n: usize) -> String {
+        let mut out = String::with_capacity(self.range(Owner::Slot(n)).len());
+        for (i, piece) in self.pieces(Owner::Slot(n)).enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&self.text[piece.text]);
+        }
+        out
+    }
+}
+
+impl Layout {
+    /// Give each of `owner`'s content lines its offset in the owner's content.
+    /// A slot's first line keeps the offset of the owner before it when the
+    /// slot starts inside that line. O(its lines).
+    fn number(&mut self, owner: Owner) {
+        let lines = self.content_lines(owner);
+        let shared = matches!(owner, Owner::Slot(n) if !self.opens_line(n));
+        let mut at = 0;
+        for i in lines.clone() {
+            let len = self.piece(owner, i).text.len();
+            if !(shared && i == lines.start) {
+                self.lines[i].at = at;
+            }
+            at += len + 1;
+        }
+    }
+
     pub fn format(&self) -> Format {
         self.format
     }
@@ -369,143 +468,190 @@ impl<'a> PageText<'a> {
         let line = self.lines[i];
         (line.start..line.end, line.text_end)
     }
+    /// The line holding file byte `at`; the line count for the end of the
+    /// file. O(log lines).
+    pub fn line_at(&self, at: usize) -> usize {
+        let before = self.lines.partition_point(|l| l.start <= at);
+        (before + usize::from(at >= self.len)).saturating_sub(1)
+    }
     /// Layout bytes in front of physical line `i` (for the owner of its first byte).
     pub fn line_layout(&self, i: usize) -> usize {
         self.lines[i].layout_end - self.lines[i].start
     }
-    /// The physical lines the reader reads (before the tail).
+    /// Offset of physical line `i`'s text in the content of the owner of its
+    /// first byte (0 for a trailer line).
+    pub fn line_offset(&self, i: usize) -> usize {
+        self.lines[i].at
+    }
+    /// The physical lines that are some owner's content (before the trailer).
     pub fn read_lines(&self) -> usize {
         self.tail
     }
-    /// The tail's bytes: lines the reader does not read.
-    pub fn tail(&self) -> Range<usize> {
-        self.lines
-            .get(self.tail)
-            .map_or(self.text.len(), |l| l.start)..self.text.len()
+    /// The first byte of the trailer (the file's length when there is none).
+    pub fn read_end(&self) -> usize {
+        self.lines.get(self.tail).map_or(self.len, |l| l.start)
     }
 
-    /// File bytes owned by `owner`.
+    /// File bytes owned by `owner`, its trailer included.
     pub fn range(&self, owner: Owner) -> Range<usize> {
         let start = |n: usize| self.slots.get(n).map(|s| s.start);
-        let end = self.tail().start;
         match owner {
-            Owner::Preamble => 0..start(0).unwrap_or(end),
-            Owner::Slot(n) => self.slots[n].start..start(n + 1).unwrap_or(end),
+            Owner::Preamble => 0..start(0).unwrap_or(self.len),
+            Owner::Slot(n) => self.slots[n].start..start(n + 1).unwrap_or(self.len),
         }
     }
 
-    /// The pieces of `owner`, in order. O(its lines) to walk, no allocation.
-    pub fn pieces(&self, owner: Owner) -> impl Iterator<Item = Piece> + '_ {
+    /// The physical lines holding `owner`'s content pieces. O(1).
+    fn content_lines(&self, owner: Owner) -> Range<usize> {
+        let (first, next) = match owner {
+            Owner::Preamble => (0, 0),
+            Owner::Slot(n) => (self.slots[n].line, n + 1),
+        };
+        let end = self.slots.get(next).map_or(self.tail, |next| {
+            next.line + usize::from(next.start > self.lines[next.line].start)
+        });
+        first..end.max(first)
+    }
+
+    /// The piece of `owner` on physical line `i`.
+    fn piece(&self, owner: Owner, i: usize) -> Piece {
+        let line = self.lines[i];
         let range = self.range(owner);
-        let first = match owner {
-            Owner::Preamble => 0,
-            Owner::Slot(n) => self.slots[n].line,
+        let start = line.start.max(range.start);
+        let layout_end = match owner {
+            Owner::Slot(n) if i == self.slots[n].line => self.slots[n].text_start,
+            _ => line.layout_end.min(range.end),
         };
-        let text_start = match owner {
-            Owner::Slot(n) => self.slots[n].text_start,
-            Owner::Preamble => 0,
+        let (text_end, brk_end, kind) = if line.end > range.end {
+            (range.end, range.end, Break::Continues)
+        } else {
+            (line.text_end, line.end, line.kind)
         };
-        let lines = self.lines[first..self.tail].iter();
-        lines
-            .take_while(move |line| line.start < range.end)
-            .enumerate()
-            .map(move |(i, line)| {
-                let start = line.start.max(range.start);
-                let layout_end = if i == 0 && owner != Owner::Preamble {
-                    text_start
-                } else {
-                    line.layout_end.min(range.end)
-                };
-                let (text_end, brk_end, kind) = if line.end > range.end {
-                    (range.end, range.end, Break::Continues)
-                } else {
-                    let kind = match &self.text.as_bytes()[line.text_end..line.end] {
-                        b"\n" => Break::Lf,
-                        b"\r\n" => Break::CrLf,
-                        b"\r" => Break::Cr,
-                        _ => Break::Eof,
-                    };
-                    (line.text_end, line.end, kind)
-                };
-                Piece {
-                    layout: start..layout_end,
-                    text: layout_end..text_end,
-                    brk: text_end..brk_end,
-                    kind,
-                }
+        Piece {
+            layout: start..layout_end,
+            text: layout_end..text_end,
+            brk: text_end..brk_end,
+            kind,
+        }
+    }
+
+    /// The content pieces of `owner`, in order. O(its lines) to walk, no
+    /// allocation.
+    pub fn pieces(&self, owner: Owner) -> impl Iterator<Item = Piece> + '_ {
+        self.content_lines(owner).map(move |i| self.piece(owner, i))
+    }
+
+    /// The trailer pieces of `owner`: the physical lines after the last
+    /// content line of the file, written back untouched, not content. Only the
+    /// last owner (the last slot, else the preamble) has any; their layout is
+    /// empty.
+    pub fn trailer(&self, owner: Owner) -> impl Iterator<Item = Piece> + '_ {
+        let last = match self.slots.len() {
+            0 => Owner::Preamble,
+            n => Owner::Slot(n - 1),
+        };
+        let lines = if owner == last {
+            self.tail..self.lines.len()
+        } else {
+            0..0
+        };
+        self.lines[lines].iter().map(|line| Piece {
+            layout: line.start..line.start,
+            text: line.start..line.text_end,
+            brk: line.text_end..line.end,
+            kind: line.kind,
+        })
+    }
+
+    /// The map between `owner`'s content offsets and file bytes. O(1).
+    pub fn content_map(&self, owner: Owner) -> ContentMap<'_> {
+        ContentMap {
+            layout: self,
+            owner,
+            lines: self.content_lines(owner),
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Line records [`ContentMap`] has looked at.
+    pub(crate) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The map between an owner's content offsets and file bytes: every content
+/// offset has one file byte; a file byte of the owner that is layout maps to
+/// the start of the following text, one that is break to the end of the
+/// preceding text. A view of the [`Layout`]; nothing is built.
+#[derive(Clone, Debug)]
+pub struct ContentMap<'p> {
+    layout: &'p Layout,
+    owner: Owner,
+    lines: Range<usize>,
+}
+
+impl ContentMap<'_> {
+    /// Offset of the piece on physical line `i` in the content.
+    fn offset(&self, i: usize) -> usize {
+        if i == self.lines.start {
+            0
+        } else {
+            self.layout.lines[i].at
+        }
+    }
+    /// The physical line whose piece holds content offset `at` (a separator
+    /// belongs to the piece it ends). O(log lines).
+    fn line_of(&self, at: usize) -> usize {
+        let later = &self.layout.lines[(self.lines.start + 1).min(self.lines.end)..self.lines.end];
+        self.lines.start
+            + later.partition_point(|line| {
+                #[cfg(test)]
+                VISITS.with(|n| n.set(n.get() + 1));
+                line.at <= at
             })
     }
-
-    /// Slot `n`'s content: its text pieces joined by `"\n"`. O(its bytes).
-    pub fn content(&self, n: usize) -> String {
-        let mut out = String::with_capacity(self.range(Owner::Slot(n)).len());
-        for (i, piece) in self.pieces(Owner::Slot(n)).enumerate() {
-            if i > 0 {
-                out.push('\n');
-            }
-            out.push_str(&self.text[piece.text]);
-        }
-        out
-    }
-
-    /// The map between slot `n`'s content offsets and file bytes. O(its lines).
-    pub fn content_map(&self, n: usize) -> ContentMap {
-        let mut lines = Vec::new();
-        let mut at = 0;
-        for piece in self.pieces(Owner::Slot(n)) {
-            let len = piece.text.len();
-            lines.push((at, piece));
-            at += len + 1;
-        }
-        ContentMap { lines }
-    }
-}
-
-/// A total map between a slot's content offsets and file bytes: every content
-/// offset has one file byte; a file byte of the slot that is layout maps to
-/// the start of the following text, one that is break to the end of the
-/// preceding text.
-#[derive(Clone, Debug)]
-pub struct ContentMap {
-    /// Per piece: its content offset, and the piece.
-    lines: Vec<(usize, Piece)>,
-}
-
-impl ContentMap {
-    /// Content length.
+    /// Content length. O(1).
     pub fn len(&self) -> usize {
-        self.lines
-            .last()
-            .map_or(0, |(at, piece)| at + piece.text.len())
+        match self.lines.clone().last() {
+            Some(i) => self.offset(i) + self.layout.piece(self.owner, i).text.len(),
+            None => 0,
+        }
     }
     /// Whether the content is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
     /// The pieces, each with its content offset.
-    pub fn pieces(&self) -> &[(usize, Piece)] {
-        &self.lines
-    }
-    /// The piece holding content offset `at` (a separator belongs to the
-    /// piece it ends). O(log lines).
-    pub fn piece_at(&self, at: usize) -> usize {
-        self.lines
-            .partition_point(|(start, _)| *start <= at)
-            .saturating_sub(1)
+    pub fn pieces(&self) -> impl Iterator<Item = (usize, Piece)> + '_ {
+        let lines = self.lines.clone();
+        lines.map(|i| (self.offset(i), self.layout.piece(self.owner, i)))
     }
     /// File byte of content offset `at` (`at <= len`). O(log lines).
     pub fn to_file(&self, at: usize) -> usize {
-        let (start, piece) = &self.lines[self.piece_at(at)];
-        piece.text.start + (at - start).min(piece.text.len())
+        if self.lines.is_empty() {
+            return self.layout.range(self.owner).start;
+        }
+        let i = self.line_of(at);
+        let piece = self.layout.piece(self.owner, i);
+        piece.text.start + (at - self.offset(i)).min(piece.text.len())
     }
-    /// Content offset of file byte `at` inside the slot (or its end). O(log lines).
+    /// How the piece holding content offset `at` ends. O(log lines).
+    pub fn break_at(&self, at: usize) -> Break {
+        if self.lines.is_empty() {
+            return Break::Eof;
+        }
+        self.layout.piece(self.owner, self.line_of(at)).kind
+    }
+    /// Content offset of file byte `at` inside the owner (or its end).
+    /// O(log lines).
     pub fn to_content(&self, at: usize) -> usize {
-        let i = self
-            .lines
-            .partition_point(|(_, piece)| piece.layout.start <= at)
-            .saturating_sub(1);
-        let (start, piece) = &self.lines[i];
-        start + at.clamp(piece.text.start, piece.text.end) - piece.text.start
+        if self.lines.is_empty() {
+            return 0;
+        }
+        let later = &self.layout.lines[self.lines.start + 1..self.lines.end];
+        let i = self.lines.start + later.partition_point(|line| line.start <= at);
+        let piece = self.layout.piece(self.owner, i);
+        self.offset(i) + at.clamp(piece.text.start, piece.text.end) - piece.text.start
     }
 }
 

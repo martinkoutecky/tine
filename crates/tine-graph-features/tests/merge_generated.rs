@@ -563,12 +563,11 @@ pub fn check_output(
             .sum();
         let view = tine_core::org::lone_cr_to_lf(&source[..head_end]);
         let regions = tine_core::block_regions::parse_document(&view, true);
-        let mut at = 0;
-        let physical: BTreeMap<_, _> = tine_core::doc::physical_lines(&source[..head_end])
-            .map(|line| {
-                let start = at;
-                at += line.len();
-                (start, (at, line))
+        let head = &source[..head_end];
+        let physical: BTreeMap<_, _> = tine_text::lines(head)
+            .map(|(text, brk)| {
+                let end = text.end + brk.as_str().len();
+                (text.start, (end, &head[text.start..end]))
             })
             .collect();
         let consumed: std::collections::HashSet<_> = trace.consumed.iter().copied().collect();

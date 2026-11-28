@@ -1,9 +1,10 @@
-//! `physical_lines` and `line_terminator`: the physical writers' one answer
-//! to "which bytes end a line" agrees with the reader's normalization.
-use super::{line_terminator, normalize_line_endings, physical_lines};
+//! `line_terminator` reads a line's terminator where the one line lexer
+//! (`tine_text::lines`) ends the line, and the reader's normalization keeps
+//! the same lines.
+use super::{line_terminator, normalize_line_endings};
 
 #[test]
-fn physical_lines_end_where_the_reader_ends_a_line() {
+fn line_terminators_are_the_lexers_breaks() {
     for text in [
         "",
         "a",
@@ -17,20 +18,14 @@ fn physical_lines_end_where_the_reader_ends_a_line() {
         "a\r\rb",
         "- x\r  y\r- z",
     ] {
-        let lines: Vec<_> = physical_lines(text).collect();
-        assert_eq!(lines.concat(), text, "{text:?}");
-        // Every line but the last is terminated, by exactly one terminator.
-        for (n, line) in lines.iter().enumerate() {
-            let end = line_terminator(line);
-            assert_eq!(
-                end.is_empty(),
-                n + 1 == lines.len() && !text.ends_with(['\r', '\n'])
-            );
-            assert!(
-                !line[..line.len() - end.len()].contains(['\r', '\n']),
-                "{line:?}"
-            );
+        let lines: Vec<_> = tine_text::lines(text).collect();
+        let mut at = 0;
+        for (body, brk) in &lines {
+            assert_eq!(body.start, at, "{text:?}");
+            at = body.end + brk.as_str().len();
+            assert_eq!(line_terminator(&text[body.start..at]), brk.as_str());
         }
+        assert_eq!(at, text.len(), "{text:?}");
         // The reader's LF form has the same lines.
         let lf = normalize_line_endings(text);
         assert_eq!(lines.len(), lf.split_inclusive('\n').count(), "{text:?}");

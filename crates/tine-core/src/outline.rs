@@ -52,103 +52,61 @@ pub(crate) struct Header {
     pub(crate) content_indent: usize,
 }
 
-/// Where the reader took its answer from (`doc::parse_outlined`): the native
-/// byte range of every physical line, and for each line it read the bytes it
-/// removed in front (a block's structural prefix or a continuation dedent) and
-/// the line's offset in its owner's text (the pre-block, or a block's `raw`).
-/// LF, CRLF and lone-CR lines share line indices, so offsets in the reader's
-/// LF text map to native bytes by line. Built in the reader's pass, O(lines).
-#[derive(Debug, Default)]
+/// Where the reader took its answer from (`doc::parse_outlined`): the
+/// physical layer it read ([`tine_text::Layout`]) and how many of its lines
+/// are the pre-block. Every offset is the layer's own answer; this adds only
+/// the reader's names for it. LF, CRLF and lone-CR lines share line indices,
+/// so offsets in the reader's LF text map to native bytes by line.
+#[derive(Debug)]
 pub struct SourceMap {
-    /// Native start of every physical line, then the text length; and the
-    /// native end of every physical line before its terminator.
-    starts: Vec<usize>,
-    ends: Vec<usize>,
-    /// Per read line: the bytes the reader removed in front, and the line's
-    /// offset in its owner's text.
-    removed: Vec<usize>,
-    at: Vec<usize>,
-    /// Per block, preorder: its header line and that line's leading layout.
-    blocks: Vec<(usize, usize)>,
+    page: tine_text::Layout,
     /// Lines of the pre-block.
     pre_block: usize,
 }
 
 impl SourceMap {
     /// The map of `page` as the reader read it, with `pre_block` lines of
-    /// pre-block. O(lines).
-    pub(crate) fn new(page: &PageText<'_>, pre_block: usize) -> Self {
-        let text = page.text().as_bytes();
-        let (mut starts, mut ends) = (vec![0], Vec::new());
-        for i in 0..page.line_count() {
-            let (range, brk) = page.line(i);
-            ends.push(brk);
-            starts.push(range.end);
-        }
-        let removed: Vec<usize> = (0..page.read_lines())
-            .map(|i| page.line_layout(i))
-            .collect();
-        let (mut at, mut next) = (Vec::with_capacity(removed.len()), 0);
-        let mut slots = page.slots().iter().map(|s| s.line()).peekable();
-        for (i, removed) in removed.iter().enumerate() {
-            if slots.next_if_eq(&i).is_some() {
-                next = 0;
-            }
-            at.push(next);
-            next += ends[i] - starts[i] - removed + 1;
-        }
-        let blocks = page
-            .slots()
-            .iter()
-            .map(|slot| {
-                let line = &text[starts[slot.line()]..ends[slot.line()]];
-                let indent = line.iter().take_while(|b| matches!(b, b' ' | b'\t' | 0x0c));
-                (slot.line(), indent.count())
-            })
-            .collect();
+    /// pre-block. O(1).
+    pub(crate) fn new(page: PageText<'_>, pre_block: usize) -> Self {
         Self {
-            starts,
-            ends,
-            removed,
-            at,
-            blocks,
+            page: page.into_layout(),
             pre_block,
         }
     }
 
     /// Physical line `i`, terminator included.
     pub fn line(&self, i: usize) -> std::ops::Range<usize> {
-        self.starts[i]..self.starts[i + 1]
+        self.page.line(i).0
     }
     /// The physical lines, in order.
     pub fn lines(&self) -> std::ops::Range<usize> {
-        0..self.starts.len() - 1
+        0..self.page.line_count()
     }
-    /// The line holding native byte `at` (the last line for the text end).
+    /// The line holding native byte `at` (the line count for the text end).
     pub fn line_at(&self, at: usize) -> usize {
-        self.starts.partition_point(|s| *s <= at).saturating_sub(1)
+        self.page.line_at(at)
     }
     /// Native end of physical line `i` before its terminator.
     pub fn end(&self, i: usize) -> usize {
-        self.ends[i]
+        self.page.line(i).1
     }
     /// The bytes of line `i` the reader kept: after what it removed, before
     /// the terminator (a line it did not read is all kept).
     pub fn payload(&self, i: usize) -> std::ops::Range<usize> {
-        self.starts[i] + self.removed(i)..self.ends[i]
+        self.line(i).start + self.removed(i)..self.end(i)
     }
     /// Bytes the reader removed in front of line `i`.
     pub fn removed(&self, i: usize) -> usize {
-        self.removed.get(i).copied().unwrap_or(0)
+        self.page.line_layout(i)
     }
     /// Offset of read line `i` in its owner's text.
     pub fn offset(&self, i: usize) -> usize {
-        self.at[i]
+        self.page.line_offset(i)
     }
     /// End of the last line the reader read, its terminator included (Org
-    /// does not read a file's final blank lines).
+    /// does not read a file's final blank lines: the last block's trailer).
     pub fn read_end(&self) -> usize {
-        self.starts[self.removed.len()]
+        self.page.read_end()
     }
     /// The lines of the pre-block.
     pub fn pre_block(&self) -> std::ops::Range<usize> {
@@ -156,23 +114,24 @@ impl SourceMap {
     }
     /// The read lines of block `n` (preorder).
     pub fn block(&self, n: usize) -> std::ops::Range<usize> {
-        let end = self.blocks.get(n + 1).map_or(self.removed.len(), |b| b.0);
-        self.blocks[n].0..end
+        let line = self.page.slots()[n].line();
+        let end = (self.page.slots().get(n + 1)).map_or(self.page.read_lines(), |s| s.line());
+        line..end
     }
     /// Native start of block `n`'s header line, if there is such a block.
     pub fn block_start(&self, n: usize) -> Option<usize> {
-        self.blocks.get(n).map(|b| self.starts[b.0])
+        let slot = self.page.slots().get(n)?;
+        Some(self.line(slot.line()).start)
     }
     /// Leading layout bytes (indentation) of block `n`'s header line.
     pub fn indent(&self, n: usize) -> usize {
-        self.blocks[n].1
+        self.page.slots()[n].indent()
     }
     /// The native byte of offset `at` in the reader's text of the pre-block
     /// (`block` none) or of block `block`'s `raw`. O(log lines).
     pub fn native(&self, block: Option<usize>, at: usize) -> usize {
-        let lines = block.map_or(self.pre_block(), |n| self.block(n));
-        let i = lines.start + self.at[lines].partition_point(|s| *s <= at) - 1;
-        self.starts[i] + self.removed[i] + at - self.at[i]
+        let owner = block.map_or(Owner::Preamble, Owner::Slot);
+        self.page.content_map(owner).to_file(at)
     }
 }
 
@@ -270,17 +229,6 @@ pub(crate) fn pre_block(page: &PageText<'_>, lines: usize) -> String {
     let pieces = page.pieces(Owner::Preamble).take(lines);
     let texts: Vec<&str> = pieces.map(|piece| &text[piece.text]).collect();
     texts.join("\n")
-}
-
-/// Remove up to `n` leading tabs, spaces or form feeds (mldoc's layout
-/// whitespace; master `strip_leading_layout_whitespace`).
-pub(crate) fn strip_layout_ws(line: &str, n: usize) -> &str {
-    let skip = line
-        .bytes()
-        .take(n)
-        .take_while(|b| matches!(b, b' ' | b'\t' | 0x0c))
-        .count();
-    &line[skip..]
 }
 
 /// Nest a source-order `(level, block)` list: each block goes under the

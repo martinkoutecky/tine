@@ -1,17 +1,29 @@
-//! The physical layer's properties R0–R3 as tests, on the repository's page
-//! corpora, on the model checks' specimens and on generated pages.
+//! The physical layer's properties as tests, on the repository's page
+//! corpora, on the model checks' specimens and on generated pages. Each test
+//! named after a theorem of the file-layer model checks that theorem's
+//! statement on this crate's reader and writer:
 //!
-//! - R0: the pieces concatenate to the file.
-//! - R1: [`apply`] with no splices returns the file.
-//! - Content equality: every slot's content is develop's `DocBlock.raw`
-//!   (`develop_reader`, the frozen reader), and the content map round-trips.
-//! - R3: after a splice every byte outside the mapped range is the file's, and
-//!   re-reading gives the same slots, the spliced one with the new content.
+//! - `r0`: the pieces, trailers included, concatenate to the file.
+//! - `r1`: [`apply`] with no splices returns the file.
+//! - `gap_total`, `gap_monotone`, `gap_strict`: a content offset maps to a file
+//!   byte inside its slot; the map is monotone, strictly so on the content.
+//! - `text_address_inverse`, `content_newline`: a text byte maps to itself at
+//!   one file byte; a `"\n"` maps to its line's break and the next line's
+//!   removed indent.
+//! - `r3`, `commute`: splices keep every other byte, in order; disjoint
+//!   splices give the same bytes in any order.
+//! - `lexical_check_iff`: [`check_planned_rows`] holds exactly when the lexer
+//!   reads the rows back.
+//!
+//! Content equality: every slot's content is develop's `DocBlock.raw`
+//! (`develop_reader`, the frozen reader). Read-back: a splice inside plain
+//! lines re-reads as the same slots, the spliced one with the new content.
 
 mod develop_reader;
 
 use std::path::{Path, PathBuf};
-use tine_text::{apply, Break, Format, Owner, PageText, Splice};
+use std::sync::OnceLock;
+use tine_text::{apply, check_planned_rows, Break, Format, Owner, PageText, Splice};
 
 /// What one page check covered.
 #[derive(Default, Debug)]
@@ -30,7 +42,12 @@ fn format_of(path: &Path) -> Format {
     }
 }
 
-/// R0, R1, content equality and the map, for one page.
+/// The owners of `page`, in file order.
+fn owners(page: &PageText<'_>) -> impl Iterator<Item = Owner> {
+    std::iter::once(Owner::Preamble).chain((0..page.slots().len()).map(Owner::Slot))
+}
+
+/// R0, R1, the map theorems and content equality, for one page.
 fn check_read<'a>(text: &'a str, format: Format, seen: &mut Seen) -> Option<PageText<'a>> {
     seen.pages += 1;
     let org = format == Format::Org;
@@ -45,24 +62,7 @@ fn check_read<'a>(text: &'a str, format: Format, seen: &mut Seen) -> Option<Page
             return None;
         }
     };
-    // R0: preamble, slots and tail concatenate to the file, piece by piece.
-    let mut at = 0;
-    let owners = std::iter::once(Owner::Preamble).chain((0..page.slots().len()).map(Owner::Slot));
-    for owner in owners {
-        assert_eq!(page.range(owner).start, at, "{owner:?} of {text:?}");
-        for piece in page.pieces(owner) {
-            assert_eq!(piece.layout.start, at, "{text:?}");
-            assert_eq!(piece.layout.end, piece.text.start);
-            assert_eq!(piece.text.end, piece.brk.start);
-            assert_eq!(&text[piece.brk.clone()], piece.kind.as_str(), "{text:?}");
-            assert!(!text[piece.text.clone()].contains(['\n', '\r']), "{text:?}");
-            at = piece.brk.end;
-        }
-        assert_eq!(page.range(owner).end, at, "{owner:?} of {text:?}");
-    }
-    assert_eq!(page.tail().start, at);
-    assert!(text[page.tail()].bytes().all(|b| b == b'\n' || b == b'\r'));
-    // R1.
+    r0_holds(&page);
     assert_eq!(apply(&page, &[]).unwrap(), text);
     // Content equality with develop, where develop gives the page an outline.
     let develop = develop_reader::blocks(text, org);
@@ -77,39 +77,151 @@ fn check_read<'a>(text: &'a str, format: Format, seen: &mut Seen) -> Option<Page
         seen.mid_line += 1;
         assert!(develop.is_err(), "develop reads {text:?}");
     }
-    for n in 0..page.slots().len() {
-        seen.slots += 1;
-        check_map(&page, n);
-    }
+    seen.slots += page.slots().len();
+    map_theorems_hold(&page);
     check_breaks_against_lsdoc(&page);
     Some(page)
 }
 
-/// The content map is total and round-trips every content offset; text bytes
-/// map to themselves.
-fn check_map(page: &PageText<'_>, n: usize) {
+/// R0: each owner's pieces and then its trailer pieces start where the
+/// previous ended, and together they are the file. Only the last owner has a
+/// trailer, and a trailer piece is an empty line.
+fn r0_holds(page: &PageText<'_>) {
     let text = page.text();
-    let content = page.content(n);
-    let map = page.content_map(n);
-    assert_eq!(map.len(), content.len());
-    let mut last = None;
-    for at in 0..=content.len() {
-        let file = map.to_file(at);
-        assert_eq!(map.to_content(file), at, "slot {n} offset {at} of {text:?}");
-        assert!(last.is_none_or(|l| l < file), "{text:?}");
-        last = Some(file);
-        if at < content.len() && content.as_bytes()[at] != b'\n' {
-            assert_eq!(text.as_bytes()[file], content.as_bytes()[at]);
+    let last = match page.slots().len() {
+        0 => Owner::Preamble,
+        n => Owner::Slot(n - 1),
+    };
+    let mut at = 0;
+    for owner in owners(page) {
+        assert_eq!(page.range(owner).start, at, "{owner:?} of {text:?}");
+        for piece in page.pieces(owner) {
+            assert_eq!(piece.layout.start, at, "{text:?}");
+            assert_eq!(piece.layout.end, piece.text.start);
+            assert_eq!(piece.text.end, piece.brk.start);
+            assert_eq!(&text[piece.brk.clone()], piece.kind.as_str(), "{text:?}");
+            assert!(!text[piece.text.clone()].contains(['\n', '\r']), "{text:?}");
+            at = piece.brk.end;
+        }
+        if owner == last {
+            assert_eq!(page.read_end(), at, "{text:?}");
+        }
+        for piece in page.trailer(owner) {
+            assert_eq!(owner, last, "{text:?}");
+            assert_eq!(piece.layout.start, at, "{text:?}");
+            assert!(piece.layout.is_empty() && piece.text.is_empty(), "{text:?}");
+            assert_eq!(&text[piece.brk.clone()], piece.kind.as_str(), "{text:?}");
+            at = piece.brk.end;
+        }
+        assert_eq!(page.range(owner).end, at, "{owner:?} of {text:?}");
+    }
+    assert_eq!(at, text.len(), "{text:?}");
+}
+
+/// Slot `n`'s gaps: the file byte of every content offset, and two past the
+/// end (which clamp to the end).
+fn gaps(page: &PageText<'_>, n: usize) -> Vec<usize> {
+    let map = page.content_map(Owner::Slot(n));
+    (0..=map.len() + 2).map(|at| map.to_file(at)).collect()
+}
+
+/// `gap_total`: every gap of a slot is inside the slot's bytes.
+fn gap_total_holds(page: &PageText<'_>) {
+    for n in 0..page.slots().len() {
+        let range = page.range(Owner::Slot(n));
+        for gap in gaps(page, n) {
+            assert!(range.start <= gap && gap <= range.end, "{:?}", page.text());
         }
     }
-    for file in page.range(Owner::Slot(n)) {
-        let at = map.to_content(file);
-        assert!(at <= content.len());
-        let in_text = map.pieces().iter().any(|(_, p)| p.text.contains(&file));
-        if in_text {
-            assert_eq!(map.to_file(at), file);
+}
+
+/// `gap_monotone`: a later offset never maps to an earlier byte.
+fn gap_monotone_holds(page: &PageText<'_>) {
+    for n in 0..page.slots().len() {
+        assert!(
+            gaps(page, n).windows(2).all(|w| w[0] <= w[1]),
+            "{:?}",
+            page.text()
+        );
+    }
+}
+
+/// `gap_strict`: on the content's offsets the map is strictly increasing. Its
+/// premise, that the slot is what the lexer reads, holds for every slot read
+/// from bytes, which is the only way to make one.
+fn gap_strict_holds(page: &PageText<'_>) {
+    for n in 0..page.slots().len() {
+        let len = page.content_map(Owner::Slot(n)).len();
+        let gaps = gaps(page, n);
+        assert!(
+            gaps[..=len].windows(2).all(|w| w[0] < w[1]),
+            "{:?}",
+            page.text()
+        );
+    }
+}
+
+/// `text_address_inverse`: a text byte of the content is the file byte at its
+/// gap, and no other offset has that gap.
+fn text_address_inverse_holds(page: &PageText<'_>) {
+    let text = page.text().as_bytes();
+    for n in 0..page.slots().len() {
+        let content = page.content(n);
+        let map = page.content_map(Owner::Slot(n));
+        let gaps = gaps(page, n);
+        for (i, byte) in content.bytes().enumerate().filter(|(_, b)| *b != b'\n') {
+            assert_eq!(text[gaps[i]], byte, "{:?}", page.text());
+            assert_eq!(map.to_content(gaps[i]), i);
+            assert_eq!(
+                gaps[..=content.len()]
+                    .iter()
+                    .filter(|g| **g == gaps[i])
+                    .count(),
+                1
+            );
+        }
+        // From the file side: every byte of the slot has an offset, and a text
+        // byte's offset maps back to it.
+        let pieces: Vec<_> = map.pieces().collect();
+        for file in page.range(Owner::Slot(n)) {
+            let at = map.to_content(file);
+            assert!(at <= content.len());
+            if pieces.iter().any(|(_, p)| p.text.contains(&file)) {
+                assert_eq!(map.to_file(at), file, "{:?}", page.text());
+            }
         }
     }
+}
+
+/// `content_newline`: a `"\n"` of the content spans exactly its line's
+/// break and the next line's removed indent, and that break is a real one.
+fn content_newline_holds(page: &PageText<'_>) {
+    let text = page.text();
+    for n in 0..page.slots().len() {
+        let map = page.content_map(Owner::Slot(n));
+        let pieces: Vec<_> = map.pieces().collect();
+        for pair in pieces.windows(2) {
+            let ((at, piece), (_, next)) = (&pair[0], &pair[1]);
+            let i = at + piece.text.len();
+            assert_eq!(page.content(n).as_bytes()[i], b'\n');
+            assert!(matches!(piece.kind, Break::Lf | Break::CrLf | Break::Cr));
+            let expected = format!("{}{}", &text[piece.brk.clone()], &text[next.layout.clone()]);
+            assert_eq!(
+                &text[map.to_file(i)..map.to_file(i + 1)],
+                expected,
+                "{text:?}"
+            );
+        }
+    }
+}
+
+/// Every map theorem, for one page.
+fn map_theorems_hold(page: &PageText<'_>) {
+    gap_total_holds(page);
+    gap_monotone_holds(page);
+    gap_strict_holds(page);
+    text_address_inverse_holds(page);
+    content_newline_holds(page);
 }
 
 /// lsdoc's own scan of the file (not its LF form) ends each header line where
@@ -191,8 +303,8 @@ fn check_splices(page: &PageText<'_>, rng: &mut Rng, seen: &mut Seen) {
     let text = page.text();
     for _ in 0..3 {
         let n = rng.below(slots);
-        let map = page.content_map(n);
-        let pieces = map.pieces();
+        let map = page.content_map(Owner::Slot(n));
+        let pieces: Vec<_> = map.pieces().collect();
         let k = rng.below(pieces.len());
         let (at, piece) = &pieces[k];
         if !plain(&text[piece.text.clone()]) {
@@ -547,18 +659,37 @@ fn lines_end_where_the_lf_form_ends_them() {
 }
 
 /// Org does not read a file's final empty lines; Markdown does not read a
-/// file that is one empty line. Those bytes are the tail.
+/// file that is one empty line. Those lines are the last owner's trailer.
 #[test]
-fn the_tail_is_what_the_reader_does_not_read() {
+fn the_trailer_is_what_the_reader_does_not_read() {
+    let trailer = |text: &'static [u8], format| {
+        let page = PageText::read(text, format).unwrap();
+        let last = page
+            .slots()
+            .len()
+            .checked_sub(1)
+            .map_or(Owner::Preamble, Owner::Slot);
+        let pieces: Vec<_> = page.trailer(last).map(|p| (p.range(), p.kind)).collect();
+        (page.read_end(), pieces)
+    };
     let page = PageText::read(b"* a\nb\n\r\n\n", Format::Org).unwrap();
     assert_eq!(page.content(0), "a\nb");
-    assert_eq!(page.tail(), 6..9);
+    assert_eq!(page.range(Owner::Slot(0)), 0..9);
+    assert_eq!(
+        trailer(b"* a\nb\n\r\n\n", Format::Org),
+        (6, vec![(6..8, Break::CrLf), (8..9, Break::Lf)])
+    );
     let page = PageText::read(b"- a\nb\n\n", Format::Markdown).unwrap();
     assert_eq!(page.content(0), "a\nb\n");
-    assert_eq!(page.tail(), 7..7);
+    assert_eq!(trailer(b"- a\nb\n\n", Format::Markdown), (7, vec![]));
     assert_eq!(
-        PageText::read(b"\r\n", Format::Markdown).unwrap().tail(),
-        0..2
+        trailer(b"\r\n", Format::Markdown),
+        (0, vec![(0..2, Break::CrLf)])
+    );
+    // Final breaks of mixed kinds are all the last slot's.
+    assert_eq!(
+        trailer(b"* T\r\n\n\r", Format::Org),
+        (5, vec![(5..6, Break::Lf), (6..7, Break::Cr)])
     );
 }
 
@@ -573,4 +704,355 @@ fn develops_refusals_are_kept() {
         PageText::read(b"- \xff\n", Format::Markdown).unwrap_err(),
         tine_text::Refusal::NotUtf8
     );
+}
+
+/// The pages every theorem test runs on: generated pages, then every UTF-8
+/// page of the repository's corpora. Read once per test process.
+fn cases() -> &'static [(String, Format)] {
+    static CASES: OnceLock<Vec<(String, Format)>> = OnceLock::new();
+    CASES.get_or_init(|| {
+        let mut rng = Rng(0x6c65_616e_2d62_7478);
+        let mut cases: Vec<_> = (0..4_000).map(|_| generate(&mut rng)).collect();
+        for path in corpus_files() {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                cases.push((text, format_of(&path)));
+            }
+        }
+        cases
+    })
+}
+
+/// Run `check` on every page of [`cases`] that has a physical layer, with a
+/// generator; returns how many pages it ran on.
+fn on_cases(mut check: impl FnMut(&PageText<'_>, &mut Rng)) -> usize {
+    let mut rng = Rng(0x7468_656f_7265_6d73);
+    let mut pages = 0;
+    for (text, format) in cases() {
+        if let Ok(page) = PageText::read_text(text, *format) {
+            pages += 1;
+            check(&page, &mut rng);
+        }
+    }
+    assert!(pages > 3_000, "{pages} pages");
+    pages
+}
+
+#[test]
+fn r0() {
+    on_cases(|page, _| r0_holds(page));
+}
+
+#[test]
+fn r1() {
+    on_cases(|page, _| assert_eq!(apply(page, &[]).unwrap(), page.text()));
+}
+
+#[test]
+fn gap_total() {
+    on_cases(|page, _| gap_total_holds(page));
+}
+
+#[test]
+fn gap_monotone() {
+    on_cases(|page, _| gap_monotone_holds(page));
+}
+
+#[test]
+fn gap_strict() {
+    on_cases(|page, _| gap_strict_holds(page));
+}
+
+#[test]
+fn text_address_inverse() {
+    on_cases(|page, _| text_address_inverse_holds(page));
+}
+
+#[test]
+fn content_newline() {
+    on_cases(|page, _| content_newline_holds(page));
+}
+
+/// A content offset of slot `n` on a character boundary.
+fn boundary(content: &str, rng: &mut Rng) -> usize {
+    let mut at = rng.below(content.len() + 1);
+    while !content.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+/// Up to `count` splices of one snapshot, pairwise separate in the model's
+/// sense: distinct ranges that do not overlap, so an insertion may touch a
+/// range's end but not lie inside it, and no two insertions share a gap.
+fn separate_splices(
+    page: &PageText<'_>,
+    rng: &mut Rng,
+    count: usize,
+) -> Vec<(Splice<'static>, std::ops::Range<usize>)> {
+    const REPLACEMENTS: &[&str] = &["", "x", "yz", "\n", "a\nb", "\n\n", " é ", "q\n  r", "\t"];
+    let mut chosen: Vec<(Splice<'static>, std::ops::Range<usize>)> = Vec::new();
+    for _ in 0..count {
+        let n = rng.below(page.slots().len());
+        let content = page.content(n);
+        let (a, b) = (boundary(&content, rng), boundary(&content, rng));
+        let range = a.min(b)..a.max(b);
+        let map = page.content_map(Owner::Slot(n));
+        let file = map.to_file(range.start)..map.to_file(range.end);
+        let separate = chosen.iter().all(|(_, other)| {
+            (other.start, other.end) != (file.start, file.end)
+                && (other.end <= file.start || file.end <= other.start)
+        });
+        if separate {
+            let text = REPLACEMENTS[rng.below(REPLACEMENTS.len())];
+            chosen.push((
+                Splice {
+                    slot: n,
+                    range,
+                    text,
+                },
+                file,
+            ));
+        }
+    }
+    chosen
+}
+
+/// The bytes `apply` writes for one splice alone, and its file range.
+fn written(page: &PageText<'_>, splice: &Splice<'_>, file: &std::ops::Range<usize>) -> String {
+    let text = page.text();
+    let out = apply(page, std::slice::from_ref(splice)).unwrap();
+    assert_eq!(&out[..file.start], &text[..file.start]);
+    assert!(out.ends_with(&text[file.end..]));
+    out[file.start..out.len() - (text.len() - file.end)].to_string()
+}
+
+/// `R3`: the old file is kept chunks and cut chunks in turn, the new file the
+/// same kept chunks and the written chunks in turn; each cut chunk is the file
+/// between its range's gaps; each written chunk is the replacement with every
+/// `"\n"` written as a break and one continuation indent. Its premises (the
+/// slot has a first row; the plan is ordered and inside the content) are, in
+/// order, true of every slot read from bytes and checked by `apply`, which
+/// refuses an out-of-range or overlapping plan.
+#[test]
+fn r3() {
+    let mut splices = 0;
+    on_cases(|page, rng| {
+        if page.slots().is_empty() {
+            return;
+        }
+        let text = page.text();
+        let count = 1 + rng.below(4);
+        let mut plan = separate_splices(page, rng, count);
+        plan.sort_by_key(|(_, file)| (file.start, file.end));
+        let mut expected = String::new();
+        let mut at = 0;
+        for (splice, file) in &plan {
+            let put = written(page, splice, file);
+            let lf = tine_text::lf_form(&put);
+            let (ours, theirs): (Vec<_>, Vec<_>) =
+                (lf.split('\n').collect(), splice.text.split('\n').collect());
+            assert_eq!(ours.len(), theirs.len(), "{text:?} {splice:?}");
+            assert_eq!(ours[0], theirs[0]);
+            let indent = ours.get(1).map(|o| &o[..o.len() - theirs[1].len()]);
+            for (o, t) in ours.iter().zip(&theirs).skip(1) {
+                assert_eq!(*o, format!("{}{t}", indent.unwrap()), "{text:?} {splice:?}");
+            }
+            expected.push_str(&text[at..file.start]);
+            expected.push_str(&put);
+            at = file.end;
+        }
+        expected.push_str(&text[at..]);
+        let splices_only: Vec<_> = plan.iter().map(|(s, _)| s.clone()).collect();
+        assert_eq!(apply(page, &splices_only).unwrap(), expected, "{text:?}");
+        splices += plan.len();
+    });
+    assert!(splices > 5_000, "{splices}");
+}
+
+/// `commute`: a separate plan gives the same bytes in any order.
+#[test]
+fn commute() {
+    on_cases(|page, rng| {
+        if page.slots().is_empty() {
+            return;
+        }
+        let count = 2 + rng.below(4);
+        let mut plan: Vec<_> = separate_splices(page, rng, count)
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
+        let first = apply(page, &plan).unwrap();
+        for _ in 0..3 {
+            for i in (1..plan.len()).rev() {
+                plan.swap(i, rng.below(i + 1));
+            }
+            assert_eq!(
+                apply(page, &plan).unwrap(),
+                first,
+                "{:?} {plan:?}",
+                page.text()
+            );
+        }
+    });
+}
+
+/// The lexer's reading of `text` as rows.
+fn lexed(text: &str) -> Vec<(&[u8], Break)> {
+    tine_text::lines(text)
+        .map(|(body, brk)| (&text.as_bytes()[body], brk))
+        .collect()
+}
+
+/// `lexicalCheck_iff`: [`check_planned_rows`] holds exactly when lexing the
+/// rows' bytes gives the rows back.
+#[test]
+fn lexical_check_iff() {
+    let mut rng = Rng(0x6c65_7869_6361_6c);
+    const BODIES: &[&str] = &["", "", "a", "bc", " ", "a\rb", "\n", "x\r"];
+    const BREAKS: &[Break] = &[
+        Break::Lf,
+        Break::CrLf,
+        Break::Cr,
+        Break::Eof,
+        Break::Lf,
+        Break::Cr,
+    ];
+    let (mut yes, mut no) = (0, 0);
+    for _ in 0..50_000 {
+        let rows: Vec<(&[u8], Break)> = (0..rng.below(5))
+            .map(|_| {
+                (
+                    BODIES[rng.below(BODIES.len())].as_bytes(),
+                    BREAKS[rng.below(BREAKS.len())],
+                )
+            })
+            .collect();
+        let bytes: String = rows
+            .iter()
+            .map(|(body, brk)| format!("{}{}", std::str::from_utf8(body).unwrap(), brk.as_str()))
+            .collect();
+        let reads_back = lexed(&bytes) == rows;
+        assert_eq!(check_planned_rows(&rows), reads_back, "{rows:?}");
+        if reads_back {
+            yes += 1
+        } else {
+            no += 1
+        }
+    }
+    assert!(yes > 5_000 && no > 5_000, "{yes} {no}");
+}
+
+/// The file-layer model's kernel-checked witnesses that this crate's reader
+/// and the writer's rule-independent parts reproduce, as fixtures.
+#[test]
+fn model_witnesses() {
+    // `* T\n\n`: one content row and one trailer row; a splice keeps it.
+    let page = PageText::read(b"* T\n\n", Format::Org).unwrap();
+    assert_eq!(page.content(0), "T");
+    let trailer: Vec<_> = page
+        .trailer(Owner::Slot(0))
+        .map(|p| (p.range(), p.kind))
+        .collect();
+    assert_eq!(trailer, [(4..5, Break::Lf)]);
+    let splice = Splice {
+        slot: 0,
+        range: 0..1,
+        text: "U",
+    };
+    assert_eq!(apply(&page, &[splice]).unwrap(), "* U\n\n");
+    // Three real break kinds and a nonempty last row in one slot, with its gaps.
+    let mixed = "- A\n B\r C\r\n D";
+    assert_eq!(
+        lexed(mixed).iter().map(|r| r.1).collect::<Vec<_>>(),
+        [Break::Lf, Break::Cr, Break::CrLf, Break::Eof]
+    );
+    let page = PageText::read(mixed.as_bytes(), Format::Markdown).unwrap();
+    assert_eq!(page.content(0), "A\nB\nC\nD");
+    let map = page.content_map(Owner::Slot(0));
+    assert_eq!([3, 4, 5, 6].map(|i| map.to_file(i)), [6, 8, 9, 12]);
+    // Adjacent ranges of one snapshot, an insertion at a replacement's start.
+    let page = PageText::read(b"- ABC", Format::Markdown).unwrap();
+    let plan = [
+        Splice {
+            slot: 0,
+            range: 1..2,
+            text: "Y",
+        },
+        Splice {
+            slot: 0,
+            range: 0..1,
+            text: "X",
+        },
+        Splice {
+            slot: 0,
+            range: 1..1,
+            text: "!",
+        },
+    ];
+    assert_eq!(apply(&page, &plan).unwrap(), "- X!YC");
+    // An empty file has no lines, and a no-op write keeps it.
+    let page = PageText::read(b"", Format::Org).unwrap();
+    assert_eq!(page.line_count(), 0);
+    assert_eq!(apply(&page, &[]).unwrap(), "");
+    // A header cut into a line body keeps every byte; its first row has no
+    // removed prefix.
+    let text = ":PROPERTIES:\n:key: value\n:END: # Kept\n";
+    let page = PageText::read(text.as_bytes(), Format::Markdown).unwrap();
+    assert!(!page.opens_line(0));
+    let first = page.pieces(Owner::Slot(0)).next().unwrap();
+    assert_eq!(first.layout.start, page.slots()[0].start());
+    r0_holds(&page);
+    // Planned rows the lexer cannot read back: a retained bare CR before an
+    // emitted empty LF row (`-\r` + `\n` + `X`), a deletion that leaves a bare
+    // CR before a retained LF (`-\r\n`), and an empty last row (`-\n`).
+    let rows = |rows: &[(&'static str, Break)]| {
+        rows.iter()
+            .map(|(b, k)| (b.as_bytes(), *k))
+            .collect::<Vec<_>>()
+    };
+    assert!(!check_planned_rows(&rows(&[
+        ("-", Break::Cr),
+        ("", Break::Lf),
+        ("X", Break::Eof)
+    ])));
+    assert!(!check_planned_rows(&rows(&[
+        ("-", Break::Cr),
+        ("", Break::Lf)
+    ])));
+    assert!(!check_planned_rows(&rows(&[
+        ("-", Break::Lf),
+        ("", Break::Eof)
+    ])));
+    // The repair the model names reads back: `-\r\r\nX`.
+    assert!(check_planned_rows(&rows(&[
+        ("-", Break::Cr),
+        ("", Break::CrLf),
+        ("X", Break::Eof)
+    ])));
+    assert_eq!(
+        lexed("-\r\r\nX"),
+        rows(&[("-", Break::Cr), ("", Break::CrLf), ("X", Break::Eof)])
+    );
+}
+
+/// The model's witnesses for the write rule, which this crate's writer does
+/// not follow yet: a bare-CR line's new break, and the separator after a bare
+/// header. They pass once the write rule lands.
+#[test]
+#[ignore = "the write rule for breaks and bare headers is not implemented yet"]
+fn model_write_rule_witnesses() {
+    let page = PageText::read(b"* A\rline\n* Next\n", Format::Org).unwrap();
+    let splice = Splice {
+        slot: 0,
+        range: 1..6,
+        text: "\n",
+    };
+    assert_eq!(apply(&page, &[splice]).unwrap(), "* A\n\n* Next\n");
+    let page = PageText::read(b"-\n- N\n", Format::Markdown).unwrap();
+    let splice = Splice {
+        slot: 0,
+        range: 0..0,
+        text: "x",
+    };
+    assert_eq!(apply(&page, &[splice]).unwrap(), "- x\n- N\n");
 }

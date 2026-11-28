@@ -679,7 +679,7 @@ fn page_edits(
         let mut raw = first_line.to_string();
         let mut pieces = vec![(0usize, line_starts[header.line] + header.prefix_len)];
         for (k, line) in lines.iter().enumerate().take(end).skip(header.line + 1) {
-            let kept = outline::strip_layout_ws(line, header.content_indent);
+            let kept = crate::doc::continuation_raw(line, header.content_indent);
             raw.push('\n');
             pieces.push((raw.len(), line_starts[k] + line.len() - kept.len()));
             raw.push_str(kept);
