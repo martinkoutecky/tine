@@ -54,8 +54,19 @@ fn browser_core_command_wires() {
     assert_eq!(modified.rev, String::from(view.rev()));
     modified.rev = "0".into();
     record!("page_modified", modified);
-    let (files, references, rev) = page_backlink_counts_wire(&view);
+    let (mut files, mut references, rev) = page_backlink_counts_wire(&view);
     assert_eq!(rev, String::from(view.rev()));
+    // The wire lists page slots, and their order follows the directory listing, which differs between
+    // filesystems. All Pages reads the counts by key, so compare by key: put both lists in the recorded order.
+    let recorded: (Vec<(String, usize)>, Vec<(String, usize)>, String) = serde_json::from_str(
+        fixture["expected"]["page_backlink_counts"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    for (counts, recorded) in [(&mut files, &recorded.0), (&mut references, &recorded.1)] {
+        counts.sort_by_key(|(key, _)| recorded.iter().position(|(seen, _)| seen == key));
+    }
     record!("page_backlink_counts", (files, references, "0"));
     record!("resolve_page", resolve_name(&view, "Org Notes", false));
     record!(

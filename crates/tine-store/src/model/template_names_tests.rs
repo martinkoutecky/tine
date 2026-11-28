@@ -119,7 +119,19 @@ fn names_follow_headers_nested_templates_edits_deletions_and_warm_load() {
     };
     let store = open();
     let held = store.whole_graph().unwrap();
-    let expected = vec!["Header", "Same", "Nested", "Same", "Org block"];
+    // Names come in page-slot order, and the slots of files found together follow the directory listing, which
+    // differs between filesystems: read which of the two files came first.
+    let slot = |path: &str| *held.graph.pages.positions.get(path).unwrap();
+    let b_first = slot("pages/B.org") < slot("pages/A.md");
+    let in_slot_order = |a: &[&'static str]| {
+        let b = ["Same", "Org block"];
+        if b_first {
+            [&b[..], a].concat()
+        } else {
+            [a, &b[..]].concat()
+        }
+    };
+    let expected = in_slot_order(&["Header", "Same", "Nested"]);
     assert_eq!(held.template_names(), expected);
     let check = |store: &crate::Store| {
         let view = store.whole_graph().unwrap();
@@ -153,11 +165,11 @@ fn names_follow_headers_nested_templates_edits_deletions_and_warm_load() {
             .iter()
             .flat_map(|(_, names)| names.iter().map(String::as_str))
             .collect::<Vec<_>>(),
-        ["Renamed", "Same", "Org block"]
+        in_slot_order(&["Renamed"])
     );
     std::fs::write(&a, "- changed\n  template:: Changed\n").unwrap();
     store.refresh(crate::Depth::Stamps).unwrap();
-    assert_eq!(check(&store), ["Changed", "Same", "Org block"]);
+    assert_eq!(check(&store), in_slot_order(&["Changed"]));
     std::fs::remove_file(&b).unwrap();
     store.refresh(crate::Depth::Stamps).unwrap();
     assert_eq!(check(&store), ["Changed"]);
