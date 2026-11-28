@@ -435,19 +435,15 @@ enum Placement {
     /// whether lsdoc finds the header there depends on the whole line, which
     /// the edit changed.
     MidLineCutEdited,
-    /// A question for the model: a bare dash whose content starts with an
-    /// ATX run (`-# H`) is a header because lsdoc takes `-`, the `#` run and
-    /// a separator after it as a header; the model's `separator` looks at
-    /// the first byte only, so an edit that keeps the first `#` but not the
-    /// separator after the run writes `-#x`, which is no header.
-    BareDashAtxRun,
+    /// The stated boundary of the bare-header rule: an edit changes a bare
+    /// header's first line, but the slot's first splice starts after content
+    /// offset 0, so no splice owns the gap before the kept text and no space
+    /// is written there (`-# H` with `x` put at offset 1 writes `-#xH`, which
+    /// is no header).
+    BareHeaderEditedPastFirstGap,
     /// Org reads the file's final empty lines as trailer, not content: an
     /// edit that ends the last slot's content with empty lines loses them.
     OrgFinalEmptyLines,
-    /// A bare header whose new first byte is an ASCII space: the model takes
-    /// the space as the separator (no space is added), lsdoc then takes it
-    /// as the header's prefix, so the content loses its first byte.
-    BareHeaderLeadingSpace,
     /// Layout bytes (space, tab, form feed) put at the start of a kept line
     /// whose own layout is shorter than the bullet's content column: lsdoc
     /// removes them as that line's indent.
@@ -482,9 +478,6 @@ fn content_placement(page: &PageText<'_>, n: usize, want: &str, got: &str) -> Op
     let last = n + 1 == page.slots().len();
     if page.format() == Format::Org && last && want.trim_end_matches('\n') == got {
         return Some(Placement::OrgFinalEmptyLines);
-    }
-    if page.slots()[n].bare() && want.strip_prefix(' ') == Some(got) {
-        return Some(Placement::BareHeaderLeadingSpace);
     }
     let (wants, gots): (Vec<_>, Vec<_>) = (want.split('\n').collect(), got.split('\n').collect());
     let layout_removed = |w: &str, g: &str| {
@@ -524,15 +517,18 @@ fn structure_placement(
     };
     let first = |s: &str| s.split('\n').next().unwrap_or("").to_string();
     let content = |m: usize| page.content(m);
-    // The model question first: it is the most specific.
-    let bare_atx = |m: usize| {
+    // The rule's boundary first: it is the most specific.
+    let past_gap = |m: usize| {
+        let start = splices
+            .iter()
+            .filter(|s| s.slot == m)
+            .map(|s| s.range.start);
         page.slots()[m].bare()
-            && content(m).starts_with('#')
-            && want[m].starts_with('#')
             && first(&content(m)) != first(&want[m])
+            && start.min().is_some_and(|start| start > 0)
     };
-    if edited.iter().any(|m| bare_atx(*m)) {
-        Some(Placement::BareDashAtxRun)
+    if edited.iter().any(|m| past_gap(*m)) {
+        Some(Placement::BareHeaderEditedPastFirstGap)
     } else if edited
         .iter()
         .any(|m| block_lines_edited(&content(*m), &want[*m]))
@@ -1207,27 +1203,140 @@ fn checked_write_exact() {
     );
 }
 
+/// [`apply`] of the batch `splices` in the order `order` (indices into
+/// `splices`), with a refusal's index mapped back to `splices`.
+fn apply_in(
+    page: &PageText<'_>,
+    splices: &[Splice<'_>],
+    order: &[usize],
+) -> Result<String, SpliceError> {
+    let batch: Vec<Splice<'_>> = order.iter().map(|i| splices[*i].clone()).collect();
+    apply(page, &batch).map_err(|e| {
+        use SpliceError::*;
+        match e {
+            OutOfRange(i) => OutOfRange(order[i]),
+            NotCharBoundary(i) => NotCharBoundary(order[i]),
+            NotSeparate(i) => NotSeparate(order[i]),
+            CarriageReturn(i) => CarriageReturn(order[i]),
+            EmptySliceEnd(i) => EmptySliceEnd(order[i]),
+        }
+    })
+}
+
 /// `checkedWrite_commute`: every order of a separate batch gives the same
-/// bytes, or a refusal of the same kind.
+/// bytes, or the same refusal naming the same splice.
 #[test]
 fn checked_write_commute() {
-    let kind =
-        |r: &Result<String, SpliceError>| r.as_ref().map_err(std::mem::discriminant).cloned();
+    let mut refused = 0;
     on_batches(|page, splices, rng| {
         let first = apply(page, splices);
-        let mut plan = splices.to_vec();
+        refused += usize::from(first.is_err());
+        let mut order: Vec<usize> = (0..splices.len()).collect();
         for _ in 0..3 {
-            for i in (1..plan.len()).rev() {
-                plan.swap(i, rng.below(i + 1));
+            for i in (1..order.len()).rev() {
+                order.swap(i, rng.below(i + 1));
             }
             assert_eq!(
-                kind(&apply(page, &plan)),
-                kind(&first),
-                "{:?} {plan:?}",
+                apply_in(page, splices, &order),
+                first,
+                "{:?} {splices:?} {order:?}",
                 page.text()
             );
         }
     });
+    assert!(refused > 1_000, "{refused}");
+}
+
+/// Every order of `0..n`.
+fn permutations(n: usize) -> Vec<Vec<usize>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut out = Vec::new();
+    for rest in permutations(n - 1) {
+        for at in 0..n {
+            let mut order = rest.clone();
+            order.insert(at, n - 1);
+            out.push(order);
+        }
+    }
+    out
+}
+
+/// A batch with two causes of refusal is refused for the same cause, naming
+/// the same splice, in every order: two CR replacements (the first in the
+/// model's order is named); a CR replacement and a splice of a slot that
+/// does not exist (out of range comes first); a CR replacement and two
+/// insertions at one gap (not separate comes first, at the later of the
+/// two). On `- X` and `* X`, ending in EOF, LF, CRLF and bare CR.
+#[test]
+fn a_refusal_does_not_depend_on_the_order_of_the_batch() {
+    let s = |slot: usize, at: usize, text: &'static str| Splice {
+        slot,
+        range: at..at,
+        text,
+    };
+    let cases: [(Vec<Splice<'static>>, SpliceError); 3] = [
+        (
+            vec![s(0, 0, "\r"), s(0, 1, "\r\n")],
+            SpliceError::CarriageReturn(0),
+        ),
+        (
+            vec![s(0, 0, "\r"), s(5, 0, "y")],
+            SpliceError::OutOfRange(1),
+        ),
+        (
+            vec![s(0, 0, "\r"), s(0, 1, "a"), s(0, 1, "b")],
+            SpliceError::NotSeparate(2),
+        ),
+    ];
+    for (format, header) in [(MD, "- X"), (ORG, "* X")] {
+        for ending in ENDINGS {
+            let text = format!("{header}{ending}");
+            let page = PageText::read(text.as_bytes(), format).unwrap();
+            for (splices, want) in &cases {
+                for order in permutations(splices.len()) {
+                    let got = apply_in(&page, splices, &order);
+                    assert_eq!(got, Err(*want), "{text:?} {splices:?} {order:?}");
+                }
+            }
+        }
+    }
+}
+
+/// A range off a character boundary is a contract rejection, decided before
+/// the model's rule: in `- éö` and `* éö`, the ranges 1..3, 1..1, 1..2 and
+/// 0..1 each cut a character, with every line ending.
+#[test]
+fn a_range_that_splits_a_character_is_rejected() {
+    for (format, header) in [(MD, "- éö"), (ORG, "* éö")] {
+        for ending in ENDINGS {
+            let text = format!("{header}{ending}");
+            let page = PageText::read(text.as_bytes(), format).unwrap();
+            assert_eq!(page.content(0), "éö");
+            for range in [1..3, 1..1, 1..2, 0..1] {
+                let splice = Splice {
+                    slot: 0,
+                    range: range.clone(),
+                    text: "",
+                };
+                assert_eq!(
+                    apply(&page, &[splice]),
+                    Err(SpliceError::NotCharBoundary(0)),
+                    "{text:?} {range:?}"
+                );
+            }
+            let whole = Splice {
+                slot: 0,
+                range: 0..2,
+                text: "e",
+            };
+            assert_eq!(
+                apply(&page, &[whole]).unwrap(),
+                format!("{}eö{ending}", &header[..2])
+            );
+        }
+    }
 }
 
 /// The bytes of `out` around the patches of `plan`: each patch's file range
@@ -1289,7 +1398,8 @@ fn r3_patch_start() {
 /// line, else LF) and the slot's continuation layout, with exactly three
 /// additions: a CR before an LF break written right after a bare CR; a CR at
 /// its end when the kept run after it starts with an LF and a bare CR comes
-/// before it; and one space at the start of a bare header's first patch.
+/// before it; and one space at the start of a bare header's first patch, where the
+/// model's plan earns it ([`r3_separator_patch`] checks when).
 #[test]
 fn r3() {
     let mut repairs = 0;
@@ -1301,6 +1411,9 @@ fn r3() {
         let mut sorted = splices.to_vec();
         sorted.sort_by_key(|s| (s.slot, s.range.start, s.range.end));
         let plan: Vec<_> = model_patches(page, splices);
+        let spaces: Vec<bool> = (model::plan_page(page, splices).slots.iter())
+            .map(|s| s.separator)
+            .collect();
         let written = kept_runs_and_patches(text, &out, &plan);
         // Rebuild each patch from the rule, with the byte written before it.
         let mut before: Vec<u8> = Vec::new();
@@ -1311,8 +1424,7 @@ fn r3() {
             before.extend_from_slice(&text.as_bytes()[at..file.start]);
             let start = before.len();
             let first = k == 0 || sorted[k - 1].slot != splice.slot;
-            let space = first && got.first() == Some(&b' ') && !splice.text.starts_with(' ');
-            if space {
+            if first && spaces[splice.slot] {
                 assert!(page.slots()[splice.slot].bare() && splice.range.start == 0);
                 before.push(b' ');
             }
@@ -1350,8 +1462,9 @@ fn r3() {
 /// `R3_separatorPatch`: when a bare header earns its space, the first sorted
 /// splice of the slot starts at the first content gap, its patch is the
 /// space and then what the patch would be without it, and the space is
-/// earned exactly when the first text byte changed to one that is not a
-/// separator.
+/// earned exactly when that splice starts at offset 0 and the first line
+/// changed to a nonempty line lsdoc does not read after the bare layout as
+/// the same header.
 #[test]
 fn r3_separator_patch() {
     let mut spaces = 0;
@@ -1365,10 +1478,13 @@ fn r3_separator_patch() {
             mine.sort_by_key(|s| (s.range.start, s.range.end));
             let old = page.content(n);
             let new = apply_content(&old, &mine);
-            let text_byte = |s: &str| s.bytes().next().filter(|b| *b != b'\n');
+            let line = |s: &str| s.split('\n').next().unwrap_or("").to_string();
+            let (new, old) = (line(&new), line(&old));
             let earned = page.slots()[n].bare()
-                && text_byte(&new)
-                    .is_some_and(|b| Some(b) != text_byte(&old) && !tine_text::takes_separator(b));
+                && mine.first().is_some_and(|s| s.range.start == 0)
+                && !new.is_empty()
+                && new != old
+                && !page.head_reads(n, &new);
             assert_eq!(slot.separator, earned, "{:?} {mine:?}", page.text());
             if earned {
                 spaces += 1;
@@ -1666,17 +1782,17 @@ fn model_write_rule_witnesses() {
             output: Ok("- x# Heading"),
             read_back: Some(&["x# Heading"]),
         },
-        // A new first byte the header rule takes as a separator earns no
-        // space; an equal first byte keeps the header bare. The model's Org
-        // `*#` is not an Org headline, so the form feed case is `-#` too.
-        // The space case reads back without its space: lsdoc takes the one
-        // space after the marker as prefix (a placement question).
+        // A new first line lsdoc reads after the bare marker as the same
+        // header earns no space (tab, form feed, a longer `#` run); one it
+        // does not earns one. A leading ASCII space is not text after a bare
+        // marker (lsdoc takes one space as prefix), so it gets one in front.
+        // The model's Org `*#` is not an Org headline, so these are `-#`.
         Fixture {
             format: MD,
             input: "-#\n",
             splices: &[(0, 0..1, " ")],
-            output: Ok("- \n"),
-            read_back: None,
+            output: Ok("-  \n"),
+            read_back: Some(&[" "]),
         },
         Fixture {
             format: MD,
@@ -1707,6 +1823,44 @@ fn model_write_rule_witnesses() {
             splices: &[(0, 0..1, "")],
             output: Ok("- X\n"),
             read_back: Some(&["X"]),
+        },
+        // The first row's text unchanged: the layout is kept, whatever the
+        // parser would say.
+        Fixture {
+            format: MD,
+            input: "-\tTitle",
+            splices: &[(0, 0..1, "\t")],
+            output: Ok("-\tTitle"),
+            read_back: Some(&["\tTitle"]),
+        },
+        // A Markdown bare `-#` whose edit joins two lines: `-#**` is no
+        // header, so the space is earned; the two-tab continuation keeps its
+        // removed indent.
+        Fixture {
+            format: MD,
+            input: "-# H\n** bt ffvac\n\t\t\t> lf d\r\n",
+            splices: &[(0, 0..4, "#")],
+            output: Ok("- #** bt ffvac\n\t\t\t> lf d\r\n"),
+            read_back: Some(&["#** bt ffvac\n\t> lf d"]),
+        },
+        // An Org bare `*` given text that starts with a space: the header
+        // would take that space as its prefix, so one is written in front.
+        Fixture {
+            format: ORG,
+            input: "*\n",
+            splices: &[(0, 0..0, " é ")],
+            output: Ok("*  é \n"),
+            read_back: Some(&[" é "]),
+        },
+        // The rule's boundary: the first line changes at offset 1, no splice
+        // owns the gap before the kept `#`, so no space; `-#xH` is no header
+        // (lsdoc reads no slot), which is the caller's read-back check.
+        Fixture {
+            format: MD,
+            input: "-# H\n",
+            splices: &[(0, 1..2, "x")],
+            output: Ok("-#xH\n"),
+            read_back: None,
         },
         // `* T\n\n`: one content row and one trailer row, kept.
         Fixture {
@@ -1880,6 +2034,20 @@ fn model_write_rule_witnesses() {
     for fixture in &fixtures {
         fixture.check();
     }
+    // The boundary's output reads back as no slot at all; the space the
+    // writer cannot place would make it the header again.
+    let read = |text: &str| PageText::read(text.as_bytes(), MD).unwrap().slots().len();
+    assert_eq!((read("-#xH\n"), read("- #xH\n")), (0, 1));
+    // The parser's answers the two reported edits turn on: the bare layout
+    // does not read, the once-padded one does.
+    let reads = |layout, text, kind, level| tine_text::bound::head_reads(layout, text, kind, level);
+    let (bullet, headline) = (HeaderKind::MarkdownBullet, HeaderKind::OrgHeadline);
+    assert!(!reads("-", "#** bt ffvac", bullet, 1));
+    assert!(reads("- ", "#** bt ffvac", bullet, 1));
+    assert!(!reads("*", " é ", headline, 1));
+    assert!(reads("* ", " é ", headline, 1));
+    assert!(!reads("-", "#xH", bullet, 1));
+    assert!(reads("- ", "#xH", bullet, 1));
     // The CR a deletion's repair writes belongs to the splice before the
     // exposed LF.
     let page = PageText::read(b"*\rXY\n", ORG).unwrap();

@@ -6,7 +6,7 @@
 //! model's.
 
 use std::ops::Range;
-use tine_text::{takes_separator, Break, Owner, PageText, Splice};
+use tine_text::{Break, Owner, PageText, Splice};
 
 /// `Cell`: a content byte, or a line separator with the break before it and
 /// the next row's layout.
@@ -129,21 +129,39 @@ fn ordered<'a, 's>(edits: &[&'a Splice<'s>]) -> Vec<&'a Splice<'s>> {
     edits
 }
 
-/// `firstTextByte`.
-fn first_text_byte(cells: &[Cell]) -> Option<u8> {
-    match cells.first() {
-        Some(Cell::Text(b)) => Some(*b),
-        _ => None,
-    }
+/// `firstRowText`.
+fn first_row_text(cells: &[Cell]) -> Vec<u8> {
+    cells
+        .iter()
+        .map_while(|c| match c {
+            Cell::Text(b) => Some(*b),
+            Cell::Newline(..) => None,
+        })
+        .collect()
 }
 
-/// `separator`, with the parser's predicate.
-fn separator(bare: bool, rows: &[Row], stream: &[Cell]) -> Vec<u8> {
-    match first_text_byte(stream) {
-        Some(b) if bare && first_text_byte(&row_cells(rows)) != Some(b) && !takes_separator(b) => {
-            vec![b' ']
-        }
-        _ => Vec::new(),
+/// `separator` of slot `n`, with the parser's `headReads` (lsdoc, asked
+/// about the header's layout and the line).
+fn separator(
+    page: &PageText<'_>,
+    n: usize,
+    rows: &[Row],
+    first: Option<&Splice<'_>>,
+    stream: &[Cell],
+) -> Vec<u8> {
+    let Some(edit) = first else {
+        return Vec::new();
+    };
+    let text = first_row_text(stream);
+    let earned = page.slots()[n].bare()
+        && edit.range.start == 0
+        && !text.is_empty()
+        && text != first_row_text(&row_cells(rows))
+        && !page.head_reads(n, std::str::from_utf8(&text).unwrap());
+    if earned {
+        vec![b' ']
+    } else {
+        Vec::new()
     }
 }
 
@@ -238,7 +256,8 @@ pub fn planned_slot(
     let mut stream = Vec::new();
     let mut chunks = Vec::new();
     let mut cursor = 0;
-    for edit in ordered(edits) {
+    let order = ordered(edits);
+    for edit in &order {
         stream.extend_from_slice(&source[cursor..edit.range.start]);
         let put = encode(&old, &continuation, edit);
         let file = map.to_file(edit.range.start)..map.to_file(edit.range.end);
@@ -248,7 +267,7 @@ pub fn planned_slot(
     }
     let terminal = stream.len();
     stream.extend_from_slice(&source[cursor..]);
-    let space = separator(page.slots()[n].bare(), &old, &stream);
+    let space = separator(page, n, &old, order.first().copied(), &stream);
     let layout = [&old[0].layout[..], &space].concat();
     let adjacent = prior_cr && layout.is_empty();
     let repaired = repair_cells(adjacent, &stream);

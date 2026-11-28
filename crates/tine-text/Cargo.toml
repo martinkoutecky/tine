@@ -21,3 +21,7 @@ lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.13" }
 [[test]]
 name = "properties"
 path = "tests/properties.rs"
+
+[[test]]
+name = "write_cost"
+path = "tests/write_cost.rs"

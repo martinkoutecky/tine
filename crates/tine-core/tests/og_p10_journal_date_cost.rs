@@ -8,6 +8,9 @@ thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
     /// This thread's net live bytes and their high-water mark while measuring.
     static BYTES: Cell<Option<(isize, isize)>> = const { Cell::new(None) };
+    /// Bytes this thread asked the allocator for while measuring: every
+    /// allocation's size and every reallocation's growth.
+    static REQUESTED: Cell<Option<usize>> = const { Cell::new(None) };
 }
 fn grow(delta: isize) {
     let _ = BYTES.try_with(|bytes| {
@@ -16,6 +19,20 @@ fn grow(delta: isize) {
             bytes.set(Some((live, peak.max(live))));
         }
     });
+    let _ = REQUESTED.try_with(|requested| {
+        if let Some(total) = requested.get() {
+            requested.set(Some(total + delta.max(0) as usize));
+        }
+    });
+}
+/// What `f` returns and the bytes it asked the allocator for on this thread.
+pub fn requested_bytes<T>(f: impl FnOnce() -> T) -> (T, usize) {
+    REQUESTED.with(|requested| requested.set(Some(0)));
+    let out = f();
+    (
+        out,
+        REQUESTED.with(|requested| requested.replace(None).unwrap()),
+    )
 }
 /// Net live bytes and peak of what `f` allocated on this thread (PC-9 budgets).
 pub fn live_bytes<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {

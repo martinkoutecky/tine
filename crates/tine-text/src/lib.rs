@@ -26,7 +26,7 @@ mod splice;
 
 use std::ops::Range;
 
-pub use splice::{apply, check_planned_rows, takes_separator, Splice, SpliceError};
+pub use splice::{apply, check_planned_rows, Splice, SpliceError};
 
 /// Which outline grammar the page is read with.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -433,9 +433,20 @@ impl<'a> PageText<'a> {
     /// `- a`, nothing under `* a`). O(that layout).
     pub fn continuation(&self, n: usize) -> String {
         let slot = &self.slots[n];
-        let mut out = self.text[slot.start..slot.start + slot.lead].to_string();
+        let mut out = String::with_capacity(slot.dedent);
+        out.push_str(&self.text[slot.start..slot.start + slot.lead]);
         out.extend(std::iter::repeat_n(' ', slot.dedent - slot.lead));
         out
+    }
+
+    /// Whether lsdoc reads slot `n`'s header layout followed by `text` (one
+    /// line, no break) as a header of the slot's kind and level whose
+    /// structural prefix is that layout ([`bound::head_reads`]). One parse of
+    /// one line.
+    pub fn head_reads(&self, n: usize, text: &str) -> bool {
+        let slot = &self.slots[n];
+        let layout = &self.text[slot.start..slot.text_start];
+        bound::head_reads(layout, text, slot.kind, slot.level)
     }
 
     /// Slot `n`'s content: its text pieces joined by `"\n"`. O(its bytes).
@@ -599,6 +610,8 @@ impl Layout {
 thread_local! {
     /// Line records [`ContentMap`] has looked at.
     pub(crate) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Lines [`bound::head_reads`] has asked lsdoc about.
+    pub(crate) static HEAD_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The map between an owner's content offsets and file bytes: every content
@@ -656,6 +669,16 @@ impl ContentMap<'_> {
         let i = self.line_of(at);
         let piece = self.layout.piece(self.owner, i);
         piece.text.start + (at - self.offset(i)).min(piece.text.len())
+    }
+    /// Content offset of the end of the text of the line holding content
+    /// offset `at` (`at` itself when it is that line's separator). O(log
+    /// lines).
+    pub(crate) fn line_end(&self, at: usize) -> usize {
+        if self.lines.is_empty() {
+            return 0;
+        }
+        let i = self.line_of(at);
+        self.offset(i) + self.layout.piece(self.owner, i).text.len()
     }
     /// How the piece holding content offset `at` ends. O(log lines).
     pub fn break_at(&self, at: usize) -> Break {

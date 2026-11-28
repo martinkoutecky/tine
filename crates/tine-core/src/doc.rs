@@ -740,9 +740,7 @@ pub fn parse(content: &str) -> Document {
 pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
     let content = &normalize_line_endings(content);
     let page = outline::page_or_preamble(content, content, OutlineFormat::Markdown);
-    let lines: Vec<&str> = content.split('\n').collect();
-    let opts = SerializeOpts::from_outline(content, &lines, &outline::headers_of(&page));
-    (document_of(&page, false).0, opts)
+    (document_of(&page, false).0, SerializeOpts::of_page(&page))
 }
 
 pub use crate::outline::SourceMap;
@@ -851,23 +849,24 @@ impl SerializeOpts {
             None => SerializeOpts::default(),
             Some(s) => {
                 let s = normalize_line_endings(s);
-                let lines: Vec<&str> = s.split('\n').collect();
-                Self::from_outline(
-                    &s,
-                    &lines,
-                    &outline::headers_or_none(&s, OutlineFormat::Markdown),
-                )
+                Self::of_page(&outline::page_or_preamble(&s, &s, OutlineFormat::Markdown))
             }
         }
     }
-    fn from_outline(s: &str, lines: &[&str], headers: &[outline::Header]) -> Self {
+    /// The knobs of a page read from its LF form, from the reader's own lines
+    /// and slots. O(lines before the first slot + slots).
+    fn of_page(page: &tine_text::PageText<'_>) -> Self {
+        let line = |i: usize| {
+            let (range, brk) = page.line(i);
+            &page.text()[range.start..brk]
+        };
         Self {
-            trailing_newlines: crate::org::trailing_newlines(s),
-            blank_after_props: match headers.first() {
-                Some(header) if header.line > 0 => lines[header.line - 1].trim().is_empty(),
+            trailing_newlines: crate::org::trailing_newlines(page.text()),
+            blank_after_props: match page.slots().first() {
+                Some(slot) if slot.line() > 0 => line(slot.line() - 1).trim().is_empty(),
                 _ => true,
             },
-            indent: detect_indent(lines, headers),
+            indent: detect_indent(page),
         }
     }
 }
@@ -882,12 +881,13 @@ fn gcd(a: usize, b: usize) -> usize {
 
 /// Infer the per-level indentation unit from a file's indented bullet lines:
 /// a tab if any are tab-indented, else N spaces (the GCD of space widths).
-fn detect_indent(lines: &[&str], headers: &[outline::Header]) -> String {
+fn detect_indent(page: &tine_text::PageText<'_>) -> String {
     let mut space_widths: Vec<usize> = Vec::new();
-    for header in headers {
+    for slot in page.slots() {
         // Inspect only the structural prefix lsdoc already identified. Literal
         // lines cannot contribute a bogus indent unit.
-        let prefix = &lines[header.line][..header.prefix_len];
+        let start = page.line(slot.line()).0.start;
+        let prefix = &page.text()[start..start + page.line_layout(slot.line())];
         let lead_len = prefix.len() - prefix.trim_start_matches([' ', '\t']).len();
         if lead_len == 0 {
             continue;

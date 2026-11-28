@@ -3,7 +3,8 @@
 //! refused before lsdoc sees it. The one production caller of
 //! `lsdoc::parse_outline` (`tine-core/tests/lsdoc_parse_boundary.rs` fails on
 //! any other outside `tests/`); tine-outline's block boundary uses this
-//! crate's quote count, so both bounds agree.
+//! crate's quote count, so both bounds agree. The writer's one question about
+//! a header line ([`head_reads`]) is the same parse, of that line.
 
 /// Source-side ceiling on a line's quote staircase for free-text doors; the
 /// same 128-level ceiling the page admission applies (`PARSE_INPUT_MAX_DEPTH`).
@@ -64,4 +65,31 @@ pub fn parse_outline_bounded(text: &str, org: bool) -> Option<Vec<lsdoc::Outline
     lsdoc::parse_outline(text, if org { "org" } else { "md" })
         .ok()
         .map(|outline| outline.headers)
+}
+
+/// Whether lsdoc reads the one line `layout` + `text` as an outline header
+/// of `kind` and `level` whose structural prefix ends exactly after `layout`
+/// (the block-text model's `headReads`). `text` has no line break. One
+/// bounded outline parse of that line.
+pub fn head_reads(layout: &str, text: &str, kind: crate::HeaderKind, level: u32) -> bool {
+    #[cfg(test)]
+    crate::HEAD_QUERIES.with(|n| n.set(n.get() + 1));
+    let want = match kind {
+        crate::HeaderKind::MarkdownHeading => {
+            lsdoc::OutlineHeaderKind::MarkdownUnbulletedAtxHeading
+        }
+        crate::HeaderKind::MarkdownBullet => lsdoc::OutlineHeaderKind::MarkdownDashBullet,
+        crate::HeaderKind::OrgHeadline => lsdoc::OutlineHeaderKind::OrgHeadline,
+    };
+    let line = [layout, text].concat();
+    let org = kind == crate::HeaderKind::OrgHeadline;
+    parse_outline_bounded(&line, org).is_some_and(|headers| {
+        headers.first().is_some_and(|h| {
+            h.kind == want
+                && h.level == level
+                && h.header_start == 0
+                && h.structural_prefix.start == 0
+                && h.structural_prefix.end == layout.len()
+        })
+    })
 }

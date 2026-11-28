@@ -90,20 +90,20 @@ fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
     }
 }
 
-/// The raw calls in production file `relative`, outside its exempt functions.
+/// The raw calls in production file `relative`, outside its exempt functions
+/// and its `#[cfg(test)]` items.
 fn file_hits(relative: &str, text: &str) -> Vec<String> {
     let exempt: Vec<&str> = (EXEMPT_FNS.iter())
         .filter(|(file, ..)| *file == relative)
         .map(|(_, name, _)| *name)
         .collect();
     let (mut hits, mut depth) = (Vec::new(), 0usize);
-    // The depth an exempt function was declared at, and whether its body opened.
-    let mut inside: Option<(usize, bool)> = None;
+    // An item not scanned (an exempt function, or the item a `#[cfg(test)]`
+    // attribute applies to): the depth it began at, and whether its body
+    // opened. It ends where its braces close back to that depth, or at a `;`
+    // at that depth before any brace opens (an item with no body).
+    let mut skipped: Option<(usize, bool)> = None;
     for (n, line) in text.lines().enumerate() {
-        // Unit tests sit at the end of a production file.
-        if line.trim_start().starts_with("#[cfg(test)]") {
-            break;
-        }
         let code = line.split("//").next().unwrap_or("");
         let declares = |name: &&str| {
             let words: Vec<&str> = code
@@ -111,10 +111,11 @@ fn file_hits(relative: &str, text: &str) -> Vec<String> {
                 .collect();
             words.windows(2).any(|w| w == ["fn", *name])
         };
-        if inside.is_none() && exempt.iter().any(declares) {
-            inside = Some((depth, false));
+        let test_item = line.trim_start().starts_with("#[cfg(test)]");
+        if skipped.is_none() && (test_item || exempt.iter().any(declares)) {
+            skipped = Some((depth, false));
         }
-        if inside.is_none() {
+        if skipped.is_none() {
             for entry in raw_calls(code) {
                 hits.push(format!(
                     "{relative}:{}: raw `lsdoc::{entry}` in `{}`",
@@ -129,11 +130,11 @@ fn file_hits(relative: &str, text: &str) -> Vec<String> {
                 '}' => depth = depth.saturating_sub(1),
                 _ => {}
             }
-        }
-        if let Some((at, opened)) = &mut inside {
-            *opened |= depth > *at;
-            if *opened && depth <= *at {
-                inside = None;
+            if let Some((at, opened)) = &mut skipped {
+                *opened |= depth > *at;
+                if (*opened && depth <= *at) || (!*opened && c == ';') {
+                    skipped = None;
+                }
             }
         }
     }
@@ -192,4 +193,21 @@ fn an_exempt_function_exempts_only_its_own_body() {
     let before = format!("fn early(t: &str) {{ lsdoc::parse(t); }}\n{bounded}");
     assert_eq!(file_hits(file, &before).len(), 1, "{before}");
     assert_eq!(file_hits("crates/tine-text/src/lib.rs", bounded).len(), 1);
+}
+
+/// A one-line exempt function closes its exemption on its own line, and a
+/// `#[cfg(test)]` item in the middle of a file exempts that item only: a raw
+/// call after either is a hit.
+#[test]
+fn the_scanner_ends_each_exemption_where_its_item_ends() {
+    let file = "crates/tine-text/src/bound.rs";
+    let one_line = "pub fn parse_outline_bounded(t: &str) -> bool { lsdoc::parse_outline(t, \"md\").is_ok() }\n\
+                    fn other(t: &str) {\n    lsdoc::parse(t);\n}\n";
+    assert_eq!(file_hits(file, one_line).len(), 1, "{one_line}");
+    let lib = "crates/tine-text/src/lib.rs";
+    let middle = "#[cfg(test)]\nthread_local! {\n    static N: u8 = 0;\n}\n\
+                  #[cfg(test)]\nstatic M: u8 = 0;\n\
+                  impl Map {\n    fn live(t: &str) {\n        lsdoc::parse(t);\n    }\n}\n\
+                  #[cfg(test)]\nmod tests {\n    fn probe() {\n        lsdoc::parse(\"\");\n    }\n}\n";
+    assert_eq!(file_hits(lib, middle).len(), 1, "{middle}");
 }

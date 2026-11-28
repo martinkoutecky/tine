@@ -3,7 +3,10 @@
 //!
 //! The rule is the block-text model's `checkedWrite`
 //! (`docs/block-text-model/lean/BlockText.lean`); each step below is one
-//! function and names the model's definition it implements.
+//! function and names the model's definition it implements. The model is
+//! over bytes; this interface takes `str`, so it rejects a range off a
+//! character boundary, an out-of-range splice and a batch that is not
+//! separate, and beyond that refuses exactly what the model refuses.
 
 use crate::{Break, ContentMap, Owner, PageText};
 use std::ops::Range;
@@ -16,17 +19,22 @@ pub struct Splice<'s> {
     pub text: &'s str,
 }
 
-/// Why [`apply`] wrote nothing. `OutOfRange` and `NotSeparate` reject a
-/// batch outside the write's contract; `CarriageReturn` and `EmptySliceEnd`
-/// are the write rule's two refusals. Each names the index of a splice.
+/// Why [`apply`] wrote nothing. `OutOfRange`, `NotCharBoundary` and
+/// `NotSeparate` reject a batch outside the write's contract;
+/// `CarriageReturn` and `EmptySliceEnd` are the write rule's two refusals.
+/// The refusal is the first of these causes, in this order, that the batch
+/// has, and it names the caller's index of the first splice with that cause
+/// in the model's order (slot, then range, then replacement), so neither
+/// depends on the order of the batch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpliceError {
-    /// No such slot, or the range is reversed, past the content's end or not
-    /// on a character boundary.
+    /// No such slot, or the range is reversed or past the content's end.
     OutOfRange(usize),
-    /// The splice and another of its slot are not separate: their ranges
-    /// overlap, one is an insertion strictly inside the other, or both are
-    /// insertions at one gap.
+    /// An end of the range splits a character of the content.
+    NotCharBoundary(usize),
+    /// The splice and an earlier one of its slot are not separate: their
+    /// ranges overlap, one is an insertion strictly inside the other, or both
+    /// are insertions at one gap.
     NotSeparate(usize),
     /// The replacement has a CR: content has none, a CR would be a break the
     /// content cannot show.
@@ -35,14 +43,6 @@ pub enum SpliceError {
     /// without a break (the end of the file, or a slot cut mid-line), with no
     /// layout to carry the line: the line would not be read back.
     EmptySliceEnd(usize),
-}
-
-/// Whether lsdoc's outline header rule takes byte `b` after a marker (`-`,
-/// a `*` run) as the end of the marker: space, tab or form feed (lsdoc
-/// `mldoc_heading_boundary`, `src/block_common.rs`; the end of the line also
-/// ends it). The predicate the model's `separator` is given.
-pub fn takes_separator(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | 0x0c)
 }
 
 /// One splice, checked and mapped to file bytes.
@@ -56,75 +56,147 @@ struct Planned<'s> {
     style: &'static str,
 }
 
+/// One edited slot's splices and what the write adds around them.
+struct Edited<'p, 's> {
+    group: &'p [Planned<'s>],
+    continuation: String,
+    space: bool,
+}
+
 /// The page with every splice applied, all ranges taken in the one snapshot
-/// `page`, or the reason the edit is refused; refusals are decided from the
-/// input before any byte is written. Each content range is mapped to file
-/// bytes and replaced; every other byte of the file is kept, in order (R3).
-/// A `"\n"` in a replacement is written as [`break_style`] followed by the
-/// slot's continuation layout ([`PageText::continuation`]); a bare header
-/// may gain one space ([`separator`]); a kept bare CR is never followed by an
-/// LF ([`repair_cr`]). The order of `splices` changes neither the bytes nor
-/// the refusal. Whether the result reads back as the same blocks depends on
-/// the parser placing them there; that is the caller's check.
+/// `page`, or the reason the edit is refused ([`SpliceError`]); refusals are
+/// decided from the input before any byte is written. Each content range is
+/// mapped to file bytes and replaced; every other byte of the file is kept,
+/// in order (R3). A `"\n"` in a replacement is written as [`break_style`]
+/// followed by the slot's continuation layout ([`PageText::continuation`]); a
+/// bare header may gain one space ([`separator`]); a kept bare CR is never
+/// followed by an LF ([`repair_cr`]). The order of `splices` changes neither
+/// the bytes nor the refusal. Whether the result reads back as the same
+/// blocks depends on the parser placing them there; that is the caller's
+/// check.
 ///
 /// Cost: one sort of the splices, O(log lines of its slot) per splice and per
-/// edited slot, and one copy of the output.
+/// edited slot, one parse of one line per edited bare slot whose first line
+/// changed, and one copy of the output into a buffer of its exact length.
 pub fn apply(page: &PageText<'_>, splices: &[Splice<'_>]) -> Result<String, SpliceError> {
     let plan = ordered(page, splices)?;
-    let text = page.text();
-    let mut out = String::with_capacity(text.len() + 2 * plan.len());
-    let mut groups = Vec::new();
-    for group in plan.chunk_by(|a, b| a.slot == b.slot) {
+    let groups: Vec<_> = plan.chunk_by(|a, b| a.slot == b.slot).collect();
+    for group in &groups {
         let map = page.content_map(Owner::Slot(group[0].slot));
         if empty_slice_end(page, &map, group) {
             return Err(SpliceError::EmptySliceEnd(group[0].index));
         }
-        groups.push((group, map));
     }
-    let mut at = 0;
-    for (group, map) in groups {
-        let n = group[0].slot;
-        let continuation = page.continuation(n);
-        let space = separator(page, &map, group);
-        for (k, splice) in group.iter().enumerate() {
-            push_kept(&mut out, &text[at..splice.file.start]);
-            if k == 0 && space {
-                out.push(' ');
+    let edited: Vec<Edited<'_, '_>> = groups
+        .into_iter()
+        .map(|group| {
+            let n = group[0].slot;
+            Edited {
+                group,
+                continuation: page.continuation(n),
+                space: separator(page, &page.content_map(Owner::Slot(n)), group),
             }
-            push_replacement(&mut out, splice, &continuation);
+        })
+        .collect();
+    let mut length = Length::default();
+    write(page, &edited, &mut length);
+    let mut out = String::with_capacity(length.len);
+    write(page, &edited, &mut out);
+    Ok(out)
+}
+
+/// Where [`write`] puts bytes: the output, or a count of its length that
+/// knows whether the bytes so far end in a CR.
+trait Sink {
+    fn push(&mut self, s: &str);
+    fn ends_in_cr(&self) -> bool;
+}
+
+impl Sink for String {
+    fn push(&mut self, s: &str) {
+        self.push_str(s);
+    }
+    fn ends_in_cr(&self) -> bool {
+        self.ends_with('\r')
+    }
+}
+
+/// The length of the output and whether it ends in a CR so far. O(1) per
+/// piece.
+#[derive(Default)]
+struct Length {
+    len: usize,
+    cr: bool,
+}
+
+impl Sink for Length {
+    fn push(&mut self, s: &str) {
+        if let Some(last) = s.as_bytes().last() {
+            self.len += s.len();
+            self.cr = *last == b'\r';
+        }
+    }
+    fn ends_in_cr(&self) -> bool {
+        self.cr
+    }
+}
+
+/// The new file: each edited slot's splices in order, with the kept runs of
+/// the snapshot between them.
+fn write(page: &PageText<'_>, edited: &[Edited<'_, '_>], out: &mut impl Sink) {
+    let text = page.text();
+    let mut at = 0;
+    for slot in edited {
+        for (k, splice) in slot.group.iter().enumerate() {
+            push_kept(out, &text[at..splice.file.start]);
+            if k == 0 && slot.space {
+                out.push(" ");
+            }
+            push_replacement(out, splice, &slot.continuation);
             at = splice.file.end;
         }
     }
-    push_kept(&mut out, &text[at..]);
-    Ok(out)
+    push_kept(out, &text[at..]);
 }
 
 /// The splices in the model's order (`ordered`, by `keyLE`: slot, then
 /// start, then stop, so an insertion comes before a replacement that starts
-/// at its gap), each checked against the content and mapped to file bytes,
-/// and pairwise `separate` within a slot. A replacement with a CR is refused
-/// (`crFreeCheck`).
+/// at its gap; equal ranges, never separate, by replacement), each checked
+/// against the content and mapped to file bytes. The batch is refused for
+/// the first cause any splice has, in [`SpliceError`]'s order: out of range,
+/// off a character boundary, not `separate` from an earlier splice of its
+/// slot, a replacement with a CR (`crFreeCheck`); named at the first such
+/// splice in this order.
 fn ordered<'s>(
     page: &PageText<'_>,
     splices: &[Splice<'s>],
 ) -> Result<Vec<Planned<'s>>, SpliceError> {
     let text = page.text();
+    let mut order: Vec<usize> = (0..splices.len()).collect();
+    order.sort_by_key(|i| {
+        let s = &splices[*i];
+        (s.slot, s.range.start, s.range.end, s.text)
+    });
+    let (mut out_of_range, mut split, mut cr) = (None, None, None);
     let mut plan = Vec::with_capacity(splices.len());
-    for (index, splice) in splices.iter().enumerate() {
+    for index in order {
+        let splice = &splices[index];
         let range = splice.range.clone();
         if splice.slot >= page.slots().len() || range.start > range.end {
-            return Err(SpliceError::OutOfRange(index));
-        }
-        if splice.text.contains('\r') {
-            return Err(SpliceError::CarriageReturn(index));
+            out_of_range.get_or_insert(index);
+            continue;
         }
         let map = page.content_map(Owner::Slot(splice.slot));
         if range.end > map.len() {
-            return Err(SpliceError::OutOfRange(index));
+            out_of_range.get_or_insert(index);
+            continue;
         }
         let file = map.to_file(range.start)..map.to_file(range.end);
         if !text.is_char_boundary(file.start) || !text.is_char_boundary(file.end) {
-            return Err(SpliceError::OutOfRange(index));
+            split.get_or_insert(index);
+        }
+        if splice.text.contains('\r') {
+            cr.get_or_insert(index);
         }
         plan.push(Planned {
             index,
@@ -135,17 +207,25 @@ fn ordered<'s>(
             text: splice.text,
         });
     }
-    plan.sort_by_key(|p| (p.slot, p.range.start, p.range.end));
-    if let Some(bad) = not_separate(&plan) {
-        return Err(SpliceError::NotSeparate(bad));
+    if let Some(index) = out_of_range {
+        return Err(SpliceError::OutOfRange(index));
+    }
+    if let Some(index) = split {
+        return Err(SpliceError::NotCharBoundary(index));
+    }
+    if let Some(index) = not_separate(&plan) {
+        return Err(SpliceError::NotSeparate(index));
+    }
+    if let Some(index) = cr {
+        return Err(SpliceError::CarriageReturn(index));
     }
     Ok(plan)
 }
 
-/// The index of a splice that is not `separate` from an earlier one of its
-/// slot, in the sorted `plan`: ranges are half-open, an insertion may touch
-/// another range's end or start, but not lie strictly inside it, and two
-/// insertions may not share a gap. In sorted order this is: each splice
+/// The index of the first splice that is not `separate` from an earlier one
+/// of its slot, in the sorted `plan`: ranges are half-open, an insertion may
+/// touch another range's end or start, but not lie strictly inside it, and
+/// two insertions may not share a gap. In sorted order this is: each splice
 /// starts at or after the stops of the earlier ones of its slot, and none
 /// repeats the range before it. O(splices).
 fn not_separate(plan: &[Planned<'_>]) -> Option<usize> {
@@ -184,34 +264,54 @@ fn content_byte(page: &PageText<'_>, map: &ContentMap<'_>, at: usize) -> Option<
     })
 }
 
-/// Whether bare slot `group[0].slot` earns one space after its marker
-/// (`separator`): after the whole edit, the first line's first text byte
-/// (`firstTextByte`) differs from the snapshot's, which may be absent, and is
-/// not one the header rule takes as a separator ([`takes_separator`]). The
-/// space is header layout at the first content gap; the first sorted splice
-/// starts there whenever it is earned. O(splices + log lines).
-fn separator(page: &PageText<'_>, map: &ContentMap<'_>, group: &[Planned<'_>]) -> bool {
-    if !page.slots()[group[0].slot].bare() {
-        return false;
-    }
-    let text_byte = |b: Option<u8>| b.filter(|b| *b != b'\n');
-    // The edited content's first byte: the first splice's replacement when
-    // it starts where the kept content so far ends, else the kept byte.
+/// The text of the slot's first line after the whole edit, up to its first
+/// `"\n"` (`firstRowText` of the edited stream): kept content and
+/// replacements in order. O(that line + splices + log lines).
+fn first_line(page: &PageText<'_>, map: &ContentMap<'_>, group: &[Planned<'_>]) -> String {
+    let text = page.text();
+    let mut line = String::new();
+    // Kept content `at..stop`, up to its first separator; whether it has one.
+    let kept = |line: &mut String, at: usize, stop: usize| {
+        if at >= stop {
+            return false;
+        }
+        let end = map.line_end(at);
+        line.push_str(&text[map.to_file(at)..map.to_file(end.min(stop))]);
+        end < stop
+    };
     let mut at = 0;
-    let mut first = None;
     for splice in group {
-        if splice.range.start > at {
-            break;
+        if kept(&mut line, at, splice.range.start) {
+            return line;
         }
-        if let Some(b) = splice.text.bytes().next() {
-            first = Some(Some(b));
-            break;
+        if let Some((head, _)) = splice.text.split_once('\n') {
+            line.push_str(head);
+            return line;
         }
+        line.push_str(splice.text);
         at = splice.range.end;
     }
-    let new = text_byte(first.unwrap_or_else(|| content_byte(page, map, at)));
-    let old = text_byte(content_byte(page, map, 0));
-    new.is_some_and(|b| Some(b) != old && !takes_separator(b))
+    kept(&mut line, at, map.len());
+    line
+}
+
+/// Whether bare slot `group[0].slot` earns one space after its marker
+/// (`separator`): its first sorted splice starts at content offset 0, the
+/// edited first line ([`first_line`]) is not empty and differs from the
+/// snapshot's, and lsdoc does not read the header's layout followed by that
+/// line as the same header ([`PageText::head_reads`]). The space is header
+/// layout at the first content gap, where that first splice starts.
+/// O(splices + first line + log lines), and the one-line parse only when the
+/// first line changed.
+fn separator(page: &PageText<'_>, map: &ContentMap<'_>, group: &[Planned<'_>]) -> bool {
+    let n = group[0].slot;
+    if !page.slots()[n].bare() || group[0].range.start != 0 {
+        return false;
+    }
+    let text = page.text();
+    let new = first_line(page, map, group);
+    let old = &text[map.to_file(0)..map.to_file(map.line_end(0))];
+    !new.is_empty() && new != old && !page.head_reads(n, &new)
 }
 
 /// The refusal `EmptySliceEnd`: the slot's last line ends its slice without
@@ -254,34 +354,34 @@ fn empty_slice_end(page: &PageText<'_>, map: &ContentMap<'_>, group: &[Planned<'
 /// right after a bare CR, write one CR, so the LF reads as its own CRLF.
 /// Content and layout bytes are never CR, so a CR at the end of the output
 /// is always a bare-CR break.
-fn repair_cr(out: &mut String) {
-    if out.ends_with('\r') {
-        out.push('\r');
+fn repair_cr(out: &mut impl Sink) {
+    if out.ends_in_cr() {
+        out.push("\r");
     }
 }
 
 /// Copy a kept run of the snapshot. Its first byte follows a splice (or
 /// starts the file); when that byte is a kept LF the splice exposed to a bare
 /// CR, the CR [`repair_cr`] writes is the splice's last byte.
-fn push_kept(out: &mut String, kept: &str) {
+fn push_kept(out: &mut impl Sink, kept: &str) {
     if kept.starts_with('\n') {
         repair_cr(out);
     }
-    out.push_str(kept);
+    out.push(kept);
 }
 
 /// Write a replacement: its bytes, each `"\n"` as the splice's break style
 /// and the slot's continuation layout.
-fn push_replacement(out: &mut String, splice: &Planned<'_>, continuation: &str) {
+fn push_replacement(out: &mut impl Sink, splice: &Planned<'_>, continuation: &str) {
     for (n, segment) in splice.text.split('\n').enumerate() {
         if n > 0 {
             if splice.style == "\n" {
                 repair_cr(out);
             }
-            out.push_str(splice.style);
-            out.push_str(continuation);
+            out.push(splice.style);
+            out.push(continuation);
         }
-        out.push_str(segment);
+        out.push(segment);
     }
 }
 
@@ -306,7 +406,7 @@ pub fn check_planned_rows(rows: &[(&[u8], Break)]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Format, VISITS};
+    use crate::{Format, HEAD_QUERIES, VISITS};
 
     fn visits(page: &PageText<'_>, splices: &[Splice<'_>]) -> (String, usize) {
         VISITS.with(|n| n.set(0));
@@ -371,5 +471,47 @@ mod tests {
             visits(&page, &one).1
         };
         assert_eq!(visits_at(0), visits_at(40));
+    }
+
+    /// The header question costs one parse of one line per edited bare slot
+    /// whose first line changed, and none for any other slot: not for a
+    /// header with a separator, a bare header edited after its first line or
+    /// at a later offset of it, an edit that leaves the first line as it was,
+    /// or one that empties it.
+    #[test]
+    fn a_bare_header_is_asked_about_once_when_its_first_line_changes() {
+        let slots = 40;
+        let mut text = String::new();
+        for _ in 0..slots {
+            text += "-\tT\n  u\n- a\n";
+        }
+        let page = PageText::read_text(&text, Format::Markdown).unwrap();
+        assert_eq!(page.slots().len(), 2 * slots);
+        let edit =
+            |slot: usize, range: Range<usize>, text: &'static str| Splice { slot, range, text };
+        // Bare slot 2k gets edit k % 6; every bullet slot 2k+1 gets `x` at 0.
+        let mut splices = Vec::new();
+        let mut changed = 0;
+        for k in 0..slots {
+            let bare = 2 * k;
+            splices.push(match k % 6 {
+                0 => {
+                    changed += 1;
+                    edit(bare, 0..0, "x")
+                }
+                1 => {
+                    changed += 1;
+                    edit(bare, 0..1, "")
+                }
+                2 => edit(bare, 3..4, "v"),
+                3 => edit(bare, 1..2, "S"),
+                4 => edit(bare, 0..1, "\t"),
+                _ => edit(bare, 0..0, "\n"),
+            });
+            splices.push(edit(bare + 1, 0..0, "x"));
+        }
+        HEAD_QUERIES.with(|n| n.set(0));
+        apply(&page, &splices).unwrap();
+        assert_eq!(HEAD_QUERIES.with(|n| n.get()), changed);
     }
 }

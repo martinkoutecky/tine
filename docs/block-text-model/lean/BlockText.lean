@@ -482,42 +482,47 @@ def exitCR (afterCR : Bool) : List Cell → Bool
   | [] => afterCR
   | cell :: rest => exitCR cell.afterCR rest
 
-/-- The first content byte of the first row, if that row has text. -/
-def firstTextByte : List Cell → Option UInt8
-  | .text b :: _ => some b
-  | _ => none
+/-- Text of the first row, excluding its layout, break, and later rows. -/
+def firstRowText : List Cell → Bytes
+  | .text b :: rest => b :: firstRowText rest
+  | _ => []
 
-variable (takesSeparator : UInt8 → Bool)
+-- True when this layout followed by this text has the same local header
+-- boundary and the parser's structural trim ends exactly at the layout's end.
+variable (headReads : Bytes → Bytes → Bool)
 
-/-- The parser supplies both the bare flag and its separator predicate. A space
-    is earned only when the first row gains a different leading content byte
-    that cannot itself serve as the separator. -/
-def separator (slot : Slot) (stream : List Cell) : Bytes :=
-  match firstTextByte stream with
+/-- A changed, nonempty bare first row can earn a space at the initial content
+    gap. The first sorted splice must own that gap. -/
+def separator (slot : Slot) (first : Option Splice) (stream : List Cell) : Bytes :=
+  match first with
   | none => []
-  | some b =>
-    if slot.bare && firstTextByte (rowCells slot.rows) != some b && !takesSeparator b then [space]
+  | some edit =>
+    let text := firstRowText stream
+    if slot.bare && edit.start == 0 && !text.isEmpty &&
+        text != firstRowText (rowCells slot.rows) && !headReads (front slot.rows) text then [space]
     else []
 
-@[simp] theorem separator_same (slot : Slot) :
-    separator takesSeparator slot (rowCells slot.rows) = [] := by
-  unfold separator
-  split <;> simp_all
+@[simp] theorem separator_same (slot : Slot) (first : Option Splice) :
+    separator headReads slot first (rowCells slot.rows) = [] := by
+  cases first <;> simp [separator]
 
-/-- At a changed bare boundary, the first byte after the old layout meets the
-    predicate if the new text byte or the space used to prefix it does. -/
-theorem changedHead_separatorCheck (slot : Slot) (stream : List Cell) (b : UInt8)
-    (bare : slot.bare = true) (leading : firstTextByte stream = some b)
-    (changed : firstTextByte (rowCells slot.rows) ≠ some b) :
-    ((separator takesSeparator slot stream ++ [b]).head?.any takesSeparator) =
-      (takesSeparator b || takesSeparator space) := by
-  cases recognized : takesSeparator b <;> simp [separator, leading, bare, changed, recognized]
+/-- The raw boundary or the boundary with one extra layout space must work.
+    Only the former is queried by the writer. -/
+theorem changedHead_separatorCheck (slot : Slot) (stream : List Cell) (edit : Splice)
+    (bare : slot.bare = true) (start : edit.start = 0) (nonempty : firstRowText stream ≠ [])
+    (changed : firstRowText (rowCells slot.rows) ≠ firstRowText stream) :
+    headReads (front slot.rows ++ separator headReads slot (some edit) stream) (firstRowText stream) =
+      (headReads (front slot.rows) (firstRowText stream) ||
+        headReads (front slot.rows ++ [space]) (firstRowText stream)) := by
+  cases accepted : headReads (front slot.rows) (firstRowText stream) <;>
+    simp [separator, bare, start, nonempty, Ne.symm changed, accepted]
 
 def plannedSlot (slot : Slot) (edits : List Splice) (priorCR : Bool := false) : Slot :=
   if edits.isEmpty || slot.rows.isEmpty then slot
   else
-    let stream := editedCells slot edits
-    let layout := front slot.rows ++ separator takesSeparator slot stream
+    let order := ordered edits
+    let stream := (partition (encode slot) (rowCells slot.rows) 0 order).flatMap Chunk.after
+    let layout := front slot.rows ++ separator headReads slot order.head? stream
     let adjacent := priorCR && layout.isEmpty
     { slot with
       rows := assembleRows layout
@@ -534,15 +539,15 @@ def plannedSlot (slot : Slot) (edits : List Splice) (priorCR : Bool := false) : 
   | cons cell rest ih => simp [repairCells, ih]
 
 @[simp] theorem plannedSlot_nil (slot : Slot) (priorCR : Bool := false) :
-    plannedSlot takesSeparator slot [] priorCR = slot := rfl
+    plannedSlot headReads slot [] priorCR = slot := rfl
 
 @[simp] theorem plannedSlot_level (slot : Slot) (edits : List Splice) (priorCR : Bool := false) :
-    (plannedSlot takesSeparator slot edits priorCR).level = slot.level := by
+    (plannedSlot headReads slot edits priorCR).level = slot.level := by
   unfold plannedSlot
   split <;> rfl
 
 def writeSlot (slot : Slot) (edits : List Splice) (priorCR : Bool := false) : Bytes :=
-  (plannedSlot takesSeparator slot edits priorCR).bytes
+  (plannedSlot headReads slot edits priorCR).bytes
 
 @[simp] theorem encode_logical (slot : Slot) (edit : Splice) :
     (encode slot edit).map Cell.logical = edit.replacement := by
@@ -570,18 +575,18 @@ def applyContent (source : Bytes) (edits : List Splice) : Bytes :=
   simp [applyContent, ordered, partition, Chunk.after]
 
 theorem plan_content (slot : Slot) (edits : List Splice) (h : slot.rows ≠ []) (priorCR : Bool := false) :
-    (plannedSlot takesSeparator slot edits priorCR).content = applyContent slot.content edits := by
+    (plannedSlot headReads slot edits priorCR).content = applyContent slot.content edits := by
   cases edits with
   | nil => simp
   | cons edit rest =>
-    simp [plannedSlot, h, Slot.content, editedCells, chunks, partition_after_map, applyContent]
+    simp [plannedSlot, h, Slot.content, partition_after_map, applyContent]
 
 theorem plan_render (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
     (edited : edits ≠ []) (priorCR : Bool := false) :
     let stream := editedCells slot edits
-    let layout := front slot.rows ++ separator takesSeparator slot stream
+    let layout := front slot.rows ++ separator headReads slot (ordered edits).head? stream
     let adjacent := priorCR && layout.isEmpty
-    writeSlot takesSeparator slot edits priorCR =
+    writeSlot headReads slot edits priorCR =
       layout ++ (repairCells adjacent stream).flatMap Cell.raw ++
         (repairEnding (exitCR adjacent stream) (finalEnding slot.rows)).bytes ++
           slot.trailer.flatMap Line.bytes := by
@@ -589,24 +594,24 @@ theorem plan_render (slot : Slot) (edits : List Splice) (head : slot.rows ≠ []
   rw [writeSlot, slot_render]
   cases edits with
   | nil => contradiction
-  | cons edit rest => simp [plannedSlot, head, List.append_assoc]
+  | cons edit rest => simp [plannedSlot, head, editedCells, chunks, List.append_assoc]
 
 theorem R1_slot (slot : Slot) (priorCR : Bool := false) :
-    writeSlot takesSeparator slot [] priorCR = slot.bytes := by
+    writeSlot headReads slot [] priorCR = slot.bytes := by
   simp [writeSlot]
 
 theorem plannedSlot_commute (slot : Slot) {edits other : List Splice} (h : edits.Perm other)
     (disjoint : edits.Pairwise separate) (priorCR : Bool) :
-    plannedSlot takesSeparator slot edits priorCR = plannedSlot takesSeparator slot other priorCR := by
+    plannedSlot headReads slot edits priorCR = plannedSlot headReads slot other priorCR := by
   have len := h.length_eq
   have empty : edits.isEmpty = other.isEmpty := by
     cases edits <;> cases other <;> simp_all
-  simp only [plannedSlot, editedCells, chunks, empty, ordered_perm h disjoint]
+  simp only [plannedSlot, empty, ordered_perm h disjoint]
 
 theorem commute (slot : Slot) {edits other : List Splice} (h : edits.Perm other)
     (disjoint : edits.Pairwise separate) (priorCR : Bool := false) :
-    writeSlot takesSeparator slot edits priorCR = writeSlot takesSeparator slot other priorCR :=
-  congrArg Slot.bytes (plannedSlot_commute takesSeparator slot h disjoint priorCR)
+    writeSlot headReads slot edits priorCR = writeSlot headReads slot other priorCR :=
+  congrArg Slot.bytes (plannedSlot_commute headReads slot h disjoint priorCR)
 
 /- Byte locality and the separator patch -/
 
@@ -683,36 +688,22 @@ theorem OrderedWithin.stop_le {limit cursor : Nat} {edits : List Splice}
 /-- The leading space belongs to the first sorted patch, whose kept prefix is
     empty and whose snapshot start is the initial content gap. -/
 theorem separator_firstPatch (slot : Slot) (edits : List Splice)
-    (valid : OrderedWithin slot.content.length 0 (ordered edits))
-    (inserted : separator takesSeparator slot (editedCells slot edits) ≠ []) :
+    (_valid : OrderedWithin slot.content.length 0 (ordered edits))
+    (inserted : separator headReads slot (ordered edits).head? (editedCells slot edits) ≠ []) :
     ∃ edit, (ordered edits).head? = some edit ∧ edit.start = 0 := by
-  cases order : ordered edits with
-  | nil =>
-    have same : editedCells slot edits = rowCells slot.rows := by
-      simp [editedCells, chunks, order, partition, Chunk.after]
-    exact (inserted (same ▸ separator_same takesSeparator slot)).elim
-  | cons edit rest =>
+  cases first : (ordered edits).head? with
+  | none => simp [separator, first] at inserted
+  | some edit =>
     refine ⟨edit, rfl, ?_⟩
     cases start : edit.start with
     | zero => rfl
-    | succ n =>
-      cases stream : rowCells slot.rows with
-      | nil =>
-        rw [order] at valid
-        have limit := valid.2.2.cursor_le
-        have bounds := valid.2.1
-        simp [Slot.content, stream] at limit
-        omega
-      | cons cell cells =>
-        cases cell <;>
-          simp [separator, editedCells, chunks, order, partition, Chunk.after,
-            stream, start, firstTextByte] at inserted
+    | succ n => simp [separator, first, start] at inserted
 
 theorem separator_origin (slot : Slot) (edits : List Splice)
     (valid : OrderedWithin slot.content.length 0 (ordered edits))
-    (inserted : separator takesSeparator slot (editedCells slot edits) ≠ []) :
+    (inserted : separator headReads slot (ordered edits).head? (editedCells slot edits) ≠ []) :
     ∃ edit ∈ edits, edit.start = 0 := by
-  obtain ⟨edit, first, start⟩ := separator_firstPatch takesSeparator slot edits valid inserted
+  obtain ⟨edit, first, start⟩ := separator_firstPatch headReads slot edits valid inserted
   exact ⟨edit, List.mem_mergeSort.mp (List.mem_of_head? first), start⟩
 
 /- Independent read-back and parser placement -/
@@ -756,13 +747,13 @@ theorem readSlot_placement (spec : SlotSpec) (slot : Slot)
 
 theorem readSlot_readBack (spec : SlotSpec) (slot : Slot) (edits : List Splice)
     (head : slot.rows ≠ [])
-    (placement : spec.placement = (plannedSlot takesSeparator slot edits).placement)
-    (lexical : Lexical (plannedSlot takesSeparator slot edits)) :
-    (readSlot spec (writeSlot takesSeparator slot edits)).content = applyContent slot.content edits := by
-  have h := (readSlot_placement spec (plannedSlot takesSeparator slot edits) placement lexical).1
+    (placement : spec.placement = (plannedSlot headReads slot edits).placement)
+    (lexical : Lexical (plannedSlot headReads slot edits)) :
+    (readSlot spec (writeSlot headReads slot edits)).content = applyContent slot.content edits := by
+  have h := (readSlot_placement spec (plannedSlot headReads slot edits) placement lexical).1
   unfold writeSlot Slot.content at *
   rw [h]
-  exact plan_content takesSeparator slot edits head
+  exact plan_content headReads slot edits head
 
 def linesEndInCR (lines : List Line) : Bool :=
   lines.getLast?.any (fun line => line.ending == .cr)
@@ -774,23 +765,23 @@ def planSlots (slots : List Slot) (edits : Nat → List Splice) (i : Nat) (prior
   match slots with
   | [] => []
   | slot :: rest =>
-    plannedSlot takesSeparator slot (edits i) priorCR :: planSlots rest edits (i + 1) slot.endsInCR
+    plannedSlot headReads slot (edits i) priorCR :: planSlots rest edits (i + 1) slot.endsInCR
 
 def planPage (page : Page) (edits : Nat → List Splice) : Page :=
-  { page with slots := planSlots takesSeparator page.slots edits 0 (linesEndInCR page.preamble) }
+  { page with slots := planSlots headReads page.slots edits 0 (linesEndInCR page.preamble) }
 
-def write (page : Page) (edits : Nat → List Splice) : Bytes := (planPage takesSeparator page edits).bytes
+def write (page : Page) (edits : Nat → List Splice) : Bytes := (planPage headReads page edits).bytes
 
 theorem renderPlan_nil (slots : List Slot) (i : Nat) (priorCR : Bool) :
-    (planSlots takesSeparator slots (fun _ => []) i priorCR).flatMap Slot.bytes = slots.flatMap Slot.bytes := by
+    (planSlots headReads slots (fun _ => []) i priorCR).flatMap Slot.bytes = slots.flatMap Slot.bytes := by
   induction slots generalizing i priorCR with
   | nil => rfl
   | cons slot rest ih =>
     simp only [planSlots, List.flatMap_cons, ih]
-    rw [← writeSlot, R1_slot takesSeparator slot priorCR]
+    rw [← writeSlot, R1_slot headReads slot priorCR]
 
 theorem R1 (outline : Outline) (bytes : Bytes) :
-    write takesSeparator (read outline bytes) (fun _ => []) = bytes := by
+    write headReads (read outline bytes) (fun _ => []) = bytes := by
   simpa [write, planPage, Page.bytes, renderPlan_nil] using R0 outline bytes
 
 /-- The new parser reports the same slot order, moved byte extents, levels, and removed widths.
@@ -824,13 +815,13 @@ theorem readSlots_placement (specs : List SlotSpec) (slots : List Slot) (tail : 
 
 theorem planSlots_content (slots : List Slot) (edits : Nat → List Splice) (i : Nat)
     (heads : ∀ slot ∈ slots, slot.rows ≠ []) (priorCR : Bool := false) :
-    layoutContent (planSlots takesSeparator slots edits i priorCR) =
+    layoutContent (planSlots headReads slots edits i priorCR) =
       (slots.zipIdx i).map (fun (slot, index) => (slot.level, applyContent slot.content (edits index))) := by
   induction slots generalizing i priorCR with
   | nil => rfl
   | cons head tail ih =>
     have h := heads head (by simp)
-    have hc := plan_content takesSeparator head (edits i) h priorCR
+    have hc := plan_content headReads head (edits i) h priorCR
     simp only [planSlots, layoutContent, List.zipIdx_cons, List.map_cons, List.cons.injEq,
       Prod.mk.injEq, plannedSlot_level, true_and]
     exact ⟨hc, ih _ (fun slot hs => heads slot (by simp [hs])) _⟩
@@ -838,13 +829,13 @@ theorem planSlots_content (slots : List Slot) (edits : Nat → List Splice) (i :
 /-- Levels and content in outline order after the physical write and an independent re-lex. -/
 theorem readBack (before after : Outline) (bytes : Bytes) (edits : Nat → List Splice)
     (heads : ∀ slot ∈ (read before bytes).slots, slot.rows ≠ [])
-    (moves : after.moves (planPage takesSeparator (read before bytes) edits))
-    (lexical : ∀ slot ∈ (planPage takesSeparator (read before bytes) edits).slots, Lexical slot) :
-    layoutContent (read after (write takesSeparator (read before bytes) edits)).slots =
+    (moves : after.moves (planPage headReads (read before bytes) edits))
+    (lexical : ∀ slot ∈ (planPage headReads (read before bytes) edits).slots, Lexical slot) :
+    layoutContent (read after (write headReads (read before bytes) edits)).slots =
       ((read before bytes).slots.zipIdx).map
         (fun (slot, i) => (slot.level, applyContent slot.content (edits i))) := by
-  rw [← planSlots_content takesSeparator _ _ _ heads (linesEndInCR (read before bytes).preamble)]
-  let plan := planPage takesSeparator (read before bytes) edits
+  rw [← planSlots_content headReads _ _ _ heads (linesEndInCR (read before bytes).preamble)]
+  let plan := planPage headReads (read before bytes) edits
   change layoutContent (read after plan.bytes).slots = layoutContent plan.slots
   rcases moves with ⟨preamble, slots⟩
   change after.preamble = (plan.preamble.flatMap Line.bytes).length at preamble
@@ -1250,11 +1241,11 @@ theorem encode_clean (slot : Slot) (edit : Splice) (indent : cleanBody slot.cont
       decide
   · exact ⟨h, fun eq => free (eq ▸ hb)⟩
 
-theorem lastBodyEmpty_separator (slot : Slot) (stream : List Cell) :
-    lastBodyEmpty (front slot.rows ++ separator takesSeparator slot stream).isEmpty stream =
+theorem lastBodyEmpty_separator (slot : Slot) (first : Option Splice) (stream : List Cell) :
+    lastBodyEmpty (front slot.rows ++ separator headReads slot first stream).isEmpty stream =
       lastBodyEmpty (front slot.rows).isEmpty stream := by
   cases stream with
-  | nil => simp [separator, firstTextByte, lastBodyEmpty]
+  | nil => cases first <;> simp [separator, firstRowText, lastBodyEmpty]
   | cons cell rest => cases cell <;> rfl
 
 /-- All quantities come from the snapshot and the requested splices. EOF here is end of slice. -/
@@ -1266,8 +1257,8 @@ def EmptySliceEnd (slot : Slot) (edits : List Splice) : Prop :=
 theorem editedSlot_shape (slot : Slot) (edits : List Splice)
     (head : slot.rows ≠ []) (lexical : Lexical slot) (indent : cleanBody slot.continuation)
     (free : CRFree edits) (priorCR : Bool) (edited : edits ≠ []) :
-    headOK priorCR (plannedSlot takesSeparator slot edits priorCR).lines ∧
-      (lexShape (plannedSlot takesSeparator slot edits priorCR).lines ↔ ¬ EmptySliceEnd slot edits) := by
+    headOK priorCR (plannedSlot headReads slot edits priorCR).lines ∧
+      (lexShape (plannedSlot headReads slot edits priorCR).lines ↔ ¬ EmptySliceEnd slot edits) := by
   cases edits with
   | nil => contradiction
   | cons edit rest =>
@@ -1277,27 +1268,28 @@ theorem editedSlot_shape (slot : Slot) (edits : List Splice)
     have streamClean : ∀ c ∈ stream, c.clean :=
       partition_all_after Cell.clean (encode slot) (rowCells slot.rows) 0 (ordered edits) cells
         (fun e he => encode_clean slot e indent (free e (List.mem_mergeSort.mp he)))
-    have sepClean : cleanBody (separator takesSeparator slot stream) := by
+    have sepClean : cleanBody (separator headReads slot (ordered edits).head? stream) := by
       unfold separator
       split
       · simp [cleanBody]
-      · split
+      · dsimp only
+        split
         · exact (cleanBody_single _).mpr (by decide)
         · simp [cleanBody]
     have layoutClean := (cleanBody_append ..).mpr ⟨layout, sepClean⟩
     have shape := (repair_shape priorCR _ (finalEnding slot.rows) stream slot.trailer
       layoutClean streamClean fits trailer)
     simpa [Slot.lines, plannedSlot, head, assemble_lines, EmptySliceEnd, lastBodyEmpty_separator,
-      edits, stream] using shape
+      edits, stream, editedCells, chunks] using shape
 
 theorem repairedShape_iff (slot : Slot) (edits : List Splice)
     (head : slot.rows ≠ []) (lexical : Lexical slot) (indent : cleanBody slot.continuation)
     (free : CRFree edits) (priorCR : Bool := false) :
-    lexShape (plannedSlot takesSeparator slot edits priorCR).lines ↔ edits = [] ∨ ¬ EmptySliceEnd slot edits := by
+    lexShape (plannedSlot headReads slot edits priorCR).lines ↔ edits = [] ∨ ¬ EmptySliceEnd slot edits := by
   by_cases edited : edits = []
   · simpa [edited] using (lexical_iff slot).mp lexical
   · simpa only [edited, false_or] using
-      (editedSlot_shape takesSeparator slot edits head lexical indent free priorCR edited).2
+      (editedSlot_shape headReads slot edits head lexical indent free priorCR edited).2
 
 theorem partition_put_mem (encode : Splice → List α) (source : List α) (cursor : Nat)
     (edits : List Splice) {edit : Splice} (mem : edit ∈ edits) {c : α} (put : c ∈ encode edit) :
@@ -1321,18 +1313,19 @@ theorem repairCells_text_mem (p : Bool) (stream : List Cell) (b : UInt8)
     · exact Or.inr (ih _ tail)
 
 theorem repairedShape_CRFree (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
-    (priorCR : Bool) (shape : lexShape (plannedSlot takesSeparator slot edits priorCR).lines) : CRFree edits := by
+    (priorCR : Bool) (shape : lexShape (plannedSlot headReads slot edits priorCR).lines) : CRFree edits := by
   cases edits with
   | nil => simp [CRFree]
   | cons edit rest =>
     let edits := edit :: rest
     let stream := editedCells slot edits
-    let layout := front slot.rows ++ separator takesSeparator slot stream
+    let layout := front slot.rows ++ separator headReads slot (ordered edits).head? stream
     let adjacent := priorCR && layout.isEmpty
     have physical : lexShape (streamLines layout
         (repairEnding (exitCR adjacent stream) (finalEnding slot.rows)) (repairCells adjacent stream) ++
           slot.trailer) := by
-      simpa [Slot.lines, plannedSlot, head, assemble_lines, edits, stream, layout, adjacent] using shape
+      simpa [Slot.lines, plannedSlot, head, assemble_lines, edits, stream, layout, adjacent,
+        editedCells, chunks] using shape
     have good := (stream_source false _ _ _ _ physical (by simp [headOK])).2.1
     intro e mem bad
     have literal : Cell.text cr ∈ encode slot e := by
@@ -1503,10 +1496,11 @@ theorem render_final_token (p : Bool) (stream : List Cell) (e : Ending) :
 theorem R3 (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
     (lexical : Lexical slot) (valid : OrderedWithin slot.content.length 0 (ordered edits))
     (priorCR : Bool := false) (guard : headOK priorCR slot.lines := by simp [headOK]) :
-    let layout := front slot.rows ++ separator takesSeparator slot (editedCells slot edits)
+    let layout := front slot.rows ++
+      separator headReads slot (ordered edits).head? (editedCells slot edits)
     let patches := bytePatches (priorCR && layout.isEmpty) (framedChunks slot edits)
     slot.bytes = front slot.rows ++ patches.flatMap Chunk.before ++ slot.trailer.flatMap Line.bytes ∧
-    writeSlot takesSeparator slot edits priorCR = layout ++ patches.flatMap Chunk.after ++ slot.trailer.flatMap Line.bytes ∧
+    writeSlot headReads slot edits priorCR = layout ++ patches.flatMap Chunk.after ++ slot.trailer.flatMap Line.bytes ∧
     (patches.map Chunk.cut).take (ordered edits).length =
       (ordered edits).map (fun e =>
         (slot.bytes.drop (slot.gap e.start)).take (slot.gap e.stop - slot.gap e.start)) := by
@@ -1515,7 +1509,8 @@ theorem R3 (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
   let original := stream ++ [final]
   let cs := framedChunks slot edits
   have before : cs.flatMap Chunk.before = original := partition_before _ _ _ _
-  let layout := front slot.rows ++ separator takesSeparator slot (editedCells slot edits)
+  let layout := front slot.rows ++
+    separator headReads slot (ordered edits).head? (editedCells slot edits)
   let adjacent := priorCR && layout.isEmpty
   have sourceSafe := (slot_source slot head lexical priorCR guard).2.2.2.2
   have safe : repairCells adjacent original = original := by
@@ -1552,14 +1547,13 @@ theorem R3 (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
     · subst edits
       have same : editedCells slot [] = stream := by
         simp [editedCells, chunks, ordered, partition, Chunk.after, stream]
-      have noSep : separator takesSeparator slot (editedCells slot []) = [] := by
-        rw [same]
-        exact separator_same takesSeparator slot
-      rw [noSep, R1_slot takesSeparator slot priorCR, ← hafter, suffix, same]
+      have noSep : separator headReads slot (ordered []).head? (editedCells slot []) = [] := by
+        simp [separator, ordered]
+      rw [noSep, R1_slot headReads slot priorCR, ← hafter, suffix, same]
       change slot.bytes = _ ++ [] ++ (repairCells adjacent original).flatMap Cell.raw ++ _
       rw [safe, slot_render]
       simp [original, stream, final, Cell.raw, List.append_assoc]
-    · rw [plan_render takesSeparator _ _ head edited priorCR, ← hafter, suffix, render_final_token]
+    · rw [plan_render headReads _ _ head edited priorCR, ← hafter, suffix, render_final_token]
       simp only [layout, adjacent, List.append_assoc]
   · have bounded : OrderedWithin original.length 0 (ordered edits) :=
       valid.limit_mono (by simp [original])
@@ -1653,7 +1647,8 @@ theorem bytePatches_prefix (p : Bool) (cs : List (Chunk Cell)) (i : Nat) :
 theorem R3_patchStart (slot : Slot) (edits : List Splice) (p : Bool)
     (valid : OrderedWithin slot.content.length 0 (ordered edits)) {i : Nat} {edit : Splice}
     (found : (ordered edits)[i]? = some edit) :
-    let layout := front slot.rows ++ separator takesSeparator slot (editedCells slot edits)
+    let layout := front slot.rows ++
+      separator headReads slot (ordered edits).head? (editedCells slot edits)
     let patches := bytePatches (p && layout.isEmpty) (framedChunks slot edits)
     (front slot.rows).length + (beforePatch patches i).length = slot.gap edit.start := by
   dsimp only
@@ -1683,17 +1678,17 @@ theorem bytePatches_terminal (p : Bool) (encode : Splice → List Cell) (source 
 theorem R3_separatorPatch (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
     (lexical : Lexical slot) (valid : OrderedWithin slot.content.length 0 (ordered edits))
     (priorCR : Bool) (guard : headOK priorCR slot.lines)
-    (inserted : separator takesSeparator slot (editedCells slot edits) ≠ []) :
-    let sep := separator takesSeparator slot (editedCells slot edits)
+    (inserted : separator headReads slot (ordered edits).head? (editedCells slot edits) ≠ []) :
+    let sep := separator headReads slot (ordered edits).head? (editedCells slot edits)
     let patches := bytePatches (priorCR && (front slot.rows ++ sep).isEmpty) (framedChunks slot edits)
     ∃ edit first rest, (ordered edits).head? = some edit ∧ edit.start = 0 ∧
       patches = first :: rest ∧ first.keep = [] ∧
-      writeSlot takesSeparator slot edits priorCR =
+      writeSlot headReads slot edits priorCR =
         front slot.rows ++ ({ first with put := sep ++ first.put } :: rest).flatMap Chunk.after ++
           slot.trailer.flatMap Line.bytes := by
   dsimp only
-  obtain ⟨edit, first, start⟩ := separator_firstPatch takesSeparator slot edits valid inserted
-  let sep := separator takesSeparator slot (editedCells slot edits)
+  obtain ⟨edit, first, start⟩ := separator_firstPatch headReads slot edits valid inserted
+  let sep := separator headReads slot (ordered edits).head? (editedCells slot edits)
   let layout := front slot.rows ++ sep
   let patches := bytePatches (priorCR && layout.isEmpty) (framedChunks slot edits)
   have keeps : patches.head?.map Chunk.keep = some [] := by
@@ -1703,8 +1698,8 @@ theorem R3_separatorPatch (slot : Slot) (edits : List Splice) (head : slot.rows 
       simp only [order, List.head?_cons, Option.some.injEq] at first
       subst e
       simp [patches, framedChunks, order, partition, start, bytePatches]
-  have render := (R3 takesSeparator slot edits head lexical valid priorCR guard).2.1
-  change writeSlot takesSeparator slot edits priorCR =
+  have render := (R3 headReads slot edits head lexical valid priorCR guard).2.1
+  change writeSlot headReads slot edits priorCR =
     layout ++ patches.flatMap Chunk.after ++ slot.trailer.flatMap Line.bytes at render
   cases patchesEq : patches with
   | nil => simp [patchesEq] at keeps
@@ -1825,18 +1820,18 @@ def renderSlots (slots : List Slot) (edits : Nat → List Splice) (i : Nat) (pri
   match slots with
   | [] => []
   | slot :: tail =>
-    writeSlot takesSeparator slot (edits i) priorCR ++ renderSlots tail edits (i + 1) slot.endsInCR
+    writeSlot headReads slot (edits i) priorCR ++ renderSlots tail edits (i + 1) slot.endsInCR
 
 theorem renderPlan_slots (slots : List Slot) (edits : Nat → List Splice) (i : Nat) (priorCR : Bool) :
-    (planSlots takesSeparator slots edits i priorCR).flatMap Slot.bytes = renderSlots takesSeparator slots edits i priorCR := by
+    (planSlots headReads slots edits i priorCR).flatMap Slot.bytes = renderSlots headReads slots edits i priorCR := by
   induction slots generalizing i priorCR with
   | nil => rfl
   | cons slot tail ih => simp [planSlots, renderSlots, writeSlot, ih]
 
 /-- Page-level composition with untouched preamble and unassigned tail. -/
 theorem write_page_ranges (page : Page) (edits : Nat → List Splice) :
-    write takesSeparator page edits =
-      page.preamble.flatMap Line.bytes ++ renderSlots takesSeparator page.slots edits 0 (linesEndInCR page.preamble) ++
+    write headReads page edits =
+      page.preamble.flatMap Line.bytes ++ renderSlots headReads page.slots edits 0 (linesEndInCR page.preamble) ++
         page.unassigned.flatMap Line.bytes := by
   simp [write, planPage, Page.bytes, renderPlan_slots]
 
@@ -1922,9 +1917,9 @@ theorem readSlots_lexical (specs : List SlotSpec) (file : Bytes) :
 theorem planSlots_lexical (old : List Slot) (edits : Nat → List Splice) (i : Nat)
     (source : ∀ slot ∈ old, Lexical slot)
     (changed : ∀ (slot : Slot) (index : Nat), (slot, index) ∈ old.zipIdx i →
-      edits index ≠ [] → ∀ priorCR, lexShape (plannedSlot takesSeparator slot (edits index) priorCR).lines)
+      edits index ≠ [] → ∀ priorCR, lexShape (plannedSlot headReads slot (edits index) priorCR).lines)
     (priorCR : Bool := false) :
-    ∀ slot ∈ planSlots takesSeparator old edits i priorCR, Lexical slot := by
+    ∀ slot ∈ planSlots headReads old edits i priorCR, Lexical slot := by
   induction old generalizing i priorCR with
   | nil => simp [planSlots]
   | cons head tail ih =>
@@ -1945,28 +1940,28 @@ theorem lexicalCheck_iff (slot : Slot) : lexicalCheck slot = true ↔ lexShape s
 /-- Only edited slots need a shape premise. The reader supplies lexical validity for untouched slots. -/
 theorem readBack_edits (before after : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible before file)
-    (moves : after.moves (planPage takesSeparator (read before file) edits))
+    (moves : after.moves (planPage headReads (read before file) edits))
     (shape : ∀ (slot : Slot) (i : Nat), (slot, i) ∈ (read before file).slots.zipIdx →
-      edits i ≠ [] → ∀ priorCR, lexShape (plannedSlot takesSeparator slot (edits i) priorCR).lines) :
-    layoutContent (read after (write takesSeparator (read before file) edits)).slots =
+      edits i ≠ [] → ∀ priorCR, lexShape (plannedSlot headReads slot (edits i) priorCR).lines) :
+    layoutContent (read after (write headReads (read before file) edits)).slots =
       ((read before file).slots.zipIdx).map
         (fun (slot, i) => (slot.level, applyContent slot.content (edits i))) := by
-  refine readBack takesSeparator before after file edits (admitted_heads _ _ _ admitted.2) moves ?_
-  exact planSlots_lexical takesSeparator _ _ _ (readSlots_lexical _ _) shape _
+  refine readBack headReads before after file edits (admitted_heads _ _ _ admitted.2) moves ?_
+  exact planSlots_lexical headReads _ _ _ (readSlots_lexical _ _) shape _
 
 def SlotInputOK (slot : Slot) (edits : List Splice) : Prop :=
   CRFree edits ∧ (edits = [] ∨ ¬ EmptySliceEnd slot edits)
 
 theorem slotCheck_exact (slot : Slot) (edits : List Splice) (priorCR : Bool)
     (head : slot.rows ≠ []) (lexical : Lexical slot) (indent : cleanBody slot.continuation) :
-    lexicalCheck (plannedSlot takesSeparator slot edits priorCR) = true ↔ SlotInputOK slot edits := by
+    lexicalCheck (plannedSlot headReads slot edits priorCR) = true ↔ SlotInputOK slot edits := by
   rw [lexicalCheck_iff]
   constructor
   · intro shape
-    have free := repairedShape_CRFree takesSeparator slot edits head priorCR shape
-    exact ⟨free, (repairedShape_iff takesSeparator slot edits head lexical indent free priorCR).mp shape⟩
+    have free := repairedShape_CRFree headReads slot edits head priorCR shape
+    exact ⟨free, (repairedShape_iff headReads slot edits head lexical indent free priorCR).mp shape⟩
   · rintro ⟨free, input⟩
-    exact (repairedShape_iff takesSeparator slot edits head lexical indent free priorCR).mpr input
+    exact (repairedShape_iff headReads slot edits head lexical indent free priorCR).mpr input
 
 def crFreeCheck (edits : List Splice) : Bool :=
   edits.all fun e => !e.replacement.contains cr
@@ -1975,15 +1970,15 @@ theorem crFreeCheck_exact (edits : List Splice) : crFreeCheck edits = true ↔ C
   simp [crFreeCheck, CRFree, List.all_eq_true]
 
 def checkedWriteSlot (slot : Slot) (edits : List Splice) (priorCR : Bool := false) : Option Bytes :=
-  let candidate := plannedSlot takesSeparator slot edits priorCR
+  let candidate := plannedSlot headReads slot edits priorCR
   if crFreeCheck edits && lexicalCheck candidate then some candidate.bytes else none
 
 theorem checkedWriteSlot_exact (slot : Slot) (edits : List Splice) (priorCR : Bool)
     (head : slot.rows ≠ []) (lexical : Lexical slot) (indent : cleanBody slot.continuation) :
-    checkedWriteSlot takesSeparator slot edits priorCR = some (writeSlot takesSeparator slot edits priorCR) ↔
+    checkedWriteSlot headReads slot edits priorCR = some (writeSlot headReads slot edits priorCR) ↔
       SlotInputOK slot edits := by
   simp only [checkedWriteSlot, writeSlot, Bool.and_eq_true, ite_eq_left_iff, reduceCtorEq,
-    imp_false, Classical.not_not, crFreeCheck_exact, slotCheck_exact takesSeparator _ _ _ head lexical indent]
+    imp_false, Classical.not_not, crFreeCheck_exact, slotCheck_exact headReads _ _ _ head lexical indent]
   exact ⟨And.right, fun h => ⟨h.1, h⟩⟩
 
 theorem admitted_continuations (file : Bytes) (specs : List SlotSpec) (pos : Nat)
@@ -2006,14 +2001,14 @@ def PageInputOK (page : Page) (edits : Nat → List Splice) : Prop :=
 theorem planSlots_check_exact (slots : List Slot) (edits : Nat → List Splice) (i : Nat)
     (priorCR : Bool)
     (source : ∀ slot ∈ slots, slot.rows ≠ [] ∧ Lexical slot ∧ cleanBody slot.continuation) :
-    (planSlots takesSeparator slots edits i priorCR).all lexicalCheck = true ↔
+    (planSlots headReads slots edits i priorCR).all lexicalCheck = true ↔
       ∀ slot j, (slot, j) ∈ slots.zipIdx i → SlotInputOK slot (edits j) := by
   induction slots generalizing i priorCR with
   | nil => simp [planSlots]
   | cons slot tail ih =>
     obtain ⟨head, lexical, indent⟩ := source slot (by simp)
     have rest := ih (i + 1) slot.endsInCR (fun s h => source s (by simp [h]))
-    simp only [planSlots, List.all_cons, Bool.and_eq_true, slotCheck_exact takesSeparator _ _ _ head lexical indent,
+    simp only [planSlots, List.all_cons, Bool.and_eq_true, slotCheck_exact headReads _ _ _ head lexical indent,
       rest, List.zipIdx_cons, List.mem_cons]
     constructor
     · rintro ⟨current, other⟩ s j (eq | later)
@@ -2025,7 +2020,7 @@ theorem planSlots_check_exact (slots : List Slot) (edits : Nat → List Splice) 
 
 theorem pageCheck_exact (outline : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible outline file) :
-    (planPage takesSeparator (read outline file) edits).slots.all lexicalCheck = true ↔
+    (planPage headReads (read outline file) edits).slots.all lexicalCheck = true ↔
       PageInputOK (read outline file) edits := by
   apply planSlots_check_exact
   intro slot mem
@@ -2035,46 +2030,46 @@ theorem pageCheck_exact (outline : Outline) (file : Bytes) (edits : Nat → List
 /-- All-or-nothing file-layer gate. Placements and in-bounds disjoint splices are supplied by
     the callers to this layer. Only edits addressed to existing slots participate. -/
 def checkedWrite (page : Page) (edits : Nat → List Splice) : Option Bytes :=
-  let plan := planPage takesSeparator page edits
+  let plan := planPage headReads page edits
   if (page.slots.zipIdx.all fun (_, i) => crFreeCheck (edits i)) && plan.slots.all lexicalCheck then
     some plan.bytes
   else none
 
 theorem checkedWrite_exact (outline : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible outline file) :
-    checkedWrite takesSeparator (read outline file) edits = some (write takesSeparator (read outline file) edits) ↔
+    checkedWrite headReads (read outline file) edits = some (write headReads (read outline file) edits) ↔
       PageInputOK (read outline file) edits := by
   simp only [checkedWrite, write, Bool.and_eq_true, ite_eq_left_iff, reduceCtorEq, imp_false, Classical.not_not,
-    pageCheck_exact takesSeparator outline file edits admitted, List.all_eq_true, crFreeCheck_exact]
+    pageCheck_exact headReads outline file edits admitted, List.all_eq_true, crFreeCheck_exact]
   exact ⟨And.right, fun h => ⟨fun (slot, i) mem => (h slot i mem).1, h⟩⟩
 
 theorem checkedWrite_commute (page : Page) {edits other : Nat → List Splice}
     (perm : ∀ i, (edits i).Perm (other i)) (disjoint : ∀ i, (edits i).Pairwise separate) :
-    checkedWrite takesSeparator page edits = checkedWrite takesSeparator page other := by
+    checkedWrite headReads page edits = checkedWrite headReads page other := by
   have plans (slots : List Slot) (i : Nat) (p : Bool) :
-      planSlots takesSeparator slots edits i p = planSlots takesSeparator slots other i p := by
+      planSlots headReads slots edits i p = planSlots headReads slots other i p := by
     induction slots generalizing i p with
     | nil => rfl
     | cons slot tail ih =>
-      simp [planSlots, plannedSlot_commute takesSeparator slot (perm i) (disjoint i) p, ih]
+      simp [planSlots, plannedSlot_commute headReads slot (perm i) (disjoint i) p, ih]
   have check (i : Nat) : crFreeCheck (edits i) = crFreeCheck (other i) := (perm i).all_eq
   simp only [checkedWrite, planPage, plans, check]
 
 theorem checkedWrite_refuses (outline : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible outline file) :
-    checkedWrite takesSeparator (read outline file) edits = none ↔ ¬PageInputOK (read outline file) edits := by
-  rw [← checkedWrite_exact takesSeparator outline file edits admitted]
+    checkedWrite headReads (read outline file) edits = none ↔ ¬PageInputOK (read outline file) edits := by
+  rw [← checkedWrite_exact headReads outline file edits admitted]
   simp [checkedWrite, write]
 
 theorem readBack_checked (before after : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible before file)
-    (moves : after.moves (planPage takesSeparator (read before file) edits))
+    (moves : after.moves (planPage headReads (read before file) edits))
     (input : PageInputOK (read before file) edits) :
-    layoutContent (read after (write takesSeparator (read before file) edits)).slots =
+    layoutContent (read after (write headReads (read before file) edits)).slots =
       ((read before file).slots.zipIdx).map
         (fun (slot, i) => (slot.level, applyContent slot.content (edits i))) := by
-  have checked := (pageCheck_exact takesSeparator before file edits admitted).mpr input
-  refine readBack takesSeparator before after file edits (admitted_heads _ _ _ admitted.2) moves ?_
+  have checked := (pageCheck_exact headReads before file edits admitted).mpr input
+  refine readBack headReads before after file edits (admitted_heads _ _ _ admitted.2) moves ?_
   intro slot mem
   exact (lexical_iff _).mpr ((lexicalCheck_iff _).mp (List.all_eq_true.mp checked slot mem))
 
@@ -2123,12 +2118,12 @@ theorem lexical_headOK_bytes (slot : Slot) (p : Bool) (lexical : Lexical slot) :
       simp [Line.bytes, h.1]
 
 theorem endsInCR_preserved (slot : Slot) (edits : List Splice) (p : Bool) :
-    (plannedSlot takesSeparator slot edits p).endsInCR = slot.endsInCR := by
+    (plannedSlot headReads slot edits p).endsInCR = slot.endsInCR := by
   unfold plannedSlot
   split
   · rfl
   · let stream := editedCells slot edits
-    let layout := front slot.rows ++ separator takesSeparator slot stream
+    let layout := front slot.rows ++ separator headReads slot (ordered edits).head? stream
     let adjacent := p && layout.isEmpty
     let e := repairEnding (exitCR adjacent stream) (finalEnding slot.rows)
     change linesEndInCR ((assembleRows layout e (repairCells adjacent stream)).map Piece.line ++
@@ -2218,35 +2213,35 @@ theorem read_joins (outline : Outline) (file : Bytes) (admitted : Admissible out
 theorem repairedSlot_headOK (slot : Slot) (edits : List Splice) (head : slot.rows ≠ [])
     (lexical : Lexical slot) (indent : cleanBody slot.continuation) (free : CRFree edits)
     (p : Bool) (sourceGuard : headOK p slot.lines) :
-    headOK p (plannedSlot takesSeparator slot edits p).lines := by
+    headOK p (plannedSlot headReads slot edits p).lines := by
   by_cases edited : edits = []
   · simpa [edited] using sourceGuard
-  · exact (editedSlot_shape takesSeparator slot edits head lexical indent free p edited).1
+  · exact (editedSlot_shape headReads slot edits head lexical indent free p edited).1
 
 theorem planSlots_joins (slots : List Slot) (edits : Nat → List Splice) (i : Nat) (p : Bool)
     (source : ∀ slot ∈ slots, slot.rows ≠ [] ∧ Lexical slot ∧ cleanBody slot.continuation)
     (joins : joinsSafe p slots)
     (free : ∀ slot j, (slot, j) ∈ slots.zipIdx i → CRFree (edits j)) :
-    joinsSafe p (planSlots takesSeparator slots edits i p) := by
+    joinsSafe p (planSlots headReads slots edits i p) := by
   induction slots generalizing i p with
   | nil => trivial
   | cons slot tail ih =>
     obtain ⟨head, lexical, indent⟩ := source slot (by simp)
     obtain ⟨guard, rest⟩ := joins
-    change headOK p (plannedSlot takesSeparator slot (edits i) p).lines ∧
-      joinsSafe (plannedSlot takesSeparator slot (edits i) p).endsInCR
-        (planSlots takesSeparator tail edits (i + 1) slot.endsInCR)
+    change headOK p (plannedSlot headReads slot (edits i) p).lines ∧
+      joinsSafe (plannedSlot headReads slot (edits i) p).endsInCR
+        (planSlots headReads tail edits (i + 1) slot.endsInCR)
     rw [endsInCR_preserved]
-    exact ⟨repairedSlot_headOK takesSeparator slot _ head lexical indent (free slot i (by simp)) p guard,
+    exact ⟨repairedSlot_headOK headReads slot _ head lexical indent (free slot i (by simp)) p guard,
       ih _ _ (fun s hs => source s (by simp [hs])) rest (fun s j hs => free s j (by simp [hs]))⟩
 
 theorem repairedPage_joins (outline : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible outline file) (input : PageInputOK (read outline file) edits) :
-    joinsSafe (linesEndInCR (read outline file).preamble) (planPage takesSeparator (read outline file) edits).slots := by
+    joinsSafe (linesEndInCR (read outline file).preamble) (planPage headReads (read outline file) edits).slots := by
   have source (slot : Slot) (mem : slot ∈ (read outline file).slots) :=
     And.intro (admitted_heads _ _ _ admitted.2 slot mem)
       (And.intro (readSlots_lexical _ _ slot mem) (admitted_continuations _ _ _ admitted.2 slot mem))
-  exact planSlots_joins takesSeparator _ _ _ _ source (read_joins _ _ admitted)
+  exact planSlots_joins headReads _ _ _ _ source (read_joins _ _ admitted)
     (fun slot i mem => (input slot i mem).1)
 
 /-- The raw bytes on either side of every outline cut cannot form a split CRLF. -/
@@ -2275,9 +2270,9 @@ theorem joinsSafe_bytes (slots : List Slot) (previous : Option UInt8)
 theorem repairedPage_byteJoins (outline : Outline) (file : Bytes) (edits : Nat → List Splice)
     (admitted : Admissible outline file) (input : PageInputOK (read outline file) edits) :
     byteJoinsSafe ((read outline file).preamble.flatMap Line.bytes).getLast?
-      (planPage takesSeparator (read outline file) edits).slots := by
-  have checked := (pageCheck_exact takesSeparator outline file edits admitted).mpr input
-  have safe := repairedPage_joins takesSeparator outline file edits admitted input
+      (planPage headReads (read outline file) edits).slots := by
+  have checked := (pageCheck_exact headReads outline file edits admitted).mpr input
+  have safe := repairedPage_joins headReads outline file edits admitted input
   have preamble := linesEndInCR_exact (read outline file).preamble (lex_shape _)
   apply joinsSafe_bytes
   · intro slot mem
@@ -2302,10 +2297,10 @@ theorem readSlots_segments (specs : List SlotSpec) (slots : List Slot) (tail : B
 theorem readBack_segments (after : Outline) (page : Page) (edits : Nat → List Splice)
     (preamble : after.preamble = (page.preamble.flatMap Line.bytes).length)
     (widths : after.slots.map SlotSpec.width =
-      (planPage takesSeparator page edits).slots.map (fun slot => slot.bytes.length)) :
-    (read after (write takesSeparator page edits)).slots =
-      List.zipWith (fun spec slot => readSlot spec slot.bytes) after.slots (planPage takesSeparator page edits).slots := by
-  let plan := planPage takesSeparator page edits
+      (planPage headReads page edits).slots.map (fun slot => slot.bytes.length)) :
+    (read after (write headReads page edits)).slots =
+      List.zipWith (fun spec slot => readSlot spec slot.bytes) after.slots (planPage headReads page edits).slots := by
+  let plan := planPage headReads page edits
   change (read after plan.bytes).slots = _
   change after.preamble = (plan.preamble.flatMap Line.bytes).length at preamble
   rw [read, Page.bytes, preamble]
@@ -2322,11 +2317,22 @@ theorem readBack_untouched (previous next : SlotSpec) (bytes : Bytes)
 
 section Witnesses
 
-private def parserSeparator (b : UInt8) : Bool := b == space || b == 9 || b == 12
+private def headingBoundary : Bytes → Bool
+  | [] => true
+  | b :: _ => b == space || b == 9 || b == 12
+
+-- Local marker and structural-trim rules of lsdoc v0.5.13, on bare and
+-- once-padded Markdown dash and Org star layouts. Page placement is separate.
+private def parserHead (layout text : Bytes) : Bool :=
+  layout.getLast? == some space ||
+    (text.head? != some space &&
+      (headingBoundary text ||
+        (layout.getLast? == some 45 && text.head? == some 35 &&
+          headingBoundary (text.dropWhile (· == 35)))))
 
 private def bareHeader (bytes : Bytes) : Outline := ⟨0, [⟨bytes.length, 1, [1], true, []⟩]⟩
 private def checkedBareHeader (bytes : Bytes) (edits : List Splice) : Option Bytes :=
-  checkedWrite parserSeparator (read (bareHeader bytes) bytes) (fun _ => edits)
+  checkedWrite parserHead (read (bareHeader bytes) bytes) (fun _ => edits)
 private def insertX : List Splice := [⟨0, 0, [120]⟩]
 
 -- Markdown "-\tTitle", Org "*\fTitle", and Markdown "-# Heading".
@@ -2356,8 +2362,9 @@ example : checkedBareHeader orgFormFeed insertX = some [42, 32, 120, 12, 84, 105
 example : checkedBareHeader mdHeading insertX = some [45, 32, 120, 35, 32, 72, 101, 97, 100, 105, 110, 103] :=
   by decide +kernel
 
--- A recognized new first byte needs no added space, and an equal first byte stays bare.
-example : checkedBareHeader [45, 35, 10] [⟨0, 1, [32]⟩] = some [45, 32, 10] ∧
+-- One ASCII space would be consumed as layout, while tab and form feed remain text.
+-- Doubling the hash run here still leaves a Markdown bullet with exact text.
+example : checkedBareHeader [45, 35, 10] [⟨0, 1, [32]⟩] = some [45, 32, 32, 10] ∧
     checkedBareHeader [45, 35, 10] [⟨0, 1, [9]⟩] = some [45, 9, 10] ∧
     checkedBareHeader [42, 35, 10] [⟨0, 1, [12]⟩] = some [42, 12, 10] ∧
     checkedBareHeader [45, 35, 10] [⟨0, 0, [35]⟩] = some [45, 35, 35, 10] := by decide +kernel
@@ -2366,12 +2373,49 @@ example : checkedBareHeader [45, 35, 10] [⟨0, 1, [32]⟩] = some [45, 32, 10] 
 example : checkedBareHeader [45, 35, 88, 10] [⟨0, 1, []⟩] = some [45, 32, 88, 10] :=
   by decide +kernel
 
+-- "-# H\n** bt ffvac\n\t\t\t> lf d\r\n", replacing the first four
+-- content bytes (including LF) with "#". Two continuation tabs are layout.
+private def mdRunBody : Bytes := [42, 42, 32, 98, 116, 32, 102, 102, 118, 97, 99]
+private def mdRunLastText : Bytes := [9, 62, 32, 108, 102, 32, 100]
+private def mdRunTail : Bytes := [10, 9, 9] ++ mdRunLastText ++ [13, 10]
+private def mdRunFile : Bytes := [45, 35, 32, 72, 10] ++ mdRunBody ++ mdRunTail
+private def mdRunWritten : Bytes := [45, 32, 35] ++ mdRunBody ++ mdRunTail
+private def mdRunOutline : Outline := ⟨0, [⟨28, 1, [1, 0, 2], true, [32, 32]⟩]⟩
+private def mdRunNext : Outline := ⟨0, [⟨26, 1, [2, 2], false, [32, 32]⟩]⟩
+
+example : checkedWrite parserHead (read mdRunOutline mdRunFile) (fun _ => [⟨0, 4, [35]⟩]) =
+      some mdRunWritten ∧
+    layoutContent (read mdRunNext mdRunWritten).slots =
+      [(1, [35] ++ mdRunBody ++ [10] ++ mdRunLastText)] ∧
+    parserHead [45] ([35] ++ mdRunBody) = false ∧
+    parserHead [45, 32] ([35] ++ mdRunBody) = true := by decide +kernel
+
+-- "*\n", inserting " é " (UTF-8). The first space is layout and the second is text.
+private def orgLeadingText : Bytes := [32, 195, 169, 32]
+private def orgLeadingWritten : Bytes := [42, 32] ++ orgLeadingText ++ [10]
+
+example : checkedBareHeader [42, 10] [⟨0, 0, orgLeadingText⟩] = some orgLeadingWritten ∧
+    layoutContent (read ⟨0, [⟨7, 1, [2], false, []⟩]⟩ orgLeadingWritten).slots =
+      [(1, orgLeadingText)] ∧
+    parserHead [42] orgLeadingText = false ∧
+    parserHead [42, 32] orgLeadingText = true := by decide +kernel
+
+-- A first-row edit at offset 1 cannot put a space at the earlier gap 0.
+example : checkedBareHeader [45, 35, 32, 72, 10] [⟨1, 2, [120]⟩] =
+      some [45, 35, 120, 72, 10] ∧
+    parserHead [45] [35, 120, 72] = false ∧
+    parserHead [45, 32] [35, 120, 72] = true := by decide +kernel
+
+-- Identical first-row text preserves layout even with an arbitrary predicate.
+example : checkedWrite (fun _ _ => false) (read (bareHeader mdTab) mdTab)
+      (fun _ => [⟨0, 1, [9]⟩]) = some mdTab := by decide +kernel
+
 private def orgTrailer : SlotSpec := ⟨5, 1, [2], false, []⟩
 
 -- "* T\\n\\n" has one content row and one physical trailer row.
 example : (readSlot orgTrailer [42, 32, 84, 10, 10]).content = [84] ∧
     (readSlot orgTrailer [42, 32, 84, 10, 10]).trailer = [⟨[], .lf⟩] ∧
-    writeSlot parserSeparator (readSlot orgTrailer [42, 32, 84, 10, 10]) [⟨0, 1, [85]⟩]
+    writeSlot parserHead (readSlot orgTrailer [42, 32, 84, 10, 10]) [⟨0, 1, [85]⟩]
       = [42, 32, 85, 10, 10] := by decide +kernel
 
 -- An Org page "* A\rline\n* Next\n": the first slot's content "A\nline" (its
@@ -2381,22 +2425,22 @@ private def orgCR : Outline := ⟨0, [⟨9, 1, [2, 0], false, []⟩, ⟨7, 1, [2
 private def orgCRFile : Bytes := [42, 32, 65, 13, 108, 105, 110, 101, 10, 42, 32, 78, 101, 120, 116, 10]
 private def orgCREdit (i : Nat) : List Splice := if i = 0 then [⟨1, 6, [10]⟩] else []
 
-example : write parserSeparator (read orgCR orgCRFile) orgCREdit =
+example : write parserHead (read orgCR orgCRFile) orgCREdit =
     [42, 32, 65, 10, 10, 42, 32, 78, 101, 120, 116, 10] := by decide +kernel
 
 example : layoutContent (read ⟨0, [⟨5, 1, [2, 0], false, []⟩, ⟨7, 1, [2], false, []⟩]⟩
-    (write parserSeparator (read orgCR orgCRFile) orgCREdit)).slots =
+    (write parserHead (read orgCR orgCRFile) orgCREdit)).slots =
       [(1, [65, 10]), (1, [78, 101, 120, 116])] := by decide +kernel
 
 -- "-\\n- N\\n" with "x" inserted into its bare first header.
 private def bareOutline : Outline := ⟨0, [⟨2, 1, [1], true, []⟩, ⟨4, 1, [2], false, []⟩]⟩
 private def bareEdits (i : Nat) : List Splice := if i = 0 then [⟨0, 0, [120]⟩] else []
 
-example : write parserSeparator (read bareOutline [45, 10, 45, 32, 78, 10]) bareEdits =
+example : write parserHead (read bareOutline [45, 10, 45, 32, 78, 10]) bareEdits =
     [45, 32, 120, 10, 45, 32, 78, 10] := by decide +kernel
 
 example : layoutContent (read ⟨0, [⟨4, 1, [2], false, []⟩, ⟨4, 1, [2], false, []⟩]⟩
-    (write parserSeparator (read bareOutline [45, 10, 45, 32, 78, 10]) bareEdits)).slots =
+    (write parserHead (read bareOutline [45, 10, 45, 32, 78, 10]) bareEdits)).slots =
       [(1, [120]), (1, [78])] := by decide +kernel
 
 -- Three real break kinds and a nonempty EOF row in one file.
@@ -2443,13 +2487,13 @@ example : oldWriteSlot emptyHeader trailingLF = [45, 10] ∧
     applyContent emptyHeader.content trailingLF = [10] := by decide +kernel
 
 -- The old emitted-LF collision is repaired by a one-byte extension to the insertion.
-example : checkedWriteSlot parserSeparator fuseSlot fuseEdit = some [45, 13, 13, 10, 88] ∧
-    (readSlot ⟨5, 1, [1, 0, 0], true, []⟩ (writeSlot parserSeparator fuseSlot fuseEdit)).content =
+example : checkedWriteSlot parserHead fuseSlot fuseEdit = some [45, 13, 13, 10, 88] ∧
+    (readSlot ⟨5, 1, [1, 0, 0], true, []⟩ (writeSlot parserHead fuseSlot fuseEdit)).content =
       applyContent fuseSlot.content fuseEdit := by decide +kernel
 
 -- Deleting X retains both original breaks and puts CR at the deletion's right endpoint.
-example : checkedWriteSlot parserSeparator eraseSlot eraseEdit = some [45, 13, 13, 10] ∧
-    (readSlot ⟨4, 1, [1, 0], true, []⟩ (writeSlot parserSeparator eraseSlot eraseEdit)).content =
+example : checkedWriteSlot parserHead eraseSlot eraseEdit = some [45, 13, 13, 10] ∧
+    (readSlot ⟨4, 1, [1, 0], true, []⟩ (writeSlot parserHead eraseSlot eraseEdit)).content =
       applyContent eraseSlot.content eraseEdit := by decide +kernel
 
 private theorem order_two (a b : Splice) :
@@ -2461,9 +2505,9 @@ private def touchSlot : Slot := readSlot ⟨5, 1, [1, 0], false, []⟩ [45, 13, 
 private def touchEdits : List Splice := [⟨1, 2, []⟩, ⟨2, 3, []⟩]
 
 example : ((bytePatches false (framedChunks touchSlot touchEdits)).map Chunk.put) = [[], [13], []] ∧
-    checkedWriteSlot parserSeparator touchSlot touchEdits = some [45, 13, 13, 10] ∧
-    checkedWriteSlot parserSeparator touchSlot touchEdits.reverse = some [45, 13, 13, 10] := by
-  simp only [checkedWriteSlot, plannedSlot, editedCells, chunks, framedChunks, touchEdits,
+    checkedWriteSlot parserHead touchSlot touchEdits = some [45, 13, 13, 10] ∧
+    checkedWriteSlot parserHead touchSlot touchEdits.reverse = some [45, 13, 13, 10] := by
+  simp only [checkedWriteSlot, plannedSlot, framedChunks, touchEdits,
     List.reverse_cons, List.reverse_nil, List.nil_append, List.singleton_append, order_two]
   decide +kernel
 
@@ -2471,19 +2515,19 @@ example : ((bytePatches false (framedChunks touchSlot touchEdits)).map Chunk.put
 private def aroundCR : Slot := readSlot ⟨4, 1, [1, 0], false, []⟩ [45, 65, 13, 88]
 private def aroundEdits : List Splice := [⟨1, 1, [10]⟩, ⟨2, 2, [10]⟩]
 
-example : checkedWriteSlot parserSeparator aroundCR aroundEdits = some [45, 65, 10, 13, 13, 10, 88] ∧
-    checkedWriteSlot parserSeparator aroundCR aroundEdits.reverse = some [45, 65, 10, 13, 13, 10, 88] := by
-  simp only [checkedWriteSlot, plannedSlot, editedCells, chunks, aroundEdits,
+example : checkedWriteSlot parserHead aroundCR aroundEdits = some [45, 65, 10, 13, 13, 10, 88] ∧
+    checkedWriteSlot parserHead aroundCR aroundEdits.reverse = some [45, 65, 10, 13, 13, 10, 88] := by
+  simp only [checkedWriteSlot, plannedSlot, aroundEdits,
     List.reverse_cons, List.reverse_nil, List.nil_append, List.singleton_append, order_two]
   decide +kernel
 
-example : checkedWriteSlot parserSeparator emptyHeader trailingLF = none ∧
-    checkedWriteSlot parserSeparator emptyHeader [⟨0, 0, [13]⟩] = none ∧
-    checkedWriteSlot parserSeparator { emptyHeader with continuation := [32] } trailingLF =
+example : checkedWriteSlot parserHead emptyHeader trailingLF = none ∧
+    checkedWriteSlot parserHead emptyHeader [⟨0, 0, [13]⟩] = none ∧
+    checkedWriteSlot parserHead { emptyHeader with continuation := [32] } trailingLF =
       some [45, 10, 32] := by decide +kernel
 
 -- With no layout on the first and only row, a deletion can empty it without inserting LF.
-example : checkedWriteSlot parserSeparator (readSlot ⟨1, 1, [0], false, []⟩ [88]) [⟨0, 1, []⟩] =
+example : checkedWriteSlot parserHead (readSlot ⟨1, 1, [0], false, []⟩ [88]) [⟨0, 1, []⟩] =
     none := by decide +kernel
 
 -- A nonfinal slice can lose its last row at a mid-line outline cut.
@@ -2494,7 +2538,7 @@ example : Admissible midSlice [88, 89, 10] := by
   simp [Admissible, midSlice, admitSlots, slotAdmissible, safeCut, atLineStart, cleanBody,
     lex, prependByte, cr, lf]
 
-example : checkedWrite parserSeparator (read midSlice [88, 89, 10]) eraseFirst = none := by decide +kernel
+example : checkedWrite parserHead (read midSlice [88, 89, 10]) eraseFirst = none := by decide +kernel
 
 -- The same collision can straddle an outline cut. Only the right slice acquires a byte.
 private def seamOutline : Outline := ⟨1, [⟨2, 1, [0], false, []⟩]⟩
@@ -2504,17 +2548,17 @@ example : Admissible seamOutline [13, 88, 10] := by
     lex, prependByte, cr, lf]
 
 example : oldWriteSlot (readSlot ⟨2, 1, [0], false, []⟩ [88, 10]) (eraseFirst 0) = [10] ∧
-    checkedWrite parserSeparator (read seamOutline [13, 88, 10]) eraseFirst = some [13, 13, 10] ∧
-    lex (write parserSeparator (read seamOutline [13, 88, 10]) eraseFirst) = [⟨[], .cr⟩, ⟨[], .crlf⟩] :=
+    checkedWrite parserHead (read seamOutline [13, 88, 10]) eraseFirst = some [13, 13, 10] ∧
+    lex (write parserHead (read seamOutline [13, 88, 10]) eraseFirst) = [⟨[], .cr⟩, ⟨[], .crlf⟩] :=
   by decide +kernel
 
 -- Adjacent ranges use one snapshot, including an insertion at a replacement boundary.
-#guard writeSlot parserSeparator (readSlot ⟨5, 1, [2], false, []⟩ [45, 32, 65, 66, 67])
+#guard writeSlot parserHead (readSlot ⟨5, 1, [2], false, []⟩ [45, 32, 65, 66, 67])
     [⟨1, 2, [89]⟩, ⟨0, 1, [88]⟩, ⟨1, 1, [33]⟩] == [45, 32, 88, 33, 89, 67]
 
 -- Empty file and no-op writes also traverse the real lexer.
-example : write parserSeparator (read ⟨0, []⟩ []) (fun _ => []) = [] := by decide +kernel
-example : writeSlot parserSeparator emptyHeader [] = [45] := by decide +kernel
+example : write parserHead (read ⟨0, []⟩ []) (fun _ => []) = [] := by decide +kernel
+example : writeSlot parserHead emptyHeader [] = [45] := by decide +kernel
 
 -- A cut into a line body preserves bytes and gives the suffix header no removed prefix.
 example : (read ⟨2, [⟨3, 1, [0], false, []⟩]⟩ [97, 98, 99, 100, 10]).bytes =

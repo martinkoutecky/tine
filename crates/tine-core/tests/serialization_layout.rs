@@ -32,3 +32,22 @@ fn parse_and_layout_share_the_outline_for_all_line_endings() {
         }
     }
 }
+
+/// Save preparation reads the page's lines once: `parse_with_opts` asks the
+/// allocator for no more than `parse` does plus the knobs, on a block of
+/// 100,000 continuation lines, with LF, CRLF and bare-CR endings.
+#[test]
+fn layout_detection_reads_the_lines_the_reader_already_has() {
+    use crate::og_p10_journal_date_cost::requested_bytes;
+    let block = format!("- a\n{}", "  x\n".repeat(100_000));
+    for eol in ["\n", "\r\n", "\r"] {
+        let input = block.replace('\n', eol);
+        let (_, parse) = requested_bytes(|| doc::parse(&input));
+        let (_, with_opts) = requested_bytes(|| doc::parse_with_opts(&input));
+        println!("{eol:?}: parse {parse} bytes, parse_with_opts {with_opts}");
+        assert!(
+            with_opts <= parse + 1024,
+            "{eol:?}: parse_with_opts asked for {with_opts} bytes, parse {parse}"
+        );
+    }
+}
