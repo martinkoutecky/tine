@@ -26,7 +26,7 @@ mod splice;
 
 use std::ops::Range;
 
-pub use splice::{apply, check_planned_rows, Splice, SpliceError};
+pub use splice::{apply, check_planned_rows, takes_separator, Splice, SpliceError};
 
 /// Which outline grammar the page is read with.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,6 +154,7 @@ pub struct Slot {
     dedent: usize,
     indent: usize,
     lead: usize,
+    bare: bool,
     opaque: bool,
 }
 
@@ -183,6 +184,14 @@ impl Slot {
     /// with no bound).
     pub fn indent(&self) -> usize {
         self.indent
+    }
+    /// Whether the header's structural prefix ends at its marker (`-`, `**`,
+    /// `-<tab>Title`, `-# Heading`): lsdoc's `OutlineHeader::structural_prefix`
+    /// (`src/outline.rs`) takes one ASCII space after the marker when there is
+    /// one, so a bare header's content starts right after the marker. An
+    /// unbulleted Markdown heading has an empty prefix and is never bare.
+    pub fn bare(&self) -> bool {
+        self.bare
     }
     /// Whether two outline headers fell into this slot because lsdoc reported
     /// them without disjoint byte ranges; its content is text only.
@@ -383,6 +392,9 @@ impl<'a> PageText<'a> {
             dedent,
             indent: removed_indent(&bytes[native..physical.text_end], usize::MAX),
             lead: removed_indent(&bytes[start..text_start], dedent),
+            bare: kind != HeaderKind::MarkdownHeading
+                && start < text_start
+                && bytes[text_start - 1] != b' ',
             opaque: false,
         })
     }
@@ -414,6 +426,16 @@ impl<'a> PageText<'a> {
     /// The physical layer without the text.
     pub fn into_layout(self) -> Layout {
         self.layout
+    }
+
+    /// The layout in front of a line a write adds to slot `n`: the header's
+    /// leading layout, then spaces up to the slot's dedent (`"  "` under
+    /// `- a`, nothing under `* a`). O(that layout).
+    pub fn continuation(&self, n: usize) -> String {
+        let slot = &self.slots[n];
+        let mut out = self.text[slot.start..slot.start + slot.lead].to_string();
+        out.extend(std::iter::repeat_n(' ', slot.dedent - slot.lead));
+        out
     }
 
     /// Slot `n`'s content: its text pieces joined by `"\n"`. O(its bytes).
@@ -641,6 +663,15 @@ impl ContentMap<'_> {
             return Break::Eof;
         }
         self.layout.piece(self.owner, self.line_of(at)).kind
+    }
+    /// How the last content piece ends: [`Break::Eof`] or
+    /// [`Break::Continues`] when the owner's slice ends without a break.
+    /// O(1).
+    pub fn final_break(&self) -> Break {
+        match self.lines.clone().last() {
+            Some(i) => self.layout.piece(self.owner, i).kind,
+            None => Break::Eof,
+        }
     }
     /// Content offset of file byte `at` inside the owner (or its end).
     /// O(log lines).

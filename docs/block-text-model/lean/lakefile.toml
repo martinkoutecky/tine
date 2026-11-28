@@ -1,0 +1,6 @@
+name = "tine_block_text"
+defaultTargets = ["BlockText"]
+
+[[lean_lib]]
+name = "BlockText"
+moreLeanArgs = ["-j2"]
