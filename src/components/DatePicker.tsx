@@ -4,7 +4,7 @@ import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
 import { readSchedule, setSchedule } from "../document";
-import { fieldLabel, readField, writeFieldVisibly, type FieldId } from "../sheet/fields";
+import { fieldLabel, readField, writeCellVisibly, writeFieldVisibly, type FieldId } from "../sheet/fields";
 import { daysInCalendarMonth, parseIsoDateLike, utcCalendarMillis } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
 import { captureBinding, bindingCurrent, refuseStaleWrite } from "../binding";
@@ -125,6 +125,12 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     setCursor({ ...next, d: Math.min(cursor().d, daysInCalendarMonth(next.y, next.m)) });
     setView(next);
   };
+  // A property cell's write ends the gesture when it happened or was refused
+  // for another spelling of the key: the picker closes as after a write.
+  const writeProperty = (bid: string, field: FieldId, value: string) => {
+    const write = writeCellVisibly(bid, field, value);
+    return write.ok || write.otherSpelling !== undefined;
+  };
   const writePickedDate = (y: number, m: number, d: number) => {
     if (!bound()) return false;
     const bid = props.resolveWriteTarget ? props.resolveWriteTarget() : props.bid;
@@ -144,7 +150,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
       return true;
     }
     const fieldTime = props.which.fieldType === "datetime" ? propDateSelection(bid, props.which.field)?.time : null;
-    return writeFieldVisibly(bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
+    return writeProperty(bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
   };
   const [chosen, setChosen] = createSignal({ ...cursor() });
   const commitDraft = () => {
@@ -302,7 +308,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
                 const bid = props.resolveWriteTarget ? props.resolveWriteTarget() : props.bid;
                 if (!bid) return;
                 if (isScheduleTarget(props.which) && !writeFieldVisibly(bid, props.which, "")) return;
-                else if (typeof props.which === "object" && "field" in props.which && !writeFieldVisibly(bid, props.which.field, "")) return;
+                else if (typeof props.which === "object" && "field" in props.which && !writeProperty(bid, props.which.field, "")) return;
                 close();
               }}
             >

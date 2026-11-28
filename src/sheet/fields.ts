@@ -247,7 +247,8 @@ export function readField(id: string, field: FieldId): FieldValue | null {
 
 
 /** What a cell write did: `ok`, or refused; a property column's write names
- *  the row's `otherSpelling` of its key when that is why. */
+ *  the row's `otherSpelling` of its key when that is why. That refusal ends the
+ *  gesture: nothing retries it, and the control shows the saved value. */
 export type CellWrite = { ok: true } | { ok: false; otherSpelling?: string };
 const WRITTEN: CellWrite = { ok: true };
 const REFUSED: CellWrite = { ok: false };
@@ -314,15 +315,20 @@ export function writeCell(id: string, field: FieldId, value: string): CellWrite 
  * page, vanished row, a value this column cannot take) is SHOWN with the
  * rejected text, never a silently closed input (I-9). Same cost as writeField. */
 export function writeFieldVisibly(id: string, field: FieldId, value: string): boolean {
+  return writeCellVisibly(id, field, value).ok;
+}
+
+/** {@link writeFieldVisibly} with the reason for a refusal. */
+export function writeCellVisibly(id: string, field: FieldId, value: string): CellWrite {
   const write = writeCell(id, field, value);
-  if (write.ok) return true;
+  if (write.ok) return write;
   if (write.otherSpelling !== undefined) {
     pushToast(msg("sheet-cell-other-spelling", { other: write.otherSpelling }), "error");
   } else {
     const shown = value.trim().slice(0, 60);
     pushToast(msg("sheet-cell-refused", { value: shown, hasValue: shown ? 1 : 0 }), "error");
   }
-  return false;
+  return write;
 }
 
 export function writeTagDelta(id: string, delta: { add?: string; remove?: string }): boolean {

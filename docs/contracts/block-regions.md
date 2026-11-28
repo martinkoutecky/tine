@@ -35,6 +35,16 @@ Literal planning lookalikes remain in place. Markdown built-in identity/collapse
 metadata keeps trailer placement. Debug builds reparse edits and compare the
 header, unrelated metadata/drawers/planning and literal source slices.
 
+Refusals of `apply`, each without mutation:
+
+| Edit | Refused when | Threat in scope |
+|---|---|---|
+| Exact `Edit::Property` (a table or board cell's property write, and each of Flatten's fills) | `BlockRegions::other_spelling` finds, where the write lands (an Org block's own drawer, every accepted Markdown property line), a property whose source spelling is the same key to Logseq (`property_key_norm`: trimmed, ASCII lower case, space and `_` as `-`) but not exactly the column's key | Honest input under another spelling: a `Ready` column's cell would rewrite or delete the row's `ready::` line, or add `a_b::` beside `a-b::`, which Logseq reads as one property. The window shows the refusal naming the other spelling; a cell's control shows the saved value and its gesture ends. |
+
+Property writes that are not exact (every non-cell caller) keep the ASCII case
+match. The refusal's error is `property-other-spelling:` followed by the other
+spelling.
+
 Where a block's title ends and its rows begin is lsdoc's headline node: its
 source span, mapped to raw by `raw_offset`, the one prepared-to-raw conversion.
 Rows after the title go to the end of that headline (`BlockRegions::title_end`),

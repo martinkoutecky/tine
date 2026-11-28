@@ -840,8 +840,9 @@ impl BlockRegions {
 
     /// The first property, in the region an `Edit::Property` for `key` writes
     /// (an Org block's own drawer; every accepted line in Markdown), that
-    /// Logseq reads as the same key (`property_key_norm`: `Ready`, `ready`,
-    /// `re_ady`) but whose source spelling is not exactly `key`. Compares the
+    /// Logseq reads as the same key (`property_key_norm`: `Ready` and `ready`
+    /// are `ready`; `re_ady` and `Re-Ady` are `re-ady`) but whose source
+    /// spelling is not exactly `key`. Compares the
     /// spelling at each line's `key_range`, never `Property::key`, which one
     /// parser node shares across its lines. O(properties), no parse.
     pub fn other_spelling(&self, raw: &str, org: bool, key: &str) -> Option<String> {

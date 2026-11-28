@@ -1320,7 +1320,9 @@ function FieldCell(props: {
       const type = props.fieldType;
       if (type === "checkbox") {
         const cur = (value()?.raw ?? value()?.text ?? "").trim().toLowerCase();
-        writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true");
+        // The native toggle stands only for a write that happened; a refused
+        // one is undone, so the box keeps showing the saved value.
+        if (!writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true")) e.preventDefault();
       } else if (type === "date" || type === "datetime") {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4, resultWriteTarget(props.row));

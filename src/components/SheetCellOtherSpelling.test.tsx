@@ -7,12 +7,12 @@ import type { JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { DatePicker } from "./DatePicker";
-import { initParser } from "../render/parse";
+import * as parser from "../render/parse";
 import { resetStore } from "../document";
 import { undoTopTag } from "../document/history";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { setWorkflow } from "../ui";
+import { closeDatePicker, setWorkflow } from "../ui";
 import { resetCellSelectionForTests } from "../sheet/selection";
 import { setToasts, toasts } from "../toasts";
 
@@ -25,10 +25,12 @@ vi.mock("../document/host/wiring", () => new Proxy({}, {
 
 beforeAll(async () => {
   saveFixture.actual = await vi.importActual("../document/host/wiring");
-  await initParser();
+  await parser.initParser();
 });
 
 afterEach(() => {
+  closeDatePicker();
+  vi.restoreAllMocks();
   resetCellSelectionForTests();
   resetStore();
   setToasts([]);
@@ -234,6 +236,121 @@ describe("a table cell refuses a write that would change another spelling of its
     }
     expectRefused("card", raw, "Status", undoBefore);
     dispose();
+  });
+});
+
+/** The property values each cell write asked the core for, in order. */
+function propertyWrites(): { calls: () => unknown[] } {
+  const edit = vi.spyOn(parser, "editBlock");
+  return { calls: () => edit.mock.calls.map(([, , request]) => (request as { value?: unknown }).value) };
+}
+
+describe("after a refused write the control shows the saved value and the gesture is over", () => {
+  it.each([["Shipped", "shipped", "shipped:: true"], ["shipped", "Shipped", "Shipped:: true"], ["a_b", "a-b", "a-b:: false"], ["Ship_Ped", "ship-ped", "ship-ped:: true"]])(
+    "a refused %s checkbox beside `%s` stays unchecked, and a second click asks for the same value", (column, other, line) => {
+      for (const fields of [`${column}=checkbox;${other}=checkbox`, `${other}=checkbox;${column}=checkbox`]) {
+        const raw = `Row\n${line}`;
+        load({
+          table: node("table", `Table\ntine.view:: table\ntine.fields:: ${fields}`, null, ["r1"]),
+          r1: node("r1", raw, "table"),
+        }, "table");
+        const { root, dispose } = mount(() => <Block id="table" />);
+        const writes = propertyWrites();
+        const box = () => cell(root, 0, `prop:${column}`).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+        expect(box().checked).toBe(false);
+        box().click();
+        expect(doc.byId.r1.raw).toBe(raw);
+        expect(box().checked).toBe(false);
+        box().click();
+        expect(doc.byId.r1.raw).toBe(raw);
+        expect(box().checked).toBe(false);
+        expect(writes.calls()).toEqual(["true", "true"]);
+        dispose();
+        vi.restoreAllMocks();
+        resetStore();
+        setToasts([]);
+      }
+    });
+
+  it("a checked `ready` beside `Ready:: yes` stays checked after the refused click", () => {
+    const raw = "Row\nReady:: yes\nready:: true";
+    load({
+      table: node("table", "Table\ntine.view:: table\ntine.fields:: ready=checkbox;Ready=text", null, ["r1"]),
+      r1: node("r1", raw, "table"),
+    }, "table");
+    const { root, dispose } = mount(() => <Block id="table" />);
+    const box = cell(root, 0, "prop:ready").querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(box.checked).toBe(true);
+    box.click();
+    expect(doc.byId.r1.raw).toBe(raw);
+    expect(box.checked).toBe(true);
+    dispose();
+  });
+
+  it("a checkbox refused for any other reason (a read-only page) also keeps the saved value", () => {
+    const raw = "Row\nready:: false";
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: ready=checkbox", null, ["r1"]),
+        r1: node("r1", raw, "table"),
+      },
+      pages: [{ ...page(["table"]), readOnly: true }], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    const box = cell(root, 0, "prop:ready").querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    box.click();
+    expect(doc.byId.r1.raw).toBe(raw);
+    expect(box.checked).toBe(false);
+    dispose();
+  });
+
+  const picker = () => document.querySelector<HTMLElement>(".date-picker");
+  const dismissals: [string, () => void][] = [
+    ["day selection", () => [...picker()!.querySelectorAll<HTMLElement>(".dp-cell")].find((el) => el.textContent?.trim() === "10")!.click()],
+    ["Done", () => [...picker()!.querySelectorAll<HTMLElement>(".dp-btn")].find((el) => !el.classList.contains("dp-clear"))!.click()],
+    ["backdrop click", () => document.querySelector<HTMLElement>(".dp-overlay")!.click()],
+    ["backdrop right-click", () => document.querySelector<HTMLElement>(".dp-overlay")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }))],
+    ["Enter", () => keydown(picker()!.querySelector<HTMLElement>(".dp-cell")!, "Enter")],
+    ["Clear", () => picker()!.querySelector<HTMLElement>(".dp-clear")!.click()],
+  ];
+  const rows: [string, string][] = [
+    ["date", "Due:: 2026-07-08"],
+    ["date", "due:: 2026-07-01\nDue:: 2026-07-08"],
+    ["datetime", "Due:: 2026-07-08 09:30"],
+    ["datetime", "due:: 2026-07-01 08:00\nDue:: 2026-07-08 09:30"],
+  ];
+  it.each(rows)("a refused %s cell closes the picker on every dismissal (row %j)", (type, lines) => {
+    const exact = lines.startsWith("due::");
+    for (const [name, dismiss] of dismissals) {
+      if (name === "Clear" && !exact) continue; // Clear is offered only for a shown value
+      const raw = `Row\n${lines}`;
+      load({
+        table: node("table", `Table\ntine.view:: table\ntine.fields:: due=${type}`, null, ["r1"]),
+        r1: node("r1", raw, "table"),
+      }, "table");
+      const { root, dispose } = mount(() => (
+        <>
+          <Block id="table" />
+          <DatePicker />
+        </>
+      ));
+      const due = cell(root, 0, "prop:due");
+      (due.querySelector<HTMLElement>(".date-chip") ?? due).click();
+      expect(picker(), name).not.toBeNull();
+      const writes = propertyWrites();
+      dismiss();
+      expect(picker(), name).toBeNull();
+      expect(document.querySelector(".dp-overlay"), name).toBeNull();
+      expect(doc.byId.r1.raw, name).toBe(raw);
+      expect(toasts().filter((t) => t.kind === "error").map((t) => t.message), name)
+        .toEqual(["Not changed: this row already has “Due”, another spelling of this property."]);
+      expect(writes.calls(), name).toHaveLength(1);
+      dispose();
+      vi.restoreAllMocks();
+      closeDatePicker();
+      resetStore();
+      setToasts([]);
+    }
   });
 });
 
