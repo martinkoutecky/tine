@@ -145,7 +145,6 @@ quick-switcher-could-not-create = Could not create “{ $name }”: { $error }
 quick-switcher-that-pane-is-no-longer-available-close-this = That pane is no longer available. Close this search and try again.
 
 # $error is an untranslated diagnostic from the operating system or backend.
-sidebar-couldn-t-remove-graph = Couldn't remove graph. ({ $error })
 
 # $error is an untranslated diagnostic from the operating system or backend.
 sidebar-couldn-t-open-the-graph-picker = Couldn't open the graph picker. ({ $error })

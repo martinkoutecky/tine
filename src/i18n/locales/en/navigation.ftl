@@ -97,7 +97,6 @@ sidebar-namespaces = Namespaces
 
 sidebar-new-page = + New page
 
-sidebar-remove-from-this-list = Remove { $name } from this list
 
 sidebar-open-graph = Open graph…
 

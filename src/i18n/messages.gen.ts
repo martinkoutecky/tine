@@ -3127,7 +3127,6 @@ export interface MessageArgs {
   "sidebar-conflict-count": { "count": number };
   "sidebar-couldn-t-create-the-graph": { "error": string | number };
   "sidebar-couldn-t-open-the-graph-picker": { "error": string | number };
-  "sidebar-couldn-t-remove-graph": { "error": string | number };
   "sidebar-favorites": {};
   "sidebar-favorites-collapse": {};
   "sidebar-favorites-delete-group": { "groupName": string | number };
@@ -3142,7 +3141,6 @@ export interface MessageArgs {
   "sidebar-new-page": {};
   "sidebar-open-graph": {};
   "sidebar-recent": {};
-  "sidebar-remove-from-this-list": { "name": string | number };
   "sidebar-review-the-pages-that-need-a-decision": {};
   "sidebar-sizing-could-not-load-right-sidebar-width": {};
   "sidebar-sizing-could-not-load-sidebar-width": {};

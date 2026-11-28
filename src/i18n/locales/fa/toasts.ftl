@@ -65,7 +65,6 @@ quick-switcher-the-graph-changed-before-the-page-was-created = گراف پیش �
 quick-switcher-could-not-create-it-will-be-saved-on = «{ $name }» ساخته نشد: { $error }. با نخستین ویرایش شما ذخیره می‌شود.
 quick-switcher-could-not-create = «{ $name }» ساخته نشد: { $error }
 quick-switcher-that-pane-is-no-longer-available-close-this = آن قاب دیگر در دسترس نیست. این جستجو را ببندید و دوباره امتحان کنید.
-sidebar-couldn-t-remove-graph = گراف حذف نشد. ({ $error })
 sidebar-couldn-t-open-the-graph-picker = انتخابگر گراف باز نشد. ({ $error })
 sidebar-couldn-t-create-the-graph = گراف ساخته نشد. ({ $error })
 toasts-image-copied = تصویر کپی شد

@@ -447,7 +447,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-all-graphs.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"g Shift+G opens All graphs, arrow keys and Enter switch to another remembered graph, and edits remain saved in their originating graph. The graph switcher's rows hold no remove control; Remove from this list on All graphs takes a graph out of the remembered list and the switcher, and leaves its files.","blocking":true,"authority":"GH #758; UI-ALL-GRAPHS-758; GH #1015; UI-GRAPH-SWITCHER-NO-REMOVE"}],
       "acceptableVariations": ["Graph ordering, layout, and save/render latency may vary."],
       "nonRequirements": ["Exact pixels; remote sync graphs; native certification outside Linux WebKitGTK; new-window actions have component coverage."],
       "stability":"burn-in"
