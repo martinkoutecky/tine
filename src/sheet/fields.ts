@@ -247,8 +247,9 @@ export function readField(id: string, field: FieldId): FieldValue | null {
 
 
 /** What a cell write did: `ok`, or refused; a property column's write names
- *  the row's `otherSpelling` of its key when that is why. That refusal ends the
- *  gesture: nothing retries it, and the control shows the saved value. */
+ *  the row's `otherSpelling` of its key when that is why. After a refusal a
+ *  checkbox shows the saved value and the date picker closes; a text or number
+ *  cell keeps its draft, and each resubmission is refused the same way. */
 export type CellWrite = { ok: true } | { ok: false; otherSpelling?: string };
 const WRITTEN: CellWrite = { ok: true };
 const REFUSED: CellWrite = { ok: false };

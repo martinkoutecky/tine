@@ -5,7 +5,7 @@
 // must not merge the next block of the result's file, which the table does not draw, into the result.
 // Last, typing in a table's `Ready` text column on a row holding `ready:: false` (another spelling of the
 // same property to Logseq) is refused visibly and leaves that line on disk, and a refused `Done` checkbox
-// beside `done:: true` keeps showing the saved value; the file is compared after every gesture.
+// beside `done:: true` keeps showing the saved value; the file is compared after the refused gestures and the next save.
 //
 // Every pointer interaction here goes through the W3C Actions API (pointerdown/mousedown/mouseup/click as a
 // pointing device produces them), never `element.click()` from script: a synthetic click skips the
