@@ -2235,6 +2235,23 @@ mod og_20d_guide_tests {
     }
 
     #[test]
+    fn where_things_are_documents_settings_search_from_the_keyboard() {
+        // GH #996, #1007: Settings can be searched without the mouse.
+        let map = page("Start/Where things are");
+        for detail in [
+            "Settings opens with the caret in its search box",
+            "Press **ArrowDown** to highlight the first matching setting",
+            "ArrowUp on the first returns to the search box",
+            "**Enter** to open the highlighted one",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing where-things-are detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
     fn where_things_are_documents_the_help_button_switch_and_settings_paths() {
         // GH #926 (D-20261111-QP2): a hideable "?" that leaves help reachable,
         // and Settings two taps away from the "···" menu and the phone drawer.

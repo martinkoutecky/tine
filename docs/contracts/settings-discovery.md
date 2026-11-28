@@ -25,6 +25,15 @@ scrolls to its stable ID, including controls that mount after an asynchronous
 read. Labels are never navigation keys. Keyboard shortcuts retain their own
 command/key filter.
 
+Except on a phone-sized touch screen, opening Settings focuses the search box,
+also when it opens on a category or on a setting. While search shows results,
+the keyboard's current result follows a Search tab's results: Down from the box
+makes the first result current, Down and Up move one result without wrapping,
+Up on the first returns to the box, and Enter opens the current result as a
+click does. The caret stays in the box: the current result is its
+`aria-activedescendant` and is scrolled into view. A changed result list has no
+current result.
+
 Themes is a separate category on every screen; static and package theme
 descriptors target it. On touch screens up to 480 CSS px wide, Settings fills
 the screen within the safe areas and opens a category list. A category or search
