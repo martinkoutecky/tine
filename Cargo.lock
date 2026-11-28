@@ -5166,6 +5166,7 @@ dependencies = [
  "tine-core",
  "tine-outline",
  "tine-search",
+ "tine-text",
  "unicode-normalization",
  "unicode-segmentation",
  "url",
@@ -5224,6 +5225,7 @@ dependencies = [
  "lsdoc",
  "serde",
  "serde_json",
+ "tine-text",
 ]
 
 [[package]]
@@ -5275,6 +5277,14 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "tine-text"
+version = "0.10.0-beta.2"
+dependencies = [
+ "lsdoc",
+ "memchr",
 ]
 
 [[package]]

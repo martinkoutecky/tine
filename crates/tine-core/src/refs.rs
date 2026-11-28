@@ -307,9 +307,10 @@ pub fn physical_outline(
     } else {
         crate::outline::OutlineFormat::Markdown
     };
-    let headers =
-        crate::outline::headers(&crate::org::lone_cr_to_lf(text), format).unwrap_or_default();
-    let map = crate::doc::SourceMap::new(text, &[], Vec::new(), &headers, 0);
+    let page = crate::outline::page(text, format)
+        .unwrap_or_else(|_| tine_text::PageText::preamble_only(text, format.text()));
+    let headers = crate::outline::headers_of(&page);
+    let map = crate::doc::SourceMap::new(&page, 0);
     (headers.iter().enumerate())
         .map(|(i, h)| {
             let start = map.block_start(i).unwrap();

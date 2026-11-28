@@ -79,8 +79,8 @@ pub fn parse_org(content: &str) -> Document {
             ..Document::default()
         };
     }
-    let headers = outline::headers_or_none(content, OutlineFormat::Org);
-    crate::doc::document_of(content, &headers, true, None).0
+    let page = outline::page_or_preamble(content, content, OutlineFormat::Org);
+    crate::doc::document_of(&page, true).0
 }
 
 /// Serialize a [`Document`] to org text with one trailing newline (the common

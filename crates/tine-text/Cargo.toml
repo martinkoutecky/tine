@@ -1,0 +1,23 @@
+# Block text (area 1, ownership map rows 2 and 3): the bytes of one page file,
+# which of them belong to which block, and how a write replaces named ranges.
+# Depends on lsdoc (and memchr, already in lsdoc's tree) only, so it sits below
+# tine-outline and tine-core and builds for wasm32 with them.
+[package]
+autotests = false
+name = "tine-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+memchr = "2"
+# Keep this pin IN SYNC with the other lsdoc pins (scripts/wasm-artifacts.mjs checks them).
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.13" }
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"

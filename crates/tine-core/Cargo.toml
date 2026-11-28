@@ -20,6 +20,7 @@ sha2 = "0.10"
 ammonia = "4"
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.13" }
 tine-outline = { path = "../tine-outline" }
+tine-text = { path = "../tine-text" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # The one clock (`clock`): std natively, the browser's on wasm32.
 web-time = "1"

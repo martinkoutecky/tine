@@ -1,20 +1,19 @@
 //! The page-outline authority: which physical lines of a Markdown or Org page
 //! open a block, and at which structural level.
 //!
-//! lsdoc owns the recognition (`lsdoc::parse_outline`, reached through the
-//! bounded boundary `crates/tine-outline/src/lsdoc_block_parse.rs`), exactly as mldoc decides it
-//! for OG: dash bullets, unbulleted ATX headings, Org headlines, and every
-//! literal region (fences, `#+BEGIN_…` blocks) that hides a look-alike line.
-//! This module owns no Markdown or Org grammar. It checks the parser's events
-//! against the page's physical lines and maps each one onto Tine's model of
-//! one block per header line. `doc::parse` and `org::parse_org` build every
-//! [`Document`](crate::doc::Document) from [`headers`]; nothing else decides
-//! where a block starts (I-12).
+//! The physical layer of the page is `tine_text::PageText` (lsdoc's outline
+//! read once, under the bound of `tine_text::bound`): which bytes are which
+//! block's layout, text and breaks. This module adds develop's reading on top:
+//! a page whose outline does not give each block its own line has no blocks
+//! (the whole text is the pre-block), and it builds the block forest and the
+//! reader's [`SourceMap`] from the slots. `doc::parse` and `org::parse_org`
+//! build every [`Document`](crate::doc::Document) from [`page`]; nothing else
+//! decides where a block starts (I-12).
 //!
-//! Cost: one lsdoc block parse of the page, O(page bytes), plus O(lines).
+//! Cost: one lsdoc outline parse of the page, O(page bytes), plus O(lines).
 
 use crate::doc::DocBlock;
-use lsdoc::OutlineHeaderKind;
+use tine_text::{Format, Owner, PageText};
 
 #[cfg(feature = "test-counters")]
 thread_local! {
@@ -28,15 +27,11 @@ pub(crate) enum OutlineFormat {
 }
 
 impl OutlineFormat {
-    fn accepts(self, kind: OutlineHeaderKind) -> bool {
-        matches!(
-            (self, kind),
-            (
-                Self::Markdown,
-                OutlineHeaderKind::MarkdownUnbulletedAtxHeading
-                    | OutlineHeaderKind::MarkdownDashBullet
-            ) | (Self::Org, OutlineHeaderKind::OrgHeadline)
-        )
+    pub(crate) fn text(self) -> Format {
+        match self {
+            Self::Markdown => Format::Markdown,
+            Self::Org => Format::Org,
+        }
     }
 }
 
@@ -80,33 +75,35 @@ pub struct SourceMap {
 }
 
 impl SourceMap {
-    pub(crate) fn new(
-        native: &str,
-        lines: &[&str],
-        removed: Vec<usize>,
-        headers: &[Header],
-        pre_block: usize,
-    ) -> Self {
+    /// The map of `page` as the reader read it, with `pre_block` lines of
+    /// pre-block. O(lines).
+    pub(crate) fn new(page: &PageText<'_>, pre_block: usize) -> Self {
+        let text = page.text().as_bytes();
         let (mut starts, mut ends) = (vec![0], Vec::new());
-        for line in crate::doc::physical_lines(native) {
-            let start = *starts.last().unwrap();
-            ends.push(start + line.len() - crate::doc::line_terminator(line).len());
-            starts.push(start + line.len());
+        for i in 0..page.line_count() {
+            let (range, brk) = page.line(i);
+            ends.push(brk);
+            starts.push(range.end);
         }
-        let (mut at, mut next) = (Vec::new(), 0);
-        let mut headers_at = headers.iter().map(|h| h.line).peekable();
-        for (i, line) in lines.iter().enumerate() {
-            if headers_at.next_if_eq(&i).is_some() {
+        let removed: Vec<usize> = (0..page.read_lines())
+            .map(|i| page.line_layout(i))
+            .collect();
+        let (mut at, mut next) = (Vec::with_capacity(removed.len()), 0);
+        let mut slots = page.slots().iter().map(|s| s.line()).peekable();
+        for (i, removed) in removed.iter().enumerate() {
+            if slots.next_if_eq(&i).is_some() {
                 next = 0;
             }
             at.push(next);
-            next += line.len() - removed[i] + 1;
+            next += ends[i] - starts[i] - removed + 1;
         }
-        let blocks = headers
+        let blocks = page
+            .slots()
             .iter()
-            .map(|h| {
-                let line = lines.get(h.line).copied().unwrap_or("");
-                (h.line, line.len() - strip_layout_ws(line, usize::MAX).len())
+            .map(|slot| {
+                let line = &text[starts[slot.line()]..ends[slot.line()]];
+                let indent = line.iter().take_while(|b| matches!(b, b' ' | b'\t' | 0x0c));
+                (slot.line(), indent.count())
             })
             .collect();
         Self {
@@ -184,118 +181,95 @@ impl SourceMap {
 /// save writes back verbatim.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Refusal {
-    /// lsdoc did not take ownership of the text, or its quote staircase is
-    /// deeper than the bounded boundary admits (malformed imported content).
-    Unowned,
-    /// Event `event` does not start its own physical line, or shares one
-    /// with an earlier event (malformed imported content). Accepting it would
-    /// give two blocks the same line, and a save would duplicate or drop text.
-    NotOnePerLine { event: usize },
-    /// Event `event` has ranges, kind or level outside the parser's contract.
-    Invalid { event: usize },
+    /// The physical layer refused the text: lsdoc did not take ownership of
+    /// it, its quote staircase is deeper than the bound admits, or an event is
+    /// outside the parser's contract (malformed imported content).
+    Read(tine_text::Refusal),
+    /// A slot does not start its own physical line, or two outline headers
+    /// share bytes (malformed imported content). Accepting it would give two
+    /// blocks the same line, and a save would duplicate or drop text.
+    NotOnePerLine,
 }
 
-/// The block-opening lines of `text`, in source order. `text` must use `\n`
-/// line breaks (a CRLF's `\r` may stay in the line; a lone `\r` must already
-/// be a `\n`). `Err` names why no outline is representable.
-pub(crate) fn headers(text: &str, format: OutlineFormat) -> Result<Vec<Header>, Refusal> {
+/// The physical layer of `text` with one block per header line, or why the
+/// page has none. One bounded lsdoc outline parse, O(page bytes).
+pub(crate) fn page(text: &str, format: OutlineFormat) -> Result<PageText<'_>, Refusal> {
+    page_lf(text, &tine_text::lf_form(text), format)
+}
+
+/// [`page`] for a caller holding `lf`, the LF form of `text`.
+fn page_lf<'a>(text: &'a str, lf: &str, format: OutlineFormat) -> Result<PageText<'a>, Refusal> {
     #[cfg(feature = "test-counters")]
     READS.with(|n| n.set(n.get() + 1));
-    let events = crate::render::parse_outline_bounded(text, format == OutlineFormat::Org)
-        .ok_or(Refusal::Unowned)?;
-    let mut line_starts = vec![0usize];
-    line_starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));
-    let mut out: Vec<Header> = Vec::with_capacity(events.len());
-    for (event, header) in events.iter().enumerate() {
-        let prefix = header.structural_prefix;
-        let valid = format.accepts(header.kind)
-            && header.level > 0
-            && header.line_content.slice(text).is_some()
-            && prefix.slice(text).is_some()
-            && prefix.start == header.line.start
-            && prefix.end <= header.line_content.end
-            && header.line_content.start == header.line.start;
-        if !valid {
-            return Err(Refusal::Invalid { event });
-        }
-        let Ok(line) = line_starts.binary_search(&header.line.start) else {
-            return Err(Refusal::Invalid { event });
-        };
-        if header.header_start != header.line.start || out.last().is_some_and(|h| h.line >= line) {
-            return Err(Refusal::NotOnePerLine { event });
-        }
-        let prefix_len = prefix.end - prefix.start;
-        let content_indent = match header.kind {
-            OutlineHeaderKind::MarkdownDashBullet if text[..prefix.end].ends_with("- ") => {
-                prefix_len
-            }
-            OutlineHeaderKind::MarkdownDashBullet => prefix_len + 1,
-            _ => 0,
-        };
-        out.push(Header {
-            line,
-            level: header.level,
-            prefix_len,
-            content_indent,
-        });
-    }
-    Ok(out)
+    let page = PageText::read_lf(text, lf, format.text()).map_err(Refusal::Read)?;
+    let one_per_line =
+        (0..page.slots().len()).all(|n| page.opens_line(n) && !page.slots()[n].opaque());
+    one_per_line.then_some(page).ok_or(Refusal::NotOnePerLine)
 }
 
-/// Byte offset of the first block-opening line of `text` (same line-break
-/// contract as [`headers`]), or `None` when there is none or the outline is
-/// not representable: `doc::parse`/`org::parse_org` then read the whole text
-/// as the preamble. Silent (the page parse reports refusals).
+/// [`page`] of `text` (whose LF form is `lf`), or (with a diagnostic) the
+/// whole text as the pre-block when the outline is not representable.
+pub(crate) fn page_or_preamble<'a>(text: &'a str, lf: &str, format: OutlineFormat) -> PageText<'a> {
+    page_lf(text, lf, format).unwrap_or_else(|refusal| {
+        crate::diag_line::diagnostic_line(match refusal {
+            Refusal::Read(tine_text::Refusal::Invalid { .. }) => {
+                "page outline events invalid; shown as page text"
+            }
+            Refusal::Read(_) => "page outline not owned by lsdoc; shown as page text",
+            Refusal::NotOnePerLine => "page outline has two blocks on one line; shown as page text",
+        });
+        PageText::preamble_only(text, format.text())
+    })
+}
+
+/// The block-opening lines of `page`, in source order. O(slots).
+pub(crate) fn headers_of(page: &PageText<'_>) -> Vec<Header> {
+    let slots = page.slots().iter();
+    slots
+        .map(|slot| Header {
+            line: slot.line(),
+            level: slot.level(),
+            prefix_len: page.line_layout(slot.line()),
+            content_indent: slot.dedent(),
+        })
+        .collect()
+}
+
+/// The block-opening lines of `text`, in source order. `Err` names why no
+/// outline is representable.
+pub(crate) fn headers(text: &str, format: OutlineFormat) -> Result<Vec<Header>, Refusal> {
+    page(text, format).map(|page| headers_of(&page))
+}
+
+/// Byte offset of the first block-opening line of `text`, or `None` when
+/// there is none or the outline is not representable: `doc::parse`/
+/// `org::parse_org` then read the whole text as the preamble. Silent (the
+/// page parse reports refusals).
 pub(crate) fn first_header_start(text: &str, format: OutlineFormat) -> Option<usize> {
-    let line = headers(text, format).ok()?.first()?.line;
-    Some(text.split_inclusive('\n').take(line).map(str::len).sum())
+    Some(page(text, format).ok()?.slots().first()?.start())
 }
 
 /// Headers, or none (with a diagnostic) when the outline is not representable.
 pub(crate) fn headers_or_none(text: &str, format: OutlineFormat) -> Vec<Header> {
-    headers(text, format).unwrap_or_else(|refusal| {
-        crate::diag_line::diagnostic_line(match refusal {
-            Refusal::Unowned => "page outline not owned by lsdoc; shown as page text",
-            Refusal::NotOnePerLine { .. } => {
-                "page outline has two blocks on one line; shown as page text"
-            }
-            Refusal::Invalid { .. } => "page outline events invalid; shown as page text",
-        });
-        Vec::new()
-    })
+    headers_of(&page_or_preamble(text, &tine_text::lf_form(text), format))
 }
 
-/// The blocks of `lines` (the page's physical lines), one per header: the
-/// header line after its prefix, then each following line up to the next
-/// header, dedented by the header's `content_indent`, nested by level.
-/// `removed`, when given (one entry per line), records the bytes removed in
-/// front of each block line, for the reader's [`SourceMap`].
-pub(crate) fn blocks(
-    lines: &[&str],
-    headers: &[Header],
-    is_org: bool,
-    mut removed: Option<&mut [usize]>,
-) -> Vec<DocBlock> {
-    let mut flat = Vec::with_capacity(headers.len());
-    for (n, header) in headers.iter().enumerate() {
-        let end = headers.get(n + 1).map_or(lines.len(), |next| next.line);
-        let mut raw = lines[header.line][header.prefix_len..].to_string();
-        if let Some(removed) = removed.as_deref_mut() {
-            removed[header.line] = header.prefix_len;
-        }
-        for (i, line) in lines.iter().enumerate().take(end).skip(header.line + 1) {
-            let kept = strip_layout_ws(line, header.content_indent);
-            if let Some(removed) = removed.as_deref_mut() {
-                removed[i] = line.len() - kept.len();
-            }
-            raw.push('\n');
-            raw.push_str(kept);
-        }
-        let mut block = DocBlock::new(raw);
+/// The blocks of `page`, one per slot: its content, nested by level.
+pub(crate) fn blocks(page: &PageText<'_>, is_org: bool) -> Vec<DocBlock> {
+    let flat = (0..page.slots().len()).map(|n| {
+        let mut block = DocBlock::new(page.content(n));
         block.is_org = is_org;
-        flat.push((header.level, block));
-    }
-    build_tree(flat)
+        (page.slots()[n].level(), block)
+    });
+    build_tree(flat.collect())
+}
+
+/// The text of `page`'s pre-block lines (`..lines`), joined by `"\n"`.
+pub(crate) fn pre_block(page: &PageText<'_>, lines: usize) -> String {
+    let text = page.text();
+    let pieces = page.pieces(Owner::Preamble).take(lines);
+    let texts: Vec<&str> = pieces.map(|piece| &text[piece.text]).collect();
+    texts.join("\n")
 }
 
 /// Remove up to `n` leading tabs, spaces or form feeds (mldoc's layout
@@ -336,9 +310,9 @@ fn build_tree(flat: Vec<(u32, DocBlock)>) -> Vec<DocBlock> {
 /// Whether lsdoc reads `line`, alone, as an unbulleted Markdown heading.
 pub(crate) fn is_unbulleted_heading_line(line: &str) -> bool {
     !line.contains(['\n', '\r'])
-        && crate::render::parse_outline_bounded(line, false).is_some_and(|events| {
+        && tine_text::bound::parse_outline_bounded(line, false).is_some_and(|events| {
             matches!(events.as_slice(), [only]
-                if only.kind == OutlineHeaderKind::MarkdownUnbulletedAtxHeading
+                if only.kind == lsdoc::OutlineHeaderKind::MarkdownUnbulletedAtxHeading
                     && only.header_start == 0)
         })
 }

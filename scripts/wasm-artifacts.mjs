@@ -34,7 +34,7 @@ export function assertWithinCeiling(dir, bytes, maxBytes) {
 }
 
 export function readLsdocTag() {
-  const manifests = ["tine-core", "tine-outline", "lsdoc-wasm", "tine-graph-features"];
+  const manifests = ["tine-core", "tine-outline", "tine-text", "lsdoc-wasm", "tine-graph-features"];
   const tags = manifests.map((name) => {
     const rel = `crates/${name}/Cargo.toml`;
     const pin = readFileSync(join(root, rel), "utf8").match(/lsdoc\s*=\s*\{[^}]*\btag\s*=\s*"([^"]+)"/);

@@ -34,6 +34,10 @@ const EXEMPT: &[(&str, &str)] = &[
         "the bounded boundary itself",
     ),
     (
+        "crates/tine-text/src/bound.rs",
+        "the page outline parse under the same quote bound",
+    ),
+    (
         "crates/tine-core/src/query/conformance.rs",
         "a #[cfg(test)] module (asserted below)",
     ),

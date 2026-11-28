@@ -680,11 +680,7 @@ pub use crate::property_line::parse_property_line;
 /// do. Borrows when the text has no `\r`; otherwise two O(n) copies (CRLF
 /// first, then lone CR, so `\r\r\n` becomes `\n\n`).
 pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
-    if content.contains('\r') {
-        std::borrow::Cow::Owned(content.replace("\r\n", "\n").replace('\r', "\n"))
-    } else {
-        std::borrow::Cow::Borrowed(content)
-    }
+    tine_text::lf_form(content)
 }
 
 /// The terminator a new line gets in `existing` text: CRLF when it has any,
@@ -702,8 +698,9 @@ pub fn line_convention(existing: &str) -> &'static str {
 
 /// The physical lines of page text, each with its terminator (CRLF, LF or a
 /// lone CR, as [`normalize_line_endings`] reads them; the last may have none).
-/// The one answer to "which bytes end a line" for the physical writers (page
-/// merge, outline offsets). Concatenated, they are `text`. O(n), no copy.
+/// For page merge; the reader's lines are `tine_text::PageText`'s, which end
+/// at the same bytes (`tine-text` tests). Concatenated, they are `text`. O(n),
+/// no copy.
 pub fn physical_lines(text: &str) -> impl Iterator<Item = &str> {
     let mut rest = text;
     std::iter::from_fn(move || {
@@ -759,12 +756,10 @@ pub fn parse(content: &str) -> Document {
 /// are normalized for parsing; the store restores them when writing.
 pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
     let content = &normalize_line_endings(content);
-    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
-    let (document, lines, _) = document_of(content, &headers, false, None);
-    (
-        document,
-        SerializeOpts::from_outline(content, &lines, &headers),
-    )
+    let page = outline::page_or_preamble(content, content, OutlineFormat::Markdown);
+    let lines: Vec<&str> = content.split('\n').collect();
+    let opts = SerializeOpts::from_outline(content, &lines, &outline::headers_of(&page));
+    (document_of(&page, false).0, opts)
 }
 
 pub use crate::outline::SourceMap;
@@ -782,60 +777,43 @@ pub(crate) struct Outlined<'a> {
 }
 
 pub(crate) fn parse_outlined(text: &str, is_org: bool, mapped: bool) -> Outlined<'_> {
-    // A stray `\r` in the model would pollute property / `id::` values.
+    // A stray `\r` in the model would pollute property / `id::` values; the
+    // physical layer reads the native text and joins its lines with `\n`.
     let lf = normalize_line_endings(text);
     let format = if is_org {
         OutlineFormat::Org
     } else {
         OutlineFormat::Markdown
     };
-    let headers = outline::headers_or_none(&lf, format);
-    let mut removed = Vec::new();
-    let (document, lines, pre) = document_of(&lf, &headers, is_org, mapped.then_some(&mut removed));
-    let map = mapped.then(|| SourceMap::new(text, &lines, removed, &headers, pre));
+    let page = outline::page_or_preamble(text, &lf, format);
+    let (document, pre) = document_of(&page, is_org);
     Outlined {
         lf,
         document,
-        headers,
-        map,
+        headers: outline::headers_of(&page),
+        map: mapped.then(|| SourceMap::new(&page, pre)),
     }
 }
 
-/// The reader's split of LF `content` with its outline `headers`: the
-/// document, its lines and the pre-block's line count. Markdown reads the
-/// text without its final line break and drops the pre-block's trailing blank
-/// lines; Org reads it without any final line breaks. `removed` collects the
-/// bytes removed in front of each line (see [`SourceMap`]).
-pub(crate) fn document_of<'a>(
-    content: &'a str,
-    headers: &[outline::Header],
-    is_org: bool,
-    removed: Option<&mut Vec<usize>>,
-) -> (Document, Vec<&'a str>, usize) {
-    let body = if is_org {
-        content.trim_end_matches('\n')
-    } else {
-        content.strip_suffix('\n').unwrap_or(content)
+/// The reader's document of `page` and the pre-block's line count. Markdown
+/// drops the pre-block's trailing blank lines; the lines the physical layer
+/// does not read (its tail) are in neither. O(page bytes).
+pub(crate) fn document_of(page: &tine_text::PageText<'_>, is_org: bool) -> (Document, usize) {
+    let line = |i: usize| {
+        let (range, brk) = page.line(i);
+        &page.text()[range.start..brk]
     };
-    let lines: Vec<&str> = if body.is_empty() {
-        Vec::new()
-    } else {
-        body.split('\n').collect()
-    };
-    let mut pre = headers.first().map_or(lines.len(), |header| header.line);
-    while !is_org && pre > 0 && lines[pre - 1].trim().is_empty() {
+    let first = page.slots().first().map_or(page.read_lines(), |s| s.line());
+    let mut pre = first;
+    while !is_org && pre > 0 && line(pre - 1).trim().is_empty() {
         pre -= 1;
     }
-    let removed = removed.map(|r| {
-        r.resize(lines.len(), 0);
-        r.as_mut_slice()
-    });
     let document = Document {
-        pre_block: (pre > 0).then(|| lines[..pre].join("\n")),
-        roots: outline::blocks(&lines, headers, is_org, removed),
+        pre_block: (pre > 0).then(|| outline::pre_block(page, pre)),
+        roots: outline::blocks(page, is_org),
         org: is_org,
     };
-    (document, lines, pre)
+    (document, pre)
 }
 
 /// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading
