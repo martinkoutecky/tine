@@ -953,6 +953,16 @@ mod search_guide_tests {
         }
     }
     #[test]
+    fn a_new_rows_checkbox_value_is_documented() {
+        let sheets = include_str!("templates/sheets.md");
+        for text in [
+            "A new row starts unchecked in each checkbox column, written as `false`",
+            "starts blank instead",
+        ] {
+            assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
+        }
+    }
+    #[test]
     fn a_cell_refusing_another_spelling_is_documented() {
         let sheets = include_str!("templates/sheets.md");
         for text in [
