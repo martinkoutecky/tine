@@ -149,6 +149,16 @@ describe("sheet fields", () => {
     expect(writeField("a", "prop:owner", "")).toBe(true);
     expect(doc.byId.a.raw).toBe("Title\nbody line\nother:: keep");
   });
+
+  it("writes an Org cell named properties without touching the drawer's delimiters", () => {
+    const raw = "Title\n:PROPERTIES:\n:ready: false\n:properties: true\n:END:\nafter";
+    setDoc({ byId: { a: node("a", raw) }, pages: [page(["a"], { format: "org" })], feed: ["Sheet"], loaded: true });
+
+    expect(writeField("a", "prop:properties", "false")).toBe(true);
+    expect(doc.byId.a.raw).toBe("Title\n:PROPERTIES:\n:ready: false\n:properties: false\n:END:\nafter");
+    expect(writeField("a", "prop:properties", "")).toBe(true);
+    expect(doc.byId.a.raw).toBe("Title\n:PROPERTIES:\n:ready: false\n:END:\nafter");
+  });
 });
 
 describe("writeField review fixes", () => {

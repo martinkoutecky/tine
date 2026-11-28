@@ -59,6 +59,10 @@ fs.writeFileSync(`${GRAPH}/pages/Property filters.md`, filterPage);
 // The graph uses the legacy file-name format ({} config), so the namespace comes from title::.
 fs.writeFileSync(`${GRAPH}/pages/Property filters child.md`, "title:: Property filters/Child\n\n- Child body\n");
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
+// An Org page drawer with an entry named like its opener: removing that entry
+// from the form must keep `:PROPERTIES:`, `:END:` and the other entry.
+const orgDrawer = ":PROPERTIES:\n:ready: false\n:properties: true\n:END:\n\n* Body\n";
+fs.writeFileSync(`${GRAPH}/pages/Property drawer.org`, orgDrawer);
 // GH #210: a table block whose view is set before its title is typed, first on a
 // page with no page properties.
 const tableConfig = "tine.view:: table\n  tine.table-widths:: prop%3Atest=171";
@@ -71,7 +75,7 @@ const moveAbove = "tags:: reading\nicon:: 📚\n\n- First block\n- Second block\
 fs.writeFileSync(`${GRAPH}/pages/Property move above.md`, moveAbove);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n- [[Property move above]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n- [[Property move above]]\n- [[Property drawer]]\n");
 
 const env = {
   ...process.env,
@@ -504,6 +508,23 @@ try {
   if (!lines.includes("A:: XX") || !lines.includes("B:: XX") || !lines.includes("C:: XX") || !lines.includes("icon:: ★")) {
     throw new Error(`simple page properties were lost or merged: ${JSON.stringify(lines)}`);
   }
+  await openPageByName(browser, "Property drawer", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  await openPageProperties();
+  const drawerField = await browser.execute(() => [...document.querySelectorAll(".page-props-panel .pp-field")]
+    .findIndex((field) => field.querySelector(".pp-label")?.textContent?.trim() === "properties"));
+  if (drawerField < 0) throw new Error("missing the Org drawer's properties field");
+  await (await browser.$$(".page-props-panel .pp-field"))[drawerField].$(".pp-remove").click();
+  const drawerAfter = await waitForFileText(
+    `${GRAPH}/pages/Property drawer.org`,
+    (text) => !text.includes(":properties: true"),
+    { timeoutMs: 10_000 },
+  );
+  const drawerExpected = orgDrawer.replace(":properties: true\n", "");
+  if (drawerAfter !== drawerExpected) {
+    throw new Error(`removing the properties entry changed the drawer\nEXPECTED:\n${JSON.stringify(drawerExpected)}\nACTUAL:\n${JSON.stringify(drawerAfter)}`);
+  }
+  await browser.keys("Escape");
+  await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
   await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const reopenedCustom = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row")]
     .find((row) => row.querySelector(".prop-key")?.textContent?.trim() === "ai-prompt")

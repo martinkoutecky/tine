@@ -385,8 +385,12 @@ fn compact_regions_keep_the_existing_flat_wire() {
             open_fence: regions.open_fence.as_deref(),
             headline_end: regions.headline_end,
         };
+        // The binary form appends the opaque region list, always present
+        // since postcard is positional; the JSON names it only when non-empty.
         let bytes = postcard::to_stdvec(&regions).unwrap();
-        assert_eq!(bytes, postcard::to_stdvec(&flat).unwrap(), "{raw}");
+        let mut wire = postcard::to_stdvec(&flat).unwrap();
+        wire.extend(postcard::to_stdvec(&regions.opaque_regions).unwrap());
+        assert_eq!(bytes, wire, "{raw}");
         assert_eq!(
             serde_json::to_string(&regions).unwrap(),
             serde_json::to_string(&flat).unwrap(),

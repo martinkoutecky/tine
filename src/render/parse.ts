@@ -100,6 +100,8 @@ export interface BlockRegions {
   open_fence: RegionOpenFence | null;
   /** lsdoc's headline end when it is not the first line's end (Rust `BlockRegions::headline_end`). */
   headline_end: number | null;
+  /** Org property regions shown as text (Rust `BlockRegions::opaque_regions`); absent when none. */
+  opaque_regions?: number[];
 }
 /** An accepted identity value carried with the exact editor buffer that owns
  * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */

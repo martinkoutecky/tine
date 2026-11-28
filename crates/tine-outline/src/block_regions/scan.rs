@@ -97,11 +97,30 @@ pub(super) fn visit_blocks(
                     }
                 }
             }
-            Block::Properties { props, span, .. } => {
+            Block::Properties {
+                props,
+                span,
+                drawers,
+                ..
+            } => {
                 if let Some(r) = raw_range(raw, span, coords) {
                     let r = whole_line(raw, r);
                     let index = out.property_regions.len();
                     out.property_regions.push(r);
+                    // lsdoc answers which lines are drawer delimiters, folded
+                    // ones (`:END: tail`) included: none of them is a row.
+                    let mut delimiters = Vec::new();
+                    for d in drawers {
+                        for span in [d.open, d.close] {
+                            if let Some(line) = raw_range(raw, &Some(span), coords) {
+                                delimiters.push(whole_line(raw, line).0);
+                            }
+                        }
+                    }
+                    let lines = line_ranges(raw, r);
+                    if org && !drawers.is_empty() && !is_one_frame(raw, &lines, &delimiters) {
+                        out.opaque_regions.push(index);
+                    }
                     // Index accepted parser keys once, rather than searching
                     // the entire folded property node for every source entry.
                     let mut names = HashMap::new();
@@ -109,7 +128,10 @@ pub(super) fn visit_blocks(
                         let name = &property.0;
                         names.entry(name.to_ascii_lowercase()).or_insert(name);
                     }
-                    for line in line_ranges(raw, r) {
+                    for line in lines {
+                        if delimiters.contains(&line.0) {
+                            continue;
+                        }
                         let t = trimmed_range(raw, line);
                         let s = t.slice(raw);
                         // A Properties node can fold Markdown lines, a drawer
@@ -159,7 +181,14 @@ pub(super) fn visit_blocks(
             Block::Directive {
                 name, value, span, ..
             } if org => {
-                if let Some(r) = raw_range(raw, span, coords) {
+                // A directive that does not start its line (after a bare CR or
+                // a folded `:END:`) stays text of the line it shares.
+                let starts_line = |r: &Range| {
+                    raw[whole_line(raw, *r).0..r.0]
+                        .bytes()
+                        .all(|b| b == b' ' || b == b'\t')
+                };
+                if let Some(r) = raw_range(raw, span, coords).filter(starts_line) {
                     let line = whole_line(raw, r);
                     let region = out.property_regions.len();
                     out.property_regions.push(line);
@@ -211,6 +240,22 @@ pub(super) fn visit_blocks(
         }
     }
 }
+/// Whether an Org property region is exactly one drawer whose opener is its
+/// first line and whose closer is its last, so the editor may drop that frame.
+/// `lines` are the region's LF lines; `delimiters` the line starts of its
+/// drawers' open and close spans.
+fn is_one_frame(raw: &str, lines: &[Range], delimiters: &[usize]) -> bool {
+    let (Some(first), Some(last), [open, close]) = (lines.first(), lines.last(), delimiters) else {
+        return false;
+    };
+    let marker = |line: &Range, opening| {
+        let text = line.slice(raw);
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        super::is_property_drawer_marker(text.strip_suffix('\r').unwrap_or(text), opening)
+    };
+    *open == first.0 && *close == last.0 && marker(first, true) && marker(last, false)
+}
+
 fn visit_items(
     raw: &str,
     org: bool,
