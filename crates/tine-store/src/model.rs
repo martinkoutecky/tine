@@ -4622,7 +4622,8 @@ fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
 
 /// The kind folders under the graph trash (`logseq/.tine-trash/<kind>/`).
 /// [`TrashEntryKind::dir_name`] is the one place a folder is spelled,
-/// [`typed_trash_dir`] the one producer of its path, and
+/// `TrashEntryKind::folder` the one producer of its path (both
+/// [`typed_trash_dir`] and [`TrashEntryKind::graph_rel`] ask it), and
 /// [`TrashEntryKind::of_trashed_file`] the transaction's choice of folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrashEntryKind {
@@ -4659,52 +4660,80 @@ impl TrashEntryKind {
         }
     }
 
+    /// The kind folder below the graph root, one component per item: the
+    /// one producer of a kind folder's path.
+    fn folder(self) -> [&'static str; 3] {
+        let [logseq, trash] = TRASH_ROOT;
+        [logseq, trash, self.dir_name()]
+    }
+
     /// The kind folder as a graph-relative, `/`-separated name, the form of a
     /// trash `FileId` and of a location shown in a message.
     pub(crate) fn graph_rel(self) -> String {
-        format!("logseq/.tine-trash/{}", self.dir_name())
+        self.folder().join("/")
     }
 
     /// The folder a transaction files the graph file `rel` (graph-relative,
-    /// `/`-separated) in, from its path alone: a sync-conflict copy in the
-    /// pages or journals area, then the pages area, the journals area,
-    /// `assets/`, else other. An area is matched as the configured folder
-    /// written followed by `/`, ignoring one trailing `/` on the configured
-    /// value. Cost O(path length).
-    pub(crate) fn of_trashed_file(rel: &str, config: &Config) -> Self {
-        let under = |dir: &str| {
-            let dir = dir.strip_suffix('/').unwrap_or(dir);
-            rel.strip_prefix(dir)
-                .is_some_and(|rest| rest.starts_with('/'))
-        };
-        let pages = under(&config.pages_dir);
-        let journals = under(&config.journals_dir);
+    /// `/`-separated) in. A trash of an unreferenced asset goes to `assets/`.
+    /// Any other trash is filed from the path alone: a sync-conflict copy in
+    /// the pages or journals area, then the pages area, the journals area,
+    /// `assets/`, else other, an area being the configured folder written
+    /// followed by `/`. A file that would go to other is matched once more,
+    /// ignoring one trailing `/` on each configured value. Cost O(path length).
+    pub(crate) fn of_trashed_file(rel: &str, when: crate::TrashIf, config: &Config) -> Self {
+        if when == crate::TrashIf::UnreferencedAsset {
+            return Self::Asset;
+        }
         let stem = Path::new(rel)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        if (pages || journals) && tine_core::model::is_sync_conflict(stem) {
-            Self::Conflict
-        } else if pages {
-            Self::Page
-        } else if journals {
-            Self::Journal
-        } else if rel.starts_with("assets/") {
-            Self::Asset
-        } else {
-            Self::Other
+        let by_path = |trim: bool| {
+            let under = |dir: &str| {
+                let dir = if trim {
+                    dir.strip_suffix('/').unwrap_or(dir)
+                } else {
+                    dir
+                };
+                rel.strip_prefix(dir)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            };
+            let pages = under(&config.pages_dir);
+            let journals = under(&config.journals_dir);
+            if (pages || journals) && tine_core::model::is_sync_conflict(stem) {
+                Self::Conflict
+            } else if pages {
+                Self::Page
+            } else if journals {
+                Self::Journal
+            } else if rel.starts_with("assets/") {
+                Self::Asset
+            } else {
+                Self::Other
+            }
+        };
+        match by_path(false) {
+            Self::Other => by_path(true),
+            kind => kind,
         }
     }
 }
 
+/// The graph trash below the graph root, one component per item.
+const TRASH_ROOT: [&str; 2] = ["logseq", ".tine-trash"];
+
 pub(crate) fn trash_root(root: &Path) -> PathBuf {
-    root.join("logseq").join(".tine-trash")
+    let mut path = root.to_path_buf();
+    path.extend(TRASH_ROOT);
+    path
 }
 
 /// The kind folder `kind` under the trash of the graph at `root`; an empty
 /// `root` gives the graph-relative folder.
 pub(crate) fn typed_trash_dir(root: &Path, kind: TrashEntryKind) -> PathBuf {
-    trash_root(root).join(kind.dir_name())
+    let mut path = root.to_path_buf();
+    path.extend(kind.folder());
+    path
 }
 
 /// The typed bucket a directory directly under the trash root counts as;

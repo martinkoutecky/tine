@@ -1,7 +1,8 @@
 //! Which kind folder under the graph trash a transaction files a trashed file
 //! in: a sync-conflict copy in either text area, then the pages area, the
-//! journals area, `assets/`, then `other/`. A configured folder written with a
-//! trailing `/` names the same area as without it.
+//! journals area, `assets/`, then `other/`. A file that would land in
+//! `other/` is matched again against a configured folder written with a
+//! trailing `/`, as if written without it.
 use crate::{Area, Store, TrashIf, TxOutcome};
 use std::fs;
 
@@ -157,4 +158,41 @@ fn conflict_copies_keep_their_folder_and_names() {
     assert_eq!(trashed(old), b"- older\n");
     assert_eq!(trashed(withdrawn), b"- a\n");
     store.close();
+}
+
+/// The trailing-slash match only rescues a file from `other/`: where the
+/// folder as written already gave a kind, that kind stands.
+#[test]
+fn a_trailing_slash_moves_only_what_went_to_other() {
+    let cases = [
+        (
+            r#"{:pages-directory "assets/"}"#,
+            Area::Assets,
+            "crop.png",
+            "assets/crop.png",
+            "assets",
+        ),
+        (
+            r#"{:journals-directory "assets/"}"#,
+            Area::Assets,
+            "photo.sync-conflict-20240101-000000-ABCDEFG.png",
+            "assets/photo.sync-conflict-20240101-000000-ABCDEFG.png",
+            "assets",
+        ),
+        (
+            r#"{:pages-directory "notes/" :journals-directory "notes/daily"}"#,
+            Area::Journals,
+            "attachment.bin",
+            "notes/daily/attachment.bin",
+            "journals",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (config, area, rel, disk, expected) in cases {
+        let folder = trashed_into(config, area, rel, disk);
+        if folder != expected {
+            wrong.push(format!("{config} {disk}: {folder}, not {expected}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

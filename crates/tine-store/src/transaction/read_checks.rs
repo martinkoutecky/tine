@@ -16,7 +16,7 @@ impl PagePlan<'_> {
             matches!(
                 step,
                 Step::Trash {
-                    orphan_only: true,
+                    when: crate::TrashIf::UnreferencedAsset,
                     ..
                 }
             )

@@ -254,3 +254,47 @@ fn the_guard_sees_each_way_a_folder_was_spelled() {
         assert!(spelled(code).is_empty(), "flagged: {code}");
     }
 }
+
+/// Whether `tokens` hold the identifier `name`.
+fn names(tokens: TokenStream, name: &str) -> bool {
+    tokens.into_iter().any(|token| match token {
+        TokenTree::Ident(ident) => ident == name,
+        TokenTree::Group(group) => names(group.stream(), name),
+        _ => false,
+    })
+}
+
+/// One producer builds a kind folder's path: in `model.rs`, only
+/// `TrashEntryKind::folder` joins the trash root and a folder name, and
+/// `trash_dir_kind` reads names back; the trash root is spelled once.
+#[test]
+fn one_function_builds_a_kind_folder() {
+    let model = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/model.rs");
+    let parsed = syn::parse_file(&std::fs::read_to_string(model).unwrap()).unwrap();
+    let mut units = Vec::new();
+    items(&parsed.items, &mut units);
+    // Unnamed items (consts, statics) build no path; the root's const is one.
+    let users = |name: &str| {
+        let mut found: Vec<_> = (units.iter())
+            .filter(|(item, tokens)| {
+                !item.is_empty() && item != name && names(tokens.clone(), name)
+            })
+            .map(|(item, _)| item.clone())
+            .collect();
+        found.sort();
+        found
+    };
+    assert_eq!(users("dir_name"), ["folder", "trash_dir_kind"]);
+    assert_eq!(users("TRASH_ROOT"), ["folder", "trash_root"]);
+    let spelled_root = (units.iter())
+        .filter(|(_, tokens)| {
+            let (mut literals, mut calls_root) = (Vec::new(), false);
+            scan(tokens.clone(), &mut literals, &mut calls_root);
+            literals.iter().any(|text| text.contains(".tine-trash"))
+        })
+        .count();
+    assert_eq!(
+        spelled_root, 1,
+        "the trash root is spelled once in model.rs"
+    );
+}

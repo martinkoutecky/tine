@@ -321,3 +321,64 @@ fn the_second_reviews_in_use_files_are_never_offered_for_trash() {
     }
     store.close();
 }
+
+/// Orphaned media's trash files an unused asset under the trash's `assets/`
+/// folder even when the pages or journals folder is configured as
+/// `"assets/"` or `"assets"`, a sync-conflict name included; Settings then counts it as
+/// asset trash and Empty asset trash removes it.
+#[test]
+fn an_asset_trash_files_under_assets_whatever_the_text_folders_are() {
+    let photo = "photo.png";
+    let copy = "photo.sync-conflict-20240101-000000-ABCDEFG.png";
+    // (folder of the trashed copy, Settings' asset count, Empty asset
+    // trash's result, entries left in the trash) per case that differs.
+    let mut wrong = Vec::new();
+    for config in [
+        r#"{:pages-directory "assets/"}"#,
+        r#"{:journals-directory "assets/"}"#,
+        r#"{:pages-directory "assets/" :journals-directory "assets/"}"#,
+        r#"{:pages-directory "assets"}"#,
+        r#"{:journals-directory "assets"}"#,
+    ] {
+        for name in [photo, copy] {
+            let root = crate::test_support::fresh_dir("tine-asset-trash-overlap-");
+            std::fs::create_dir_all(root.join("logseq")).unwrap();
+            std::fs::create_dir_all(root.join("assets")).unwrap();
+            std::fs::write(root.join("logseq/config.edn"), config).unwrap();
+            std::fs::write(root.join("assets").join(name), b"png-bytes").unwrap();
+            let store = Store::open(&root, Default::default()).unwrap().0;
+            assert_eq!(
+                trash_asset(&store, name).unwrap(),
+                TrashOutcome::Trashed,
+                "{config} {name}"
+            );
+            let trash = root.join("logseq/.tine-trash");
+            let mut folders = Vec::new();
+            for kind in std::fs::read_dir(&trash).unwrap() {
+                let kind = kind.unwrap();
+                for entry in std::fs::read_dir(kind.path()).unwrap() {
+                    let entry = entry.unwrap().file_name().to_string_lossy().into_owned();
+                    if entry.ends_with(&format!("__{name}")) {
+                        folders.push(kind.file_name().to_string_lossy().into_owned());
+                    }
+                }
+            }
+            let stats = store.trash_stats().unwrap();
+            let counted = stats
+                .iter()
+                .find(|(k, _, _)| *k == TrashKind::Asset)
+                .map(|s| s.1);
+            let purged = store.purge_asset_trash().unwrap();
+            let left = std::fs::read_dir(&trash)
+                .unwrap()
+                .flat_map(|kind| std::fs::read_dir(kind.unwrap().path()).unwrap())
+                .count();
+            let seen = (folders, counted, purged, left);
+            if seen != (vec!["assets".to_owned()], Some(1), (1, 9), 0) {
+                wrong.push(format!("{config} {name}: {seen:?}"));
+            }
+            store.close();
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

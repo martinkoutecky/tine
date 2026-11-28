@@ -113,7 +113,8 @@ pub enum TrashIf {
     /// Trash the file whatever references it.
     Any,
     /// Trash only an `assets/` file no published page references; a
-    /// referenced asset refuses with [`Refusal::AssetReferenced`].
+    /// referenced asset refuses with [`Refusal::AssetReferenced`]. The file
+    /// goes to the trash's `assets/` folder whatever the configured folders.
     UnreferencedAsset,
 }
 
@@ -408,7 +409,7 @@ enum Step {
     Trash {
         file: FileId,
         expected: FileRev,
-        orphan_only: bool,
+        when: TrashIf,
     },
 }
 
@@ -979,7 +980,7 @@ impl<'a> PagePlan<'a> {
         self.steps.push(Step::Trash {
             file: file.clone(),
             expected,
-            orphan_only: when == TrashIf::UnreferencedAsset,
+            when,
         });
         self
     }
@@ -1215,10 +1216,13 @@ impl<'a> PagePlan<'a> {
         names
     }
 
-    fn trash_id(&self, file: &FileId) -> FileId {
+    fn trash_id(&self, file: &FileId, when: TrashIf) -> FileId {
         let rel = file.as_str();
-        let kind =
-            crate::model::TrashEntryKind::of_trashed_file(rel, &self.store.graph.current_config());
+        let kind = crate::model::TrashEntryKind::of_trashed_file(
+            rel,
+            when,
+            &self.store.graph.current_config(),
+        );
         let name = Path::new(rel)
             .file_name()
             .and_then(|s| s.to_str())
@@ -1474,10 +1478,10 @@ impl<'a> PagePlan<'a> {
                 unreachable!()
             }
             Step::Move { .. } => self.apply_move(plan, undo, index),
-            Step::Trash { .. } => {
+            Step::Trash { when, .. } => {
                 let old = plan.old.as_deref().expect("trash baseline");
                 self.verify(&plan.src, Some(old), index)?;
-                let trash_id = self.trash_id(&plan.src);
+                let trash_id = self.trash_id(&plan.src, *when);
                 let trash = self.path(&trash_id)?;
                 if let Some(parent) = trash.parent() {
                     crate::directory_durability::create_dir_all_durable(

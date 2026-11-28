@@ -502,9 +502,9 @@ impl<'a> PagePlan<'a> {
             Step::Trash {
                 file,
                 expected,
-                orphan_only,
+                when,
             } => {
-                if *orphan_only {
+                if *when == crate::TrashIf::UnreferencedAsset {
                     self.check_orphan_asset(file)?;
                 }
                 if file.as_str().starts_with("logseq/.tine-trash/") {

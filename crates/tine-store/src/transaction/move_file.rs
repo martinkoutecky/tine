@@ -15,7 +15,7 @@ impl PagePlan<'_> {
     /// same old-byte recovery copy as a rewritten transaction rename.
     pub(crate) fn retain_spelling_bytes(&self, from: &FileId, bytes: &[u8]) -> Result<(), Why> {
         self.verify(from, Some(bytes), 0)?;
-        self.write_trash_copy(&self.trash_id(from), bytes)?;
+        self.write_trash_copy(&self.trash_id(from, TrashIf::Any), bytes)?;
         Ok(())
     }
 
@@ -534,7 +534,7 @@ impl PagePlan<'_> {
 
         // Preserve the original bytes for the same recovery affordance
         // as the old destination-first move.
-        let trash_id = self.trash_id(&plan.src);
+        let trash_id = self.trash_id(&plan.src, TrashIf::Any);
         let trash = self.write_trash_copy(&trash_id, old)?;
         undo.trash = Some(trash_id);
         if fault(self.store, FaultPoint::MoveAfterTrashCopyIo) {
