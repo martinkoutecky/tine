@@ -91,6 +91,8 @@ pub mod model;
 #[cfg(test)]
 mod outside_roots_tests;
 #[cfg(test)]
+mod trash_folder_guard_tests;
+#[cfg(test)]
 mod upcoming_query_tests;
 pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{not_utf8, parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};

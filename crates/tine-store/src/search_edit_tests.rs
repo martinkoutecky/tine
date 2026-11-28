@@ -1001,7 +1001,7 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock, "{err}");
     assert_eq!(
         err.to_string(),
-        "“journals/2026_06_20.md” could not be written; moving the journal to trash at logseq/.tine-trash/pages finishes once it can be."
+        "“journals/2026_06_20.md” could not be written; moving the journal to the trash finishes once it can be."
     );
     assert!(journal.is_file(), "source journal survives");
     assert_eq!(

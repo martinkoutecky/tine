@@ -368,8 +368,13 @@ field transaction::RenameCheck.observed
 field transaction::RenameCheck.source
 enum transaction::Guarantee
 
-## Trash admin (ceiling: 3)
+## Trash admin (ceiling: 4)
+# TrashKind::folders: the app's Git pull barrier, its Git ignore probe and the
+# asset error text need the trash's kind folders, which only the store spells.
+# trash_stats and purge_asset_trash answer counts and a purge, not where a kind
+# lives; a parameter on either would make a listing answer a layout question.
 enum store::TrashKind
+fn store::TrashKind::folders
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 

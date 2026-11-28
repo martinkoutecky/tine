@@ -801,7 +801,7 @@ impl ConfigState {
                 .and_then(|part| part.to_str())
                 .unwrap_or("dir")
                 .to_owned(),
-            asset_trash_location: graph.root.join("logseq/.tine-trash/assets"),
+            asset_trash_location: crate::model::typed_trash_dir(&graph.root, TrashEntryKind::Asset),
         }
     }
 }
@@ -836,6 +836,15 @@ pub enum TrashKind {
     Conflict,
     /// Entry without a recognized typed trash category.
     Legacy,
+}
+
+impl TrashKind {
+    /// Every kind folder of the graph trash with the kind its entries count
+    /// as, graph-relative and `/`-separated (`logseq/.tine-trash/pages`);
+    /// `other/` counts as `Legacy`. Cost O(1).
+    pub fn folders() -> [(TrashKind, String); 5] {
+        TrashEntryKind::ALL.map(|kind| (TrashKind::from(kind), kind.graph_rel()))
+    }
 }
 
 impl From<TrashEntryKind> for TrashKind {

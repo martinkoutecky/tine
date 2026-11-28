@@ -1309,9 +1309,8 @@ fn barrier(slot: &GraphSlot, root: &Path, changes: &[Change]) -> std::io::Result
         }
     }
     if trash {
-        let base = root.join("logseq/.tine-trash");
-        for kind in ["pages", "journals", "assets", "conflicts", "other"] {
-            let dir = base.join(kind);
+        for (_, folder) in tine_store::TrashKind::folders() {
+            let dir = root.join(folder);
             if dir.is_dir() {
                 folders.insert(dir);
             }

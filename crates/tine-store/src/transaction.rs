@@ -36,6 +36,8 @@ pub(crate) use read_checks::config_write_failure;
 mod prepared;
 #[cfg(test)]
 mod prepared_move_tests;
+#[cfg(test)]
+mod trash_folder_tests;
 use prepared::PreparedRewrite;
 #[cfg(test)]
 #[path = "transaction_environment_tests.rs"]
@@ -1215,36 +1217,15 @@ impl<'a> PagePlan<'a> {
 
     fn trash_id(&self, file: &FileId) -> FileId {
         let rel = file.as_str();
-        let page_area = rel
-            .starts_with(&format!("{}/", self.store.graph.current_config().pages_dir))
-            || rel.starts_with(&format!(
-                "{}/",
-                self.store.graph.current_config().journals_dir
-            ));
-        let stem = Path::new(rel)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        let kind = if page_area && tine_core::model::is_sync_conflict(stem) {
-            "conflicts"
-        } else if rel.starts_with(&format!("{}/", self.store.graph.current_config().pages_dir)) {
-            "pages"
-        } else if rel.starts_with(&format!(
-            "{}/",
-            self.store.graph.current_config().journals_dir
-        )) {
-            "journals"
-        } else if rel.starts_with("assets/") {
-            "assets"
-        } else {
-            "other"
-        };
+        let kind =
+            crate::model::TrashEntryKind::of_trashed_file(rel, &self.store.graph.current_config());
         let name = Path::new(rel)
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("file");
         FileId::from(format!(
-            "logseq/.tine-trash/{kind}/{}",
+            "{}/{}",
+            kind.graph_rel(),
             crate::atomic_file::prefixed_name(&format!("{}__", trash_stamp()), name)
         ))
     }
@@ -1259,7 +1240,8 @@ impl<'a> PagePlan<'a> {
             .and_then(|s| s.to_str())
             .unwrap_or("file");
         let id = FileId::from(format!(
-            "logseq/.tine-trash/conflicts/{}",
+            "{}/{}",
+            crate::model::TrashEntryKind::Conflict.graph_rel(),
             crate::atomic_file::prefixed_name(&format!("{}__markers__", trash_stamp()), name)
         ));
         self.write_trash_copy(&id, old)?;
@@ -1706,7 +1688,8 @@ impl<'a> PagePlan<'a> {
             .and_then(|s| s.to_str())
             .unwrap_or("file");
         let copy = FileId::from(format!(
-            "logseq/.tine-trash/conflicts/{}",
+            "{}/{}",
+            crate::model::TrashEntryKind::Conflict.graph_rel(),
             crate::atomic_file::prefixed_name(&format!("{}__tx-old__", trash_stamp()), name)
         ));
         let recovery = self.store.graph.root.join(copy.as_str());

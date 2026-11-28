@@ -4620,23 +4620,79 @@ fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
     tine_core::model::decode_page_name(stem, fmt)
 }
 
+/// The kind folders under the graph trash (`logseq/.tine-trash/<kind>/`).
+/// [`TrashEntryKind::dir_name`] is the one place a folder is spelled,
+/// [`typed_trash_dir`] the one producer of its path, and
+/// [`TrashEntryKind::of_trashed_file`] the transaction's choice of folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrashEntryKind {
+    /// `assets/`: trashed asset files.
     Asset,
+    /// `pages/`: trashed pages-area files and every page the page host deletes.
     Page,
+    /// `journals/`: journals-area files a transaction trashes.
     Journal,
+    /// `conflicts/`: sync-conflict copies and conflict recovery copies.
     Conflict,
+    /// `other/`: any other graph file.
     Other,
 }
 
 impl TrashEntryKind {
-    fn dir_name(self) -> Option<&'static str> {
+    /// Every kind folder a trashed file can be filed in.
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Page,
+        Self::Journal,
+        Self::Asset,
+        Self::Conflict,
+        Self::Other,
+    ];
+
+    /// The kind folder's name under the trash root.
+    pub(crate) fn dir_name(self) -> &'static str {
         match self {
-            TrashEntryKind::Asset => Some("assets"),
-            TrashEntryKind::Page => Some("pages"),
-            TrashEntryKind::Journal => Some("journals"),
-            TrashEntryKind::Conflict => Some("conflicts"),
-            TrashEntryKind::Other => None,
+            TrashEntryKind::Asset => "assets",
+            TrashEntryKind::Page => "pages",
+            TrashEntryKind::Journal => "journals",
+            TrashEntryKind::Conflict => "conflicts",
+            TrashEntryKind::Other => "other",
+        }
+    }
+
+    /// The kind folder as a graph-relative, `/`-separated name, the form of a
+    /// trash `FileId` and of a location shown in a message.
+    pub(crate) fn graph_rel(self) -> String {
+        format!("logseq/.tine-trash/{}", self.dir_name())
+    }
+
+    /// The folder a transaction files the graph file `rel` (graph-relative,
+    /// `/`-separated) in, from its path alone: a sync-conflict copy in the
+    /// pages or journals area, then the pages area, the journals area,
+    /// `assets/`, else other. An area is matched as the configured folder
+    /// written followed by `/`, ignoring one trailing `/` on the configured
+    /// value. Cost O(path length).
+    pub(crate) fn of_trashed_file(rel: &str, config: &Config) -> Self {
+        let under = |dir: &str| {
+            let dir = dir.strip_suffix('/').unwrap_or(dir);
+            rel.strip_prefix(dir)
+                .is_some_and(|rest| rest.starts_with('/'))
+        };
+        let pages = under(&config.pages_dir);
+        let journals = under(&config.journals_dir);
+        let stem = Path::new(rel)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if (pages || journals) && tine_core::model::is_sync_conflict(stem) {
+            Self::Conflict
+        } else if pages {
+            Self::Page
+        } else if journals {
+            Self::Journal
+        } else if rel.starts_with("assets/") {
+            Self::Asset
+        } else {
+            Self::Other
         }
     }
 }
@@ -4645,18 +4701,24 @@ pub(crate) fn trash_root(root: &Path) -> PathBuf {
     root.join("logseq").join(".tine-trash")
 }
 
-fn typed_trash_dir(root: &Path, kind: TrashEntryKind) -> PathBuf {
-    trash_root(root).join(kind.dir_name().unwrap_or("other"))
+/// The kind folder `kind` under the trash of the graph at `root`; an empty
+/// `root` gives the graph-relative folder.
+pub(crate) fn typed_trash_dir(root: &Path, kind: TrashEntryKind) -> PathBuf {
+    trash_root(root).join(kind.dir_name())
 }
 
+/// The typed bucket a directory directly under the trash root counts as;
+/// `other/` and any unknown name are not one (they count as legacy).
 pub(crate) fn trash_dir_kind(path: &Path) -> Option<TrashEntryKind> {
-    match path.file_name().and_then(|s| s.to_str()) {
-        Some("assets") => Some(TrashEntryKind::Asset),
-        Some("pages") => Some(TrashEntryKind::Page),
-        Some("journals") => Some(TrashEntryKind::Journal),
-        Some("conflicts") => Some(TrashEntryKind::Conflict),
-        _ => None,
-    }
+    let name = path.file_name()?.to_str()?;
+    [
+        TrashEntryKind::Asset,
+        TrashEntryKind::Page,
+        TrashEntryKind::Journal,
+        TrashEntryKind::Conflict,
+    ]
+    .into_iter()
+    .find(|kind| kind.dir_name() == name)
 }
 
 /// A flat (pre-typed-directory) trash entry keeps only its file name, so a
@@ -7766,6 +7828,54 @@ mod tests {
         assert_eq!(stats[0].1, 0, "asset trash should be empty");
         assert_eq!(stats[1].1, 1, "page trash should still be counted");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Each kind folder keeps its name, and the listing keeps four typed
+    /// buckets: everything in `other/` counts as one legacy entry.
+    #[test]
+    fn kind_folders_keep_their_names_and_other_counts_as_one_legacy_entry() {
+        let names: Vec<_> = TrashEntryKind::ALL.iter().map(|k| k.dir_name()).collect();
+        assert_eq!(names, ["pages", "journals", "assets", "conflicts", "other"]);
+        for kind in TrashEntryKind::ALL {
+            assert_eq!(
+                typed_trash_dir(Path::new("/g"), kind),
+                Path::new("/g/logseq/.tine-trash").join(kind.dir_name())
+            );
+            assert_eq!(
+                kind.graph_rel(),
+                format!("logseq/.tine-trash/{}", kind.dir_name())
+            );
+        }
+        use crate::store::TrashKind;
+        let folder = |name: &str| format!("logseq/.tine-trash/{name}");
+        assert_eq!(
+            TrashKind::folders(),
+            [
+                (TrashKind::Page, folder("pages")),
+                (TrashKind::Journal, folder("journals")),
+                (TrashKind::Asset, folder("assets")),
+                (TrashKind::Conflict, folder("conflicts")),
+                (TrashKind::Legacy, folder("other")),
+            ]
+        );
+        let dir = scratch("trash-other-is-legacy");
+        let other = typed_trash_dir(&dir, TrashEntryKind::Other);
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("1__a.bin"), b"abc").unwrap();
+        fs::write(other.join("2__b.bin"), b"defgh").unwrap();
+        let journals = typed_trash_dir(&dir, TrashEntryKind::Journal);
+        fs::create_dir_all(&journals).unwrap();
+        fs::write(journals.join("3__2024_01_05.md"), b"- x\n").unwrap();
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
+        let stats = store.trash_stats().unwrap();
+        let of = |kind| stats.iter().find(|(k, _, _)| *k == kind).copied();
+        assert_eq!(of(TrashKind::Legacy), Some((TrashKind::Legacy, 1, 8)));
+        assert_eq!(of(TrashKind::Journal), Some((TrashKind::Journal, 1, 4)));
+        assert_eq!(of(TrashKind::Page).map(|s| s.1), Some(0));
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 

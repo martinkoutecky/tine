@@ -192,7 +192,7 @@ impl PageHost {
             let _writer = store.writer.lock().unwrap_or_else(|e| e.into_inner());
             store.page_plan(None).complete_case_moves();
         }
-        let trash = crate::model::trash_root(&graph.root).join("pages");
+        let trash = crate::model::typed_trash_dir(&graph.root, crate::model::TrashEntryKind::Page);
         let mut io = ProductionIo::attach_bound(
             &graph.root,
             app_data,

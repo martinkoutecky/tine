@@ -1211,7 +1211,7 @@ pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Res
         host,
         Input::Flush,
         std::slice::from_ref(&page),
-        "moving the journal to trash at logseq/.tine-trash/pages",
+        "moving the journal to the trash",
         "journal changed repeatedly during trash",
         crate::retained::unsaved,
         plan,

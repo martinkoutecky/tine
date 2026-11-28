@@ -146,3 +146,85 @@ fn a_delete_outside_the_graph_refuses_without_writes() {
         b"- one\n"
     );
 }
+
+/// The kind folders of the graph trash holding one trashed copy of `name`
+/// with `bytes`, each named for its folder.
+fn trashed(root: &std::path::Path, name: &str, bytes: &[u8]) -> Vec<String> {
+    let mut found = Vec::new();
+    for kind in fs::read_dir(root.join("logseq/.tine-trash")).unwrap() {
+        let kind = kind.unwrap();
+        for entry in fs::read_dir(kind.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(&format!("__{name}"))
+            {
+                assert_eq!(fs::read(entry.path()).unwrap(), bytes);
+                found.push(kind.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    found
+}
+
+/// Delete page and Delete journal keep the page host's one trash folder,
+/// `pages/`, for a page in any folder and for a journal.
+#[test]
+fn hosted_deletes_file_pages_and_journals_under_the_pages_folder() {
+    let _integration_guard = crate::integration_lock();
+    for (name, path, kind) in [
+        ("Foo", "pages/Foo.md", PageKind::Page),
+        ("Foo", "archive/Foo.md", PageKind::Page),
+        ("Jan 5th, 2024", "journals/2024_01_05.md", PageKind::Journal),
+    ] {
+        let (root, store) = fixture(&[]);
+        fs::create_dir_all(root.path().join("archive")).unwrap();
+        fs::write(root.path().join(path), "- body\n").unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        store.whole_graph().unwrap();
+        assert_eq!(
+            delete(&store, name, kind, Some(path)).unwrap(),
+            PageOperation::Applied,
+            "{path}"
+        );
+        assert!(!root.path().join(path).exists(), "{path}");
+        let leaf = path.rsplit('/').next().unwrap();
+        assert_eq!(trashed(root.path(), leaf, b"- body\n"), ["pages"], "{path}");
+        store.close();
+    }
+}
+
+/// The page host refuses a sync-conflict copy; discarding the copy files it
+/// under `conflicts/`.
+#[test]
+fn a_refused_conflict_copy_is_discarded_into_the_conflicts_folder() {
+    let _integration_guard = crate::integration_lock();
+    let copy = "pages/Foo.sync-conflict-20240101-000000-ABCDEFG.md";
+    let (root, store) = fixture(&[("pages/Foo.md", "- mine\n"), (copy, "- theirs\n")]);
+    let file = store
+        .file_id(
+            tine_store::Area::Pages,
+            copy.strip_prefix("pages/").unwrap(),
+        )
+        .unwrap();
+    let rev = store.read(&file, None).unwrap().1;
+    let app_data = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+        .as_u64()
+        .unwrap();
+    let rev = String::from(rev);
+    let refused = pages::delete_page_file(&store, &host, session, copy, &rev);
+    assert_eq!(
+        refused.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert_eq!(fs::read(root.path().join(copy)).unwrap(), b"- theirs\n");
+    tine_graph_features::conflicts::trash_sync_conflict(&store, Some(&host), copy).unwrap();
+    assert!(!root.path().join(copy).exists());
+    let leaf = copy.rsplit('/').next().unwrap();
+    assert_eq!(trashed(root.path(), leaf, b"- theirs\n"), ["conflicts"]);
+    drop(host);
+    store.close();
+}

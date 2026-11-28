@@ -16,8 +16,10 @@ use tine_store::{PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar\n :default-home {:page \"Start\"}}\n";
 
+/// The pending message promises the trash, never one folder in it: the
+/// folder is the trash's own answer when the move finally runs.
 #[test]
-fn an_unusable_journal_trash_names_the_recovery_location() {
+fn an_unusable_journal_trash_names_no_trash_folder() {
     let _guard = crate::integration_lock();
     let root = graph(
         "journal-trash-location",
@@ -29,10 +31,11 @@ fn an_unusable_journal_trash_names_the_recovery_location() {
     store.whole_graph().unwrap();
     let host = PageHost::start_for_tests(&store, app.path()).unwrap();
     let error = journals::trash_journal_file(&store, &host, "2026_06_20.md").unwrap_err();
-    assert!(
-        error.to_string().contains("logseq/.tine-trash/pages"),
-        "{error}"
+    assert_eq!(
+        error.to_string(),
+        "“journals/2026_06_20.md” could not be written; moving the journal to the trash finishes once it can be.",
     );
+    assert!(!error.to_string().contains(".tine-trash"), "{error}");
     assert_eq!(
         fs::read(root.join("journals/2026_06_20.md")).unwrap(),
         b"- keep\n"

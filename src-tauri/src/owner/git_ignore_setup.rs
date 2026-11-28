@@ -16,21 +16,26 @@ use super::{open_checked, prefix_of, registry};
 /// a negation such as `!logseq/.tine-trash/**` still gets the line (the
 /// appended line comes last, so it wins; staging excludes these files
 /// regardless, so the negation could never have made them tracked).
-const IGNORE_LINES: [(&str, &str, &[&str]); 2] = [
-    (
-        "git-syncthing-ignore-checked",
-        ".syncthing.*",
-        &[".syncthing.tine-ignore-check.tmp"],
-    ),
-    (
-        "git-tine-own-ignore-checked",
-        "logseq/.tine-*",
-        &[
-            "logseq/.tine-ignore-check",
-            "logseq/.tine-trash/pages/tine-ignore-check.md",
-        ],
-    ),
+const IGNORE_LINES: [(&str, &str, fn() -> Vec<String>); 2] = [
+    ("git-syncthing-ignore-checked", ".syncthing.*", || {
+        vec![".syncthing.tine-ignore-check.tmp".into()]
+    }),
+    ("git-tine-own-ignore-checked", "logseq/.tine-*", || {
+        vec![
+            "logseq/.tine-ignore-check".into(),
+            format!("{}/tine-ignore-check.md", page_trash()),
+        ]
+    }),
 ];
+/// The trash's pages folder, graph-relative.
+fn page_trash() -> String {
+    tine_store::TrashKind::folders()
+        .into_iter()
+        .find(|(kind, _)| *kind == tine_store::TrashKind::Page)
+        .map(|(_, folder)| folder)
+        .unwrap_or_default()
+}
+
 static IGNORE_SETUP_LOCK: Mutex<()> = Mutex::new(());
 
 /// The ignore lines [`prepare_git_ignore`] added, or with the error those it
@@ -66,9 +71,9 @@ pub(crate) fn prepare_git_ignore(
     let repo = open_checked(root).map_err(|e| fail(e.message()))?;
     let mut missing = Vec::new();
     for (_, line, probes) in &due {
-        for probe in *probes {
+        for probe in probes() {
             let path = match prefix_of(&repo) {
-                prefix if prefix.is_empty() => (*probe).to_owned(),
+                prefix if prefix.is_empty() => probe,
                 prefix => format!("{prefix}/{probe}"),
             };
             let ignored = git_ignores(&repo.repo, &path).map_err(|e| fail(e.to_string()))?;
@@ -156,4 +161,22 @@ pub(crate) fn report_ignore_setup(root: &Path, result: IgnoreSetup) {
             }
         }
     }
+}
+
+/// The names git is asked about stay what they were: the trash file probed is
+/// a page in the trash's pages folder.
+#[cfg(test)]
+#[test]
+fn the_ignore_probes_keep_their_names() {
+    let probes: Vec<_> = IGNORE_LINES.iter().map(|(_, _, probes)| probes()).collect();
+    assert_eq!(
+        probes,
+        [
+            vec![".syncthing.tine-ignore-check.tmp".to_owned()],
+            vec![
+                "logseq/.tine-ignore-check".to_owned(),
+                "logseq/.tine-trash/pages/tine-ignore-check.md".to_owned(),
+            ],
+        ]
+    );
 }

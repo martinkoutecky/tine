@@ -53,10 +53,10 @@ pub(super) fn directory_read_error(error: io::Error, path: &Path) -> io::Error {
 }
 
 pub(super) fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {
-    let display = if error.kind() == io::ErrorKind::NotADirectory
-        && parent.ends_with(Path::new("logseq/.tine-trash/assets"))
-    {
-        Path::new("logseq/.tine-trash/assets")
+    let asset_trash = crate::model::TrashEntryKind::Asset.graph_rel();
+    let asset_trash = Path::new(&asset_trash);
+    let display = if error.kind() == io::ErrorKind::NotADirectory && parent.ends_with(asset_trash) {
+        asset_trash
     } else {
         parent
     };

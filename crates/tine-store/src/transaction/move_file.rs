@@ -459,12 +459,14 @@ impl PagePlan<'_> {
             return Ok(true);
         }
         let name = leaf.to_string_lossy();
-        let trash = crate::model::trash_root(&self.store.graph.root)
-            .join("pages")
-            .join(crate::atomic_file::prefixed_name(
-                &format!("{}__respell__", crate::model::trash_stamp()),
-                &name,
-            ));
+        let trash = crate::model::typed_trash_dir(
+            &self.store.graph.root,
+            crate::model::TrashEntryKind::Page,
+        )
+        .join(crate::atomic_file::prefixed_name(
+            &format!("{}__respell__", crate::model::trash_stamp()),
+            &name,
+        ));
         crate::directory_durability::create_dir_all_durable(
             trash.parent().unwrap(),
             self.store.graph.creation_bound(trash.parent().unwrap()),

@@ -18,8 +18,13 @@ const COMPOUND_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.
 /// Keep the legacy trash error display path while the store owns its layout.
 /// Cost O(error text); the original I/O failure remains visible.
 pub fn error_for_user(store: &Store, error: io::Error) -> String {
+    let asset_trash = TrashKind::folders()
+        .into_iter()
+        .find(|(kind, _)| *kind == TrashKind::Asset)
+        .map(|(_, folder)| folder)
+        .unwrap_or_default();
     error.to_string().replace(
-        "logseq/.tine-trash/assets",
+        &asset_trash,
         &store.config().asset_trash_location.display().to_string(),
     )
 }

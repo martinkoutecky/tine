@@ -9,7 +9,7 @@
 //! and recovery before retrying. Windows directory sync is filesystem-dependent;
 //! Linux/macOS/iOS/Android sync output entries. Callers need no staging knowledge.
 
-use crate::model::Graph;
+use crate::model::{Graph, TrashEntryKind};
 use crate::store::Store;
 use crate::transaction::IoError;
 use cap_std::ambient_authority;
@@ -760,19 +760,14 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let recovery_rel = Path::new("logseq").join(".tine-trash").join("conflicts");
+    let recovery_rel = crate::model::typed_trash_dir(Path::new(""), TrashEntryKind::Conflict);
     let recovery = graph.root.join(&recovery_rel);
     graph.ensure_write_target(&recovery)?;
     #[cfg(test)]
     crate::model::assert_checked_target(&recovery);
     root.create_dir_all(&recovery_rel)?;
     let recovery_root = root.open_dir(&recovery_rel)?;
-    for rel in [
-        "logseq/.tine-trash/conflicts",
-        "logseq/.tine-trash",
-        "logseq",
-        "",
-    ] {
+    for rel in recovery_rel.ancestors() {
         crate::directory_durability::sync_directory_entry(&graph.root.join(rel))?;
     }
     let stamp = SystemTime::now()
@@ -942,6 +937,43 @@ fn rename_publish_entry(
 mod rg7_tests {
     use super::*;
     use crate::model::write_target::clear_checked_target;
+
+    /// A replaced export is kept in conflict trash under its own name, and
+    /// the folder chain from that folder up to the graph root is synced
+    /// leaf first before the name is reserved.
+    #[test]
+    fn publish_recovery_keeps_its_folder_name_and_sync_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path());
+        let root = Dir::open_ambient_dir(&graph.root, ambient_authority()).unwrap();
+        crate::directory_durability::take_synced_directories();
+        let recovery = reserve_publish_recovery(&graph, &root).unwrap();
+        let synced = crate::directory_durability::take_synced_directories();
+        let conflicts = graph.root.join("logseq/.tine-trash/conflicts");
+        assert_eq!(recovery.path.parent(), Some(conflicts.as_path()));
+        let name = recovery.path.file_name().unwrap().to_str().unwrap();
+        let (stamp, rest) = name.split_once('-').unwrap();
+        let (seq, rest) = rest.split_once("__").unwrap();
+        assert!(
+            stamp.bytes().all(|b| b.is_ascii_digit()) && !stamp.is_empty(),
+            "{name}"
+        );
+        assert!(
+            seq.bytes().all(|b| b.is_ascii_digit()) && !seq.is_empty(),
+            "{name}"
+        );
+        assert_eq!(rest, "previous-publish");
+        assert_eq!(
+            synced,
+            [
+                conflicts.clone(),
+                graph.root.join("logseq/.tine-trash"),
+                graph.root.join("logseq"),
+                graph.root.join(""),
+                conflicts,
+            ]
+        );
+    }
 
     #[test]
     fn rg7_unchecked_publish_capability_mutations_panic_before_io() {
