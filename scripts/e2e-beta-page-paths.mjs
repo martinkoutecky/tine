@@ -116,7 +116,8 @@ async function checkCli(name) {
 }
 async function deepLink(name = "Survey test") {
   await openPageByName(browser, "Refs");
-  await browser.$(`.main-content a[href="tine://block/${block}"]`).click();
+  // Refs holds one link; a tine: link carries no href, so it is found by its class.
+  await browser.$(".main-content a.external-link").click();
   // The referrer itself displays the referenced text. Observe the destination
   // route and its actual block, so that text cannot satisfy the link check.
   await browser.waitUntil(() => browser.execute((name, block) =>

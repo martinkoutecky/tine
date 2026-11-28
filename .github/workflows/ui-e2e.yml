@@ -118,18 +118,9 @@ jobs:
         run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
       - name: Write Windows E2E candidate receipt
         run: node scripts/build-e2e-receipt.mjs after --snapshot target/release/tine.exe.build.before.json --app target/release/tine.exe
-      - name: Install Edge WebDriver matching the hosted browser
+      - name: Install Edge WebDriver matching the WebView2 runtime
         shell: pwsh
-        run: |
-          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
-          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
-          $driverDir = "$env:RUNNER_TEMP\edgedriver"
-          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
-          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
-          Expand-Archive $zip -DestinationPath $driverDir -Force
-          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          & "$driverDir\msedgedriver.exe" --version
+        run: ./scripts/install-edge-webdriver.ps1
       - name: Run Windows WebView2 smoke
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
