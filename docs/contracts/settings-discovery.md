@@ -28,13 +28,8 @@ command/key filter.
 Except on a phone-sized touch screen, opening Settings focuses the search box,
 also when it opens on a category or on a setting. While a block is being
 edited, opening Settings leaves focus where it is, so the edit stays open and
-Escape returns to it. While search shows results, they take real focus as a
-Search tab's results do: bare Down from the box focuses the first result, bare
-Down and Up move focus one result without wrapping, Up on the first returns to
-the box, and Enter or Space activates the focused result as a click does. The
-focused result is the only current one. Arrows held with Ctrl, Alt, Meta or
-Shift stay with the global shortcuts, and bare Up and Down in the box or its
-results never act on a block selection behind Settings.
+Escape returns to it. Settings adds no key handling of its own for search
+results; keys typed in the box are the box's.
 
 Themes is a separate category on every screen; static and package theme
 descriptors target it. On touch screens up to 480 CSS px wide, Settings fills

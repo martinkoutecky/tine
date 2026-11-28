@@ -2235,15 +2235,12 @@ mod og_20d_guide_tests {
     }
 
     #[test]
-    fn where_things_are_documents_settings_search_from_the_keyboard() {
-        // GH #996, #1007: Settings can be searched without the mouse.
+    fn where_things_are_documents_the_caret_in_settings_search() {
+        // GH #1007: Settings opens with the caret in its search box.
         let map = page("Start/Where things are");
         for detail in [
             "Settings opens with the caret in its search box",
             "while you are editing a block, the caret stays in the block instead",
-            "Press **ArrowDown** to move to the first matching setting",
-            "ArrowUp on the first returns to the search box",
-            "**Enter** to open the one you are on",
         ] {
             assert!(
                 map.contains(detail),

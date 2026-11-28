@@ -1,9 +1,6 @@
-// GH #996, #1007: Settings can be searched without the mouse. Opening Settings
-// puts the caret in its search box (desktop, when no block is being edited), and
-// Up, Down and Enter move through the matching settings the way they do in a
-// Search tab (GH #697): the results take real focus, Down from the box focuses
-// the first, the ends do not wrap, Up on the first result returns to the box,
-// and Enter is the focused result's own activation, exactly as a click.
+// GH #1007: Settings can be searched without the mouse. Opening Settings puts the
+// caret in its search box (desktop, when no block is being edited); while a block
+// is being edited, focus and the edit stay where they were.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
@@ -12,18 +9,12 @@ import { Cm6BlockEditor } from "./Cm6BlockEditor";
 import { closeSettings, openSettings, settingsOpen } from "../ui";
 import { initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
-import { hasSelection, resetStore, selectBlock, selectedIds } from "../document";
+import { doc } from "../document/model";
+import { hasSelection, pageRoots, resetStore, selectBlock, selectedIds } from "../document";
 import { installKeybindings } from "../keybindings";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { editorIn, type EditorKind } from "../tests/editorDriver";
 import { backend } from "../backend";
-import * as panes from "../panes";
-
-vi.mock("../panes", async (original) => ({
-  ...(await original<typeof import("../panes")>()),
-  layoutHasMultiplePanes: vi.fn(() => false),
-  moveActiveTabInDirection: vi.fn(),
-}));
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 let cleanup: (() => void)[] = [];
@@ -36,8 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const undo of cleanup.splice(0).reverse()) undo();
   closeSettings(); endEdit("page-navigation"); resetStore();
-  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.mocked(panes.layoutHasMultiplePanes).mockClear();
-  vi.mocked(panes.moveActiveTabInDirection).mockClear(); document.body.replaceChildren();
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren();
 });
 
 /** Desktop unless `phone`: the phone layout is a narrow, touch-primary window. */
@@ -53,40 +43,21 @@ function mount(phone = false) {
 }
 const box = (root: HTMLElement) => root.querySelector<HTMLInputElement>(".settings-search-input")!;
 const results = (root: HTMLElement) => [...root.querySelectorAll<HTMLButtonElement>(".settings-search-result")];
-async function type(root: HTMLElement, query: string) {
-  box(root).focus();
-  box(root).value = query;
-  box(root).dispatchEvent(new InputEvent("input", { bubbles: true }));
+/** Types into whatever has focus, as a keyboard does: no focus call first. */
+async function typeIntoFocused(query: string) {
+  const input = document.activeElement as HTMLInputElement;
+  input.value = query;
+  input.dispatchEvent(new InputEvent("input", { bubbles: true }));
   await tick();
 }
 function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
-  const target = document.activeElement as HTMLElement;
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
-  target.dispatchEvent(event);
+  (document.activeElement as HTMLElement).dispatchEvent(event);
   return event;
 }
-/** What the browser does with Enter on a focused button the page left alone: it clicks it. */
-function pressEnter() {
-  const event = press("Enter");
-  if (!event.defaultPrevented && document.activeElement instanceof HTMLButtonElement) document.activeElement.click();
-}
-/**
- * The result that looks current, which must be the one Enter opens: the focused
- * result button, or none while the caret is in the box. No other result carries
- * a highlight or an accessibility pointer of its own.
- */
-function current(root: HTMLElement): HTMLButtonElement | null {
-  expect(root.querySelectorAll(".settings-search-result.active").length).toBe(0);
-  expect(box(root).hasAttribute("aria-activedescendant")).toBe(false);
-  const focused = document.activeElement;
-  if (focused === box(root)) return null;
-  expect(results(root)).toContain(focused);
-  return focused as HTMLButtonElement;
-}
 const activeTab = (root: HTMLElement) => root.querySelector<HTMLElement>(".settings-nav-item.active")?.dataset.settingsTab;
-const navTo = (root: HTMLElement, tab: string) => root.querySelector<HTMLElement>(`.settings-nav-item[data-settings-tab="${tab}"]`)!.click();
 
-describe("Settings search from the keyboard (GH #996, #1007)", () => {
+describe("Settings search from the keyboard (GH #1007)", () => {
   it("opening Settings puts the caret in the search box, also when it opens on a tab or on a setting", async () => {
     const root = mount();
     openSettings(); await tick();
@@ -100,6 +71,27 @@ describe("Settings search from the keyboard (GH #996, #1007)", () => {
     expect(activeTab(root)).toBe("appearance");
     expect(root.querySelector('[data-setting-id="toolbar-title"]')).not.toBeNull();
     expect(document.activeElement).toBe(box(root));
+  });
+
+  it("typing right after opening, with no click, shows the matching settings", async () => {
+    const root = mount();
+    openSettings(); await tick();
+    await typeIntoFocused("Wide mode");
+    expect(box(root).value).toBe("Wide mode");
+    expect(results(root).map((row) => row.dataset.settingTarget)).toContain("settings-ui-wide-mode");
+  });
+
+  it("Escape from the box clears a query, then closes Settings", async () => {
+    cleanup.push(installKeybindings());
+    const root = mount();
+    openSettings(); await tick();
+    box(root).focus();
+    await typeIntoFocused("theme");
+    press("Escape"); await tick();
+    expect(settingsOpen()).toBe(true);
+    expect(box(root).value).toBe("");
+    press("Escape"); await tick();
+    expect(settingsOpen()).toBe(false);
   });
 
   it("the caret lands in the box also when the dialog first waits for the platform probe, as the app mounts it", async () => {
@@ -131,138 +123,24 @@ describe("Settings search from the keyboard (GH #996, #1007)", () => {
     expect(document.activeElement).not.toBe(box(root));
   });
 
-  it("Down focuses the first result, Down and Up move focus one result without wrapping, and Up on the first returns to the box", async () => {
-    const root = mount();
-    openSettings(); await tick();
-    await type(root, "theme");
-    const rows = results(root);
-    expect(rows.length).toBeGreaterThan(2);
-    expect(current(root)).toBeNull();
-    const scrolled = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
-    expect(press("ArrowDown").defaultPrevented).toBe(true);
-    expect(current(root)).toBe(rows[0]);
-    expect(scrolled.mock.contexts.at(-1)).toBe(rows[0]);
-    press("ArrowDown");
-    expect(current(root)).toBe(rows[1]);
-    expect(scrolled.mock.contexts.at(-1)).toBe(rows[1]);
-    press("ArrowUp");
-    expect(current(root)).toBe(rows[0]);
-    press("ArrowUp");
-    expect(current(root)).toBeNull();
-    // No wrap at the top: Up in the box stays in the box (the caret is the box's).
-    expect(press("ArrowUp").defaultPrevented).toBe(false);
-    expect(current(root)).toBeNull();
-    // No wrap at the bottom: Down on the last result stays there.
-    for (const _ of rows) press("ArrowDown");
-    expect(current(root)).toBe(rows.at(-1));
-    expect(press("ArrowDown").defaultPrevented).toBe(true);
-    expect(current(root)).toBe(rows.at(-1));
-  });
-
-  it("Enter on the focused result opens the same tab and setting as clicking it, and the caret ends in the box", async () => {
-    const root = mount();
-    openSettings(); await tick();
-    await type(root, "theme");
-    const clicked = results(root)[1];
-    const id = clicked.dataset.settingTarget!;
-    press("ArrowDown"); press("ArrowDown");
-    expect(current(root)).toBe(clicked);
-    pressEnter();
-    await tick();
-    const viaEnter = { tab: activeTab(root), shown: !!root.querySelector(`[data-setting-id="${id}"]`), query: box(root).value };
-    expect(viaEnter).toEqual({ tab: viaEnter.tab, shown: true, query: "" });
-    expect(document.activeElement).toBe(box(root));
-
-    await type(root, "theme");
-    results(root).find((row) => row.dataset.settingTarget === id)!.click();
-    await tick();
-    expect({ tab: activeTab(root), shown: !!root.querySelector(`[data-setting-id="${id}"]`), query: box(root).value }).toEqual(viaEnter);
-  });
-
-  it("after Down twice, Tab back to the first result: only that result looks current, and Enter opens it", async () => {
-    const root = mount();
-    openSettings(); await tick();
-    await type(root, "theme");
-    const rows = results(root);
-    press("ArrowDown"); press("ArrowDown");
-    expect(current(root)).toBe(rows[1]);
-    // Shift+Tab (or Tab from the box) moves the browser's focus; the page does not see a key it handles.
-    expect(press("Tab", { shiftKey: true }).defaultPrevented).toBe(false);
-    rows[0].focus();
-    expect(current(root)).toBe(rows[0]);
-    const id = rows[0].dataset.settingTarget!;
-    pressEnter();
-    await tick();
-    expect(root.querySelector(`[data-setting-id="${id}"]`)).not.toBeNull();
-    expect(box(root).value).toBe("");
-  });
-
-  it("typing again leaves no result current: Down then starts at the new first result", async () => {
-    const root = mount();
-    openSettings(); await tick();
-    await type(root, "theme");
-    press("ArrowDown"); press("ArrowDown");
-    expect(current(root)).toBe(results(root)[1]);
-    await type(root, "font");
-    expect(current(root)).toBeNull();
-    const rows = results(root);
-    expect(rows.length).toBeGreaterThan(0);
-    press("ArrowDown");
-    expect(current(root)).toBe(rows[0]);
-  });
-
-  it("switching to Keyboard shortcuts and back with the query kept shows no result highlighted", async () => {
-    const root = mount();
-    openSettings(); await tick();
-    await type(root, "theme");
-    press("ArrowDown"); press("ArrowDown");
-    navTo(root, "shortcuts"); await tick();
-    expect(root.querySelector(".settings-search-results")).toBeNull();
-    navTo(root, "appearance"); await tick();
-    expect(box(root).value).toBe("theme");
-    expect(results(root).length).toBeGreaterThan(2);
-    expect(root.querySelectorAll(".settings-search-result.active").length).toBe(0);
-    expect(box(root).hasAttribute("aria-activedescendant")).toBe(false);
-    expect(results(root)).not.toContain(document.activeElement);
-  });
-
-  it("modified arrows stay with the global shortcuts: Mod+Alt+Down and Mod+Alt+Shift+Down run their pane command once and Settings moves nothing", async () => {
-    cleanup.push(installKeybindings());
-    const root = mount();
-    openSettings(); await tick();
-    await type(root, "theme");
-    const panesAsked = vi.mocked(panes.layoutHasMultiplePanes).mock.calls.length;
-    press("ArrowDown", { ctrlKey: true, altKey: true });
-    expect(vi.mocked(panes.layoutHasMultiplePanes).mock.calls.length - panesAsked).toBe(1);
-    expect(current(root)).toBeNull();
-    press("ArrowDown", { ctrlKey: true, altKey: true, shiftKey: true });
-    expect(vi.mocked(panes.moveActiveTabInDirection).mock.calls.map((call) => call[1])).toEqual(["down"]);
-    expect(current(root)).toBeNull();
-    // From a focused result too.
-    press("ArrowDown");
-    const first = current(root);
-    press("ArrowUp", { ctrlKey: true, altKey: true, shiftKey: true });
-    expect(vi.mocked(panes.moveActiveTabInDirection).mock.calls.map((call) => call[1])).toEqual(["down", "up"]);
-    expect(current(root)).toBe(first);
-  });
-
-  it("no outline shortcut runs from these keys: a block selection behind Settings stays as it was", async () => {
+  it("keys typed in the box leave a block selection behind Settings and its page unchanged", async () => {
     loadSingle({ name: "P", kind: "page", title: "P", id: "pages/P.md", rev: "r1", format: "md", pre_block: null,
       blocks: [{ id: "a", raw: "one", children: [], collapsed: false }, { id: "b", raw: "two", children: [], collapsed: false }] });
+    const page = () => pageRoots("P").map((id) => doc.byId[id]?.raw);
     selectBlock("a");
     cleanup.push(installKeybindings());
     const root = mount();
     openSettings(); await tick();
-    await type(root, "theme");
+    // A guard that holds with or without the caret placed on open: put it in the box as a click does.
+    box(root).focus();
+    await typeIntoFocused("theme");
     expect(hasSelection()).toBe(true);
-    press("ArrowDown"); press("ArrowDown"); press("ArrowUp"); press("ArrowDown");
-    expect(selectedIds()).toEqual(["a"]);
-    press("ArrowUp"); press("ArrowUp");
-    expect(current(root)).toBeNull();
-    press("Enter");
-    expect(selectedIds()).toEqual(["a"]);
-    press("ArrowDown"); pressEnter(); await tick();
-    expect(selectedIds()).toEqual(["a"]);
+    for (const [key, init] of [["Backspace", {}], ["Delete", {}], ["ArrowDown", {}], ["ArrowDown", { ctrlKey: true, altKey: true }]] as const) {
+      press(key, init); await tick();
+      expect(selectedIds(), key).toEqual(["a"]);
+      expect(page(), key).toEqual(["one", "two"]);
+      expect(document.activeElement, key).toBe(box(root));
+    }
   });
 
   describe.each<EditorKind>(["textarea", "cm6"])("while a block is being edited (%s editor)", (kind) => {

@@ -1,5 +1,5 @@
 // GH #866 / L4-04: real Settings search -> theme/settings row, on a routed page.
-// GH #996, #1007: opening Settings (no block being edited) puts the caret in its search box; typing, Down and Enter open a row without the mouse.
+// GH #1007: opening Settings (no block being edited) puts the caret in its search box; typing without a click shows the setting.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { setTimeout as poll } from "node:timers/promises";
@@ -67,31 +67,21 @@ async function findAndOpen(query, id) {
   proof.steps.push({ query, id });
   console.log(`PASS ${query} -> ${id}`);
 }
-/** The literal keyboard path: no click after the toolbar button. Keys go to whatever has focus. */
-async function keyboardOnly(query, id) {
+/** Typing with no click after the toolbar button: keys go to whatever has focus. Then the result is clicked, as before. */
+async function typedWithoutClick(query, id) {
   await browser.waitUntil(() => browser.execute(() => document.activeElement?.classList.contains("settings-search-input")),
     { timeout: 10_000, timeoutMsg: "Opening Settings did not put the caret in its search box" });
   await browser.keys([...query]);
   await browser.waitUntil(() => browser.execute((id) => [...document.querySelectorAll(".settings-search-result")]
     .some(row => row.getAttribute("data-setting-target") === id), id), { timeout: 10_000, timeoutMsg: `Typing found no result for ${query}` });
-  const rows = await browser.execute(() => document.querySelectorAll(".settings-search-result").length);
-  for (let step = 0; step < rows; step++) {
-    await browser.keys(["ArrowDown"]);
-    const current = await browser.execute(() => {
-      const row = document.activeElement;
-      return row?.classList.contains("settings-search-result") ? row.getAttribute("data-setting-target") : null;
-    });
-    assert.ok(current, `Down ${step + 1}: a result has focus`);
-    if (current === id) break;
-  }
-  await browser.keys(["Enter"]);
+  await browser.execute(id => [...document.querySelectorAll(".settings-search-result")]
+    .find(row => row.getAttribute("data-setting-target") === id).click(), id);
   await browser.waitUntil(() => browser.execute(id => {
     const row = [...document.querySelectorAll(".settings-modal [data-setting-id]")].find(row => row.getAttribute("data-setting-id") === id);
-    const input = document.querySelector(".settings-search-input");
-    return row?.classList.contains("settings-jump-flash") && !input.value && document.activeElement === input;
-  }, id), { timeout: 10_000, timeoutMsg: `Enter did not land on ${id}` });
-  proof.steps.push({ keyboard: query, id });
-  console.log(`PASS keyboard ${query} -> ${id}`);
+    return row?.classList.contains("settings-jump-flash") && !document.querySelector(".settings-search-input").value;
+  }, id), { timeout: 10_000, timeoutMsg: `The result did not land on ${id}` });
+  proof.steps.push({ typedWithoutClick: query, id });
+  console.log(`PASS typed without a click ${query} -> ${id}`);
 }
 try {
   const deadline = Date.now() + 10_000;
@@ -107,7 +97,7 @@ try {
   await assertAppLease(home);
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-search-input").waitForDisplayed({ timeout: 10_000 });
-  await keyboardOnly("Wide mode", "settings-ui-wide-mode");
+  await typedWithoutClick("Wide mode", "settings-ui-wide-mode");
   const themeId = "theme.installed.page.tine.theme.discovery@1.0.0";
   for (const locale of ["en", "zh-CN"]) {
     if (locale === "zh-CN") {

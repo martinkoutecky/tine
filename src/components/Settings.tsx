@@ -26,7 +26,6 @@ import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
-import { resultListStep, steppedResultIndex } from "../resultNavigation";
 import { editingId } from "../editorController";
 import {
   copyStripCollapsed,
@@ -191,24 +190,6 @@ export function Settings(): JSX.Element {
     };
     queueMicrotask(() => attempt(true));
   };
-  // Search results take real keyboard focus, as a Search tab's do (GH #697, #996, #1007):
-  // Down from the box focuses the first result, bare Up/Down move focus without
-  // wrapping, Up on the first returns to the box, and Enter or Space is the focused
-  // button's own activation. The focused button is the only current result, so Tab,
-  // the arrows and Enter cannot disagree. Modified arrows belong to the global map.
-  let resultsList: HTMLDivElement | undefined;
-  const resultKeyDown = (event: KeyboardEvent) => {
-    const direction = resultListStep(event);
-    if (!direction || !searching() || !resultsList) return;
-    const rows = [...resultsList.querySelectorAll<HTMLButtonElement>("button.settings-search-result")];
-    const fromInput = event.target === searchInput;
-    const index = steppedResultIndex(fromInput ? -1 : rows.indexOf(event.target as HTMLButtonElement), direction, rows.length);
-    if (index === null) { if (!fromInput) event.preventDefault(); return; }
-    event.preventDefault();
-    if (index < 0) { searchInput?.focus(); return; }
-    rows[index].focus();
-    rows[index].scrollIntoView({ block: "nearest" });
-  };
 
     const shortcuts = () => {
     const cfg = graphMeta()?.shortcuts ?? {};
@@ -226,7 +207,7 @@ export function Settings(): JSX.Element {
   });
 
   createEffect(() => { if (!settingsOpen()) { setPaneOpen(false); if (phone()) setSettingsQuery(""); } });
-  // Settings opens with the caret in its search box (GH #996), except on a phone, where the
+  // Settings opens with the caret in its search box (GH #1007), except on a phone, where the
   // on-screen keyboard would cover the category list, and while a block is being edited:
   // taking focus would end that edit, so the editor keeps it and Escape returns to it.
   // An effect, not the field's ref: the app mounts Settings under Suspense, and effects
@@ -344,7 +325,6 @@ export function Settings(): JSX.Element {
                 ref={searchInput}
                 class="settings-search-input"
                 type="search"
-                data-result-list
                 placeholder={shortcutSearch() ? t("settings-ui-search-shortcuts") : t("settings-ui-search-settings")}
                 aria-label={shortcutSearch() ? t("settings-ui-search-shortcuts-2") : t("settings-ui-search-settings-2")}
                 value={settingsQuery()}
@@ -355,7 +335,7 @@ export function Settings(): JSX.Element {
                     event.preventDefault();
                     setSettingsQuery("");
                     setRevealedQuery("");
-                  } else resultKeyDown(event);
+                  }
                 }}
               />
               <button class="icon-btn settings-maximize" type="button"
@@ -372,7 +352,7 @@ export function Settings(): JSX.Element {
               <Show when={graphConfigUnreadable()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={searching()}>
-                <div ref={resultsList} class="settings-search-results" aria-live="polite" data-result-list onKeyDown={resultKeyDown}>
+                <div class="settings-search-results" aria-live="polite">
                   <Show when={matches().length} fallback={<div class="settings-search-empty">{t("settings-ui-no-matching-settings")}</div>}>
                     <For each={matches()}>
                       {(entry) => (
