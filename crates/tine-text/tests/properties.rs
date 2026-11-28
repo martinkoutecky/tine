@@ -1,4 +1,4 @@
-//! R0–R3 of `specs/areas/block-text.md` as tests, on the repository's page
+//! The physical layer's properties R0–R3 as tests, on the repository's page
 //! corpora, on the model checks' specimens and on generated pages.
 //!
 //! - R0: the pieces concatenate to the file.
@@ -414,7 +414,7 @@ fn repository_corpora() {
     assert!(seen.slots > 2_000 && seen.splices > 1_000, "{seen:?}");
 }
 
-/// The manager's private corpus: R0, R1 and content equality over every page
+/// A private corpus: R0, R1 and content equality over every page
 /// under `TINE_TEXT_CORPUS`. Never run on a lane.
 #[test]
 #[ignore = "needs TINE_TEXT_CORPUS"]
@@ -432,7 +432,7 @@ fn private_corpus() {
     assert!(!files.is_empty());
 }
 
-/// H1 (check 2): two files whose first slot has the same content but different
+/// Mixed line endings: two files whose first slot has the same content but different
 /// internal breaks stay distinct, and a splice in one line keeps every break.
 #[test]
 fn h1_mixed_line_endings_round_trip() {
@@ -489,7 +489,7 @@ fn a_new_line_takes_the_lines_break_and_the_slots_indent() {
     assert_eq!(apply(&eof, &[end]).unwrap(), "* b\nc");
 }
 
-/// H2 (check 2): an outline header that starts inside a physical line opens a
+/// Mid-line headers: an outline header that starts inside a physical line opens a
 /// slot there; the line's first bytes stay with the owner before it. Develop
 /// refuses both pages (shown as page text).
 #[test]

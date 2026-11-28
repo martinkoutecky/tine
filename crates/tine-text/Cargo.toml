@@ -1,4 +1,4 @@
-# Block text (area 1, ownership map rows 2 and 3): the bytes of one page file,
+# Block text: the bytes of one page file,
 # which of them belong to which block, and how a write replaces named ranges.
 # Depends on lsdoc (and memchr, already in lsdoc's tree) only, so it sits below
 # tine-outline and tine-core and builds for wasm32 with them.

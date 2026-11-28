@@ -1,4 +1,4 @@
-//! Block text, the physical layer (area 1, `specs/areas/block-text.md`): which
+//! Block text, the physical layer: which
 //! bytes of a page file belong to which block, as layout (structural prefix or
 //! removed indent), text or line break, so that the pieces concatenate to the
 //! file (R0) and a write replaces only named byte ranges (R3).
