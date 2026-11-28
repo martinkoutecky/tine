@@ -18,8 +18,16 @@
       ]
     },
     "2": {
-      "current": null,
-      "retained": []
+      "current": {
+        "run_id": 46135045317,
+        "sha256": "8f3f00584f7cf681b756ab7afe3b0b05894c14e3d3aafb1148860e1f26fc315a"
+      },
+      "retained": [
+        {
+          "run_id": 46135045317,
+          "sha256": "8f3f00584f7cf681b756ab7afe3b0b05894c14e3d3aafb1148860e1f26fc315a"
+        }
+      ]
     }
   }
 }
