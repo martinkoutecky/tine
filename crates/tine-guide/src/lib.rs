@@ -958,7 +958,8 @@ mod search_guide_tests {
         for text in [
             "A cell never changes a property spelled another way on its row",
             "`Ready::` and `ready::`, or `a_b::` and `a-b::`, as one property",
-            "keeps showing the saved value and shows a notice naming that spelling",
+            "shows a notice naming that spelling",
+            "A checkbox keeps showing the saved value; a text or number cell keeps what you typed",
         ] {
             assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
         }
