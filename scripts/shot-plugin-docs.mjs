@@ -180,12 +180,11 @@ try {
   // inserts in the same instant. Where the keyboard writes through an EditContext (Android), the editor has not read
   // that selection yet, so the new text would land after the old text.
   await editor.press("Control+a");
-  await page.keyboard.insertText(
-    PLATFORM === "desktop"
-      ? "Tasks\n{{query (todo TODO DOING DONE)}}"
-      : "Tasks\n{{query (todo TODO DOING DONE)}}\ntine.view:: table",
-  );
-  assert.match(await editorText(editorBrowser), /^Tasks\n/, "the typed text replaces the block's text");
+  const tasksText = PLATFORM === "desktop"
+    ? "Tasks\n{{query (todo TODO DOING DONE)}}"
+    : "Tasks\n{{query (todo TODO DOING DONE)}}\ntine.view:: table";
+  await page.keyboard.insertText(tasksText);
+  assert.equal(await editorText(editorBrowser), tasksText, "the typed text replaces the block's text");
   await page.keyboard.press("Escape");
   await editor.waitFor({ state: "detached" });
   if (PLATFORM === "desktop") {
