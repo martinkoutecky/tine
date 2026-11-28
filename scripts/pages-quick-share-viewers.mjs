@@ -19,7 +19,7 @@ await deployViewers({ manifest, website, download: async (pin, generation) => {
   if (pin.tag) execFileSync("gh", ["release", "download", pin.tag, "--pattern", `quick-share-viewer-g${generation}.zip`, "--dir", scratch], { stdio: "inherit" });
   else execFileSync("gh", ["run", "download", String(pin.run_id), "--name", `quick-share-viewer-g${generation}`, "--dir", scratch], { stdio: "inherit" });
   const dir = path.join(scratch, "unpacked");
-  unpackViewer(path.join(scratch, `quick-share-viewer-g${generation}.zip`), dir, pin.sha256);
+  unpackViewer(path.join(scratch, `quick-share-viewer-g${generation}.zip`), dir, pin.sha256, generation);
   cached.set(pin.sha256, dir); return dir;
 } });
 console.log("Quick share viewers verified and staged");

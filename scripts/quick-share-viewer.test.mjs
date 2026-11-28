@@ -9,11 +9,11 @@ import { serveViewer } from "./check-quick-share-viewer.mjs";
 const artifacts = path.resolve(import.meta.dirname, "../artifacts/quick-share-viewer/tests");
 fs.mkdirSync(artifacts, { recursive: true });
 function scratch() { return fs.mkdtempSync(path.join(artifacts, "case-")); }
-function build(dir, version, chunk = `late-${version}.js`) {
+function build(dir, version, chunk = `late-${version}.js`, generation = 1) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), `<button onclick="import('./${chunk}').then(m=>document.body.dataset.loaded=m.version)">Load later</button>`);
   fs.writeFileSync(path.join(dir, chunk), `export const version = '${version}';`);
-  fs.writeFileSync(path.join(dir, "viewer.json"), JSON.stringify({ generation: 1, link: 1, envelope: 1, document: 1, snapshot_schema: 1, built_from: version, files: fileHashes(dir) }));
+  fs.writeFileSync(path.join(dir, "viewer.json"), JSON.stringify({ generation, link: generation, envelope: 1, document: generation, snapshot_schema: generation, built_from: version, files: fileHashes(dir) }));
 }
 test("old HTML loads a previously unloaded chunk after upgrade and rollback", async () => {
   const dir = scratch(), old = path.join(dir, "old"), next = path.join(dir, "next"), deployed = path.join(dir, "deployed");
@@ -61,4 +61,30 @@ test("retention cannot shrink, while the same bytes may move from a trial artifa
   const old = { generations: { 1: { retained: [{ run_id: 123, sha256: "a".repeat(64) }] } } };
   assert.throws(() => assertRetainedBuilds(old, { generations: {} }), /cannot remove retained/);
   assert.doesNotThrow(() => assertRetainedBuilds(old, { generations: { 1: { retained: [{ tag: "v0.9.0-beta.1", sha256: "a".repeat(64) }] } } }));
+});
+
+test("Pages stages the pinned generation 2 viewer at its locator fallback and keeps generation 1 at its index", async () => {
+  const dir = scratch(), website = path.join(dir, "website");
+  const one = path.join(dir, "one"), two = path.join(dir, "two");
+  build(one, "one");
+  build(two, "two", "two.js", 2);
+  assert.equal(validateViewer(two, 2).envelope, 1);
+  assert.throws(() => validateViewer(two, 1), /generation mismatch/);
+  const first = { run_id: 1, sha256: "1".repeat(64) }, second = { run_id: 2, sha256: "2".repeat(64) };
+  await deployViewers({ manifest: { schema: 1, generations: {
+    1: { current: first, retained: [first] },
+    2: { current: second, retained: [second] },
+  } }, website, download: async (_, generation) => generation === 1 ? one : two });
+  const entry = (file) => fs.readFileSync(path.join(website, file), "utf8");
+  assert.equal(entry("s/1/index.html"), fs.readFileSync(path.join(one, "index.html"), "utf8"));
+  assert.equal(entry("s/2/index.html"), fs.readFileSync(path.join(two, "index.html"), "utf8"));
+  // A generation 2 link names its share in the path, which Pages answers with the root 404 document.
+  assert.equal(entry("404.html"), entry("s/2/index.html"));
+});
+
+test("an unpinned generation installs no viewer", async () => {
+  const website = scratch();
+  const manifest = { schema: 1, generations: { 2: { current: null, retained: [] } } };
+  await deployViewers({ manifest, website, download: async () => assert.fail("unpinned viewer downloaded") });
+  assert.equal(fs.existsSync(path.join(website, "404.html")), false);
 });
