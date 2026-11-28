@@ -956,8 +956,9 @@ mod search_guide_tests {
     fn a_new_rows_checkbox_value_is_documented() {
         let sheets = include_str!("templates/sheets.md");
         for text in [
-            "A new row starts unchecked in each checkbox column, written as `false`",
-            "starts blank instead",
+            "A new row starts unchecked in each checkbox column",
+            "Add row usually also writes this as `false`",
+            "can leave some or all of the new row empty instead",
         ] {
             assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
         }
