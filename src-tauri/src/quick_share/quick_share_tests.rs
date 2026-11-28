@@ -734,10 +734,14 @@ fn an_unpinned_writer_generation_never_uploads_or_copies_a_link() {
     f.connect();
     let id = f.prepared(&payload());
     f.service.prepared.lock().unwrap()[0].generation = share::GENERATION;
-    let result = block_on(
-        f.service
-            .create_share(&id, |_| panic!("copied an unready link")),
-    );
+    let result = block_on(f.service.create_share_with_viewer_check(
+        &id,
+        |_| panic!("copied an unready link"),
+        |generation| {
+            assert_eq!(generation, share::GENERATION);
+            false
+        },
+    ));
     assert_eq!(result.unwrap_err(), QsError::Disabled);
     assert_eq!(mock.count("POST", "/gists"), 0);
     assert!(f.rows().is_empty());
