@@ -1783,12 +1783,12 @@ describe("SheetTable", () => {
 
   // tine#1047: a checkbox column shows an unset value as unchecked, so Add row
   // writes it `false`; text columns stay unset. One Undo removes row and value.
-  const clickAddRow = async (ownerRaw: string, format: "md" | "org") => {
+  const clickAddRow = async (ownerRaw: string, format: "md" | "org", existingRaw = "Existing", addColumn?: string) => {
     const otherRaw = format === "md" ? "Other\nprop:: true" : "Other\n:PROPERTIES:\n:prop: true\n:END:";
     setDoc({
       byId: {
         table: node("table", ownerRaw, null, ["r1"]),
-        r1: node("r1", "Existing", "table"),
+        r1: node("r1", existingRaw, "table"),
         other: node("other", otherRaw, null),
       },
       pages: [{ ...page(["table", "other"]), format }],
@@ -1796,11 +1796,17 @@ describe("SheetTable", () => {
       loaded: true,
     });
     const { root, dispose } = mount(() => <Block id="table" />);
+    if (addColumn) {
+      (root.querySelector(".sheet-add-column-ghost") as HTMLButtonElement).click();
+      const input = root.querySelector(".sheet-add-field-input") as HTMLInputElement;
+      input.value = addColumn;
+      keydown(input, "Enter");
+    }
     (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
     await tick();
     const id = doc.byId.table.children[1];
     expect(doc.byId.table.raw).toBe(ownerRaw);
-    expect(doc.byId.r1.raw).toBe("Existing");
+    expect(doc.byId.r1.raw).toBe(existingRaw);
     expect(doc.byId.other.raw).toBe(otherRaw);
     return { id, root, dispose };
   };
@@ -1932,6 +1938,26 @@ describe("SheetTable", () => {
     expect(blockProperty(id, typed)).toBe("x");
     dispose();
   });
+  // The table also draws columns its schema does not declare: those observed on existing rows, and those added with
+  // Add column. They count as well, so a cell the user can type in never holds another spelling of a seeded key, and
+  // an Org row never gets an editable `properties` column beside a seeded drawer.
+  it.each([
+    ["md", "observed", "Ready"],
+    ["org", "observed", "Ready"],
+    ["md", "added", "Ready"],
+    ["org", "added", "Ready"],
+    ["org", "observed", "properties"],
+    ["org", "added", "properties"],
+  ] as const)("children add-row (%s) with a %s `%s` column beside checkbox `ready` seeds nothing (tine#1047)", async (format, how, column) => {
+    const existing = how === "added" ? "Existing"
+      : format === "md" ? `Existing\n${column}:: yes` : `Existing\n:PROPERTIES:\n:${column}: yes\n:END:`;
+    const { id, root, dispose } = await clickAddRow(tableOf("ready=checkbox", format), format, existing, how === "added" ? column : undefined);
+    const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headers).toContain(column);
+    expect(doc.byId[id].raw).toBe("");
+    dispose();
+  });
+
   it.each(["md", "org"] as const)("children add-row still seeds beside unrelated text columns (%s) (tine#1047)", async (format) => {
     const { id, dispose } = await addRowUnderSchema(tableOf("ready=checkbox;note=text", format), format);
     expect(doc.byId[id].raw).toBe(seededRaw(["ready"], format));

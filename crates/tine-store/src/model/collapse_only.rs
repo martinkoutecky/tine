@@ -50,6 +50,7 @@ fn same_block(old: &DocBlock, new: &DocBlock, changed: &mut bool) -> bool {
             Edit::Property {
                 key: "collapsed".into(),
                 value: None,
+                exact: false,
             },
         )
         .ok()

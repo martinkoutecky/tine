@@ -716,13 +716,15 @@ export function SheetTable(props: {
     if (!owner || blockPageReadOnly(props.ownerId)) return;
     const at = owner.children.length;
     // A checkbox column shows an unset value as unchecked, so the new row is
-    // written `false` there (the core decides which columns can take it, given
-    // every property column of the schema): a query for `false` then finds what
-    // the table shows.
+    // written `false` there. The core decides which columns can take it, given
+    // every property column the table draws (the cells' own columns and types:
+    // declared, observed on rows, or added): a query for `false` then finds
+    // what the table shows.
     const checkboxKeys: string[] = [];
     const otherKeys: string[] = [];
-    for (const spec of schemaFields()) {
-      if (spec.field.startsWith("prop:")) (spec.type === "checkbox" ? checkboxKeys : otherKeys).push(spec.field.slice("prop:".length));
+    const types = fieldTypes();
+    for (const field of fields()) {
+      if (field.startsWith("prop:")) (types.get(field) === "checkbox" ? checkboxKeys : otherKeys).push(field.slice("prop:".length));
     }
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => {
       const row = insertEmptyChildBlock(props.ownerId, at);
@@ -1336,7 +1338,9 @@ function FieldCell(props: {
       const type = props.fieldType;
       if (type === "checkbox") {
         const cur = (value()?.raw ?? value()?.text ?? "").trim().toLowerCase();
-        writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true");
+        // The native toggle stands only for a write that happened; a refused
+        // one is undone, so the box keeps showing the saved value.
+        if (!writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true")) e.preventDefault();
       } else if (type === "date" || type === "datetime") {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4, resultWriteTarget(props.row));

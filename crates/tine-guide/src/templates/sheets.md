@@ -70,6 +70,7 @@ icon:: ▦
 	- Drag the narrow handle at a Table column's right edge to resize it. Double-click the handle to restore its automatic width. Tine stores widths by column identity in `tine.table-widths::`, so reordering columns keeps their sizes.
 	- The **+ Add row** label stays at the visible edge when a wide table scrolls sideways. **Copy / export…** can produce HTML from the same table content.
 	- 4. Press **Tab** after editing a cell to commit its value and move to the next cell.
+	- A cell never changes a property spelled another way on its row. Logseq reads `Ready::` and `ready::`, or `a_b::` and `a-b::`, as one property, so when the row already has another spelling of the column's name, the cell leaves the row as it is and shows a notice naming that spelling. A checkbox keeps showing the saved value; a text or number cell keeps what you typed, and submitting it again is refused the same way.
 	- 5. What you should see: each child bullet becomes a row, and properties become editable table columns.
 	- 6. Under the hood: the block carries `tine.view:: table` (with optional `tine.fields::` to type columns and `tine.col-aggregates:: prop:estimate=sum` to total a numeric column in the footer). The ghost buttons write these for you.
 - ## Typed reading list

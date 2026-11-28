@@ -2,7 +2,7 @@
 // (CM6 and the textarea), so the two never drift. Table title cells and board cards keep
 // today's sheet keys; only cells of a `tine.view:: grid` edit like an outline.
 import { batch } from "solid-js";
-import { blockIsGridView, blockIsOpaqueSheetView, deleteBlock, insertEmptyChildBlock, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
+import { blockIsGridView, blockIsOpaqueSheetView, deleteBlock, insertEmptyChildBlock, mergeWithNext, mergeWithPrev, node, setRaw, withUndoUnit, type OutlineScope } from "../document";
 import { editingId, editingOwner, startEditing, takeCaretFor, type CaretPos } from "../editorController";
 import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
 import type { SheetCellCtx } from "./context";
@@ -13,6 +13,35 @@ import { wrapCompactGridCell } from "./mutations";
 /** True for a cell of a grid view, the only sheet surface that edits like an outline. */
 export function editsLikeOutline(cell: SheetCellCtx): boolean {
   return blockIsGridView(cell.gridId);
+}
+
+/** The outline writers a deleting key at an editor's edge may call. */
+export interface StructuralWriters {
+  mergeWithPrev: typeof mergeWithPrev;
+  mergeWithNext: typeof mergeWithNext;
+  /** Deletes the empty leaf `id` and edits `focus` at its start. False when refused. */
+  deleteEmptyLeaf(id: string, focus: string, surface: string | null): boolean;
+}
+
+const outlineWriters: StructuralWriters = {
+  mergeWithPrev,
+  mergeWithNext,
+  deleteEmptyLeaf(id, focus, surface) {
+    deleteBlock(id);
+    startEditing(focus, 0, null, surface);
+    return true;
+  },
+};
+const refusingWriters: StructuralWriters = { mergeWithPrev: () => false, mergeWithNext: () => false, deleteEmptyLeaf: () => false };
+
+/** The one answer to whether a deleting key may write a block other than the edited one.
+ * A records editor (a sheet cell that is not a grid cell: a table title or a board card)
+ * draws only its block's own text, never the source neighbours a merge or a deletion
+ * would reach, so its writers refuse silently: nothing written, no message, no focus
+ * move. Every other editor gets the outline's writers. `records` is the classification
+ * the editor made at mount. O(1). */
+export function structuralWriters(ctx: { records: boolean }): StructuralWriters {
+  return ctx.records ? refusingWriters : outlineWriters;
 }
 
 /** Opens the editor at a resolved target: a grid cell (selected, then edited) or an outline block. */

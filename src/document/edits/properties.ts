@@ -71,22 +71,47 @@ export function blockWritable(id: string): boolean {
   return !!node && pageWritable(node.page);
 }
 
+/** What a cell's property write did: written or nothing to change, refused
+ *  because the row holds `otherSpelling` (another spelling Logseq reads as the
+ *  same key), or failed with `error` (already shown as develop's toast). */
+export type CellPropertyWrite = { ok: true } | { ok: false; otherSpelling: string } | { ok: false; error: string };
+
+/** The core's refusal for an exact write; the rest of the message is the other spelling. */
+const OTHER_SPELLING = "property-other-spelling:";
+
 /** Set/remove a block property on one block or a batch. Read-only and unchanged
  * blocks are skipped. Parser edits cost O(target bytes), the undo snapshot and
  * guarded save O(affected page bytes): one snapshot and store publication per
  * batch, one save notification per page. */
 export function setBlockProperty(target: string | readonly string[], key: string, value: string | null) {
+  applyBlockProperty(target, key, value, false);
+}
+
+/** A table or board cell's write of property `key`: {@link setBlockProperty},
+ *  except that a row holding another spelling of `key` (the core's
+ *  `other_spelling`) is refused and nothing is written, so a cell never
+ *  changes a line it does not show. Same cost: one `editBlock`. */
+export function setCellProperty(id: string, key: string, value: string | null): CellPropertyWrite {
+  return applyBlockProperty(id, key, value, true);
+}
+
+function applyBlockProperty(target: string | readonly string[], key: string, value: string | null, exact: boolean): CellPropertyWrite {
   const ids = typeof target === "string" ? [target] : target;
   const changes: { id: string; page: string; raw: string }[] = [];
   try {
     for (const id of ids) {
       const node = doc.byId[id];
       if (!node || !blockWritable(id)) continue;
-      const raw = editBlock(node.raw, formatForBlock(id), { kind: "property", key, value });
+      const raw = editBlock(node.raw, formatForBlock(id), { kind: "property", key, value, exact });
       if (raw !== node.raw) changes.push({ id, page: node.page, raw });
     }
-  } catch (e) { pushToast(rawText(String(e)),"error"); return; }
-  if (!changes.length) return;
+  } catch (e) {
+    const error = String(e);
+    if (exact && error.startsWith(OTHER_SPELLING)) return { ok: false, otherSpelling: error.slice(OTHER_SPELLING.length) };
+    pushToast(rawText(error), "error");
+    return { ok: false, error };
+  }
+  if (!changes.length) return { ok: true };
   const pages = [...new Set(changes.map(change => change.page))];
   pushUndo(`prop:${typeof target === "string" ? target : "selection"}:${key}`, pages);
   // Raw-field writes only: a whole-state producer would republish the page index
@@ -94,6 +119,7 @@ export function setBlockProperty(target: string | readonly string[], key: string
   // rescan (merge review F1). One Solid batch keeps it one reactive publication.
   batch(() => { for (const change of changes) setDoc("byId", change.id, "raw", change.raw); });
   for (const page of pages) markDirty(page, "save-block");
+  return { ok: true };
 }
 
 /** The first root of a Markdown page when it is the page header (a transient

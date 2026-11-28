@@ -59,6 +59,10 @@ sheet-cell-refused = 无法将该单元格{ $hasValue ->
    *[other] { "" }
     }：页面只读、行已不存在，或值不符合列要求。
 
+sheet-cell-other-spelling = 未更改：此行已有“{ $other }”，这是该属性的另一种写法。
+
+sheet-flatten-other-spelling = 有 { NUMBER($count, useGrouping: 0) } 行未填入：某行已有“{ $other }”，这是该属性的另一种写法。
+
 sheet-type-text = 文本
 
 sheet-type-number = 数字

@@ -78,6 +78,7 @@ fn removing_last_org_drawer_entry_saves_only_the_edited_bytes() {
                         Edit::Property {
                             key: key.into(),
                             value: None,
+                            exact: false,
                         },
                     )
                     .unwrap();

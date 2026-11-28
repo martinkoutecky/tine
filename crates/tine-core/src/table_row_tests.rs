@@ -149,6 +149,7 @@ fn never_writes_the_asset_pointer_so_an_asset_named_false_stays_unreferenced() {
         Edit::Property {
             key: "file-path".into(),
             value: Some("false".into()),
+            exact: true,
         },
     )
     .unwrap();
@@ -288,6 +289,7 @@ fn typing_in_a_risky_text_column_finds_no_seed_to_lose() {
             Edit::Property {
                 key: "Ready".into(),
                 value: Some("x".into()),
+                exact: true,
             },
         )
         .unwrap();
@@ -319,6 +321,7 @@ fn a_linkable_key_gets_the_bytes_a_click_writes() {
             Edit::Property {
                 key: "shipped".into(),
                 value: Some("false".into()),
+                exact: true,
             },
         )
         .unwrap();
@@ -382,6 +385,7 @@ fn a_generated_plain_key_round_trips_through_a_click() {
                 Edit::Property {
                     key: key.clone(),
                     value: Some("true".into()),
+                    exact: true,
                 },
             )
             .unwrap();

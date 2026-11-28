@@ -946,6 +946,7 @@ mod preparation_tests {
         let id = || Edit::Property {
             key: "id".into(),
             value: Some("6679-abc".into()),
+            exact: false,
         };
         let scheduled = || Edit::Planning {
             which: "Scheduled".into(),
@@ -954,6 +955,7 @@ mod preparation_tests {
         let prop = || Edit::Property {
             key: "owner".into(),
             value: Some("me".into()),
+            exact: false,
         };
         for (raw, is_org, request) in [
             ("\nTODO", true, id as fn() -> Edit),
@@ -1043,6 +1045,7 @@ mod preparation_tests {
         let fold = || Edit::Property {
             key: "collapsed".into(),
             value: Some("true".into()),
+            exact: false,
         };
         for (raw, is_org, after) in [
             (
@@ -1105,6 +1108,7 @@ mod preparation_tests {
         let owner = || Edit::Property {
             key: "owner".into(),
             value: Some("me".into()),
+            exact: false,
         };
         let scheduled = || Edit::Planning {
             which: "Scheduled".into(),

@@ -16,7 +16,8 @@ thread_local! {
 }
 
 /// The raw text of a new row whose checkbox columns are `keys` and whose other
-/// property columns are `others` (the table's schema order): an empty title line, then `key:: false` (Org: a drawer row
+/// property columns are `others`: every property column the table draws, in
+/// its order (declared, observed on rows, added). An empty title line, then `key:: false` (Org: a drawer row
 /// `:key: false`) for each admitted key, written by the block's one property
 /// writer; `""` (an empty row) when none is admitted. A key is admitted when it
 /// is plain (ASCII letter first, then letters, digits, `_` or `-`; never `end`

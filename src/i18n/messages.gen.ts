@@ -3033,10 +3033,12 @@ export interface MessageArgs {
   "sheet-board-empty-column": {};
   "sheet-can-t-convert-this-parser-does-not-round-trip-inside-table-cells": {};
   "sheet-can-t-convert-to-grid-children-would-collide-with-grid-rows": {};
+  "sheet-cell-other-spelling": { "other": string | number };
   "sheet-cell-refused": { "hasValue": number; "value": string | number };
   "sheet-couldn-t-copy-cells-clipboard-write-failed": {};
   "sheet-couldn-t-cut-cells-clipboard-write-failed": {};
   "sheet-drag-to-resize-double-click-to-reset": {};
+  "sheet-flatten-other-spelling": { "count": number; "other": string | number };
   "sheet-grid-add-column": {};
   "sheet-grid-add-row": {};
   "sheet-grid-cell-children": {};

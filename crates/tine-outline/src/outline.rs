@@ -759,6 +759,7 @@ pub fn raw_expanded(raw: &str, format: Format) -> Result<String, Reason> {
         let edit = block_regions::Edit::Property {
             key: "collapsed".into(),
             value: None,
+            exact: false,
         };
         return block_regions::edit(raw, true, edit).map_err(|_| Reason::Unparseable);
     }

@@ -2,7 +2,7 @@ import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, exitMultilineBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
-  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem,
+  moveBlockFeed, moveItem,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
@@ -30,7 +30,7 @@ import { calcSource } from "./calc";
 import { caretInFence, caretInDisplayMath, caretOnOpeningFence } from "./fences";
 import { codeBodyExitTrim } from "./codeFence";
 import type { SheetCellCtx } from "../sheet/context";
-import { gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
+import { gridNestedBlock, openGridTarget, type StructuralWriters } from "../sheet/gridEditMove";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
@@ -56,6 +56,8 @@ interface StructureContext {
   viewNext(): string | null;
   embedExit: { hostBlockId: string; hostSurface: string; firstRoot(): string | undefined; rowHost?(id: string): { id: string; scope: OutlineScope | null; surface?: string } | null } | null;
   collapse: CollapseSurfaceApi | null;
+  /** The writers this editor's deleting keys may call (`structuralWriters`). */
+  writers: StructuralWriters;
 }
 
 /** CM owns text/visual rows; document commands own outline topology and writes.
@@ -291,17 +293,16 @@ export function cm6Structure(ctx: StructureContext) {
         v.dispatch({ selection: { anchor: 0 } });
         return true;
       }
-      if (mergeWithPrev(ctx.id, structuralScope, editSurface())) return true;
+      if (ctx.writers.mergeWithPrev(ctx.id, structuralScope, editSurface())) return true;
       const n = node(ctx.id), next = bodyNeighbor(ctx.id, 1, structuralScope);
-      if (isEditorEmpty(n.raw, BUILTIN_HIDE, ctx.format) && !n.children.length && next && node(next)?.page === n.page) {
-        deleteBlock(ctx.id); startEditing(next, 0, null, editSurface()); return true;
-      }
+      if (isEditorEmpty(n.raw, BUILTIN_HIDE, ctx.format) && !n.children.length && next && node(next)?.page === n.page
+        && ctx.writers.deleteEmptyLeaf(ctx.id, next, editSurface())) return true;
     }
     if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
       if (ctx.code() || ctx.calc() || bodyScopeOf(ctx.id) === undefined) return true;
       if (calcSource(raw) !== null) return false;
       const next = bodyNeighbor(ctx.id, 1, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
-      if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {
+      if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && ctx.writers.mergeWithNext(ctx.id, structuralScope, editSurface())) {
         if (ctx.current()) v.dispatch({ selection: { anchor: s.head } });
         return true;
       }

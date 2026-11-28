@@ -37,6 +37,11 @@ sheet-cell-refused = Couldn't change that cell{ $hasValue ->
         [1] { " " }to “{ $value }”
        *[other] { "" }
     }: the page is read-only, the row is gone, or the value doesn't fit the column.
+sheet-cell-other-spelling = Not changed: this row already has “{ $other }”, another spelling of this property.
+sheet-flatten-other-spelling = { $count ->
+        [one] One row was
+       *[other] { NUMBER($count, useGrouping: 0) } rows were
+    } not filled in: a row already has “{ $other }”, another spelling of this property.
 # Human-readable labels for the fixed tine.fields:: type tokens.
 sheet-type-text = text
 sheet-type-number = number

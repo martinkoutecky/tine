@@ -1,7 +1,9 @@
 import { deleteBlock, formatForBlock, insertEmptyChildBlock, replaceChildOrders, setRaw, withUndoUnit, blockPageReadOnly, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { MARKERS } from "../markers";
-import { fieldIdsForBlocks, groupKeyForBlock, isFieldId, readField, writeField, type FieldId } from "./fields";
+import { fieldIdsForBlocks, groupKeyForBlock, isFieldId, readField, writeCell, type FieldId } from "./fields";
+import { msg } from "../i18n";
+import { pushToast } from "../toasts";
 import { sheetConfigFromRaw } from "./config";
 
 const NONE_LABEL = "(none)";
@@ -175,13 +177,20 @@ export function flatten(parentId: string): boolean {
     return group ? [id, ...group.rows] : [id];
   });
 
-  return withUndoUnit("sheet:flatten", [parent.page], () => {
+  // A row holding another spelling of the field keeps it and is not filled;
+  // it is still reparented. One notice names how many.
+  let refused = 0;
+  let other = "";
+  const flattened = withUndoUnit("sheet:flatten", [parent.page], () => {
     if (field) {
       for (const group of groups) {
         const value = parseLabel(field, group.label);
         if (value == null) continue;
         for (const row of group.rows) {
-          if (!readField(row, field)) writeField(row, field, value);
+          if (readField(row, field)) continue;
+          const write = writeCell(row, field, value);
+          if (write.ok || write.otherSpelling === undefined) continue;
+          if (!refused++) other = write.otherSpelling;
         }
       }
     }
@@ -191,4 +200,6 @@ export function flatten(parentId: string): boolean {
     for (const group of groups) if (!group.retain) deleteBlock(group.id);
     return true;
   }) ?? false;
+  if (flattened && refused) pushToast(msg("sheet-flatten-other-spelling", { count: refused, other }), "warn");
+  return flattened;
 }

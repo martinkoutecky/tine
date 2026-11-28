@@ -203,7 +203,7 @@ export function nested_reference_names(content: string): string[];
 
 /**
  * The raw text of a children table's new row whose checkbox columns are
- * `keys` and other property columns `others`, in schema order: `false` for
+ * `keys` and other drawn property columns `others`, in table order: `false` for
  * each plain, ordinary checkbox one, or `""`
  * (I-12: the one answerer, `tine_core::table_row::new_checkbox_row_raw`).
  * O(key bytes) plus one property write on a one-line block.

@@ -612,12 +612,20 @@ pub use crate::page_preamble::{
     page_header, page_header_in, page_header_only, HeaderEntry, PageHeader,
 };
 
+/// Prefix of the error an exact `Edit::Property` returns, followed by the
+/// other spelling: machine-readable, so the window can say which line.
+pub const OTHER_SPELLING_ERROR: &str = "property-other-spelling:";
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Edit {
     Property {
         key: String,
         value: Option<String>,
+        /// A table or board cell's write: refused, writing nothing, when the
+        /// block holds another spelling of `key` ([`BlockRegions::other_spelling`]).
+        #[serde(default)]
+        exact: bool,
     },
     Properties {
         values: Vec<(String, String)>,
@@ -830,6 +838,23 @@ impl BlockRegions {
         Err("Drawer reattachment refused: metadata ownership would change".into())
     }
 
+    /// The first property, in the region an `Edit::Property` for `key` writes
+    /// (an Org block's own drawer; every accepted line in Markdown), that
+    /// Logseq reads as the same key (`property_key_norm`: `Ready` and `ready`
+    /// are `ready`; `re_ady` and `Re-Ady` are `re-ady`) but whose source
+    /// spelling is not exactly `key`. Compares the
+    /// spelling at each line's `key_range`, never `Property::key`, which one
+    /// parser node shares across its lines. O(properties), no parse.
+    pub fn other_spelling(&self, raw: &str, org: bool, key: &str) -> Option<String> {
+        let own = org.then(|| self.own_org_region(raw)).flatten();
+        let norm = crate::editor_text::property_key_norm(key);
+        self.properties
+            .iter()
+            .filter(|p| !org || Some(p.region) == own)
+            .map(|p| p.key_range.slice(raw).trim())
+            .find(|s| *s != key && crate::editor_text::property_key_norm(s) == norm)
+            .map(str::to_string)
+    }
     fn remove_properties(
         &self,
         raw: &str,
@@ -1083,12 +1108,17 @@ impl BlockRegions {
             Edit::NormalizePlanning => (vec![], false, None, None),
         };
         let out = match edit {
-            Edit::Property { key, value } => {
+            Edit::Property { key, value, exact } => {
                 if key.is_empty()
                     || key.contains(['\n', '\r', ':'])
                     || value.as_ref().is_some_and(|v| v.contains(['\n', '\r']))
                 {
                     return Err("Invalid property edit".into());
+                }
+                if exact {
+                    if let Some(other) = self.other_spelling(raw, org, &key) {
+                        return Err(format!("{OTHER_SPELLING_ERROR}{other}"));
+                    }
                 }
                 if value.is_none() {
                     let own = org.then(|| self.own_org_region(raw)).flatten();
