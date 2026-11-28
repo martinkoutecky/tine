@@ -675,17 +675,7 @@ pub fn property_key_norm(key: &str) -> String {
 
 pub use crate::property_line::parse_property_line;
 
-/// Rewrite every line terminator to `\n`. Page text ends a line at `\r\n`,
-/// `\n` or a lone `\r`, as mldoc (`eol_chars = ['\r'; '\n']`) and lsdoc's lexer
-/// do. Borrows when the text has no `\r`; otherwise two O(n) copies (CRLF
-/// first, then lone CR, so `\r\r\n` becomes `\n\n`).
-pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
-    if content.contains('\r') {
-        std::borrow::Cow::Owned(content.replace("\r\n", "\n").replace('\r', "\n"))
-    } else {
-        std::borrow::Cow::Borrowed(content)
-    }
-}
+pub use tine_text::{line_terminator, normalize_line_endings, physical_lines};
 
 /// The terminator a new line gets in `existing` text: CRLF when it has any,
 /// else `\r` when it has a lone one, else LF. Reused lines keep their own.
@@ -697,35 +687,6 @@ pub fn line_convention(existing: &str) -> &'static str {
         "\r"
     } else {
         "\n"
-    }
-}
-
-/// The physical lines of page text, each with its terminator (CRLF, LF or a
-/// lone CR, as [`normalize_line_endings`] reads them; the last may have none).
-/// The one answer to "which bytes end a line" for the physical writers (page
-/// merge, outline offsets). Concatenated, they are `text`. O(n), no copy.
-pub fn physical_lines(text: &str) -> impl Iterator<Item = &str> {
-    let mut rest = text;
-    std::iter::from_fn(move || {
-        let end = rest.find(['\r', '\n']).map_or(rest.len(), |at| {
-            at + if rest[at..].starts_with("\r\n") { 2 } else { 1 }
-        });
-        let (line, tail) = rest.split_at(end);
-        rest = tail;
-        (!line.is_empty()).then_some(line)
-    })
-}
-
-/// The terminator `line` ends with: `"\r\n"`, `"\n"`, `"\r"` or `""`. O(1).
-pub fn line_terminator(line: &str) -> &'static str {
-    if line.ends_with("\r\n") {
-        "\r\n"
-    } else if line.ends_with('\n') {
-        "\n"
-    } else if line.ends_with('\r') {
-        "\r"
-    } else {
-        ""
     }
 }
 
@@ -838,12 +799,7 @@ pub(crate) fn document_of<'a>(
     (document, lines, pre)
 }
 
-/// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading
-/// (`# Title`), the one block form written without a `- ` bullet. For a
-/// writer that keeps such a heading unbulleted; the reparse stays the judge.
-pub fn is_unbulleted_heading_line(line: &str) -> bool {
-    outline::is_unbulleted_heading_line(line)
-}
+pub use tine_text::is_unbulleted_heading_line;
 
 /// The raw text the outline parser reads from a continuation `line` of a block
 /// whose continuations dedent by `content_indent` bytes: up to that many

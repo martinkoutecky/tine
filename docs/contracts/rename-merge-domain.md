@@ -234,8 +234,9 @@ input; checks of assembled output name the survivor. `BodyLaw`,
 Each source root supplies its own indentation offset for its subtree. Removal
 is bounded by each block line's reader-owned layout: leading whitespace before
 the marker, or the continuation dedent the reader removed.
-The next root chooses its own offset. The document reader returns its own
-source map (`tine_core::doc::SourceMap`, built in the same outline pass): each
+The next root chooses its own offset. `tine-text` projects each block's content
+and removed layout from the bounded lsdoc outline. The document reader returns
+`tine_core::doc::SourceMap` from that same outline pass, recording each
 physical line's native range, the bytes the reader removed in front of each
 line it read, each line's offset in its owner's text (pre-block or block
 `raw`), and each block's lines and indentation. `doc::native::NativeDocument`

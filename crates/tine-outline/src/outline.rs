@@ -29,7 +29,7 @@ use insert::insert_outline;
 /// The deepest outline the kernel builds (the window's `OUTLINE_MAX_DEPTH`,
 /// the store's `PARSE_INPUT_MAX_DEPTH`): a root is depth 0, so the deepest
 /// block sits at depth 127.
-pub const OUTLINE_MAX_DEPTH: usize = 128;
+pub const OUTLINE_MAX_DEPTH: usize = tine_text::SOURCE_DEPTH_MAX;
 
 /// The block-level list property (OG `:logseq.order-list-type`).
 pub const ORDER_LIST_KEY: &str = "logseq.order-list-type";

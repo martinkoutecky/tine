@@ -8,6 +8,10 @@
 //! by a supposedly unique sentinel) makes the transform collision-proof.
 
 use lsdoc::ast::{Block, Inline, ListItem, Projection, Span};
+use tine_text::{quote_depth_within, SOURCE_QUOTE_DEPTH_MAX};
+
+#[cfg(test)]
+use tine_text::line_quote_depth;
 
 const MAX_PARSED_TREE_DEPTH: usize = 1024;
 
@@ -39,54 +43,6 @@ mod trim_tests {
         );
     }
 }
-/// Source-side ceiling on a line's quote staircase for free-text doors; the
-/// same 128-level ceiling the page admission applies (`PARSE_INPUT_MAX_DEPTH`).
-#[allow(dead_code)] // each crate that includes this file uses a subset
-pub const SOURCE_QUOTE_DEPTH_MAX: usize = 128;
-
-/// `>` markers that open a quote staircase on one line: after leading spaces
-/// and any list markers, each `>` optionally followed by spaces. lsdoc parses
-/// every level by recursing *during the parse* (`markdown_blockquote_sequence`
-/// re-parses the stripped body), so a tree check after the parse is too late:
-/// ~1,300 levels overflow a 2 MiB debug stack before any tree exists (I-22).
-/// Counts markers, an upper bound on levels (lsdoc may strip two per level).
-pub fn line_quote_depth(line: &str) -> usize {
-    let spaces = |bytes: &[u8], mut at: usize| {
-        while matches!(bytes.get(at), Some(b' ' | b'\t' | b'\x0c' | b'\x1a')) {
-            at += 1;
-        }
-        at
-    };
-    let bytes = line.as_bytes();
-    let mut at = spaces(bytes, 0);
-    loop {
-        let digits = bytes[at..]
-            .iter()
-            .take_while(|b| b.is_ascii_digit())
-            .count();
-        let marker_end = match bytes.get(at + digits) {
-            Some(b'.' | b')') if digits > 0 => at + digits + 1,
-            Some(b'-' | b'+' | b'*') if digits == 0 => at + 1,
-            _ => break,
-        };
-        if !matches!(bytes.get(marker_end), Some(b' ' | b'\t')) {
-            break;
-        }
-        at = spaces(bytes, marker_end);
-    }
-    let mut depth = 0;
-    while bytes.get(at) == Some(&b'>') {
-        depth += 1;
-        at = spaces(bytes, at + 1);
-    }
-    depth
-}
-
-fn quote_depth_within(text: &str, limit: usize) -> bool {
-    text.split(['\n', '\r'])
-        .all(|line| line_quote_depth(line) <= limit)
-}
-
 /// Refuse before lsdoc recurses: the block doors keep their panic contract
 /// (the page parse isolates it), sized to the tree bound so no input that
 /// parsed before is refused by this check alone.
@@ -797,20 +753,6 @@ pub fn parse_text_bounded(text: &str, format: &str) -> Option<Projection> {
         drop_parsed_tree(blocks);
         None
     }
-}
-
-/// A whole page's outline headers ([`lsdoc::parse_outline`]) under the
-/// free-text bound: `None` when the page's quote staircase is deeper than
-/// [`SOURCE_QUOTE_DEPTH_MAX`] (refused before lsdoc recurses) or lsdoc does not
-/// take ownership of the text. lsdoc drops its own parse tree stack-safely.
-#[allow(dead_code)] // each crate that includes this file uses a subset
-pub fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::OutlineHeader>> {
-    if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
-        return None;
-    }
-    lsdoc::parse_outline(text, format)
-        .ok()
-        .map(|outline| outline.headers)
 }
 
 /// [`lsdoc::inline`] under the same bound, for inline-only readers.

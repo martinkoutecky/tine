@@ -1,6 +1,6 @@
 //! I-22: every production lsdoc parse goes through the bounded boundary in
-//! `crates/tine-outline/src/lsdoc_block_parse.rs` (the exemplar: `parse_block`,
-//! `parse_projection`, `parse_text_bounded`, `parse_inline_bounded`). lsdoc
+//! `crates/tine-outline/src/lsdoc_block_parse.rs` for block and inline parses,
+//! or `crates/tine-text/src/boundary.rs` for the page outline. lsdoc
 //! recurses while parsing a quote staircase and returns trees whose drop and
 //! walk recurse, so a raw call on synced or imported text (a property value,
 //! a whole file, a query atom) aborted the process on a deep `>>>…` value
@@ -27,17 +27,9 @@ const ENTRIES: &[&str] = &[
     "__inline_v2",
 ];
 
-/// Files allowed to call lsdoc directly, each with its reason.
-const EXEMPT: &[(&str, &str)] = &[
-    (
-        "crates/tine-outline/src/lsdoc_block_parse.rs",
-        "the bounded boundary itself",
-    ),
-    (
-        "crates/tine-core/src/query/conformance.rs",
-        "a #[cfg(test)] module (asserted below)",
-    ),
-];
+const PAGE_BOUNDARY: &str = "crates/tine-text/src/boundary.rs";
+const BLOCK_BOUNDARY: &str = "crates/tine-outline/src/lsdoc_block_parse.rs";
+const QUERY_TEST: &str = "crates/tine-core/src/query/conformance.rs";
 
 fn raw_calls(code: &str) -> Vec<&'static str> {
     ENTRIES
@@ -73,8 +65,7 @@ fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
             }
             continue;
         }
-        if path.extension().is_none_or(|e| e != "rs") || EXEMPT.iter().any(|(f, _)| *f == relative)
-        {
+        if path.extension().is_none_or(|e| e != "rs") || relative == QUERY_TEST {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
@@ -85,6 +76,11 @@ fn scan(root: &Path, dir: &Path, hits: &mut Vec<String>) {
             }
             let code = line.split("//").next().unwrap_or("");
             for entry in raw_calls(code) {
+                if (relative == PAGE_BOUNDARY && entry == "parse_outline")
+                    || (relative == BLOCK_BOUNDARY && entry != "parse_outline")
+                {
+                    continue;
+                }
                 hits.push(format!(
                     "{relative}:{}: raw `lsdoc::{entry}` in `{}`",
                     n + 1,
@@ -104,10 +100,8 @@ fn every_production_lsdoc_parse_goes_through_the_bounded_boundary() {
     scan(&root, &root.join("src-tauri/src"), &mut hits);
     assert!(
         hits.is_empty(),
-        "I-22: call lsdoc only through crates/tine-outline/src/lsdoc_block_parse.rs (exemplar: \
-         `parse_text_bounded` / `parse_inline_bounded`, reached via tine_core::render), \
-         which refuses a quote staircase before lsdoc recurses and drains too-deep \
-         trees iteratively:\n{}",
+        "I-22: use the bounded parser in tine-text for page outlines or \
+         tine-outline for block and inline parsing:\n{}",
         hits.join("\n")
     );
     let query = std::fs::read_to_string(root.join("crates/tine-core/src/query.rs")).unwrap();

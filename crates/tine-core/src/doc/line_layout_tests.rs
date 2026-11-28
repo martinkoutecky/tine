@@ -40,3 +40,60 @@ fn physical_lines_end_where_the_reader_ends_a_line() {
     assert_eq!(line_terminator("x\n"), "\n");
     assert_eq!(line_terminator("x"), "");
 }
+
+#[test]
+fn mapped_markdown_keeps_trimmed_preamble_layout_and_native_offsets() {
+    let input = "pre\r\n \t\r- α\r\n \ttrailing\r  \r\n- Next";
+    let read = super::parse_outlined(input, false, true);
+    let map = read.map.unwrap();
+    assert_eq!(read.document.pre_block.as_deref(), Some("pre"));
+    assert_eq!(read.document.roots[0].raw(), "α\ntrailing\n");
+    assert_eq!(read.document.roots[1].raw(), "Next");
+    assert_eq!(map.pre_block(), 0..1);
+    assert_eq!(map.block(0), 2..5);
+    assert_eq!(map.block(1), 5..6);
+    assert_eq!(map.removed(2), 2);
+    assert_eq!(map.removed(3), 2);
+    assert_eq!(map.offset(3), 3);
+    assert_eq!(map.native(Some(0), 3), input.find("trailing").unwrap());
+    assert_eq!(&input[map.line(4)], "  \r\n");
+    assert_eq!(map.read_end(), input.len());
+}
+
+#[test]
+fn mapped_org_keeps_native_trailer_beyond_the_reader_end() {
+    let input = "\r\n* T\r\n body\r\n \t\r\n\r\n\r";
+    let read = super::parse_outlined(input, true, true);
+    let map = read.map.unwrap();
+    assert_eq!(read.document.pre_block.as_deref(), Some(""));
+    assert_eq!(read.document.roots[0].raw(), "T\n body\n \t");
+    assert_eq!(map.pre_block(), 0..1);
+    assert_eq!(map.block(0), 1..4);
+    assert_eq!(map.native(Some(0), 2), input.find(" body").unwrap());
+    assert_eq!(&input[map.read_end()..], "\r\n\r");
+    assert_eq!(map.lines(), 0..6);
+    assert_eq!(map.removed(5), 0);
+}
+
+#[test]
+fn mapped_midline_header_keeps_the_full_line_as_preamble() {
+    let input = ":PROPERTIES:\r\n:key: value\r:END: # Kept\nnext:: property\r\n";
+    let read = super::parse_outlined(input, false, true);
+    let map = read.map.unwrap();
+    assert!(read.document.roots.is_empty());
+    assert_eq!(
+        read.document.pre_block.as_deref(),
+        Some(":PROPERTIES:\n:key: value\n:END: # Kept\nnext:: property")
+    );
+    assert_eq!(map.pre_block(), 0..4);
+    assert_eq!(
+        map.line(2),
+        input.find(":END:").unwrap()..input.find("next::").unwrap()
+    );
+    assert_eq!(&input[map.payload(2)], ":END: # Kept");
+    assert_eq!(
+        map.native(None, map.offset(2) + 5),
+        input.find(":END:").unwrap() + 5
+    );
+    assert_eq!(map.read_end(), input.len());
+}

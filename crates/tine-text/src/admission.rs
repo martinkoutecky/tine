@@ -1,17 +1,64 @@
 //! Pure source depth admission for Markdown and Org page text.
 
-use super::PARSE_INPUT_MAX_DEPTH;
-use tine_core::doc;
+use crate::{line_terminator, physical_lines};
+
+/// File size accepted by the page reader, inclusive.
+pub const PAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Source depth accepted by the page reader, inclusive.
+pub const SOURCE_DEPTH_MAX: usize = 128;
+
+/// Source-side ceiling on a quote staircase, checked before lsdoc recurses.
+pub const SOURCE_QUOTE_DEPTH_MAX: usize = SOURCE_DEPTH_MAX;
+
+/// Quote markers after layout and list markers. This is an upper bound on
+/// parser recursion, since lsdoc may consume two markers per level.
+pub fn line_quote_depth(line: &str) -> usize {
+    let spaces = |bytes: &[u8], mut at: usize| {
+        while matches!(bytes.get(at), Some(b' ' | b'\t' | b'\x0c' | b'\x1a')) {
+            at += 1;
+        }
+        at
+    };
+    let bytes = line.as_bytes();
+    let mut at = spaces(bytes, 0);
+    loop {
+        let digits = bytes[at..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let marker_end = match bytes.get(at + digits) {
+            Some(b'.' | b')') if digits > 0 => at + digits + 1,
+            Some(b'-' | b'+' | b'*') if digits == 0 => at + 1,
+            _ => break,
+        };
+        if !matches!(bytes.get(marker_end), Some(b' ' | b'\t')) {
+            break;
+        }
+        at = spaces(bytes, marker_end);
+    }
+    let mut depth = 0;
+    while bytes.get(at) == Some(&b'>') {
+        depth += 1;
+        at = spaces(bytes, at + 1);
+    }
+    depth
+}
+
+/// Whether each source line stays within a caller's quote recursion bound.
+pub fn quote_depth_within(text: &str, limit: usize) -> bool {
+    physical_lines(text).all(|line| line_quote_depth(line) <= limit)
+}
 
 /// Whether source text is within the parser and renderer nesting ceiling
-/// (`PARSE_INPUT_MAX_DEPTH` = 128 levels, inclusive). List-item columns define
+/// ([`SOURCE_DEPTH_MAX`] = 128 levels, inclusive). List-item columns define
 /// outline depth; callouts, quotes, and paired inline delimiters have separate
 /// ceilings and do not consume outline levels. Fenced code and literal
 /// src/example/export/comment bodies are excluded. Org headline levels are
 /// checked separately by the path-aware reader. Pure, O(n).
-pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
-    let input: &str = &doc::normalize_line_endings(input); // a lone `\r` ends a line (K01a)
-    let lines: Vec<_> = input.lines().collect();
+pub fn parse_input_depth_within_limit(input: &str) -> bool {
+    let lines =
+        || physical_lines(input).map(|line| &line[..line.len() - line_terminator(line).len()]);
     // lsdoc's fence rule, transcribed (`v2/source.rs::is_fence_marker_line`,
     // `block_common::find_matching_fence`): any line whose trimmed text starts
     // with three backticks OR three tildes is a fence marker; a marker line with
@@ -19,12 +66,16 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
     // whatever its character or length. (CommonMark's "same character, at least
     // as long" is NOT the parser's rule: a four-backtick opener is closed by a
     // three-backtick line, and the outline after it is real structure.)
-    let last_marker = lines.iter().rposition(|line| is_fence_marker_line(line));
+    let last_marker = lines()
+        .enumerate()
+        .filter(|(_, line)| is_fence_marker_line(line))
+        .last()
+        .map(|(n, _)| n);
     let mut bullet_columns = Vec::new();
     let mut containers = Vec::<String>::new();
     let mut literal: Option<String> = None;
     let mut in_fence = false;
-    for (line_index, line) in lines.into_iter().enumerate() {
+    for (line_index, line) in lines().enumerate() {
         let indent = line
             .bytes()
             .take_while(|byte| matches!(byte, b' ' | b'\t'))
@@ -78,7 +129,7 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
                 bullet_columns.pop();
             }
             bullet_columns.push(indent);
-            if bullet_columns.len() > PARSE_INPUT_MAX_DEPTH {
+            if bullet_columns.len() > SOURCE_DEPTH_MAX {
                 return false;
             }
         }
@@ -100,7 +151,7 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
                 literal = Some(name);
             } else if literal.is_none() && !name.is_empty() {
                 containers.push(name);
-                if containers.len() > PARSE_INPUT_MAX_DEPTH {
+                if containers.len() > SOURCE_DEPTH_MAX {
                     return false;
                 }
             }
@@ -121,7 +172,7 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
             }
         }
         // Spaced (`> > >`) and list-prefixed (`- > >`) staircases nest too.
-        if tine_core::render::line_quote_depth(body) > PARSE_INPUT_MAX_DEPTH {
+        if line_quote_depth(body) > SOURCE_DEPTH_MAX {
             return false;
         }
         // Inline parsing starts afresh for each source line. Only paired
@@ -156,7 +207,7 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
             }
             if matches!(byte, b'[' | b'{' | b'(') {
                 depth += 1;
-                if depth > PARSE_INPUT_MAX_DEPTH {
+                if depth > SOURCE_DEPTH_MAX {
                     return false;
                 }
             } else {

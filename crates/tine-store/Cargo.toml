@@ -9,6 +9,7 @@ license.workspace = true
 test-faults = []
 
 [dependencies]
+tine-text = { path = "../tine-text" }
 tine-core = { path = "../tine-core" }
 serde = { workspace = true }
 tine-outline = { path = "../tine-outline" }

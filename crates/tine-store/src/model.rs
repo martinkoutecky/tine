@@ -36,7 +36,6 @@ pub(crate) mod namespace_parents;
 mod page_icons;
 mod page_identity;
 pub(crate) mod page_parse;
-mod parse_depth;
 pub(crate) use file_source::FileSource;
 mod path_membership;
 pub(crate) mod referenced_names;
@@ -93,7 +92,7 @@ use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
 /// Maximum source bytes admitted to a page/config/EDN parser or renderer.
-pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+pub const PARSE_INPUT_MAX_BYTES: u64 = tine_text::PAGE_MAX_BYTES;
 /// Maximum structural depth admitted before recursive projections or rendering:
 /// the outline kernel's cap, so admission and every edit agree (twin 4).
 pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = tine_outline::outline::OUTLINE_MAX_DEPTH;
@@ -371,7 +370,7 @@ pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
 /// ceiling. Literal regions and paired inline delimiters are handled before
 /// counting outline levels. Pure O(source length), with no failure mode.
 pub fn parse_input_depth_within_limit(input: &str) -> bool {
-    parse_depth::parse_input_depth_within_limit(input)
+    tine_text::parse_input_depth_within_limit(input)
 }
 
 #[cfg(test)]

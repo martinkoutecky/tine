@@ -4,8 +4,8 @@
 //! no message; the user saw "Unreachable code should not be executed
 //! (evaluating 'page_header_json')" and one page refused to display. Native
 //! tine-core hid the same bug behind `catch_unwind`. Invariants: I-2 (one bad
-//! file must not refuse the graph), I-22 (every lsdoc call goes through
-//! `crates/tine-outline/src/lsdoc_block_parse.rs`). Exemplar: `parse_text_bounded`.
+//! file must not refuse the graph), I-22 (the page header reads through
+//! `tine-outline`'s bounded text parser).
 
 use tine_core::block_regions::page_header;
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/tine-search", "crates/tine-outline", "crates/tine-core", "crates/tine-store", "crates/tine-guide", "crates/tine-graph-features", "plugin-sdk/rust", "src-tauri", "src-tauri/ios-folder-picker-native", "src-tauri/ios-native-integrations", "crates/lsdoc-wasm"]
+members = ["crates/tine-search", "crates/tine-text", "crates/tine-outline", "crates/tine-core", "crates/tine-store", "crates/tine-guide", "crates/tine-graph-features", "plugin-sdk/rust", "src-tauri", "src-tauri/ios-folder-picker-native", "src-tauri/ios-native-integrations", "crates/lsdoc-wasm"]
 # lsdoc-wasm ships only as wasm32, built by `npm run build:wasm` (wasm-pack, the
 # `wasm-release` profile below) to regenerate the vendored frontend parser. It is
 # a member so it resolves its dependencies (tine-core's among them) from this
