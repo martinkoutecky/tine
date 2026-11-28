@@ -8,7 +8,7 @@ import { pushToast } from "../toasts";
 import { isTauri } from "../backend";
 import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { queryAllWindows } from "../windowRealm";
 import { platformKind } from "../platform";
 import { readOr } from "../resourceRead";
@@ -19,6 +19,7 @@ import { APP_IOS_DISPLAY_NAME } from "../appIdentity";
  *  no graph configured: choose to open an existing Logseq graph, or create a new
  *  one that comes pre-loaded with a short guided demo. */
 export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
+  useModal();
   const [busy, setBusy] = createSignal<null | "open" | "create">(null);
   const [cloning, setCloning] = createSignal(false);
   // iOS opens graphs only inside the app's own containers (master 027b5ae15).

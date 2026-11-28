@@ -6,7 +6,7 @@ import { visibleBody } from "../render/block";
 import { EmojiText } from "../render/emoji";
 import { openReferenceResultsCopy } from "./queryResultsCopy";
 import type { BlockDto, RefGroup } from "../types";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 
 /** Choose from a stable snapshot of the filtered reference rows. Opening
  * costs O(reference rows). Continuing reads only the chosen source pages. */
@@ -15,6 +15,7 @@ export function ReferenceExportChooser(props: {
   groups: RefGroup[];
   onClose: () => void;
 }): JSX.Element {
+  useModal();
   let root: HTMLDivElement | undefined;
   const groups = props.groups;
   let alive = true;

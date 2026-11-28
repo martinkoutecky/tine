@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { pageByName } from "../document";
+import { pageByName, pageRoots, resetStore, selectBlock, topSelected } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { installKeybindings } from "../keybindings";
@@ -331,6 +332,30 @@ describe("page hover-peek (GH #40)", () => {
       expect(preview).toHaveBeenCalledWith("58900000-0000-4000-8000-0000000000b1", 50);
     } finally {
       dispose();
+    }
+  });
+
+  it("a hover peek is not a modal: with the focus on the page, Down steps the selection and Backspace deletes it", async () => {
+    loadSingle({ name: "Here", kind: "page", title: "Here", id: "pages/Here.md", rev: "r1", format: "md", pre_block: null, blocks: [
+      { id: "here-a", raw: "one", children: [], collapsed: false },
+      { id: "here-b", raw: "two", children: [], collapsed: false },
+      { id: "here-c", raw: "three", children: [], collapsed: false },
+    ] });
+    selectBlock("here-a");
+    const uninstall = installKeybindings();
+    const { root, dispose } = mountAttached("A link to [[Tine]] here");
+    try {
+      fireEnter(root.querySelector("a.page-ref")!);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup())).toBe(true);
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      expect(topSelected()).toEqual(["here-b"]);
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+      expect([...pageRoots("Here")]).toEqual(["here-a", "here-c"]);
+    } finally {
+      dispose();
+      uninstall();
+      resetStore();
     }
   });
 

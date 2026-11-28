@@ -10,7 +10,7 @@ import { flushAll, unsavedDrafts } from "../document";
 import { mainPaneRouter } from "../router";
 import { writeClipboardText } from "../clipboard";
 import { closeUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { DEFAULT_EXPORT_OPTIONS, exportOutline, type ExportNode } from "../editor/exportText";
 import type { PageDto } from "../types";
 import "../styles/unsavedRecovery.css";
@@ -47,6 +47,7 @@ export function UnsavedRecovery(): JSX.Element {
 }
 
 function RecoveryPanel(): JSX.Element {
+  useModal();
   const [pages, setPages] = createSignal(unsavedDrafts());
   const [busy, setBusy] = createSignal(false);
   const [message, setMessage] = createSignal("");

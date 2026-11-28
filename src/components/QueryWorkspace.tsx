@@ -56,7 +56,7 @@ import { createAnswerDay } from "../journal";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
 import { QueryResultSections, type ResultFamily } from "./QueryResultSections";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, formatOfFile, queryWorkspacePage } from "../document";
@@ -526,6 +526,7 @@ function AdvancedModal(props: {
   layerId: string;
   trigger: () => HTMLElement | null;
 }): JSX.Element {
+  useModal();
   const initialFields = props.sourceKind() === "search" ? friendlyFieldsFromSource(props.source()) : null;
   const [all, setAll] = createSignal(initialFields?.all ?? "");
   const [any, setAny] = createSignal(initialFields?.any ?? "");

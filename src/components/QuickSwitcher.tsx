@@ -13,7 +13,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
-import { paletteCommands } from "../keybindings";
+import { matchesCommand, paletteCommands, runGlobalCommand } from "../keybindings";
 import { closePane, focusPane, focusedRouter, layoutPaneIds, openRouteInOtherPane, paneRouter } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
 import { SEARCH_SYNTAX } from "../editor/searchQuery";
@@ -21,7 +21,7 @@ import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind, QueryExecution } from "../types";
 import { rankLauncherItems, recordLauncherActivation, pinyinMatchingEnabled } from "../launcherRanking";
-import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
+import { dismissTopTransient, registerTransientLayer, useModal } from "../transientLayers";
 import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { ownerPath } from "../pageIndex";
@@ -61,6 +61,7 @@ const BLOCK_CHUNK = 50;
 // Ctrl-K: grouped search (Pages / Create / Commands / Blocks), command palette
 // (⌘⇧P, commands-only), and recents on an empty query — mirroring OG's cmdk.
 export function QuickSwitcher(): JSX.Element {
+  useModal(switcherOpen);
   const [query, setQuery] = createSignal("");
   const [sel, setSel] = createSignal(0);
   const [syntaxOpen, setSyntaxOpen] = createSignal(false);
@@ -555,7 +556,15 @@ export function QuickSwitcher(): JSX.Element {
 
   return (
     <Show when={switcherOpen()}>
-      <div class="switcher-overlay" data-pane-focus-neutral onClick={cancelSwitcher}>
+      <div class="switcher-overlay" data-pane-focus-neutral onClick={cancelSwitcher} onKeyDown={(e) => {
+        // The footer's mode chord works from every control in the switcher. The
+        // window dispatcher already ran it for the input (it prevents the
+        // default) and leaves a key on a button of an open modal alone.
+        if (e.defaultPrevented || !matchesCommand(e, "command-palette/toggle")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        runGlobalCommand("command-palette/toggle");
+      }}>
         <div class="switcher" onClick={(e) => e.stopPropagation()}>
           <input
             ref={inputRef}

@@ -1,6 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { linkSchemeRequest, type LinkSchemeRequest } from "../linkSchemePrompt";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
 import "./LinkSchemePrompt.css";
@@ -12,6 +12,7 @@ export function LinkSchemePrompt() {
 }
 
 function Prompt(props: { request: LinkSchemeRequest }) {
+  useModal();
   const request = props.request;
   const [always, setAlways] = createSignal(false);
   let root!: HTMLFormElement;

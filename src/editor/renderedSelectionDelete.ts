@@ -19,7 +19,7 @@ import { FOREIGN_SOURCE_ATTR, editorOffsetFromRenderedRange, rangeEndDependsOnGe
 import { codeCardBodyAt } from "../components/blockGestures";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
-import { queryAllWindows, selectionOf } from "../windowRealm";
+import { selectionOf } from "../windowRealm";
 
 // The rendered instance (Block's content wrapper) -> the owner its click passes
 // to `startEditing`, so the handoff opens the editor in the selecting instance.
@@ -76,14 +76,12 @@ function inForeignSource(wrapper: Element, node: Node): boolean {
  *  rendering, a selection end inside another source drawn in the block (an
  *  embed, a block reference's target, a macro's expansion), a selection end that depends on generated output (a query's, a
  *  failed-region or embed-depth notice), the block being edited, a read-only
- *  page, annotation or calc blocks, an open modal, a selection point that does
+ *  page, annotation or calc blocks, a selection point that does
  *  not map to source, and a range that maps to nothing. On true, `key` is held
  *  (see `swallowHeldHandoffRepeat`) until released.
  *  Cost: O(length of that block). */
 export function openRenderedSelectionInEditor(key: string): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
-  // A modal owns keystrokes while open — never mutate background blocks behind it.
-  if (queryAllWindows(".modal-overlay")) return false;
   const sel = selectionOf();
   if (!sel || sel.rangeCount === 0) return false;
   const range = sel.getRangeAt(0);

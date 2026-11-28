@@ -9,7 +9,7 @@ import { dbg } from "../debug";
 import { pushToast } from "../toasts";
 import { closeQuickShare, quickShareDefinition } from "../shareState";
 import { GRAPH_CHANGED, finishSharePending, markSharePending, shareValue, shareGistId, pendingRecordId } from "../quickShare/definitions";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import {
   quickShareConnectText, quickShareErrorText, quickShareSize,
@@ -114,6 +114,7 @@ export function QuickShareDialog(props: { request: Accessor<QueryPublicationRequ
 }
 
 function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
+  useModal();
   const [includeComments, setIncludeComments] = createSignal(props.request.includeComments);
   let commentsChanged = false;
   const scope = {};

@@ -1,12 +1,13 @@
 import { Show, createEffect, onCleanup, type JSX } from "solid-js";
 import { cssEditorSession, cssEditorText, setCssEditorText, cssEditorProblem, cssEditorBusy, flushCssEditor, closeCssEditor, closeCssEditorOnOutsideClick, cancelCssEditor, reloadCssEditor, checkCssEditorDisk } from "../cssEditor";
 import { DialogActions } from "./DialogActions";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { t } from "../i18n";
 import { graphTransitioning } from "../ui";
 import { onEachWindow } from "../windowRealm";
 
 export function CssEditor(): JSX.Element {
+  useModal(() => !!cssEditorSession());
   createEffect(() => {
     if (!cssEditorSession()) return;
     const unregister = registerTransientLayer({ id: "css-editor", dismiss: () => { void cancelCssEditor(); return true; } });

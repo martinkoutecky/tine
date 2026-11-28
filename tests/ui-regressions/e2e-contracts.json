@@ -1292,7 +1292,7 @@
       "stability": "stable"
     },
     "scripts/e2e-blockselect.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection; with Settings open, Backspace on a Settings search result leaves the selected block in the page and its file, and after Settings closes Backspace deletes it.", "blocking": true }],
       "acceptableVariations": ["Selection affordance styling may evolve while keyboard ownership remains intact."],
       "nonRequirements": ["Exact selection highlight color or transition timing."],
       "stability": "stable"

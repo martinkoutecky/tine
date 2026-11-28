@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { createSignal, createEffect, onCleanup, For, Show } from "solid-js";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import type { LinkTarget } from "../deepLinkNavigation";
 import "./DeepLinkGraphChoice.css";
 import { documentOf } from "../windowRealm";
@@ -12,6 +12,7 @@ export function chooseLinkGraph(candidates: LinkTarget[]): Promise<LinkTarget | 
   return new Promise((resolve) => setChoice({ candidates, finish: (target) => { setChoice(null); resolve(target); } }));
 }
 export function DeepLinkGraphChoice() {
+  useModal(() => !!choice());
   let root: HTMLElement | undefined;
   createEffect(() => {
     const pending = choice();

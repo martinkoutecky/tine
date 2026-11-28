@@ -11,7 +11,7 @@ import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { reportUiFailure } from "../uiFailure";
 import { readOr } from "../resourceRead";
 import { assetRelPath } from "../media";
@@ -65,6 +65,7 @@ function drawWave(canvas: HTMLCanvasElement | undefined, progress: number): void
 /** Play the selected stream, acquiring a bounded blob only if streaming fails.
  * Failed fallback or playback shows fixed text; stale reads are ignored. */
 export function AudioOverlay(): JSX.Element {
+  useModal(() => !!audioPlayer());
   let alive = true;
   onCleanup(() => { alive = false; });
   // Resolve to a range-aware native URL for graph assets (same path as the inline

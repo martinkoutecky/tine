@@ -16,8 +16,11 @@ import { BUILTIN_HIDE } from "../editor/properties";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { editorIn, maybeEditorIn, type EditorKind } from "../tests/editorDriver";
 import { useEditorKind } from "../tests/editorKind";
-import { setTypographyMode } from "../ui";
+import { setLightbox, setTypographyMode } from "../ui";
 import { Block, SurfaceContext } from "./Block";
+import { Lightbox } from "./Toasts";
+import * as layers from "../transientLayers";
+import * as realm from "../windowRealm";
 
 beforeAll(async () => {
   await initParser();
@@ -212,16 +215,45 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor", kind => {
       expect(editingId()).toBeNull();
     });
 
-    it("refuses behind an open modal as before", () => {
+    it("refuses behind an open modal as before", async () => {
       mount({ a: "abc" });
-      const modal = document.createElement("div");
-      modal.className = "modal-overlay";
-      document.body.appendChild(modal);
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      cleanup.push(render(() => <Lightbox />, host));
+      setLightbox("blob:image");
+      cleanup.push(() => setLightbox(null));
+      await Promise.resolve();
+      expect(document.querySelector(".lightbox-overlay")).not.toBeNull();
       const t = text("a", "abc");
       select([t, 1], [t, 2]);
       press("Delete");
       expect(doc.byId.a.raw).toBe("abc");
       expect(editingId()).toBeNull();
+    });
+
+    it("a note's own modal-overlay class is not a modal: the handoff opens the editor and writes nothing", () => {
+      mount({ a: "hello world", note: "<span class=\"modal-overlay\">x</span>" });
+      expect(document.querySelector('[data-block-id="note"] .modal-overlay')).not.toBeNull();
+      const setRaw = vi.spyOn(documentApi, "setRaw");
+      const start = firstOf("world")("a"), end = firstOf("world", 5)("a");
+      const expected = clickPair("a", start, end);
+      select(start, end);
+      expect(press("Delete").defaultPrevented).toBe(true);
+      expect(doc.byId.a.raw).toBe("hello world");
+      expect(setRaw).not.toHaveBeenCalled();
+      expect(editingId()).toBe("a");
+      expect(editorIn(document.querySelector('[data-block-id="a"]')!).selection()).toEqual(expected);
+    });
+
+    it("with no modal open, the handoff reads the open-modal registry once and queries no window for one", () => {
+      mount({ a: "hello world" });
+      const reads = vi.spyOn(layers, "modalOpen");
+      const windows = vi.spyOn(realm, "queryAllWindows");
+      select(firstOf("world")("a"), firstOf("world", 5)("a"));
+      expect(press("Delete").defaultPrevented).toBe(true);
+      expect(editingId()).toBe("a");
+      expect(reads).toHaveBeenCalledTimes(1);
+      expect(windows).not.toHaveBeenCalled();
     });
   });
 

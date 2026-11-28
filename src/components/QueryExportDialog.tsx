@@ -12,7 +12,7 @@ import type { QueryPublicationRequest } from "../types";
 import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
 import { activeWindow, listen } from "../windowRealm";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { FolderExportMembership } from "./FolderExportMembership";
 import { saveExportComments } from "../exportComments";
 
@@ -24,6 +24,7 @@ export function QueryExportDialog(props: { request: Accessor<QueryPublicationReq
 }
 
 function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
+  useModal();
   const [name, setName] = createSignal(props.request.name);
   const [plannedName, setPlannedName] = createSignal(props.request.name);
   const [destination, setDestination] = createSignal<"create" | "replace" | "separate">(props.request.replace ? "replace" : "create");

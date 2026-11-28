@@ -1,5 +1,5 @@
 import { onCleanup, onMount, type JSX } from "solid-js";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { documentOf } from "../windowRealm";
 import "./RenameAliasDialog.css";
 
@@ -7,6 +7,7 @@ import "./RenameAliasDialog.css";
  *  that Escape, dismissal and unmounting answer with `dismiss`, keeps Tab
  *  inside, and focuses its first `[data-choice]` button. O(buttons) per Tab. */
 export function RenameDialogFrame(props: { id: string; label: string; dismiss: () => void; children: JSX.Element }) {
+  useModal();
   let root!: HTMLElement;
   onCleanup(() => props.dismiss());
   onMount(() => {

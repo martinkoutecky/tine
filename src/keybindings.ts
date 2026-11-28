@@ -34,8 +34,9 @@ import { isTauri } from "./backend";
 import { zoomReset } from "./zoom";
 import { zoomInOnTarget, zoomOutOneLevel } from "./zoomCommands";
 import { activeWindowId, documentOf, isElementNode, MAIN_WINDOW_ID, onEachWindow, queryAllWindows, selectionOf } from "./windowRealm";
-import { dismissTopTransient, topTransientLayer } from "./transientLayers";
+import { dismissTopTransient, modalOpen, onModalOpened, topTransientLayer } from "./transientLayers";
 import { outlineSelectionAt, selectAllDialogs, selectAllFields } from "./outlineSelectionTarget";
+import { isEditableTarget, isTextCaretTarget } from "./keyTargets";
 import { DRAG_THRESHOLD_PX } from "./components/blockGestures";
 import { carryDaysBack } from "./carry";
 import {
@@ -973,29 +974,7 @@ export function eventToBindingString(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-function isEditableTarget(t: EventTarget | null): boolean {
-  const el = t as HTMLElement | null;
-  if (!el) return false;
-  const tag = el.tagName;
-  return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable
-    || !!el.closest?.('[data-block-editor="cm6"]');
-}
-
-const CARET_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "password", "number"]);
-
-/** A field with a text caret: a textarea, a text-like input, or editable content
- *  (CodeMirror's). The target itself, not its editor wrapper: a button inside an
- *  editor has no caret. */
 const HISTORY_COMMANDS = ["go/backward", "go/forward"];
-
-function isTextCaretTarget(t: EventTarget | null): boolean {
-  const el = t as HTMLElement | null;
-  if (!el?.tagName) return false;
-  if (el.tagName === "TEXTAREA") return true;
-  if (el.tagName === "INPUT") return CARET_INPUT_TYPES.has((el as HTMLInputElement).type);
-  // isContentEditable, with the nearest contenteditable attribute where it is missing.
-  return el.isContentEditable ?? (el.closest?.("[contenteditable]")?.getAttribute("contenteditable") ?? "false") !== "false";
-}
 
 function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -1148,7 +1127,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const blankClipboard = modKey === "c" || modKey === "x";
     const blankDelete = (e.key === "Delete" || e.key === "Backspace")
       && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
-    if (blank && (editing || suspended || !(modKey === "a" || blankClipboard || blankDelete))) clearSelection();
+    if (blank && (editing || suspended || modalOpen() || !(modKey === "a" || blankClipboard || blankDelete))) clearSelection();
     // Native buttons own activation even when a block selection is still present (GH #879).
     if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey
         && (e.target as HTMLElement | null)?.tagName === "BUTTON") {
@@ -1178,6 +1157,14 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       if (suspended) {
         e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
       }
+    }
+    // Settings shortcut recording still declines non-Escape input so its own
+    // capture listener can record ordinary chords.
+    if (suspended) return;
+    // An open modal owns every key whose target is not a field: nothing behind it
+    // acts on it, and its own controls and the browser get the key uncancelled.
+    if (modalOpen() && !editing) { resetSeq(); return; }
+    if (e.key === "Escape") {
       if (paneSel() && !editing && handlePaneSelectKey(e)) {
         e.preventDefault(); resetSeq(); return;
       }
@@ -1214,10 +1201,6 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       resetSeq();
       return;
     }
-
-    // Settings shortcut recording still declines non-Escape input so its own
-    // capture listener can record ordinary chords.
-    if (suspended) return;
 
     // !editing guard: pane-select must NEVER eat ordinary keys while a text
     // field has focus. Escape itself was handled after transient/drawer.
@@ -1368,7 +1351,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     superDown = false;
   };
   const pasteHandler = (e: ClipboardEvent) => {
-    if (isEditableTarget(e.target)) return;
+    if (isEditableTarget(e.target) || modalOpen()) return;
     if (!cellSel()) return;
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
@@ -1455,6 +1438,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     win.addEventListener("wheel", retireBlankSelection, { capture: true, passive: true });
     win.addEventListener("click", rememberOutlineHit, true);
     win.addEventListener("blur", retireBlankSelection);
+    // A blank selection or click hit never survives into a modal, in any window.
+    const stopModalOpened = onModalOpened(retireBlankSelection);
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
@@ -1479,6 +1464,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
       win.removeEventListener("wheel", retireBlankSelection, true);
       win.removeEventListener("click", rememberOutlineHit, true);
       win.removeEventListener("blur", retireBlankSelection);
+      stopModalOpened();
       retireBlankSelection();
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);

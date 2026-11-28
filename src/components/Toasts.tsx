@@ -6,7 +6,7 @@ import { lightbox, setLightbox, lightboxGallery, lightboxIndex, setLightboxIndex
 import { createImageViewerGestures, type Transform } from "../imageViewerGestures";
 import { stepIndex } from "../imageGallery";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { queryAllWindows } from "../windowRealm";
 import { assetNameForBlobUrl } from "../assetCache";
 import { bindingOwner } from "../owned";
@@ -75,6 +75,7 @@ export function Toasts(): JSX.Element {
 // Full-screen image viewer; click the backdrop to close. Right-click the image
 // (or use the Copy button) to copy it to the OS clipboard.
 export function Lightbox(): JSX.Element {
+  useModal(() => !!lightbox());
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
   let lastPointerType = "mouse";
   // Escape is owned by the application transient registry. Context-menu peeling

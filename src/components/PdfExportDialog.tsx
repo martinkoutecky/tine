@@ -6,7 +6,7 @@ import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } f
 import { pdfExportPage, closePdfExport } from "../ui";
 import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
 import type { PrintOpts } from "../types";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { activeWindow, isElementNode, listen } from "../windowRealm";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
@@ -75,6 +75,7 @@ export function PdfExportDialog(): JSX.Element {
 }
 
 function Dialog(props: { name: string }): JSX.Element {
+  useModal();
   let root: HTMLDivElement | undefined;
   createEffect(() => {
     const unregister = registerTransientLayer({ id: "pdf-export", root: () => root ?? null, dismiss: () => { closePdfExport(); return true; } });

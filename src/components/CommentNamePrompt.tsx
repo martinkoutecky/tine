@@ -1,6 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { commentNameRequest, type CommentNameRequest } from "../commentNamePrompt";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
@@ -14,6 +14,7 @@ export function CommentNamePrompt() {
 }
 
 function NameForm(props: { request: CommentNameRequest }) {
+  useModal();
   const request = props.request;
   const [name, setName] = createSignal("");
   let root!: HTMLFormElement;

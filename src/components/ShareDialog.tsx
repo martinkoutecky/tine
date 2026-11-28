@@ -11,7 +11,7 @@ import { readLatestOr, readOr } from "../resourceRead";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
 import { closeShareDialog, openQueryExportThen, openQuickShare, type ShareTarget } from "../shareState";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { QueryLivePreview } from "./QueryLivePreview";
@@ -38,6 +38,7 @@ type Mode = "page" | "query";
 type Where = "folder" | "link";
 
 function Dialog(props: { target: ShareTarget }): JSX.Element {
+  useModal();
   const seed = props.target;
   const block = "query" in seed ? seed : null;
   const hostBlockId = block?.query.hostBlockId ?? null;

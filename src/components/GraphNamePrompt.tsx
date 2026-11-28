@@ -1,6 +1,6 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { graphNameRequest, type GraphNameRequest } from "../graphNamePrompt";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
@@ -10,6 +10,7 @@ export function GraphNamePrompt() {
 }
 
 function NameForm(props: { request: GraphNameRequest }) {
+  useModal();
   const request = props.request;
   onCleanup(() => request.finish(null));
   const [name, setName] = createSignal(request.suggestion);

@@ -2,13 +2,14 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { backend } from "../backend";
 import { chooseNewGraphParent, loadGraphPath } from "../graph";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
 
 /** One explicit clone, then open. A failed open retains the completed clone
  * so Retry never clones over it. Sign-in uses sync's existing token store. */
 export function CloneGraphDialog(props: { onClose: () => void; onOpened?: () => void }) {
+  useModal();
   let alive = true;
   onCleanup(() => { alive = false; });
   const owner = bindingOwner(() => alive);

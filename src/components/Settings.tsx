@@ -99,7 +99,7 @@ import {
   resetLauncherRanking,
   setLauncherRankingEnabled,
 } from "../launcherRanking";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
@@ -123,6 +123,7 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
 const SEARCH_SCROLL_WAIT_MS = 1000;
 const SETTINGS_FLASH_MS = 2000;
 export function Settings(): JSX.Element {
+  useModal(settingsOpen);
   const phoneQuery = activeWindow().matchMedia?.("(max-width: 480px) and (pointer: coarse)");
   const [phone, setPhone] = createSignal(phoneQuery?.matches ?? false);
   const updatePhone = () => setPhone(phoneQuery?.matches ?? false);

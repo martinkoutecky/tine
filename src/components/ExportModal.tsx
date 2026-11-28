@@ -30,7 +30,7 @@ import { exportHtml } from "../editor/exportHtml";
 import { referenceExportAtDepth, referenceExportCandidates } from "../editor/exportProjection";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { activeWindow, listen } from "../windowRealm";
 import { parseYoutubeTimestamp, formatYoutubeTimestamp } from "../youtubeTimestamp";
 
@@ -435,6 +435,7 @@ export function ExportModal(): JSX.Element {
 }
 
 function Modal(props: { request: ExportRequest }): JSX.Element {
+  useModal();
   let root: HTMLDivElement | undefined;
   createEffect(() => {
     const unregister = registerTransientLayer({ id: "copy-export", root: () => root ?? null, dismiss: () => { closeExportModal(); return true; } });

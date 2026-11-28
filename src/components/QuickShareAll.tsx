@@ -11,7 +11,7 @@ import { exportSheets } from "../sheet/exportSheets";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
 import { queryMacroExtents } from "../editor/queryMacro";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
-import { registerTransientLayer } from "../transientLayers";
+import { registerTransientLayer, useModal } from "../transientLayers";
 import { trapTab } from "./focusableElements";
 import { pushToast } from "../toasts";
 import { dbg } from "../debug";
@@ -36,6 +36,7 @@ interface Entry { title: string; definition?: { id: string; raw: string; page: s
 
 /** Preparation only reads. Confirm consumes the same one-use native previews as single Re-share, in order. */
 function BatchDialog(props: { close: () => void; target: object }): JSX.Element {
+  useModal();
   const [entries, setEntries] = createSignal<Entry[]>([]);
   const [busy, setBusy] = createSignal<"prepare" | "upload" | null>("prepare");
   const [confirmed, setConfirmed] = createSignal(false);

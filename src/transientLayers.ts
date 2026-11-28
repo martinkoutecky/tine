@@ -192,6 +192,43 @@ function restoreAfterTransientDismissal(top: Entry) {
   tryFocusRoot(drawer);
 }
 
+/** The open modals: app layers whose backdrop covers a whole window and blocks
+ * the pointer from what is behind it. A key whose target is not a field leaves
+ * every selection behind them alone (`keybindings.ts`). Only the app registers,
+ * through `useModal`, so nothing a note renders can open or close one. */
+const modals = new Set<symbol>();
+const modalOpenedListeners = new Set<() => void>();
+
+/** Register one open modal; the disposer releases exactly this registration and
+ * a second call does nothing. The first registration tells `onModalOpened`. O(1). */
+export function registerModal(): () => void {
+  const token = Symbol("modal");
+  modals.add(token);
+  if (modals.size === 1) for (const listener of [...modalOpenedListeners]) listener();
+  return () => { modals.delete(token); };
+}
+
+/** Is a modal open in any Tine window? O(1). */
+export function modalOpen(): boolean {
+  return modals.size > 0;
+}
+
+/** Called each time the first modal opens (none was open before). O(1) to add or remove. */
+export function onModalOpened(listener: () => void): () => void {
+  modalOpenedListeners.add(listener);
+  return () => { modalOpenedListeners.delete(listener); };
+}
+
+/** A component that renders a modal registers it while `open()` holds and its
+ * owner lives, so every close route, an error boundary's disposal and a closed
+ * window all release it. Call it first in the component, before anything that
+ * can throw. */
+export function useModal(open: () => boolean = () => true): void {
+  createEffect(() => {
+    if (open()) onCleanup(registerModal());
+  });
+}
+
 export function clearTransientLayersForTest() {
   layers.clear();
   serial = 0;

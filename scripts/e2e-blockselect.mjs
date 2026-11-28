@@ -15,6 +15,7 @@ import { withEditor, withEditors } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closeNarrowDrawer } from "./lib/e2e-drawer.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const G = "/tmp/txdg-bsel-g";
@@ -451,6 +452,62 @@ try {
       throw new Error("linked-reference satellite Escape did not return to one block selection");
     }
   } else throw new Error("linked-reference satellite scenario did not find a target");
+
+  // ------ SCENARIO G: a key on a Settings control leaves the block behind it ------
+  log(`\n${"=".repeat(64)}`);
+  log("SCENARIO G: select a block, open Settings, Backspace on a search result");
+  log("=".repeat(64));
+  const pageFile = `${G}/pages/SelTest.md`;
+  const betaIdx = await browser.execute(() =>
+    [...document.querySelectorAll(".ls-block")].findIndex((b) =>
+      !b.closest(".refs-block, .linked-refs, .references, .block-embed") &&
+      (b.textContent || "").includes("beta second block")));
+  if (betaIdx < 0) throw new Error("Settings scenario did not find the beta block on SelTest");
+  await clickBlock(betaIdx, "end");
+  await browser.keys([Key.Escape]);
+  await sleep(600);
+  const betaSelected = await probe("beta selected");
+  if (betaSelected.selectedIdx.length !== 1 || betaSelected.selectedIdx[0] !== betaIdx) {
+    throw new Error(`beta block was not the one selection: ${JSON.stringify(betaSelected.selectedIdx)}`);
+  }
+  await browser.keys(["t"]);
+  await browser.keys(["s"]);
+  const search = await browser.$(".settings-search-input");
+  await search.waitForExist({ timeout: 5_000 });
+  await search.setValue("theme");
+  await browser.$(".settings-search-result").waitForExist({ timeout: 5_000 });
+  let onResult = false;
+  for (let i = 0; i < 12 && !onResult; i++) {
+    await browser.keys([Key.Tab]);
+    await sleep(100);
+    onResult = await browser.execute(() => !!document.activeElement?.classList.contains("settings-search-result"));
+  }
+  if (!onResult) throw new Error("Tab never reached a Settings search result");
+  await browser.keys([Key.Backspace]);
+  await sleep(1500);
+  const behind = await browser.execute(() => ({
+    settingsOpen: !!document.querySelector(".settings-search-input"),
+    betaShown: [...document.querySelectorAll(".ls-block")].some((b) => (b.textContent || "").includes("beta second block")),
+  }));
+  const fileAfterRefusal = fs.readFileSync(pageFile, "utf8");
+  log(`  Backspace on a result: ${JSON.stringify(behind)} file keeps beta=${fileAfterRefusal.includes("beta second block")}`);
+  if (!behind.settingsOpen) throw new Error("Backspace on a Settings result closed Settings");
+  if (!behind.betaShown || !fileAfterRefusal.includes("beta second block")) {
+    throw new Error("Backspace on a Settings result deleted the selected block behind it");
+  }
+  for (let i = 0; i < 3; i++) {
+    if (!(await browser.$(".settings-search-input").isExisting())) break;
+    await browser.keys([Key.Escape]);
+    await sleep(400);
+  }
+  if (await browser.$(".settings-search-input").isExisting()) throw new Error("Escape did not close Settings");
+  const afterClose = await probe("Settings closed");
+  if (afterClose.selectedIdx.length !== 1 || afterClose.selectedIdx[0] !== betaIdx) {
+    throw new Error(`closing Settings lost the block selection: ${JSON.stringify(afterClose.selectedIdx)}`);
+  }
+  await browser.keys([Key.Backspace]);
+  await waitForFileText(pageFile, (text) => !text.includes("beta second block") && text.includes("gamma third block"));
+  log("  Backspace with Settings closed: beta deleted from the page file");
 
   log(`\nVERDICT-INPUT: see selected-block presence + activeElement across steps above.`);
 } catch (e) {
