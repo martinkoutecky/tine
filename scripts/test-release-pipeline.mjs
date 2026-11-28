@@ -580,7 +580,7 @@ assert.match(
 );
 assert.match(preflight, /check-bench-policy\.mjs/, "release preflight omits the performance-baseline currency guard");
 
-function makeInput(base, signedFor = () => version) {
+function makeInput(base, signatureFor = (name) => fixtureSignature(name.slice(0, -4), version)) {
   const input = path.join(base, "input");
   fs.mkdirSync(input, { recursive: true });
   for (const lane of RELEASE_LANES) {
@@ -588,7 +588,7 @@ function makeInput(base, signedFor = () => version) {
     fs.mkdirSync(directory, { recursive: true });
     const assets = [];
     for (const name of layout.lanes[lane].assets) {
-      const contents = name.endsWith(".sig") ? `${fixtureSignature(name.slice(0, -4), signedFor(name))}\n` : `fixture-${name}\n`;
+      const contents = name.endsWith(".sig") ? `${signatureFor(name)}\n` : `fixture-${name}\n`;
       fs.writeFileSync(path.join(directory, name), contents);
       const bytes = Buffer.from(contents);
       assets.push({ name, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
@@ -704,13 +704,25 @@ try {
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment));
     assert.throws(() => assemble(input, path.join(base, "output")), /version 0\.5\.7, expected 0\.5\.6/);
   }
-  for (const [label, signedFor] of [["unversioned", undefined], ["older", "0.5.5"]]) {
-    // An updater signature must name the version latest.json offers, or the app
-    // (requireSignedVersion) refuses the update: assembly refuses it first.
+  // An updater signature must name the version latest.json offers, or the app
+  // (requireSignedVersion) refuses the update: assembly refuses it first. The
+  // trusted comment is read as the app's verifier reads it: the third line, so
+  // a version on another line does not count, and a CRLF line ending does not
+  // change the version.
+  const windowsSignature = [
+    ["unversioned", fixtureSignature("Tine-setup.exe", undefined)],
+    ["empty", fixtureSignature("Tine-setup.exe", "")],
+    ["older", fixtureSignature("Tine-setup.exe", "0.5.5")],
+    ["earlier-line", Buffer.from(`trusted comment: version:${version}\nRUQfixture\ntrusted comment: timestamp:1\nfixture\n`).toString("base64")],
+    ["crlf", Buffer.from(Buffer.from(fixtureSignature("Tine-setup.exe", version), "base64").toString().replaceAll("\n", "\r\n")).toString("base64")],
+  ];
+  for (const [label, signature] of windowsSignature) {
     const base = path.join(temporary, `${label}-signature`);
-    const input = makeInput(base, (name) => name.endsWith("-setup.exe.sig") ? signedFor : version);
-    assert.throws(() => assemble(input, path.join(base, "output")),
-      /latest\.json windows-x86_64 signature is not signed for version 0\.5\.6/);
+    const input = makeInput(base, (name) => name.endsWith("-setup.exe.sig") ? signature
+      : fixtureSignature(name.slice(0, -4), version));
+    const run = () => assemble(input, path.join(base, "output"));
+    if (label === "crlf") run();
+    else assert.throws(run, /latest\.json windows-x86_64 signature is not signed for version 0\.5\.6/, label);
   }
   {
     const base = path.join(temporary, "duplicate-platform");

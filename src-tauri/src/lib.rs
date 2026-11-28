@@ -1533,7 +1533,7 @@ mod mobile_drawer_policy_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, desktop))]
 mod updater_config_tests {
     #[test]
     fn the_updater_requires_the_signed_version() {
