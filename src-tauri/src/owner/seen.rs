@@ -286,6 +286,7 @@ fn normalize(blocks: &mut [DocBlock], org: bool) {
                         tine_core::block_regions::Edit::Property {
                             key: "collapsed".into(),
                             value: None,
+                            exact: false,
                         },
                     )
                     .unwrap_or_else(|_| block.raw().to_owned())

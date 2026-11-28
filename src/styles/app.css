@@ -1272,21 +1272,6 @@ html[data-system-insets="native-viewport"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.graph-switch-remove {
-  flex: 0 0 auto;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 1px 4px;
-}
-.graph-switch-remove:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
 
 .nav-contents {
   flex: 1;

@@ -3,6 +3,9 @@
 // taken by the block behind it (it entered edit mode, tore the sheet down and the control never acted), and
 // the sheet opened at the viewport's top-left. It then edits a query table's title cell: Delete at its end
 // must not merge the next block of the result's file, which the table does not draw, into the result.
+// Last, typing in a table's `Ready` text column on a row holding `ready:: false` (another spelling of the
+// same property to Logseq) is refused visibly and leaves that line on disk, and a refused `Done` checkbox
+// beside `done:: true` keeps showing the saved value; the file is compared after the refused gestures and the next save.
 //
 // Every pointer interaction here goes through the W3C Actions API (pointerdown/mousedown/mouseup/click as a
 // pointing device produces them), never `element.click()` from script: a synthetic click skips the
@@ -42,6 +45,12 @@ fs.writeFileSync(`${GRAPH}/pages/Task Table.md`, "- {{query (task TODO)}}\n  tin
 for (let i = 0; i < 12; i += 1) {
   fs.writeFileSync(`${GRAPH}/pages/Book ${i}.md`, `kind-${i}:: v${i}\ntype:: book\n\n- A book page ${i}\n`);
 }
+// A children table whose `ready` checkbox and `Ready` text columns are one property to Logseq, as are its
+// `Done` checkbox column and row two's `done::` line.
+const READY_FILE = `${GRAPH}/pages/Ready Table.md`;
+const READY = "- Rows\n  tine.view:: table\n  tine.fields:: ready=checkbox;Ready=text;Done=checkbox\n"
+  + "\t- Row one\n\t  ready:: false\n\t- Row two\n\t  done:: true\n\t- Row three\n";
+fs.writeFileSync(READY_FILE, READY);
 const QUERIES_FILE = `${GRAPH}/pages/Queries.md`;
 const BELOW = "- plain block below the query";
 fs.writeFileSync(QUERIES_FILE, `- {{query (task TODO)}}\n${BELOW}\n`);
@@ -194,6 +203,46 @@ try {
   if (!(await browser.$(`.sheet-table ${BLOCK_EDITOR}`).isExisting())) throw new Error("the title cell's editor closed on Delete");
   await browser.keys(["Escape"]);
   await sleep(1_000);
+
+  // 7. Typing in the `Ready` column of a row holding `ready:: false` is refused with a notice naming
+  //    `ready`, and a press on row two's `Done` checkbox beside `done:: true` is refused with a notice
+  //    naming `done` while the box stays unchecked. A refused gesture saves nothing, so the page's next save
+  //    is the first moment the disk could show it: row three's `ready` checkbox makes that save without
+  //    touching rows one or two, and the file must then hold exactly that one line more. Row one's own
+  //    `ready` checkbox is compared the same way.
+  await openPageByName(browser, "Ready Table");
+  const column = (field) => browser.execute((wanted) => {
+    const headers = [...document.querySelectorAll(".sheet-table [data-sheet-field-header]")];
+    return headers.findIndex((h) => h.getAttribute("data-sheet-field") === wanted) + 1;
+  }, field);
+  await browser.$(".sheet-table [data-sheet-field-header]").waitForExist({ timeout: 20_000, timeoutMsg: "the Ready Table never drew its columns" });
+  const readyCol = await column("prop:Ready");
+  const checkCol = await column("prop:ready");
+  const doneCol = await column("prop:Done");
+  if (!readyCol || !checkCol || !doneCol) throw new Error("the Ready Table lacks its ready, Ready or Done column");
+  const checkbox = (row, col) => `.sheet-table .sheet-cell[data-row="${row}"][data-col="${col}"] input[type="checkbox"]`;
+  const notice = (other, what) => browser.waitUntil(() => browser.execute((name) => [...document.querySelectorAll(".toast-msg")]
+    .some((el) => (el.textContent ?? "").includes(`already has “${name}”, another spelling of this property`)), other),
+  { timeout: 10_000, interval: 150, timeoutMsg: `${what} showed no refusal` });
+  const readyCell = await browser.$(`.sheet-table .sheet-cell[data-row="0"][data-col="${readyCol}"]`);
+  await readyCell.scrollIntoView({ block: "nearest", inline: "nearest" });
+  await browser.action("pointer", { parameters: { pointerType: "mouse" } })
+    .move({ origin: readyCell, x: 0, y: 0 }).down({ button: 0 }).up({ button: 0 }).pause(40).down({ button: 0 }).up({ button: 0 }).perform();
+  const propInput = await browser.$(".sheet-table input.sheet-prop-input");
+  await propInput.waitForExist({ timeout: 10_000, timeoutMsg: "a double press on the Ready cell opened no input" });
+  await browser.keys(["y", "e", "s", "Enter"]);
+  await notice("ready", "typing in Ready beside ready:: false");
+  await browser.keys(["Escape"]);
+  await press(checkbox(1, doneCol));
+  await notice("done", "a press on Done beside done:: true");
+  if (await browser.$(checkbox(1, doneCol)).isSelected()) throw new Error("a refused Done checkbox shows checked; the row holds no Done line");
+  await press(checkbox(2, checkCol));
+  const afterRefusals = READY.replace("\t- Row three\n", "\t- Row three\n\t  ready:: true\n");
+  const barrier = await waitForFileText(READY_FILE, (body) => body.includes("Row three\n\t  ready:: true"));
+  if (barrier !== afterRefusals) throw new Error(`a refused Ready cell or Done checkbox changed the file:\n${barrier}`);
+  await press(checkbox(0, checkCol));
+  const ready = await waitForFileText(READY_FILE, (body) => body.includes("Row one\n\t  ready:: true"));
+  if (ready !== afterRefusals.replace("ready:: false", "ready:: true")) throw new Error(`row one's ready checkbox changed more than its line:\n${ready}`);
 } catch (error) {
   failed = error;
   if (browser) {

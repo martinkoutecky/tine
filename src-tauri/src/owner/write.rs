@@ -1160,6 +1160,7 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                     tine_core::block_regions::Edit::Property {
                         key: tine_core::tine_keys::AUTHOR.into(),
                         value: Some(author_name(Some(name)).map_err(|e| kernel_refused(page, e))?),
+                        exact: false,
                     },
                 )
                 .map_err(|e| kernel_refused(page, e))?,

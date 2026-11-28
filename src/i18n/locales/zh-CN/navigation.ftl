@@ -95,7 +95,6 @@ sidebar-namespaces = 命名空间
 
 sidebar-new-page = + 新页面
 
-sidebar-remove-from-this-list = 从此列表移除 { $name }
 
 sidebar-open-graph = 打开图谱…
 

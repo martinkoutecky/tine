@@ -19,7 +19,7 @@ export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // export it (src/browserCoreParser.test.ts); trimming its code saved 1.1k of the
 // 2.3k overshoot, and no further trim fits without dropping a rule.
 // 2026-11-28, drawer delimiters: the parser ceiling moved to 1,570,000 (about
-// 0.5% above the vendored 1,562,167) for lsdoc v0.5.13's drawer spans and the
+// 0.5% above the vendored 1,562,761) for lsdoc v0.5.13's drawer spans and the
 // writers' guards that use them (about 2.9k); dropping a sort, a collect and a
 // trim saved 4.6k of the first build's overshoot.
 export const wasmArtifacts = [

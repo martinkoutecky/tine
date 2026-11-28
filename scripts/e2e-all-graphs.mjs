@@ -64,11 +64,44 @@ try {
   stage = "verify graph ownership on disk";
   await waitForFileText(path.join(alpha, "pages/Notes.md"), text => text.includes("saved in alpha"));
   assert.equal(fs.readFileSync(path.join(beta, "pages/Notes.md"), "utf8"), "- Beta notes\n");
-  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "g Shift+G, keyboard graph switch, originating edit saved", alpha, beta }, null, 2));
-  console.log(`PASS All graphs keyboard switch; alpha edit persisted, beta unchanged. ${run}`);
+  // GH #1015: the switcher's rows carry no remove control; removing a graph is a row action on All graphs.
+  const switcherRows = async () => {
+    await browser.$(".graph-switch-btn").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".graph-switch-row").length > 0), { timeout: 10_000 });
+    const rows = await browser.execute(() => [...document.querySelectorAll(".graph-switch-row")].map(row => ({
+      name: row.querySelector(".graph-switch-row-name")?.textContent?.trim(), controls: row.querySelectorAll("button, [role=button]").length,
+    })));
+    await browser.keys(["Escape"]);
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector(".graph-switch-menu")), { timeout: 5000 });
+    return rows;
+  };
+  stage = "switcher rows have no remove control";
+  const before = await switcherRows();
+  assert.deepEqual(before.map(row => row.name).sort(), ["alpha", "beta"]);
+  assert.ok(before.every(row => row.controls === 0), `no switcher row may hold a control: ${JSON.stringify(before)}`);
+  stage = "remove alpha from All graphs";
+  await browser.keys("g");
+  await browser.keys(["Shift", "g"]);
+  await browser.$(".all-graphs").waitForExist({ timeout: 10_000 });
+  const clicked = await browser.execute(() => {
+    const row = [...document.querySelectorAll(".all-graphs-row")].find(item => item.getAttribute("aria-label") === "alpha");
+    const remove = [...(row?.querySelectorAll("button") ?? [])].find(button => button.textContent === "Remove from this list");
+    remove?.click();
+    return Boolean(remove);
+  });
+  assert.ok(clicked, "All graphs must offer Remove from this list on alpha's row");
+  await browser.waitUntil(() => browser.execute(() => ![...document.querySelectorAll(".all-graphs-row")].some(item => item.getAttribute("aria-label") === "alpha")), { timeout: 10_000 });
+  const settings = path.join(run, "data", APP_ID, "tine-settings.json");
+  await waitForFileText(settings, text => !(JSON.parse(text).known_graphs ?? []).some(graph => graph.path === alpha));
+  stage = "alpha is gone from the switcher";
+  const after = await switcherRows();
+  assert.deepEqual(after.map(row => row.name), ["beta"]);
+  assert.ok(fs.existsSync(path.join(alpha, "pages/Notes.md")), "removing from the list leaves the graph's files");
+  fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, workingDiff: true, outcome: "PASS", journey: "g Shift+G, keyboard graph switch, originating edit saved; switcher rows without remove control, remove from All graphs", alpha, beta }, null, 2));
+  console.log(`PASS All graphs keyboard switch; alpha edit persisted, beta unchanged; no remove control in the switcher; alpha removed from All graphs and gone from the switcher. ${run}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
-  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: ${commit} + worktree diff\nJourney: ${stage}\nExpected: keyboard graph switch to beta; alpha edit saved only in alpha\nObserved: ${error.stack}\nClassification: ambiguous pending driver log and screenshot\n`);
+  fs.writeFileSync(path.join(run, "failure.txt"), `Tested: ${commit} + worktree diff\nJourney: ${stage}\nExpected: keyboard graph switch to beta; alpha edit saved only in alpha; switcher rows hold no control; alpha removed from All graphs leaves the switcher and settings\nObserved: ${error.stack}\nClassification: ambiguous pending driver log and screenshot\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

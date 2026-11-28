@@ -952,6 +952,18 @@ mod search_guide_tests {
             assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
         }
     }
+    #[test]
+    fn a_cell_refusing_another_spelling_is_documented() {
+        let sheets = include_str!("templates/sheets.md");
+        for text in [
+            "A cell never changes a property spelled another way on its row",
+            "`Ready::` and `ready::`, or `a_b::` and `a-b::`, as one property",
+            "shows a notice naming that spelling",
+            "A checkbox keeps showing the saved value; a text or number cell keeps what you typed",
+        ] {
+            assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -401,6 +401,7 @@ pub(super) fn block_reference(
                     Edit::Property {
                         key: "id".into(),
                         value: Some(uuid.clone()),
+                        exact: false,
                     },
                 )
                 .map_err(|e| refused("kernel", Some(page), e))?;

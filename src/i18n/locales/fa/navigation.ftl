@@ -47,7 +47,6 @@ sidebar-favorites = برگزیده‌ها
 sidebar-recent = اخیر
 sidebar-namespaces = فضاهای نام
 sidebar-new-page = + صفحهٔ جدید
-sidebar-remove-from-this-list = حذف { $name } از این فهرست
 sidebar-open-graph = باز کردن گراف…
 sidebar-new-graph = گراف جدید…
 sidebar-review-the-pages-that-need-a-decision = بررسی صفحه‌هایی که نیاز به تصمیم دارند

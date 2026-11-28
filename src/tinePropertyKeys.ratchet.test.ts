@@ -56,7 +56,7 @@ const PASS_THROUGH: Record<string, [number, string]> = {
   "src/document/convert.ts": [1, "queryBlockRaw: keys from appendQueryBlock callers (checked there)"],
   "src/document/edits/identity.ts": [1, "Org identity writer: `id`/`custom-id` from its caller"],
   "src/document/edits/paste.ts": [2, "paste keeps the pasted block's own properties"],
-  "src/document/edits/properties.ts": [5, "the generic writers themselves (setBlockProperty, setPageProperty, toggle)"],
+  "src/document/edits/properties.ts": [6, "the generic writers themselves (setBlockProperty, setCellProperty, setPageProperty, toggle)"],
   "src/document/edits/propertyDeclaration.ts": [1, "property declaration page: the user's key"],
   "src/editor/editorCompletions.ts": [1, "both editors' property autocomplete inserts the key the user picked"],
   "src/editor/exportProjection.ts": [1, "source export restores only parser-owned comment presentation keys when Remove properties is selected"],
@@ -115,6 +115,7 @@ function tsSites(): { sites: Site[]; consts: Map<string, string> } {
   const consts = new Map<string, string>();
   const patterns: [RegExp, string][] = [
     [/setBlockProperty\(\s*[^,()]+(?:\([^()]*\))?,\s*([^,]+?)\s*,/g, "setBlockProperty"],
+    [/setCellProperty\(\s*[^,()]+(?:\([^()]*\))?,\s*([^,]+?)\s*,/g, "setCellProperty"],
     [/setPageProperty\(\s*[^,()]+(?:\([^()]*\))?,\s*([^,]+?)\s*,/g, "setPageProperty"],
     [/kind:\s*"property",\s*key(?:\s*:\s*([^,}]+))?/g, "property edit"],
     [/appendQueryBlock\([^;]*?\[\[\s*([^,\]]+)\s*,/g, "appendQueryBlock"],

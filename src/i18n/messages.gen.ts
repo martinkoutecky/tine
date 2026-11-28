@@ -3033,10 +3033,12 @@ export interface MessageArgs {
   "sheet-board-empty-column": {};
   "sheet-can-t-convert-this-parser-does-not-round-trip-inside-table-cells": {};
   "sheet-can-t-convert-to-grid-children-would-collide-with-grid-rows": {};
+  "sheet-cell-other-spelling": { "other": string | number };
   "sheet-cell-refused": { "hasValue": number; "value": string | number };
   "sheet-couldn-t-copy-cells-clipboard-write-failed": {};
   "sheet-couldn-t-cut-cells-clipboard-write-failed": {};
   "sheet-drag-to-resize-double-click-to-reset": {};
+  "sheet-flatten-other-spelling": { "count": number; "other": string | number };
   "sheet-grid-add-column": {};
   "sheet-grid-add-row": {};
   "sheet-grid-cell-children": {};
@@ -3125,7 +3127,6 @@ export interface MessageArgs {
   "sidebar-conflict-count": { "count": number };
   "sidebar-couldn-t-create-the-graph": { "error": string | number };
   "sidebar-couldn-t-open-the-graph-picker": { "error": string | number };
-  "sidebar-couldn-t-remove-graph": { "error": string | number };
   "sidebar-favorites": {};
   "sidebar-favorites-collapse": {};
   "sidebar-favorites-delete-group": { "groupName": string | number };
@@ -3140,7 +3141,6 @@ export interface MessageArgs {
   "sidebar-new-page": {};
   "sidebar-open-graph": {};
   "sidebar-recent": {};
-  "sidebar-remove-from-this-list": { "name": string | number };
   "sidebar-review-the-pages-that-need-a-decision": {};
   "sidebar-sizing-could-not-load-right-sidebar-width": {};
   "sidebar-sizing-could-not-load-sidebar-width": {};

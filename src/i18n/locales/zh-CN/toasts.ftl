@@ -133,7 +133,6 @@ quick-switcher-could-not-create = 无法创建“{ $name }”：{ $error }
 
 quick-switcher-that-pane-is-no-longer-available-close-this = 该窗格已不可用。请关闭此搜索后重试。
 
-sidebar-couldn-t-remove-graph = 无法移除图谱。（{ $error }）
 
 sidebar-couldn-t-open-the-graph-picker = 无法打开图谱选择器。（{ $error }）
 

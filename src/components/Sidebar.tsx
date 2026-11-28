@@ -396,19 +396,6 @@ export function GraphSwitcher(props: {
                 }}
               >
                 <span class="graph-switch-row-name">{graph.name}</span>
-                <button
-                  class="graph-switch-remove"
-                  title={t("sidebar-remove-from-this-list", { name: String(graph.name) })}
-                  aria-label={t("sidebar-remove-from-this-list", { name: String(graph.name) })}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(graph.path))
-                      .then((result) => { if (result.kind === "current") void refetch(); })
-                      .catch((error) => pushToast(msg("sidebar-couldn-t-remove-graph", { error: String(error) }), "error"));
-                  }}
-                >
-                  ×
-                </button>
               </div>
             )}
           </For>

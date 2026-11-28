@@ -11,6 +11,7 @@ fn assert_last_org_drawer_entry_removed(tail: &str) {
                 Edit::Property {
                     key: "color".into(),
                     value: None,
+                    exact: false,
                 },
             ),
             (
@@ -18,6 +19,7 @@ fn assert_last_org_drawer_entry_removed(tail: &str) {
                 Edit::Property {
                     key: "collapsed".into(),
                     value: None,
+                    exact: false,
                 },
             ),
             (
@@ -25,6 +27,7 @@ fn assert_last_org_drawer_entry_removed(tail: &str) {
                 Edit::Property {
                     key: "id".into(),
                     value: None,
+                    exact: false,
                 },
             ),
             (":id: real", Edit::StripCopy { template: false }),
@@ -137,6 +140,7 @@ fn structural_edits_preserve_literals_and_reparse() {
                 Edit::Property {
                     key: "klíč".into(),
                     value: Some("値".into()),
+                    exact: false,
                 },
             )
             .unwrap();
@@ -149,6 +153,7 @@ fn structural_edits_preserve_literals_and_reparse() {
                 Edit::Property {
                     key: "klíč".into(),
                     value: None,
+                    exact: false,
                 },
             )
             .unwrap();
@@ -204,6 +209,7 @@ fn folded_directive_metadata_survives_id_removal() {
             Edit::Property {
                 key: "id".into(),
                 value: None,
+                exact: false,
             },
         )
         .unwrap();
@@ -233,6 +239,7 @@ fn legacy_trailing_property_moves_to_the_head_without_touching_body() {
             Edit::Property {
                 key: "old".into(),
                 value: Some("new".into()),
+                exact: false,
             },
         )
         .unwrap();
@@ -382,6 +389,7 @@ fn trailing_builtin_rows_swallowed_by_a_final_quote_stay_owned() {
                 Edit::Property {
                     key: "collapsed".into(),
                     value: value.map(str::to_string),
+                    exact: false,
                 },
             )
             .unwrap()
@@ -508,6 +516,7 @@ fn collapsing_a_block_with_a_swallowed_row_writes_a_parser_accepted_row() {
                 Edit::Property {
                     key: key.into(),
                     value: value.map(str::to_string),
+                    exact: false,
                 },
             )
             .unwrap()
@@ -585,6 +594,7 @@ fn a_property_added_to_a_quote_block_goes_before_the_quote() {
                 Edit::Property {
                     key: key.into(),
                     value: Some(value.to_string()),
+                    exact: false,
                 },
             )
             .unwrap()
@@ -677,6 +687,7 @@ fn a_property_added_to_a_block_opening_with_a_logbook_stays_outside_the_drawer()
                 Edit::Property {
                     key: key.into(),
                     value: Some("true".into()),
+                    exact: false,
                 },
             )
             .unwrap()
@@ -1026,6 +1037,7 @@ fn hoisted_planning_goes_after_an_empty_first_line() {
                 Edit::Property {
                     key: "foo".into(),
                     value: Some("bar".into()),
+                    exact: false,
                 },
             )
             .unwrap();

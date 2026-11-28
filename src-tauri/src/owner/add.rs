@@ -185,6 +185,7 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                                 Edit::Property {
                                     key: tine_core::tine_keys::AUTHOR.into(),
                                     value: Some(author.into()),
+                                    exact: false,
                                 },
                             )
                             .map_err(|e| refused("kernel", Some(page), e))?,
@@ -255,6 +256,7 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                         Edit::Property {
                             key: "tine.date".into(),
                             value: Some(date.clone()),
+                            exact: false,
                         },
                     )
                     .map_err(|e| refused("kernel", Some(page), e))?;
@@ -269,6 +271,7 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                         Edit::Property {
                             key: "id".into(),
                             value: Some(uuid::Uuid::new_v4().to_string()),
+                            exact: false,
                         },
                     )
                     .map_err(|e| refused("kernel", Some(page), e))?;

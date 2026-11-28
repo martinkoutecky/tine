@@ -5,6 +5,7 @@ import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { flatten, hierarchify } from "./restructure";
+import { setToasts, toasts } from "../toasts";
 
 beforeAll(() => initParser());
 
@@ -88,6 +89,36 @@ describe("sheet restructure", () => {
     expect(doc.byId.g1).toBeUndefined();
     expect(doc.byId.r1.raw).toBe("Needs owner\nowner:: Martin");
     expect(doc.byId.r2.raw).toBe("Already owned\nowner:: Martin");
+
+    undo();
+    expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("flatten leaves a row holding another spelling of the field unfilled, still reparents it, and says so", () => {
+    setToasts([]);
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.group-by:: prop:owner", null, ["g1"]),
+        g1: node("g1", "Martin", "table", ["r1", "r2"]),
+        r1: node("r1", "Needs owner", "g1"),
+        r2: node("r2", "Already owned\nOwner:: Alex", "g1"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const before = pageToDto("Sheet");
+
+    expect(flatten("table")).toBe(true);
+
+    expect(doc.byId.table.children).toEqual(["r1", "r2"]);
+    expect(doc.byId.g1).toBeUndefined();
+    expect(doc.byId.r1.raw).toBe("Needs owner\nowner:: Martin");
+    expect(doc.byId.r2.raw).toBe("Already owned\nOwner:: Alex");
+    // written (1) + refused (1) = rows (2): one notice for the refused row.
+    expect(toasts().map((t) => [t.kind, t.message])).toEqual([
+      ["warn", "One row was not filled in: a row already has “Owner”, another spelling of this property."],
+    ]);
 
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
