@@ -196,3 +196,21 @@ fn a_trailing_slash_moves_only_what_went_to_other() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// A note in `assets/` that a transaction trashes goes to `other/`, not to
+/// the `assets/` folder Empty asset trash deletes.
+#[test]
+fn a_note_in_assets_is_filed_under_other() {
+    for name in [
+        "Note.md",
+        "Note.ORG",
+        "Note.sync-conflict-20190201-124559.md",
+    ] {
+        let disk = format!("assets/{name}");
+        assert_eq!(
+            trashed_into("{}", Area::Assets, name, &disk),
+            "other",
+            "{disk}"
+        );
+    }
+}

@@ -4679,9 +4679,12 @@ impl TrashEntryKind {
     /// the pages or journals area, then the pages area, the journals area,
     /// `assets/`, else other, an area being the configured folder written
     /// followed by `/`. A file that would go to other is matched once more,
-    /// ignoring one trailing `/` on each configured value. Cost O(path length).
+    /// ignoring one trailing `/` on each configured value. Graph text never
+    /// goes to `assets/`, which Empty asset trash deletes: it keeps its path's
+    /// folder, other standing in for `assets/`. Cost O(path length).
     pub(crate) fn of_trashed_file(rel: &str, when: crate::TrashIf, config: &Config) -> Self {
-        if when == crate::TrashIf::UnreferencedAsset {
+        let text = crate::file_kind::is_graph_text_path(Path::new(rel));
+        if when == crate::TrashIf::UnreferencedAsset && !text {
             return Self::Asset;
         }
         let stem = Path::new(rel)
@@ -4714,6 +4717,7 @@ impl TrashEntryKind {
         };
         match by_path(false) {
             Self::Other => by_path(true),
+            Self::Asset if text => Self::Other,
             kind => kind,
         }
     }

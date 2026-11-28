@@ -339,6 +339,8 @@ fn an_asset_trash_files_under_assets_whatever_the_text_folders_are() {
         r#"{:pages-directory "assets/" :journals-directory "assets/"}"#,
         r#"{:pages-directory "assets"}"#,
         r#"{:journals-directory "assets"}"#,
+        r#"{:pages-directory "assets" :journals-directory "assets"}"#,
+        r#"{:pages-directory "assets" :journals-directory "assets/"}"#,
     ] {
         for name in [photo, copy] {
             let root = crate::test_support::fresh_dir("tine-asset-trash-overlap-");
@@ -375,6 +377,93 @@ fn an_asset_trash_files_under_assets_whatever_the_text_folders_are() {
                 .count();
             let seen = (folders, counted, purged, left);
             if seen != (vec!["assets".to_owned()], Some(1), (1, 9), 0) {
+                wrong.push(format!("{config} {name}: {seen:?}"));
+            }
+            store.close();
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A note or a sync-conflict copy of one that Orphaned media trashes is never
+/// filed under the trash's `assets/` folder, whatever the configured pages and
+/// journals folders: it keeps its pages, journals or conflicts folder, and goes
+/// to `other/` where its path alone would give `assets/`. Empty asset trash
+/// leaves it in the trash, and Settings does not count it as asset trash.
+#[test]
+fn a_trashed_note_never_becomes_asset_trash() {
+    let mut wrong = Vec::new();
+    for (pages, journals) in [
+        (None, None),
+        (Some("assets"), None),
+        (None, Some("assets")),
+        (Some("assets"), Some("assets")),
+        (Some("assets"), Some("assets/")),
+        (Some("assets/"), Some("assets")),
+        (Some("assets/"), Some("assets/")),
+    ] {
+        let mut config = String::from("{");
+        if let Some(pages) = pages {
+            config += &format!(r#":pages-directory "{pages}" "#);
+        }
+        if let Some(journals) = journals {
+            config += &format!(r#":journals-directory "{journals}""#);
+        }
+        config += "}";
+        for (name, conflict) in [
+            ("Note.md", false),
+            ("Note.markdown", false),
+            ("Note.org", false),
+            ("Note.MD", false),
+            ("Note.ORG", false),
+            ("Note (conflicted copy 2026-08-01).md", true),
+            ("Note (SFConflict 2026-08-01-10-00-00).md", true),
+            ("Note.sync-conflict-20260705-141233-A2B3C4D.md", true),
+            ("Note.sync-conflict-20190201-124559.md", true),
+        ] {
+            // The folder the copy's path gives, `other/` standing in for `assets/`.
+            let folder = match (pages == Some("assets"), journals == Some("assets")) {
+                (true, _) | (_, true) if conflict => "conflicts",
+                (true, _) => "pages",
+                (_, true) => "journals",
+                _ => "other",
+            };
+            let root = crate::test_support::fresh_dir("tine-asset-trash-text-");
+            std::fs::create_dir_all(root.join("logseq")).unwrap();
+            std::fs::create_dir_all(root.join("assets")).unwrap();
+            std::fs::write(root.join("logseq/config.edn"), &config).unwrap();
+            std::fs::write(root.join("assets").join(name), b"- note").unwrap();
+            let store = Store::open(&root, Default::default()).unwrap().0;
+            assert_eq!(
+                trash_asset(&store, name).unwrap(),
+                TrashOutcome::Trashed,
+                "{config} {name}"
+            );
+            let counted = store
+                .trash_stats()
+                .unwrap()
+                .iter()
+                .find(|(k, _, _)| *k == TrashKind::Asset)
+                .map(|s| s.1);
+            store.purge_asset_trash().unwrap();
+            let trash = root.join("logseq/.tine-trash");
+            let mut kept = Vec::new();
+            for kind in std::fs::read_dir(&trash).unwrap() {
+                let kind = kind.unwrap();
+                for entry in std::fs::read_dir(kind.path()).unwrap() {
+                    let entry = entry.unwrap();
+                    if entry
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(&format!("__{name}"))
+                    {
+                        assert_eq!(std::fs::read(entry.path()).unwrap(), b"- note");
+                        kept.push(kind.file_name().to_string_lossy().into_owned());
+                    }
+                }
+            }
+            let seen = (kept, counted.unwrap_or(0));
+            if seen != (vec![folder.to_owned()], 0) {
                 wrong.push(format!("{config} {name}: {seen:?}"));
             }
             store.close();
