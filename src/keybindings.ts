@@ -70,6 +70,7 @@ import { enterGridEdit, openGridTarget } from "./sheet/gridEditMove";
 import { containingGridCell } from "./sheet/gridNeighbour";
 import { decodeNavIntent } from "./navProtocol";
 import { ctrlArrowAlias } from "./ctrlArrowAlias";
+import { resultListStep } from "./resultNavigation";
 import {
   closePane,
   adjustPaneSize,
@@ -1149,11 +1150,10 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     const blankDelete = (e.key === "Delete" || e.key === "Backspace")
       && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
     if (blank && (editing || suspended || !(modKey === "a" || blankClipboard || blankDelete))) clearSelection();
-    // Native buttons own activation even when a block selection is still present (GH #879).
-    if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey
-        && (e.target as HTMLElement | null)?.tagName === "BUTTON") {
-      resetSeq(); return;
-    }
+    // Native buttons own activation (GH #879), and a focused result list its bare Up/Down
+    // (GH #996, #1007), even when a block selection is still present.
+    if (resultListStep(e) || ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.target as HTMLElement | null)?.tagName === "BUTTON")) { resetSeq(); return; }
 
     // Escape, in priority order, so focus mode peels off one layer at a time
     // (Logseq-like): overlays first; then if editing a block's text let the

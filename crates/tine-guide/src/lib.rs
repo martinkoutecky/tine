@@ -2240,9 +2240,10 @@ mod og_20d_guide_tests {
         let map = page("Start/Where things are");
         for detail in [
             "Settings opens with the caret in its search box",
-            "Press **ArrowDown** to highlight the first matching setting",
+            "while you are editing a block, the caret stays in the block instead",
+            "Press **ArrowDown** to move to the first matching setting",
             "ArrowUp on the first returns to the search box",
-            "**Enter** to open the highlighted one",
+            "**Enter** to open the one you are on",
         ] {
             assert!(
                 map.contains(detail),

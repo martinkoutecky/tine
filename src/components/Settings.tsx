@@ -5,7 +5,7 @@ import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigUnreadable } from "../graphConfig";
 import { JournalTemplateField } from "./JournalTemplateField";
-import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
 import { QuickShareSettings } from "./QuickShareSettings";
@@ -26,8 +26,8 @@ import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
-import { steppedResultIndex } from "../resultNavigation";
-import { ctrlArrowAlias } from "../ctrlArrowAlias";
+import { resultListStep, steppedResultIndex } from "../resultNavigation";
+import { editingId } from "../editorController";
 import {
   copyStripCollapsed,
   setCopyStripCollapsed,
@@ -191,29 +191,23 @@ export function Settings(): JSX.Element {
     };
     queueMicrotask(() => attempt(true));
   };
-  // The keyboard's current result, as in a Search tab's results (GH #697, #996, #1007):
-  // Down from the box makes the first result current, the ends do not wrap, Up on
-  // the first returns to the box, and Enter opens it as a click does. The caret
-  // stays in the box (`aria-activedescendant`), so typing goes on and no outline
-  // key behind the dialog sees the arrows. Any new list starts with none current.
-  const [currentResult, setCurrentResult] = createSignal(-1);
-  createEffect(on(matches, () => setCurrentResult(-1)));
-  const resultsId = `settings-search-results-${createUniqueId()}`;
-  const resultId = (index: number) => `${resultsId}-${index}`;
+  // Search results take real keyboard focus, as a Search tab's do (GH #697, #996, #1007):
+  // Down from the box focuses the first result, bare Up/Down move focus without
+  // wrapping, Up on the first returns to the box, and Enter or Space is the focused
+  // button's own activation. The focused button is the only current result, so Tab,
+  // the arrows and Enter cannot disagree. Modified arrows belong to the global map.
+  let resultsList: HTMLDivElement | undefined;
   const resultKeyDown = (event: KeyboardEvent) => {
-    if (!searching()) return;
-    const arrow = ctrlArrowAlias(event).key;
-    const direction = arrow === "ArrowDown" ? 1 : arrow === "ArrowUp" ? -1 : 0;
-    if (direction) {
-      const index = steppedResultIndex(currentResult(), direction, matches().length);
-      if (index === null) { if (currentResult() >= 0) event.preventDefault(); return; }
-      event.preventDefault();
-      setCurrentResult(index);
-      if (index >= 0) searchInput?.ownerDocument.getElementById(resultId(index))?.scrollIntoView({ block: "nearest" });
-    } else if (event.key === "Enter" && currentResult() >= 0) {
-      event.preventDefault();
-      openSearchResult(matches()[currentResult()]);
-    }
+    const direction = resultListStep(event);
+    if (!direction || !searching() || !resultsList) return;
+    const rows = [...resultsList.querySelectorAll<HTMLButtonElement>("button.settings-search-result")];
+    const fromInput = event.target === searchInput;
+    const index = steppedResultIndex(fromInput ? -1 : rows.indexOf(event.target as HTMLButtonElement), direction, rows.length);
+    if (index === null) { if (!fromInput) event.preventDefault(); return; }
+    event.preventDefault();
+    if (index < 0) { searchInput?.focus(); return; }
+    rows[index].focus();
+    rows[index].scrollIntoView({ block: "nearest" });
   };
 
     const shortcuts = () => {
@@ -233,9 +227,11 @@ export function Settings(): JSX.Element {
 
   createEffect(() => { if (!settingsOpen()) { setPaneOpen(false); if (phone()) setSettingsQuery(""); } });
   // Settings opens with the caret in its search box (GH #996), except on a phone, where the
-  // on-screen keyboard would cover the category list. An effect, not the field's ref: the app
-  // mounts Settings under Suspense, and effects wait until the field is in the document.
-  createEffect(() => { if (settingsOpen() && !untrack(phone)) searchInput?.focus({ preventScroll: true }); });
+  // on-screen keyboard would cover the category list, and while a block is being edited:
+  // taking focus would end that edit, so the editor keeps it and Escape returns to it.
+  // An effect, not the field's ref: the app mounts Settings under Suspense, and effects
+  // wait until the field is in the document.
+  createEffect(() => { if (settingsOpen() && !untrack(phone) && !untrack(editingId)) searchInput?.focus({ preventScroll: true }); });
   createEffect(() => {
     if (!settingsOpen()) return;
     const requested = settingsTabRequest();
@@ -348,10 +344,9 @@ export function Settings(): JSX.Element {
                 ref={searchInput}
                 class="settings-search-input"
                 type="search"
+                data-result-list
                 placeholder={shortcutSearch() ? t("settings-ui-search-shortcuts") : t("settings-ui-search-settings")}
                 aria-label={shortcutSearch() ? t("settings-ui-search-shortcuts-2") : t("settings-ui-search-settings-2")}
-                aria-controls={searching() ? resultsId : undefined}
-                aria-activedescendant={currentResult() >= 0 ? resultId(currentResult()) : undefined}
                 value={settingsQuery()}
                 onInput={(event) => { setRevealedQuery(""); setSettingsQuery(event.currentTarget.value); }}
                 onKeyDown={(event) => {
@@ -377,11 +372,11 @@ export function Settings(): JSX.Element {
               <Show when={graphConfigUnreadable()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={searching()}>
-                <div id={resultsId} class="settings-search-results" aria-live="polite">
+                <div ref={resultsList} class="settings-search-results" aria-live="polite" data-result-list onKeyDown={resultKeyDown}>
                   <Show when={matches().length} fallback={<div class="settings-search-empty">{t("settings-ui-no-matching-settings")}</div>}>
                     <For each={matches()}>
-                      {(entry, index) => (
-                        <button type="button" id={resultId(index())} class="settings-search-result" classList={{ active: currentResult() === index() }} data-setting-target={entry.id} onClick={() => openSearchResult(entry)}>
+                      {(entry) => (
+                        <button type="button" class="settings-search-result" data-setting-target={entry.id} onClick={() => openSearchResult(entry)}>
                           <span><For each={settingHighlight(typeof entry.label === "string" ? entry.label : render(entry.label), settingsQuery())}>
                             {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
                           </For><Show when={matchedDescription(entry, settingsQuery())}>{(description) => (

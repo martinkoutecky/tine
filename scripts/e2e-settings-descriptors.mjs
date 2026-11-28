@@ -1,5 +1,5 @@
 // GH #866 / L4-04: real Settings search -> theme/settings row, on a routed page.
-// GH #996, #1007: opening Settings puts the caret in its search box; typing, Down and Enter open a row without the mouse.
+// GH #996, #1007: opening Settings (no block being edited) puts the caret in its search box; typing, Down and Enter open a row without the mouse.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { setTimeout as poll } from "node:timers/promises";
@@ -78,11 +78,10 @@ async function keyboardOnly(query, id) {
   for (let step = 0; step < rows; step++) {
     await browser.keys(["ArrowDown"]);
     const current = await browser.execute(() => {
-      const input = document.querySelector(".settings-search-input");
-      const row = document.getElementById(input.getAttribute("aria-activedescendant") ?? "");
-      return document.activeElement === input && row?.classList.contains("active") ? row.getAttribute("data-setting-target") : null;
+      const row = document.activeElement;
+      return row?.classList.contains("settings-search-result") ? row.getAttribute("data-setting-target") : null;
     });
-    assert.ok(current, `Down ${step + 1}: a result is current and the caret stays in the box`);
+    assert.ok(current, `Down ${step + 1}: a result has focus`);
     if (current === id) break;
   }
   await browser.keys(["Enter"]);
